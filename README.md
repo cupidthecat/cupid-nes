@@ -1,5 +1,3 @@
-### README.md
-
 # Cupid NES Emulator
 
 A minimal NES emulator implemented in C, designed as a learning tool for understanding the 6502 CPU architecture and NES hardware.
