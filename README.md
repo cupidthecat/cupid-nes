@@ -1,6 +1,6 @@
 # Cupid NES Emulator
 
-Cupid NES Emulator is a minimal NES emulator implemented in C. It is designed as a learning tool to explore the 6502 CPU architecture and basic NES hardware emulation. The project focuses on accurately emulating the CPU instruction set, various addressing modes, and simulating the NES memory map. In addition, the emulator now supports logging each executed CPU instruction to a text file for debugging and comparison with known-good logs (e.g. nestest.log).
+Cupid NES Emulator is a minimal NES emulator implemented in C. It is designed as a learning tool to explore the 6502 CPU architecture and basic NES hardware emulation. The project focuses on accurately emulating the CPU instruction set, various addressing modes, and simulating the NES memory map.
 
 ## Features
 
@@ -39,9 +39,15 @@ Cupid NES Emulator is a minimal NES emulator implemented in C. It is designed as
 - **Integrated Test Suite**  
   A comprehensive set of tests exercises every instruction and addressing mode. The tests print PASS/FAIL messages to the console.
 
-- **Basic PPU Emulation**  
-  A simple PPU implementation that renders the first pattern table (CHR-ROM data) as a grid of 16×16 8×8 tiles.  
-  This is used in graphical mode to visualize tile data from loaded ROMs.
+- **Basic PPU Emulation & New PPU Enhancements**  
+  - **Tile Rendering:**  
+    Renders the first pattern table (CHR-ROM data) as a grid of 16×16 8×8 tiles for visualizing tile data from loaded ROMs.
+  - **Sprite Zero Hit:**  
+    A specific signal triggered when the first sprite (sprite zero) overlaps with the background. It’s used by some games for timing. The implementation will detect when pixels from sprite zero overlap with background pixels.
+  - **Sprite Priority:**  
+    Determines whether a sprite should be drawn in front of or behind the background based on its attributes and the background pixel values.
+  - **OAM (Object Attribute Memory):**  
+    Sprites (or “objects”) are defined in OAM. Each sprite entry includes the tile index, x and y position, attributes (such as palette selection, priority, and flipping), etc.
 
 ## Project Structure
 
@@ -51,15 +57,15 @@ cupid-nes/
 ├── README.md          # Project documentation (this file)
 └── src/
     ├── cpu/
-    │   ├── cpu.c     # 6502 CPU implementation, including instruction logging
+    │   ├── cpu.c     # 6502 CPU implementation
     │   └── cpu.h     # CPU interface and flag definitions
     ├── ppu/
-    │   ├── ppu.c     # Basic PPU functionality and tile rendering
+    │   ├── ppu.c     # Basic PPU functionality and tile rendering, including new sprite features
     │   └── ppu.h     # PPU interface
     ├── rom/
     │   ├── rom.c     # ROM loading and iNES header parsing
     │   └── rom.h     # ROM interface and iNES header structure
-    └── main.c         # Main entry point: sets up logging, loads ROM, runs tests or emulator loop
+    └── main.c
 ```
 
 ## Requirements
@@ -101,23 +107,11 @@ To run the emulator with graphical output (which displays tile data from CHR-ROM
 
 The emulator will:
 - Load the ROM and print header information.
-- Log each executed instruction to `cpu_log.txt` in the current directory.
 - Open an SDL window and display the first pattern table (tiles) from the ROM.
-
-### Comparing Logs
-
-After running a ROM (for example, nestest.nes), the `cpu_log.txt` file will contain a log of executed instructions. Compare this log with a reference log (such as nestest.log) using your favorite diff tool to verify correct behavior.
-
-## Logging Details
-
-- The CPU log file (`cpu_log.txt`) is opened at startup.
-- For each CPU instruction executed, the current PC and opcode are logged along with the CPU register state.
-- To see a more complete disassembly (e.g., with operand bytes and mnemonic names), you may extend the logging function `log_instruction()` in `cpu.c`.
 
 ## Future Improvements
 
-- **Enhanced Disassembly:** Expand the logging function to fully decode each opcode with its operands and mnemonic, matching the nestest.log format.
-- **Cycle-Accurate Emulation:** Improve cycle counting and incorporate PPU state in logs.
+- **Cycle-Accurate Emulation:** Improve cycle counting.
 - **Full PPU and APU Emulation:** Expand beyond basic tile rendering.
 - **Mapper Support:** Implement support for additional mappers found in NES ROMs.
 - **Debugging Tools:** Integrate an in-emulator debugger with breakpoints and memory viewing.
