@@ -126,7 +126,7 @@ Contributions are welcome! To contribute:
 
 ## License
 
-This project is open source under the MIT License. See the [LICENSE](LICENSE) file for more details.
+This project is open source under the GNU v3 License. See the [LICENSE](LICENSE) file for more details.
 
 ## Resources
 
