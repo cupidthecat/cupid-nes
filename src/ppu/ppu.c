@@ -3,6 +3,7 @@
 #include "../rom/rom.h"
 #include "../include/globals.h"
 #include <stdbool.h>
+#include <stdio.h>
 
 // PPU Memory
 uint8_t ppu_vram[PPU_VRAM_SIZE];
@@ -10,6 +11,23 @@ uint8_t ppu_palette[PPU_PALETTE_SIZE];
 
 // PPU Registers
 PPU ppu;
+
+//---------------------------------------------------------------------
+// Sample background palettes (4 background palettes, 4 colors each)
+// Note: Palette[0][0] is the universal background color.
+// For simplicity these are dummy ARGB colors.
+uint32_t bg_palettes[4][4] = {
+    { 0xFF757575, 0xFF271B8F, 0xFF0000AB, 0xFF47009F },
+    { 0xFF757575, 0xFF006400, 0xFF13A1A1, 0xFF000000 },
+    { 0xFF757575, 0xFF8B0000, 0xFFB22222, 0xFFFF0000 },
+    { 0xFF757575, 0xFF00008B, 0xFF0000CD, 0xFF4169E1 }
+};
+
+// Get the base address of the background pattern table based on PPUCTRL
+static uint16_t get_bg_pattern_table_base() {
+    // Bit 4 of PPUCTRL controls which pattern table is used for backgrounds
+    return (ppu.ctrl & 0x10) ? 0x1000 : 0x0000;
+}
 
 static uint16_t mirror_nametable_addr(uint16_t addr) {
     // addr is already masked to 0x3FFF in ppu_read/ppu_write
@@ -19,31 +37,109 @@ static uint16_t mirror_nametable_addr(uint16_t addr) {
         // Determine which nametable (0-3)
         int nametable = offset / 0x400;
         int innerOffset = offset % 0x400;
-        // Use mirroring mode from the ROM header:
-        if(mirroring_mode == 0) { // HORIZONTAL mirroring
-            // NT0 and NT1 are unique; NT2 mirrors NT0, NT3 mirrors NT1.
-            if(nametable == 0 || nametable == 2)
+        
+        // Handle mirroring based on ROM configuration
+        switch(mirroring_mode) {
+            case 0: // Horizontal mirroring
+                // NT0 and NT1 are unique; NT2 mirrors NT0, NT3 mirrors NT1
+                if(nametable == 0 || nametable == 2)
+                    return 0x2000 + innerOffset;
+                else
+                    return 0x2400 + innerOffset;
+            
+            case 1: // Vertical mirroring
+                // NT0 and NT2 are unique; NT1 mirrors NT0, NT3 mirrors NT2
+                if(nametable == 0 || nametable == 1)
+                    return 0x2000 + innerOffset;
+                else
+                    return 0x2800 + innerOffset;
+            
+            case 2: // Single-screen mirroring (all nametables use NT0)
                 return 0x2000 + innerOffset;
-            else
+            
+            case 3: // Single-screen mirroring (all nametables use NT1)
                 return 0x2400 + innerOffset;
-        } else { // VERTICAL mirroring
-            // NT0 and NT2 are unique; NT1 mirrors NT0, NT3 mirrors NT2.
-            if(nametable == 0 || nametable == 1)
-                return 0x2000 + innerOffset;
-            else
-                return 0x2800 + innerOffset;
+            
+            default:
+                // Default to horizontal mirroring
+                if(nametable == 0 || nametable == 2)
+                    return 0x2000 + innerOffset;
+                else
+                    return 0x2400 + innerOffset;
         }
     }
     return addr; // Other areas are not modified
 }
 
+// render_background()
+// Renders a full background (256×240 pixels) using the nametable and attribute table.
+// - The nametable is located in VRAM at 0x2000–0x23BF (mirrored into 0x2400–0x2FFF).
+// - The attribute table is located at 0x23C0–0x23FF for the first nametable.
+// - This function assumes a single nametable (NROM configuration).
+void render_background(uint32_t *framebuffer) {
+    const int tilesX = 32;
+    const int tilesY = 30;
+    const int tileSize = 8;
+
+    // Get the base address of the background pattern table
+    uint16_t pattern_table_base = get_bg_pattern_table_base();
+
+    for (int ty = 0; ty < tilesY; ty++) {
+        for (int tx = 0; tx < tilesX; tx++) {
+            uint16_t ntAddr = 0x2000 + ty * tilesX + tx;
+            uint8_t tileIndex = ppu_vram[mirror_nametable_addr(ntAddr)];
+
+            // Calculate attribute table address
+            int attrX = tx / 4;
+            int attrY = ty / 4;
+            uint16_t attrAddr = 0x23C0 + attrY * 8 + attrX;
+            uint8_t attribute = ppu_vram[mirror_nametable_addr(attrAddr)];
+
+            // Determine palette index
+            int quadX = (tx % 4) / 2;
+            int quadY = (ty % 4) / 2;
+            int shift = (quadY * 4) + (quadX * 2);
+            uint8_t paletteIndex = (attribute >> shift) & 0x03;
+
+            // Calculate tile address in pattern table
+            int tileAddress = pattern_table_base + tileIndex * 16;
+
+            // Render tile
+            for (int row = 0; row < tileSize; row++) {
+                uint8_t plane0 = chr_rom[tileAddress + row];
+                uint8_t plane1 = chr_rom[tileAddress + row + 8];
+                
+                for (int col = 0; col < tileSize; col++) {
+                    uint8_t bit0 = (plane0 >> (7 - col)) & 1;
+                    uint8_t bit1 = (plane1 >> (7 - col)) & 1;
+                    uint8_t pixelValue = (bit1 << 1) | bit0;
+
+                    uint32_t color = (pixelValue == 0) ? 
+                        bg_palettes[0][0] : 
+                        bg_palettes[paletteIndex][pixelValue];
+
+                    int screenX = tx * tileSize + col;
+                    int screenY = ty * tileSize + row;
+                    
+                    if (screenX < SCREEN_WIDTH && screenY < SCREEN_HEIGHT) {
+                        framebuffer[screenY * SCREEN_WIDTH + screenX] = color;
+                    }
+                }
+            }
+        }
+    }
+}
+
 // PPU Register Read
 uint8_t ppu_read(uint16_t addr) {
-    addr &= 0x3FFF; // Mirror every 16KB
+    addr &= 0x3FFF;
 
-    // Handle palette mirroring: addresses 0x3F00-0x3F1F.
+    // Handle palette mirroring
     if(addr >= 0x3F00 && addr < 0x3F20) {
-        return ppu_palette[addr & 0x1F];
+        addr &= 0x1F;
+        // Special case: address 0x3F10, 0x3F14, 0x3F18, 0x3F1C mirror 0x3F00
+        if((addr & 0x03) == 0) addr &= 0x0F;
+        return ppu_palette[addr];
     }
     
     // Nametable read: apply mirroring.
@@ -58,10 +154,13 @@ uint8_t ppu_read(uint16_t addr) {
 
 // PPU Register Write
 void ppu_write(uint16_t addr, uint8_t value) {
-    addr &= 0x3FFF; // Mirror every 16KB
+    addr &= 0x3FFF;
 
     if(addr >= 0x3F00 && addr < 0x3F20) {
-        ppu_palette[addr & 0x1F] = value;
+        addr &= 0x1F;
+        // Special case: address 0x3F10, 0x3F14, 0x3F18, 0x3F1C mirror 0x3F00
+        if((addr & 0x03) == 0) addr &= 0x0F;
+        ppu_palette[addr] = value;
         return;
     }
     
@@ -91,20 +190,12 @@ void ppu_reset(PPU* ppu) {
     }
 }
 
-// Convert a 2-bit pixel value to an ARGB color (using a simple grayscale palette)
+// Convert a pixel value (0-3 or an index into the NES palette) to an ARGB color
 uint32_t get_color(uint8_t pixel) {
-    // Simple mapping: 0->black, 1->dark gray, 2->light gray, 3->white.
-    uint8_t intensity;
-    switch(pixel) {
-        case 0: intensity = 0x00; break;
-        case 1: intensity = 0x55; break;
-        case 2: intensity = 0xAA; break;
-        case 3: intensity = 0xFF; break;
-        default: intensity = 0x00; break;
-    }
-    // ARGB: alpha=0xFF, then intensity for red, green, blue.
-    return (0xFF << 24) | (intensity << 16) | (intensity << 8) | intensity;
+    // Make sure the palette index is in range.
+    return nes_palette[pixel & 0x3F];
 }
+
 
 // Render the first pattern table (first 4KB of CHR-ROM) as a grid of 16x16 8x8 tiles.
 // Each tile is decoded from 16 bytes (8 bytes for plane 0 and 8 bytes for plane 1).
@@ -161,5 +252,37 @@ void render_tiles() {
                 framebuffer[screenY * SCREEN_WIDTH + screenX] = get_color(pixelValue);
             }
         }
+    }
+
+    // Print first few bytes of CHR-ROM
+    printf("First 16 bytes of CHR-ROM:\n");
+    for (int i = 0; i < 16; i++) {
+        printf("%02X ", chr_rom[i]);
+    }
+    printf("\n\n");
+
+    // Print pixel values for first few tiles
+    printf("Pixel values for first 3 tiles:\n");
+    for (int tile = 0; tile < 3; tile++) {
+        printf("Tile %d:\n", tile);
+        int tileOffset = tile * 16;
+        for (int row = 0; row < 8; row++) {
+            uint8_t plane0 = chr_rom[tileOffset + row];
+            uint8_t plane1 = chr_rom[tileOffset + row + 8];
+            for (int col = 0; col < 8; col++) {
+                uint8_t bit0 = (plane0 >> (7 - col)) & 1;
+                uint8_t bit1 = (plane1 >> (7 - col)) & 1;
+                uint8_t pixelValue = (bit1 << 1) | bit0;
+                printf("%d ", pixelValue);
+            }
+            printf("\n");
+        }
+        printf("\n");
+    }
+
+    // Print palette colors
+    printf("NES Palette Colors:\n");
+    for (int i = 0; i < 16; i++) {  // Print first 16 colors
+        printf("Color %02d: 0x%08X\n", i, nes_palette[i]);
     }
 }

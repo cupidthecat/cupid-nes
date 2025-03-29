@@ -11,19 +11,13 @@ void cpu_reset(CPU* cpu) {
     cpu->a = 0;
     cpu->x = 0;
     cpu->y = 0;
-    cpu->sp = 0xFD;
+    cpu->sp = 0xFD;  // Initialize to 0xFD (valid stack range is 0x00-0xFF)
     cpu->status = 0x24;
     // Read reset vector from PRG-ROM area
     cpu->pc = (prg_rom[0x7FFD] << 8) | prg_rom[0x7FFC];
 }
 
 uint8_t read_mem(uint16_t addr) {
-    // Validate address
-    if (addr > 0xFFFF) {
-        printf("Invalid memory read at: 0x%04X\n", addr);
-        return 0;
-    }
-
     if(addr <= 0x1FFF) {
         return ram[addr % 0x0800];
     } else if(addr <= 0x401F) {
@@ -35,12 +29,6 @@ uint8_t read_mem(uint16_t addr) {
 }
 
 void write_mem(uint16_t addr, uint8_t value) {
-    // Validate address
-    if (addr > 0xFFFF) {
-        printf("Invalid memory write at: 0x%04X\n", addr);
-        return;
-    }
-
     if(addr <= 0x1FFF) {
         ram[addr % 0x0800] = value;
     } else if(addr <= 0x401F) {
@@ -157,15 +145,17 @@ static uint16_t get_zpgy_address(CPU* cpu) {
 void execute(CPU* cpu, uint8_t opcode) {
     // Add opcode validation
     if (opcode == 0xFF) {
-        printf("Invalid opcode encountered: 0x%02X\n", opcode);
+        //printf("Invalid opcode encountered: 0x%02X at PC: 0x%04X\n", opcode, cpu->pc);
         return;
     }
 
     // Add stack pointer validation
-    if (cpu->sp < 0x01 || cpu->sp > 0xFF) {
-        printf("Invalid stack pointer: 0x%02X\n", cpu->sp);
+    if (cpu->sp == 0x00) {
+        //printf("Stack overflow!\n");
         return;
     }
+    write_mem(0x0100 + cpu->sp, cpu->a);
+    cpu->sp--;
 
     switch(opcode) {
         case 0xA9: // LDA Immediate
@@ -175,24 +165,39 @@ void execute(CPU* cpu, uint8_t opcode) {
             break;
 
         case 0x48: // PHA - Push Accumulator onto Stack
+            if (cpu->sp == 0x00) {
+                printf("Stack overflow!\n");
+                return;
+            }
             write_mem(0x0100 + cpu->sp, cpu->a);
-            cpu->sp--;  // Stack pointer decrements after push
+            cpu->sp--;
             break;
 
         case 0x68: // PLA - Pull Accumulator from Stack
-            cpu->sp++;  // Increment SP before pulling the value
+            if (cpu->sp == 0xFF) {
+                printf("Stack underflow!\n");
+                return;
+            }
+            cpu->sp++;
             cpu->a = read_mem(0x0100 + cpu->sp);
-            cpu->status = (cpu->a == 0) ? ZERO_FLAG :
-                          (cpu->a & NEGATIVE_FLAG) ? NEGATIVE_FLAG : 0;
+            set_zn_flags(cpu, cpu->a);
             break;
 
         case 0x08: // PHP - Push Processor Status onto Stack
+            if (cpu->sp == 0x00) {
+                printf("Stack overflow!\n");
+                return;
+            }
             write_mem(0x0100 + cpu->sp, cpu->status);
             cpu->sp--; 
             break;
 
         case 0x28: // PLP - Pull Processor Status from Stack
-            cpu->sp++; 
+            if (cpu->sp == 0xFF) {
+                printf("Stack underflow!\n");
+                return;
+            }
+            cpu->sp++;
             cpu->status = read_mem(0x0100 + cpu->sp);
             break;
 
@@ -756,7 +761,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             break;
 
         default:
-            printf("Unknown opcode: 0x%02X\n", opcode);
+            printf("Invalid opcode encountered: 0x%02X at PC: 0x%04X\n", opcode, cpu->pc);
             break;
     }
 }

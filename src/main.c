@@ -85,25 +85,25 @@ int main(int argc, char *argv[]) {
     bool running = true;
     SDL_Event e;
     
+    // In main.c (inside the main loop)
     while (running) {
         Uint32 frameStart = SDL_GetTicks();
         double cpuCyclesExecuted = 0.0;
 
-        // Process events
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT)
                 running = false;
         }
 
-        // Execute CPU instructions until one frame's worth of cycles has passed
         while (cpuCyclesExecuted < CPU_CYCLES_PER_FRAME) {
             int cycles = cpu_step(&cpu);
             cpuCyclesExecuted += cycles;
         }
 
-        // Instead of a test pattern, render the first pattern table (tile data)
-        render_tiles();
-
+        // Render the background using the nametable and attribute table.
+        render_background(framebuffer);
+        render_tiles(framebuffer);
+        
         SDL_UpdateTexture(texture, NULL, framebuffer, SCREEN_WIDTH * sizeof(uint32_t));
         SDL_RenderClear(renderer);
         SDL_RenderCopy(renderer, texture, NULL, NULL);
@@ -114,6 +114,7 @@ int main(int argc, char *argv[]) {
             SDL_Delay((Uint32)(FRAME_TIME_MS - frameTime));
         }
     }
+
     
     SDL_DestroyTexture(texture);
     SDL_DestroyRenderer(renderer);

@@ -2,6 +2,8 @@
 #define PPU_H
 
 #include <stdint.h>
+#include <stdbool.h>
+#include <SDL2/SDL.h>
 
 // PPU Memory Sizes
 #define PPU_VRAM_SIZE 0x4000  // 16KB VRAM
@@ -30,11 +32,30 @@ typedef struct {
     uint16_t vram_addr; // PPUADDR
     uint8_t vram_latch; // Internal VRAM address latch
     uint8_t oam[PPU_OAM_SIZE]; // Object Attribute Memory
+    uint8_t secondary_oam[32]; // Secondary OAM for sprite evaluation
+    uint8_t sprite_count;      // Number of sprites found on current scanline
+    uint8_t sprite_positions[8]; // Sprite X positions
+    uint8_t sprite_patterns[8];  // Sprite pattern data
+    uint8_t sprite_attributes[8]; // Sprite attributes
+    bool sprite_zero_hit;  // Sprite Zero Hit flag
 } PPU;
 
 // PPU Memory
 extern uint8_t ppu_vram[PPU_VRAM_SIZE];      // VRAM (pattern tables, nametables, attribute tables)
 extern uint8_t ppu_palette[PPU_PALETTE_SIZE];  // Palette RAM
+
+// NES Palette Colors (RGB format)
+// More accurate NES palette (NTSC approximations)
+static const uint32_t nes_palette[64] = {
+    0xFF7C7C7C, 0xFF0000FC, 0xFF0000BC, 0xFF4428BC, 0xFF940084, 0xFFA80020, 0xFFA81000, 0xFF881400,
+    0xFF503000, 0xFF007800, 0xFF006800, 0xFF005800, 0xFF004058, 0xFF000000, 0xFF000000, 0xFF000000,
+    0xFFBCBCBC, 0xFF0078F8, 0xFF0058F8, 0xFF6844FC, 0xFFD800CC, 0xFFE40058, 0xFFF83800, 0xFFE45C10,
+    0xFFAC7C00, 0xFF00B800, 0xFF00A800, 0xFF00A844, 0xFF008888, 0xFF000000, 0xFF000000, 0xFF000000,
+    0xFFF8F8F8, 0xFF3CBCFC, 0xFF6888FC, 0xFF9878F8, 0xFFF878F8, 0xFFF85898, 0xFFF87858, 0xFFFCA044,
+    0xFFF8B800, 0xFFB8F818, 0xFF58D854, 0xFF58F898, 0xFF00E8D8, 0xFF787878, 0xFF000000, 0xFF000000,
+    0xFFFCFCFC, 0xFFA4E4FC, 0xFFB8B8F8, 0xFFD8B8F8, 0xFFF8B8F8, 0xFFF8A4C0, 0xFFF0D0B0, 0xFFFCE0A8,
+    0xFFF8D878, 0xFFD8F878, 0xFFB8F8B8, 0xFFB8F8D8, 0xFF00FCFC, 0xFFF8D8F8, 0xFF000000, 0xFF000000
+};
 
 // Function prototypes
 uint8_t ppu_read(uint16_t addr);
@@ -42,4 +63,7 @@ void ppu_write(uint16_t addr, uint8_t value);
 void ppu_reset(PPU* ppu);
 void render_tiles();
 uint32_t get_color(uint8_t pixel);
+void render_background(uint32_t *framebuffer);
+void start_frame();
+void ppu_render_frame(SDL_Renderer *renderer, SDL_Texture *texture);
 #endif // PPU_H
