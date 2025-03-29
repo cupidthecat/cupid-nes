@@ -40,5 +40,6 @@ extern uint8_t ppu_palette[PPU_PALETTE_SIZE];  // Palette RAM
 uint8_t ppu_read(uint16_t addr);
 void ppu_write(uint16_t addr, uint8_t value);
 void ppu_reset(PPU* ppu);
-
+void render_tiles();
+uint32_t get_color(uint8_t pixel);
 #endif // PPU_H

@@ -4,6 +4,7 @@
 #include "rom/rom.h"
 #include "cpu/cpu.h"
 #include "ppu/ppu.h"
+#include "../include/globals.h"
 #include <time.h>
 
 // Constants for NTSC NES timing:
@@ -11,86 +12,8 @@ const double CPU_FREQ = 1789773.0;              // CPU frequency in Hz
 const double FRAME_TIME_MS = 1000.0 / 60.0;       // ~16.67 ms per frame
 const double CPU_CYCLES_PER_FRAME = CPU_FREQ / 60.0;  // ~29796 cycles/frame
 
-// Screen dimensions
-#define SCREEN_WIDTH 256
-#define SCREEN_HEIGHT 240
-
-// Framebuffer for rendering (RGBA format)
+// Framebuffer definition
 uint32_t framebuffer[SCREEN_WIDTH * SCREEN_HEIGHT];
-
-
-// Convert a 2-bit pixel value to an ARGB color (using a simple grayscale palette)
-uint32_t get_color(uint8_t pixel) {
-    // Simple mapping: 0->black, 1->dark gray, 2->light gray, 3->white.
-    uint8_t intensity;
-    switch(pixel) {
-        case 0: intensity = 0x00; break;
-        case 1: intensity = 0x55; break;
-        case 2: intensity = 0xAA; break;
-        case 3: intensity = 0xFF; break;
-        default: intensity = 0x00; break;
-    }
-    // ARGB: alpha=0xFF, then intensity for red, green, blue.
-    return (0xFF << 24) | (intensity << 16) | (intensity << 8) | intensity;
-}
-
-// Render the first pattern table (first 4KB of CHR-ROM) as a grid of 16x16 8x8 tiles.
-// Each tile is decoded from 16 bytes (8 bytes for plane 0 and 8 bytes for plane 1).
-// The resulting image is 128x128 pixels and is centered in the 256x240 screen.
-void render_tiles() {
-    if (!chr_rom) {
-        // Fallback to test pattern if no CHR-ROM data
-        for (int i = 0; i < SCREEN_WIDTH * SCREEN_HEIGHT; i++)
-            framebuffer[i] = 0xFF0000FF; // solid blue, for example
-        return;
-    }
-
-    const int tileWidth = 8;
-    const int tileHeight = 8;
-    const int tilesPerRow = 16;
-    const int gridWidth = tilesPerRow * tileWidth; // 128 pixels
-    const int gridHeight = tilesPerRow * tileHeight; // 128 pixels (16 rows)
-
-    // Compute top-left corner to center the grid on the screen
-    int offsetX = (SCREEN_WIDTH - gridWidth) / 2;
-    int offsetY = (SCREEN_HEIGHT - gridHeight) / 2;
-
-    // Clear framebuffer (set to black)
-    for (int i = 0; i < SCREEN_WIDTH * SCREEN_HEIGHT; i++) {
-        framebuffer[i] = 0xFF000000;
-    }
-
-    // For each tile in the first pattern table (4KB of data = 256 tiles)
-    for (int tile = 0; tile < 256; tile++) {
-        int tileX = (tile % tilesPerRow) * tileWidth;
-        int tileY = (tile / tilesPerRow) * tileHeight;
-        int tileOffset = tile * 16;  // each tile uses 16 bytes
-
-        // For each row in the tile (0 to 7)
-        for (int row = 0; row < tileHeight; row++) {
-            // The two bit planes: first 8 bytes and second 8 bytes.
-            uint8_t plane0 = chr_rom[tileOffset + row];
-            uint8_t plane1 = chr_rom[tileOffset + row + 8];
-
-            // For each pixel in the row (0 to 7)
-            for (int col = 0; col < tileWidth; col++) {
-                // The bit for this pixel is the (7-col) bit of each plane.
-                uint8_t bit0 = (plane0 >> (7 - col)) & 1;
-                uint8_t bit1 = (plane1 >> (7 - col)) & 1;
-                uint8_t pixelValue = (bit1 << 1) | bit0;
-
-                // Compute the position in the framebuffer:
-                int screenX = offsetX + tileX + col;
-                int screenY = offsetY + tileY + row;
-                if (screenX < 0 || screenX >= SCREEN_WIDTH ||
-                    screenY < 0 || screenY >= SCREEN_HEIGHT) {
-                    continue;
-                }
-                framebuffer[screenY * SCREEN_WIDTH + screenX] = get_color(pixelValue);
-            }
-        }
-    }
-}
 
 int main(int argc, char *argv[]) {
     if(argc < 2) {
