@@ -1,207 +1,141 @@
 # Cupid NES Emulator
 
-A minimal NES emulator implemented in C, designed as a learning tool for understanding the 6502 CPU architecture and NES hardware.
-
-### New Features
-- Implemented JSR (Jump to Subroutine) instruction
-- Implemented RTS (Return from Subroutine) instruction
-- Added subroutine test case
-
-### Technical Details
-#### JSR (0x20)
-- Pushes the return address (current PC + 2) onto the stack
-- Jumps to the specified subroutine address
-- Stack behavior:
-  - High byte pushed first
-  - Low byte pushed second
-  - Stack pointer decremented twice
-
-#### RTS (0x60)
-- Pulls the return address from the stack
-- Increments the address by 1
-- Jumps back to the return address
-- Stack behavior:
-  - Low byte pulled first
-  - High byte pulled second
-  - Stack pointer incremented twice
+Cupid NES Emulator is a minimal NES emulator implemented in C. It is designed as a learning tool to explore the 6502 CPU architecture and basic NES hardware emulation. The project focuses on accurately emulating the CPU instruction set, various addressing modes, and simulating the NES memory map. In addition, the emulator now supports logging each executed CPU instruction to a text file for debugging and comparison with known-good logs (e.g. nestest.log).
 
 ## Features
 
-- Basic 6502 CPU emulation
-- Support for fundamental instructions (LDA, BRK, NOP)
-- Memory management with 64KB address space
-- Simple test program execution
-- Implemented JSR (Jump to Subroutine) instruction
-- Implemented RTS (Return from Subroutine) instruction
-- Added subroutine test case
+- **6502 CPU Emulation**  
+  Implements a core subset of the 6502 instruction set including:
+  - **Data Transfer:** LDA, STA, TAX, TXA, LDY, LDX  
+  - **Arithmetic:** ADC, SBC  
+  - **Logical:** AND, ORA, EOR, BIT  
+  - **Comparison:** CMP, CPX, CPY  
+  - **Branching:** BEQ, BNE, BCC, BCS, BMI, BPL, BVS, BVC  
+  - **Jump/Call:** JMP (Absolute, Indirect), JSR/RTS  
+  - **Stack Operations:** PHP/PLP, PHA/PLA  
+  - **Shift/Rotate:** ASL, LSR, ROL, ROR  
+  - **Other:** BRK and interrupt flag handling
+
+- **Multiple Addressing Modes**  
+  Supports:
+  - Immediate, Zero Page, Zero Page, X
+  - Absolute, Absolute, X, Absolute, Y
+  - Indexed Indirect ((Indirect,X)) and Indirect Indexed ((Indirect),Y)
+  - Absolute Indirect (for JMP)
+  - Relative addressing for branch instructions
+
+- **Memory Map Simulation**  
+  - 2KB internal RAM with mirroring (0x0000–0x1FFF)
+  - PPU registers (0x2000–0x3FFF, mirrored)
+  - APU/I-O registers (0x4000–0x401F)
+  - Program ROM (PRG-ROM) loaded into 0x8000–0xFFFF (read/write in our test environment)
+
+- **ROM Loading**  
+  Supports loading NES ROMs in the standard iNES file format. The loader extracts:
+  - PRG-ROM data (16KB per bank)
+  - CHR-ROM data (8KB per bank or CHR-RAM if no CHR-ROM is present)
+  - Mirroring mode (Horizontal/Vertical) based on the header flags
+
+- **Integrated Test Suite**  
+  A comprehensive set of tests exercises every instruction and addressing mode. The tests print PASS/FAIL messages to the console.
+
+- **Basic PPU Emulation**  
+  A simple PPU implementation that renders the first pattern table (CHR-ROM data) as a grid of 16×16 8×8 tiles.  
+  This is used in graphical mode to visualize tile data from loaded ROMs.
 
 ## Project Structure
 
 ```
 cupid-nes/
-├── Makefile           # Build configuration
-├── README.md          # Project documentation
+├── Makefile           # Build configuration using gcc and SDL2
+├── README.md          # Project documentation (this file)
 └── src/
-    └── cpu/
-        └── cpu.c      # 6502 CPU implementation and test program
+    ├── cpu/
+    │   ├── cpu.c     # 6502 CPU implementation, including instruction logging
+    │   └── cpu.h     # CPU interface and flag definitions
+    ├── ppu/
+    │   ├── ppu.c     # Basic PPU functionality and tile rendering
+    │   └── ppu.h     # PPU interface
+    ├── rom/
+    │   ├── rom.c     # ROM loading and iNES header parsing
+    │   └── rom.h     # ROM interface and iNES header structure
+    └── main.c         # Main entry point: sets up logging, loads ROM, runs tests or emulator loop
 ```
 
 ## Requirements
 
-- **Compiler:** GCC or compatible C compiler
-- **Environment:** Linux or POSIX-compliant system
-- **Build Tools:** make
+- **Compiler:** GCC (or any C compiler that supports C99)
+- **Operating System:** Linux or any POSIX‑compliant system
+- **Build Tools:** Make
+- **Libraries:** SDL2 (for graphical output)
 
 ## Installation & Usage
 
 ### Building the Emulator
 
+From the root directory of the project, run:
+
 ```bash
 make
 ```
 
-This will generate an executable named `cupid-nes`.
+This will compile all source files and create an executable named `cupid-nes`.
 
-### Running the Emulator
+### Running the CPU Test Suite
+
+To run the integrated CPU instruction tests (which verify each instruction's behavior):
 
 ```bash
 ./cupid-nes
 ```
 
-Expected output:
-```
-CPU Test Results:
-Accumulator: 0x42
-Stack Pointer: 0xFD
-Status Register: 0x24
-Program Counter: 0x8007
+The test suite prints PASS/FAIL messages for each instruction (e.g., "LDA Immediate: PASS"). These tests do not invoke the SDL display.
 
-Test Program:
-0x8000: 0xA9
-0x8001: 0x42
-0x8002: 0x08
-0x8003: 0x48
-0x8004: 0xA9
-0x8005: 0x00
-0x8006: 0x68
-0x8007: 0x28
-0x8008: 0x00
+### Running in Graphical Mode
+
+To run the emulator with graphical output (which displays tile data from CHR-ROM), pass the path to a ROM file as an argument:
+
+```bash
+./cupid-nes path/to/rom.nes
 ```
 
-## Technical Details
+The emulator will:
+- Load the ROM and print header information.
+- Log each executed instruction to `cpu_log.txt` in the current directory.
+- Open an SDL window and display the first pattern table (tiles) from the ROM.
 
-The emulator initializes with a test program that:
-1. Sets the reset vector to address `0x8000`
-2. Executes the following instructions:
-   - `LDA #$42` - Load 0x42 into the accumulator
-   - `PHP` - Push processor status (initially 0x24) onto stack
-   - `PHA` - Push accumulator (0x42) onto stack
-   - `LDA #$00` - Load 0x00 into accumulator (sets Zero flag)
-   - `PLA` - Pull accumulator from stack (restores 0x42)
-   - `PLP` - Pull processor status from stack (restores 0x24)
-   - `BRK` - End program
-3. The status register (NV-BDIZC) bits are:
-   - N (Negative): Set if bit 7 of result is set
-   - V (Overflow): Not implemented
-   - B (Break): Set by BRK instruction
-   - D (Decimal): Not implemented
-   - I (Interrupt): Not implemented
-   - Z (Zero): Set if result is zero
-   - C (Carry): Not implemented
+### Comparing Logs
 
-The CPU implementation includes:
-- 6502 registers (A, X, Y, PC, SP, Status)
-- Basic memory read/write operations
-- Core instruction execution
+After running a ROM (for example, nestest.nes), the `cpu_log.txt` file will contain a log of executed instructions. Compare this log with a reference log (such as nestest.log) using your favorite diff tool to verify correct behavior.
 
-## Roadmap
+## Logging Details
 
-### Short-term Goals
-- Expand CPU instruction set
-- Implement additional addressing modes
-- Add memory mapping support
+- The CPU log file (`cpu_log.txt`) is opened at startup.
+- For each CPU instruction executed, the current PC and opcode are logged along with the CPU register state.
+- To see a more complete disassembly (e.g., with operand bytes and mnemonic names), you may extend the logging function `log_instruction()` in `cpu.c`.
 
-### Long-term Vision
-- PPU (Picture Processing Unit) implementation
-- APU (Audio Processing Unit) support
-- Input handling for controllers
-- ROM loading capability
-- Comprehensive test suite
+## Future Improvements
+
+- **Enhanced Disassembly:** Expand the logging function to fully decode each opcode with its operands and mnemonic, matching the nestest.log format.
+- **Cycle-Accurate Emulation:** Improve cycle counting and incorporate PPU state in logs.
+- **Full PPU and APU Emulation:** Expand beyond basic tile rendering.
+- **Mapper Support:** Implement support for additional mappers found in NES ROMs.
+- **Debugging Tools:** Integrate an in-emulator debugger with breakpoints and memory viewing.
 
 ## Contributing
 
-Contributions are welcome! Please follow these guidelines:
-1. Fork the repository
-2. Create a feature branch
-3. Submit a pull request with detailed description
+Contributions are welcome! To contribute:
+1. Fork the repository.
+2. Create a feature branch.
+3. Submit a pull request with a detailed description of your changes.
+4. Update tests and documentation as necessary.
 
 ## License
 
-This project is open source under the MIT License. See [LICENSE](LICENSE) for details.
+This project is open source under the MIT License. See the [LICENSE](LICENSE) file for more details.
 
-## Resources & References
+## Resources
 
 - [NESdev Wiki](https://www.nesdev.org/wiki/Nintendo_Entertainment_System)
-- [6502 CPU Reference](http://www.6502.org/tutorials/6502opcodes.html)
-- [Open-source NES Emulators](https://github.com/topics/nes-emulator)
-
-# NES Emulator TODO List
-
-## Core CPU Features
-- [ ] Implement all 6502 instructions
-- [ ] Add support for all addressing modes
-- [ ] Implement interrupt handling (NMI, IRQ, RESET)
-- [ ] Add cycle-accurate timing
-- [ ] Implement stack operations (PHA, PLA, PHP, PLP)
-
-## Memory Management
-- [ ] Implement memory mapping for NES hardware
-- [ ] Add support for ROM loading
-- [ ] Implement mirroring for RAM and PPU registers
-- [ ] Add memory access timing
-
-## Graphics (PPU)
-- [ ] Implement PPU registers
-- [ ] Add pattern table rendering
-- [ ] Implement nametable and attribute table handling
-- [ ] Add sprite rendering
-- [ ] Implement background scrolling
-
-## Audio (APU)
-- [ ] Implement pulse wave channels
-- [ ] Add triangle wave channel
-- [ ] Implement noise channel
-- [ ] Add DMC (Delta Modulation Channel)
-- [ ] Implement audio mixing
-
-## Input
-- [ ] Add controller input handling
-- [ ] Implement standard NES controller support
-- [ ] Add support for Zapper (light gun)
-- [ ] Implement input polling timing
-
-## Testing & Debugging
-- [ ] Add CPU test suite
-- [ ] Create PPU test patterns
-- [ ] Implement debugger interface
-- [ ] Add memory viewer
-- [ ] Create instruction tracer
-
-## Optimization
-- [ ] Profile CPU emulation
-- [ ] Optimize PPU rendering
-- [ ] Add JIT compilation option
-- [ ] Implement multi-threading for PPU/APU
-
-## User Interface
-- [ ] Add ROM file loading
-- [ ] Implement save state support
-- [ ] Add configuration options
-- [ ] Create debug visualization tools
-- [ ] Implement frame stepping
-
-## Documentation
-- [ ] Write technical documentation
-- [ ] Create architecture diagrams
-- [ ] Add code comments
-- [ ] Write user guide
+- [6502 CPU Documentation](http://www.6502.org/tutorials/6502opcodes.html)
+- [SDL2 Documentation](https://wiki.libsdl.org/)

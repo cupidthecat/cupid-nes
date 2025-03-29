@@ -25,11 +25,12 @@ typedef enum {
 } StatusFlags;
 
 extern uint8_t memory[0x10000]; // 64KB memory
+extern uint8_t prg_rom[0x8000];
 
 void cpu_reset(CPU* cpu);
 uint8_t read_mem(uint16_t addr);
 void write_mem(uint16_t addr, uint8_t value);
 void execute(CPU* cpu, uint8_t opcode);
-void cpu_step(CPU* cpu);
+int cpu_step(CPU* cpu);
 
 #endif // CPU_H
