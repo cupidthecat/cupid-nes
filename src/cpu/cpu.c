@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include "cpu.h"
+#include "../ppu/ppu.h"
 
 uint8_t ram[0x0800];        // 2KB internal RAM
 uint8_t apu_io[0x18];       // APU + I/O registers
@@ -18,24 +19,42 @@ void cpu_reset(CPU* cpu) {
 }
 
 uint8_t read_mem(uint16_t addr) {
-    if(addr <= 0x1FFF) {
-        return ram[addr % 0x0800];
-    } else if(addr <= 0x401F) {
+    if (addr <= 0x1FFF) return ram[addr & 0x07FF];
+    else if (addr >= 0x2000 && addr <= 0x3FFF) {
+        uint16_t reg = 0x2000 | (addr & 7);
+        return ppu_reg_read(reg);
+    } else if (addr == 0x4016) {
+        return joypad_read(&pad1);  // Changed from apu_io[0x16]
+    } else if (addr == 0x4017) {
+        return joypad_read(&pad2);  // Added joypad 2 support
+    } else if (addr <= 0x401F) {
         return apu_io[addr - 0x4000];
-    } else if(addr >= 0x8000) {
+    } else if (addr >= 0x8000) {
         return prg_rom[addr - 0x8000];
     }
     return 0;
 }
 
 void write_mem(uint16_t addr, uint8_t value) {
-    if(addr <= 0x1FFF) {
-        ram[addr % 0x0800] = value;
-    } else if(addr <= 0x401F) {
-        apu_io[addr - 0x4000] = value;
-    } else if(addr >= 0x8000) {
-        prg_rom[addr - 0x8000] = value;
+    if (addr <= 0x1FFF) { ram[addr & 0x07FF] = value; return; }
+    if (addr >= 0x2000 && addr <= 0x3FFF) { ppu_reg_write(0x2000 | (addr & 7), value); return; }
+    if (addr == 0x4014) { ppu_oam_dma(value); return; }  // OAM DMA copy
+    if (addr == 0x4016) {          // STROBE
+        joypad_write_strobe(&pad1, value);
+        joypad_write_strobe(&pad2, value);
+        return;
     }
+    if (addr <= 0x401F) { apu_io[addr - 0x4000] = value; return; }
+    /* writes to ROM usually ignored */
+}
+
+void cpu_nmi(CPU* cpu) {
+    uint16_t pc = cpu->pc;
+    write_mem(0x0100 + cpu->sp--, (pc >> 8));
+    write_mem(0x0100 + cpu->sp--, (pc & 0xFF));
+    write_mem(0x0100 + cpu->sp--, cpu->status & ~BREAK_FLAG);
+    cpu->status |= INTERRUPT_FLAG;
+    cpu->pc = read_mem(0xFFFA) | (read_mem(0xFFFB) << 8);
 }
 
 // Helper function to set zero and negative flags
@@ -97,7 +116,7 @@ static void lsr(CPU* cpu, uint8_t* value) {
 static void rol(CPU* cpu, uint8_t* value) {
     uint8_t new_carry = (*value >> 7) & 1;
     *value = (*value << 1) | (cpu->status & CARRY_FLAG ? 1 : 0);
-    cpu->status = (cpu->status & ~CARRY_FLAG) | (new_carry << CARRY_FLAG);
+    cpu->status = (cpu->status & ~CARRY_FLAG) | (new_carry ? CARRY_FLAG : 0);
     set_zn_flags(cpu, *value);
 }
 
@@ -149,19 +168,22 @@ void execute(CPU* cpu, uint8_t opcode) {
         return;
     }
 
-    // Add stack pointer validation
-    if (cpu->sp == 0x00) {
-        //printf("Stack overflow!\n");
-        return;
-    }
-    write_mem(0x0100 + cpu->sp, cpu->a);
-    cpu->sp--;
-
     switch(opcode) {
+        case 0x88: // DEY
+            cpu->y--;
+            // use your helper so Z/N are correct
+            // (same helper you already use for TAX/INX/etc.)
+            set_zn_flags(cpu, cpu->y);
+            break;
+
+        case 0xC8: // INY
+            cpu->y++;
+            set_zn_flags(cpu, cpu->y);
+            break;
+
         case 0xA9: // LDA Immediate
             cpu->a = read_mem(cpu->pc++);
-            cpu->status = (cpu->a == 0) ? ZERO_FLAG :
-                          (cpu->a & NEGATIVE_FLAG) ? NEGATIVE_FLAG : 0;
+            set_zn_flags(cpu, cpu->a);
             break;
 
         case 0x48: // PHA - Push Accumulator onto Stack
@@ -759,6 +781,39 @@ void execute(CPU* cpu, uint8_t opcode) {
                 write_mem(addr, value);
             }
             break;
+
+        // ORA (bitwise OR with A)
+        case 0x05: /* zpg   */ cpu->a |= read_mem(get_zpg_address(cpu)); set_zn_flags(cpu, cpu->a); break;
+        case 0x15: /* zpg,X */ cpu->a |= read_mem(get_zpgx_address(cpu)); set_zn_flags(cpu, cpu->a); break;
+        case 0x0D: /* abs   */ cpu->a |= read_mem(get_abs_address(cpu));  set_zn_flags(cpu, cpu->a); break;
+        case 0x1D: /* abs,X */ cpu->a |= read_mem(get_absx_address(cpu)); set_zn_flags(cpu, cpu->a); break;
+        case 0x19: /* abs,Y */ cpu->a |= read_mem(get_absy_address(cpu)); set_zn_flags(cpu, cpu->a); break;
+        case 0x01: /* (ind,X)*/cpu->a |= read_mem(get_indirect_x(cpu));   set_zn_flags(cpu, cpu->a); break;
+        case 0x11: /* (ind),Y*/cpu->a |= read_mem(get_indirect_y(cpu));   set_zn_flags(cpu, cpu->a); break;
+
+        // AND (bitwise AND with A) – some palette tests use these too
+        case 0x25: /* zpg   */ cpu->a &= read_mem(get_zpg_address(cpu)); set_zn_flags(cpu, cpu->a); break;
+        case 0x35: /* zpg,X */ cpu->a &= read_mem(get_zpgx_address(cpu));set_zn_flags(cpu, cpu->a); break;
+        case 0x2D: /* abs   */ cpu->a &= read_mem(get_abs_address(cpu)); set_zn_flags(cpu, cpu->a); break;
+        case 0x3D: /* abs,X */ cpu->a &= read_mem(get_absx_address(cpu));set_zn_flags(cpu, cpu->a); break;
+        case 0x39: /* abs,Y */ cpu->a &= read_mem(get_absy_address(cpu));set_zn_flags(cpu, cpu->a); break;
+        case 0x21: /* (ind,X)*/cpu->a &= read_mem(get_indirect_x(cpu));  set_zn_flags(cpu, cpu->a); break;
+        case 0x31: /* (ind),Y*/cpu->a &= read_mem(get_indirect_y(cpu));  set_zn_flags(cpu, cpu->a); break;
+
+        // EOR (bitwise XOR with A)
+        case 0x45: /* zpg   */ cpu->a ^= read_mem(get_zpg_address(cpu)); set_zn_flags(cpu, cpu->a); break;
+        case 0x55: /* zpg,X */ cpu->a ^= read_mem(get_zpgx_address(cpu));set_zn_flags(cpu, cpu->a); break;
+        case 0x4D: /* abs   */ cpu->a ^= read_mem(get_abs_address(cpu)); set_zn_flags(cpu, cpu->a); break;
+        case 0x5D: /* abs,X */ cpu->a ^= read_mem(get_absx_address(cpu));set_zn_flags(cpu, cpu->a); break;
+        case 0x59: /* abs,Y */ cpu->a ^= read_mem(get_absy_address(cpu));set_zn_flags(cpu, cpu->a); break;
+        case 0x41: /* (ind,X)*/cpu->a ^= read_mem(get_indirect_x(cpu));  set_zn_flags(cpu, cpu->a); break;
+        case 0x51: /* (ind),Y*/cpu->a ^= read_mem(get_indirect_y(cpu));  set_zn_flags(cpu, cpu->a); break;
+
+        // LDY (load Y)
+        case 0xA4: /* zpg   */ cpu->y = read_mem(get_zpg_address(cpu));  set_zn_flags(cpu, cpu->y); break;
+        case 0xB4: /* zpg,X */ cpu->y = read_mem(get_zpgx_address(cpu)); set_zn_flags(cpu, cpu->y); break;
+        case 0xAC: /* abs   */ cpu->y = read_mem(get_abs_address(cpu));  set_zn_flags(cpu, cpu->y); break;
+        case 0xBC: /* abs,X */ cpu->y = read_mem(get_absx_address(cpu)); set_zn_flags(cpu, cpu->y); break;
 
         default:
             printf("Invalid opcode encountered: 0x%02X at PC: 0x%04X\n", opcode, cpu->pc);

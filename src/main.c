@@ -4,6 +4,7 @@
 #include "rom/rom.h"
 #include "cpu/cpu.h"
 #include "ppu/ppu.h"
+#include "joypad/joypad.h"
 #include "../include/globals.h"
 #include <time.h>
 
@@ -14,6 +15,18 @@ const double CPU_CYCLES_PER_FRAME = CPU_FREQ / 60.0;  // ~29796 cycles/frame
 
 // Framebuffer definition
 uint32_t framebuffer[SCREEN_WIDTH * SCREEN_HEIGHT];
+
+// Add joypad instances globally
+Joypad pad1 = {0}, pad2 = {0};
+
+// --- timing (NTSC) ---
+const int TOTAL_SCANLINES = 262;
+const int VBLANK_SCANLINES = 20;        // lines 241–260
+const int VISIBLE_SCANLINES = TOTAL_SCANLINES - VBLANK_SCANLINES;
+
+const int CPU_CYCLES_PER_FRAME_I = (int)CPU_CYCLES_PER_FRAME;
+const int CYCLES_VISIBLE = CPU_CYCLES_PER_FRAME_I * VISIBLE_SCANLINES / TOTAL_SCANLINES;
+const int CYCLES_VBLANK  = CPU_CYCLES_PER_FRAME_I - CYCLES_VISIBLE;
 
 int main(int argc, char *argv[]) {
     if(argc < 2) {
@@ -26,7 +39,7 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Failed to load ROM\n");
         return 1;
     }
-    
+    ppu_reset(&ppu);
     // Print header information for debugging
     printf("=== ROM Header Info ===\n");
     printf("Signature: %c%c%c 0x%02X\n", 
@@ -88,31 +101,52 @@ int main(int argc, char *argv[]) {
     // In main.c (inside the main loop)
     while (running) {
         Uint32 frameStart = SDL_GetTicks();
-        double cpuCyclesExecuted = 0.0;
 
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT)
                 running = false;
+            
+            // Add SDL key mapping
+            if (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP) {
+                int down = (e.type == SDL_KEYDOWN);
+
+                switch (e.key.keysym.sym) {
+                    case SDLK_z:        joypad_set(&pad1, BTN_A,      down); break; // Z = A
+                    case SDLK_x:        joypad_set(&pad1, BTN_B,      down); break; // X = B
+                    case SDLK_RSHIFT:   joypad_set(&pad1, BTN_SELECT, down); break; // Right Shift = Select
+                    case SDLK_RETURN:   joypad_set(&pad1, BTN_START,  down); break; // Enter = Start
+                    case SDLK_UP:       joypad_set(&pad1, BTN_UP,     down); break;
+                    case SDLK_DOWN:     joypad_set(&pad1, BTN_DOWN,   down); break;
+                    case SDLK_LEFT:     joypad_set(&pad1, BTN_LEFT,   down); break;
+                    case SDLK_RIGHT:    joypad_set(&pad1, BTN_RIGHT,  down); break;
+                    default: break;
+                }
+            }
         }
 
-        while (cpuCyclesExecuted < CPU_CYCLES_PER_FRAME) {
-            int cycles = cpu_step(&cpu);
-            cpuCyclesExecuted += cycles;
-        }
+        // --- visible period: no vblank ---
+        ppu_end_vblank();
+        for (int c = 0; c < CYCLES_VISIBLE; ) c += cpu_step(&cpu);
 
-        // Render the background using the nametable and attribute table.
+        // --- vblank period: set the flag, maybe fire NMI, and LET THE CPU RUN WHILE IT'S HIGH ---
+        ppu_begin_vblank();
+        if (ppu.ctrl & 0x80) {
+            cpu_nmi(&cpu);
+        }
+        for (int c = 0; c < CYCLES_VBLANK; ) c += cpu_step(&cpu);
+
+        ppu_end_vblank();
+
+        // render after the ROM has had a chance to write during vblank
         render_background(framebuffer);
-        render_tiles(framebuffer);
-        
+        render_sprites(framebuffer);
         SDL_UpdateTexture(texture, NULL, framebuffer, SCREEN_WIDTH * sizeof(uint32_t));
         SDL_RenderClear(renderer);
         SDL_RenderCopy(renderer, texture, NULL, NULL);
         SDL_RenderPresent(renderer);
 
         Uint32 frameTime = SDL_GetTicks() - frameStart;
-        if (frameTime < FRAME_TIME_MS) {
-            SDL_Delay((Uint32)(FRAME_TIME_MS - frameTime));
-        }
+        if (frameTime < FRAME_TIME_MS) SDL_Delay((Uint32)(FRAME_TIME_MS - frameTime));
     }
 
     

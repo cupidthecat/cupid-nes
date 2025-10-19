@@ -1,7 +1,7 @@
 // ppu.c
 #include "ppu.h"
 #include "../rom/rom.h"
-#include "../include/globals.h"
+#include "../../include/globals.h"
 #include <stdbool.h>
 #include <stdio.h>
 
@@ -10,7 +10,72 @@ uint8_t ppu_vram[PPU_VRAM_SIZE];
 uint8_t ppu_palette[PPU_PALETTE_SIZE];
 
 // PPU Registers
+extern uint8_t ppu_vram[PPU_VRAM_SIZE];
+extern uint8_t ppu_palette[PPU_PALETTE_SIZE];
 PPU ppu;
+
+
+// $2000–$2007
+uint8_t ppu_reg_read(uint16_t reg) {
+    switch (reg & 7) {
+        case 2: { // PPUSTATUS
+            uint8_t s = ppu.status;
+            ppu.status &= ~0x80;     // clear VBlank flag on read
+            ppu.vram_latch = 0;      // reset address/scroll latch
+            return s;
+        }
+        case 4: return ppu.oam[ppu.oam_addr];
+        case 7: {
+            uint8_t v = ppu_read(ppu.vram_addr);
+            ppu.vram_addr += (ppu.ctrl & 0x04) ? 32 : 1;
+            return v;
+        }
+        default: return 0; // others are write-only or not needed for this ROM
+    }
+}
+
+void ppu_reg_write(uint16_t reg, uint8_t value) {
+    switch (reg & 7) {
+        case 0: ppu.ctrl = value; break;           // PPUCTRL
+        case 1: ppu.mask = value; break;           // PPUMASK
+        case 3: ppu.oam_addr = value; break;       // OAMADDR
+        case 4: ppu.oam[ppu.oam_addr++] = value; break; // OAMDATA
+        case 5: {                                  // PPUSCROLL
+            if (!ppu.vram_latch) ppu.scroll_x = value;
+            else                 ppu.scroll_y = value;
+            ppu.vram_latch ^= 1;
+            break;
+        }
+        case 6: {                                  // PPUADDR
+            if (!ppu.vram_latch) ppu.vram_addr = ((uint16_t)(value & 0x3F) << 8);
+            else                  ppu.vram_addr = (ppu.vram_addr & 0xFF00) | value;
+            ppu.vram_latch ^= 1;
+            break;
+        }
+        case 7: {                                  // PPUDATA
+            // Debug probe for palette writes
+            if (ppu.vram_addr >= 0x3F00 && ppu.vram_addr < 0x3F20) {
+                printf("PAL[%04X] = %02X\n", ppu.vram_addr, value);
+            }
+            ppu_write(ppu.vram_addr, value);
+            ppu.vram_addr += (ppu.ctrl & 0x04) ? 32 : 1;
+            break;
+        }
+    }
+}
+
+// $4014 OAM DMA — copy 256 bytes from page value<<8 in CPU RAM
+extern uint8_t read_mem(uint16_t addr); // declare
+void ppu_oam_dma(uint8_t page) {
+    uint16_t base = (uint16_t)page << 8;
+    for (int i = 0; i < 256; i++)
+        ppu.oam[(ppu.oam_addr + i) & 0xFF] = read_mem(base + i);
+    ppu.oam_addr += 256;
+}
+
+void ppu_begin_vblank(void) { ppu.status |= 0x80; }
+void ppu_end_vblank(void)   { ppu.status &= ~0x80; }
+
 
 //---------------------------------------------------------------------
 // Sample background palettes (4 background palettes, 4 colors each)
@@ -114,9 +179,11 @@ void render_background(uint32_t *framebuffer) {
                     uint8_t bit1 = (plane1 >> (7 - col)) & 1;
                     uint8_t pixelValue = (bit1 << 1) | bit0;
 
-                    uint32_t color = (pixelValue == 0) ? 
-                        bg_palettes[0][0] : 
-                        bg_palettes[paletteIndex][pixelValue];
+                    // Use ROM-loaded palette RAM instead of dummy bg_palettes
+                    uint8_t palIndex = (pixelValue == 0)
+                        ? ppu_palette[0]  // universal background color at $3F00
+                        : ppu_palette[paletteIndex * 4 + pixelValue];
+                    uint32_t color = get_color(palIndex);
 
                     int screenX = tx * tileSize + col;
                     int screenY = ty * tileSize + row;
@@ -125,6 +192,32 @@ void render_background(uint32_t *framebuffer) {
                         framebuffer[screenY * SCREEN_WIDTH + screenX] = color;
                     }
                 }
+            }
+        }
+    }
+}
+
+void render_sprites(uint32_t* fb) {
+    uint16_t base = (ppu.ctrl & 0x08) ? 0x1000 : 0x0000;
+    for (int i = 0; i < 64; i++) {
+        uint8_t y  = ppu.oam[i*4 + 0] + 1;
+        uint8_t id = ppu.oam[i*4 + 1];
+        uint8_t at = ppu.oam[i*4 + 2];
+        uint8_t x  = ppu.oam[i*4 + 3];
+        uint8_t pal = (at & 0x03);  // sprite palette 0..3
+
+        int tileAddr = base + id * 16;
+        for (int row = 0; row < 8; row++) {
+            uint8_t p0 = chr_rom[tileAddr + row];
+            uint8_t p1 = chr_rom[tileAddr + row + 8];
+            for (int col = 0; col < 8; col++) {
+                uint8_t bit0 = (p0 >> (7-col)) & 1;
+                uint8_t bit1 = (p1 >> (7-col)) & 1;
+                uint8_t px   = (bit1<<1) | bit0;
+                if (!px) continue; // color 0 is transparent
+                uint8_t idx = ppu_palette[0x10 + pal*4 + px];
+                int sx = x + col, sy = y + row;
+                if (sx<256 && sy<240) fb[sy*256 + sx] = get_color(idx);
             }
         }
     }
@@ -177,7 +270,7 @@ void ppu_write(uint16_t addr, uint8_t value) {
 void ppu_reset(PPU* ppu) {
     ppu->ctrl = 0;
     ppu->mask = 0;
-    ppu->status = 0xA0; // Status bits 5 and 7 are always set
+    ppu->status = 0x00; // Status bits 5 and 7 are always set
     ppu->oam_addr = 0;
     ppu->scroll_x = 0;
     ppu->scroll_y = 0;
@@ -191,11 +284,37 @@ void ppu_reset(PPU* ppu) {
 }
 
 // Convert a pixel value (0-3 or an index into the NES palette) to an ARGB color
-uint32_t get_color(uint8_t pixel) {
-    // Make sure the palette index is in range.
-    return nes_palette[pixel & 0x3F];
-}
+uint32_t get_color(uint8_t idx) {
+    idx &= 0x3F;
 
+    // PPUMASK bit 0: grayscale
+    if (ppu.mask & 0x01) idx &= 0x30;
+
+    uint32_t c = nes_palette[idx];
+    float r = (float)((c >> 16) & 0xFF);
+    float g = (float)((c >>  8) & 0xFF);
+    float b = (float)((c      ) & 0xFF);
+
+    // Stronger, NES-like emphasis: emphasized channel stays,
+    // the other two are attenuated noticeably.
+    const float ATTEN = 0.60f;  // try 0.55–0.70 if you want to tweak
+
+    if (ppu.mask & 0x20) {           // emphasize RED
+        g *= ATTEN; b *= ATTEN;
+    }
+    if (ppu.mask & 0x40) {           // emphasize GREEN
+        r *= ATTEN; b *= ATTEN;
+    }
+    if (ppu.mask & 0x80) {           // emphasize BLUE
+        r *= ATTEN; g *= ATTEN;
+    }
+
+    // clamp
+    int R = (int)(r < 0 ? 0 : (r > 255 ? 255 : r));
+    int G = (int)(g < 0 ? 0 : (g > 255 ? 255 : g));
+    int B = (int)(b < 0 ? 0 : (b > 255 ? 255 : b));
+    return 0xFF000000u | (R << 16) | (G << 8) | B;
+}
 
 // Render the first pattern table (first 4KB of CHR-ROM) as a grid of 16x16 8x8 tiles.
 // Each tile is decoded from 16 bytes (8 bytes for plane 0 and 8 bytes for plane 1).

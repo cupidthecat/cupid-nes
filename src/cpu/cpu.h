@@ -2,6 +2,7 @@
 #define CPU_H
 
 #include <stdint.h>
+#include "../joypad/joypad.h"
 
 typedef struct {
     uint8_t a;     // Accumulator
@@ -27,10 +28,13 @@ typedef enum {
 extern uint8_t memory[0x10000]; // 64KB memory
 extern uint8_t prg_rom[0x8000];
 
+// Add joypad extern declarations
+extern Joypad pad1, pad2;
+
 void cpu_reset(CPU* cpu);
 uint8_t read_mem(uint16_t addr);
 void write_mem(uint16_t addr, uint8_t value);
 void execute(CPU* cpu, uint8_t opcode);
 int cpu_step(CPU* cpu);
-
+void cpu_nmi(CPU *cpu);
 #endif // CPU_H

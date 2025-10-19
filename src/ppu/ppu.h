@@ -43,6 +43,7 @@ typedef struct {
 // PPU Memory
 extern uint8_t ppu_vram[PPU_VRAM_SIZE];      // VRAM (pattern tables, nametables, attribute tables)
 extern uint8_t ppu_palette[PPU_PALETTE_SIZE];  // Palette RAM
+extern PPU ppu;  // PPU registers global variable
 
 // NES Palette Colors (RGB format)
 // More accurate NES palette (NTSC approximations)
@@ -66,4 +67,13 @@ uint32_t get_color(uint8_t pixel);
 void render_background(uint32_t *framebuffer);
 void start_frame();
 void ppu_render_frame(SDL_Renderer *renderer, SDL_Texture *texture);
+
+uint8_t ppu_reg_read(uint16_t reg);
+void    ppu_reg_write(uint16_t reg, uint8_t value);
+void    ppu_oam_dma(uint8_t page);
+void    ppu_begin_vblank(void);
+void    ppu_end_vblank(void);
+void render_sprites(uint32_t *framebuffer);
+
+
 #endif // PPU_H
