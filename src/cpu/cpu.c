@@ -120,6 +120,32 @@ static void rol(CPU* cpu, uint8_t* value) {
     set_zn_flags(cpu, *value);
 }
 
+// ADC and SBC helpers
+static inline void do_adc(CPU* cpu, uint8_t o) {
+    uint16_t s = cpu->a + o + ((cpu->status & CARRY_FLAG) ? 1 : 0);
+    uint8_t r = (uint8_t)s;
+    // C, Z, V, N
+    cpu->status = (cpu->status & ~(CARRY_FLAG|ZERO_FLAG|OVERFLOW_FLAG|NEGATIVE_FLAG))
+                | ((s > 0xFF) ? CARRY_FLAG : 0)
+                | ((r == 0) ? ZERO_FLAG : 0)
+                | (((cpu->a ^ r) & (o ^ r) & 0x80) ? OVERFLOW_FLAG : 0)
+                | (r & 0x80 ? NEGATIVE_FLAG : 0)
+                | UNUSED_FLAG;             // keep U set
+    cpu->a = r;
+}
+
+static inline void do_sbc(CPU* cpu, uint8_t o) {
+    uint16_t d = cpu->a - o - ((cpu->status & CARRY_FLAG) ? 0 : 1);
+    uint8_t r = (uint8_t)d;
+    cpu->status = (cpu->status & ~(CARRY_FLAG|ZERO_FLAG|OVERFLOW_FLAG|NEGATIVE_FLAG))
+                | ((d < 0x100) ? CARRY_FLAG : 0)
+                | ((r == 0) ? ZERO_FLAG : 0)
+                | (((cpu->a ^ r) & (~o ^ r) & 0x80) ? OVERFLOW_FLAG : 0)
+                | (r & 0x80 ? NEGATIVE_FLAG : 0)
+                | UNUSED_FLAG;
+    cpu->a = r;
+}
+
 // Helper function for ROR
 static void ror(CPU* cpu, uint8_t* value) {
     // Save the old carry.
@@ -161,13 +187,13 @@ static uint16_t get_zpgy_address(CPU* cpu) {
     return (read_mem(cpu->pc++) + cpu->y) & 0xFF;
 }
 
-void execute(CPU* cpu, uint8_t opcode) {
-    // Add opcode validation
-    if (opcode == 0xFF) {
-        //printf("Invalid opcode encountered: 0x%02X at PC: 0x%04X\n", opcode, cpu->pc);
-        return;
-    }
+static inline void inc_then_sbc(CPU* cpu, uint16_t addr) {
+    uint8_t v = read_mem(addr) + 1;
+    write_mem(addr, v);
+    do_sbc(cpu, v);   // you already have do_sbc()
+}
 
+void execute(CPU* cpu, uint8_t opcode) {
     switch(opcode) {
         case 0x88: // DEY
             cpu->y--;
@@ -354,15 +380,9 @@ void execute(CPU* cpu, uint8_t opcode) {
             break;
 
         // LDX Absolute,X (opcode 0xBE)
-        case 0xBE: // LDX Absolute,X
-            cpu->x = read_mem(get_absx_address(cpu));
+        case 0xBE: // LDX Absolute,Y
+            cpu->x = read_mem(get_absy_address(cpu));
             set_zn_flags(cpu, cpu->x);
-            break;
-
-        // Handling an illegal/unimplemented opcode.
-        case 0xFF:
-            // For now, we simply treat it as a NOP.
-            // (Alternatively, you might log an error or implement specific illegal behavior.)
             break;
 
         case 0x4C: // JMP Absolute
@@ -470,18 +490,28 @@ void execute(CPU* cpu, uint8_t opcode) {
             }
             break;
 
-        case 0xE9: // SBC Immediate
-            {
-                uint8_t operand = read_mem(cpu->pc++);
-                uint16_t diff = cpu->a - operand - (cpu->status & CARRY_FLAG ? 0 : 1);
-                cpu->status = (cpu->status & ~(CARRY_FLAG|ZERO_FLAG|OVERFLOW_FLAG|NEGATIVE_FLAG)) |
-                             (diff < 0x100 ? CARRY_FLAG : 0) |
-                             ((diff & 0xFF) == 0 ? ZERO_FLAG : 0) |
-                             (((cpu->a ^ diff) & (~operand ^ diff) & 0x80) ? OVERFLOW_FLAG : 0) |
-                             (diff & 0x80 ? NEGATIVE_FLAG : 0);
-                cpu->a = diff & 0xFF;
-            }
-            break;
+        // SBC Immediate (official 0xE9) and unofficial alias 0xEB
+        case 0xE9: {
+            uint8_t operand = read_mem(cpu->pc++);
+            uint16_t diff = cpu->a - operand - (cpu->status & CARRY_FLAG ? 0 : 1);
+            cpu->status = (cpu->status & ~(CARRY_FLAG|ZERO_FLAG|OVERFLOW_FLAG|NEGATIVE_FLAG)) |
+                        (diff < 0x100 ? CARRY_FLAG : 0) |
+                        ((diff & 0xFF) == 0 ? ZERO_FLAG : 0) |
+                        (((cpu->a ^ diff) & (~operand ^ diff) & 0x80) ? OVERFLOW_FLAG : 0) |
+                        (diff & 0x80 ? NEGATIVE_FLAG : 0);
+            cpu->a = diff & 0xFF;
+        } break;
+
+        case 0xEB: { // unofficial: SBC #imm
+            uint8_t operand = read_mem(cpu->pc++);
+            uint16_t diff = cpu->a - operand - (cpu->status & CARRY_FLAG ? 0 : 1);
+            cpu->status = (cpu->status & ~(CARRY_FLAG|ZERO_FLAG|OVERFLOW_FLAG|NEGATIVE_FLAG)) |
+                        (diff < 0x100 ? CARRY_FLAG : 0) |
+                        ((diff & 0xFF) == 0 ? ZERO_FLAG : 0) |
+                        (((cpu->a ^ diff) & (~operand ^ diff) & 0x80) ? OVERFLOW_FLAG : 0) |
+                        (diff & 0x80 ? NEGATIVE_FLAG : 0);
+            cpu->a = diff & 0xFF;
+        } break;
 
         case 0x24: // BIT Zero Page
             {
@@ -815,6 +845,263 @@ void execute(CPU* cpu, uint8_t opcode) {
         case 0xAC: /* abs   */ cpu->y = read_mem(get_abs_address(cpu));  set_zn_flags(cpu, cpu->y); break;
         case 0xBC: /* abs,X */ cpu->y = read_mem(get_absx_address(cpu)); set_zn_flags(cpu, cpu->y); break;
 
+        // -- CMP
+        case 0xC5: { uint8_t o = read_mem(get_zpg_address(cpu));  uint8_t r = cpu->a - o;
+            cpu->status = (cpu->status & ~(CARRY_FLAG|ZERO_FLAG|NEGATIVE_FLAG))
+                        | ((cpu->a >= o) ? CARRY_FLAG : 0)
+                        | ((r == 0) ? ZERO_FLAG : 0)
+                        | (r & 0x80 ? NEGATIVE_FLAG : 0); } break;
+        case 0xD5: { uint8_t o = read_mem(get_zpgx_address(cpu)); uint8_t r = cpu->a - o;
+            cpu->status = (cpu->status & ~(CARRY_FLAG|ZERO_FLAG|NEGATIVE_FLAG))
+                        | ((cpu->a >= o) ? CARRY_FLAG : 0)
+                        | ((r == 0) ? ZERO_FLAG : 0)
+                        | (r & 0x80 ? NEGATIVE_FLAG : 0); } break;
+        case 0xCD: { uint8_t o = read_mem(get_abs_address(cpu));  uint8_t r = cpu->a - o;
+            cpu->status = (cpu->status & ~(CARRY_FLAG|ZERO_FLAG|NEGATIVE_FLAG))
+                        | ((cpu->a >= o) ? CARRY_FLAG : 0)
+                        | ((r == 0) ? ZERO_FLAG : 0)
+                        | (r & 0x80 ? NEGATIVE_FLAG : 0); } break;
+        case 0xDD: { uint8_t o = read_mem(get_absx_address(cpu)); uint8_t r = cpu->a - o;
+            cpu->status = (cpu->status & ~(CARRY_FLAG|ZERO_FLAG|NEGATIVE_FLAG))
+                        | ((cpu->a >= o) ? CARRY_FLAG : 0)
+                        | ((r == 0) ? ZERO_FLAG : 0)
+                        | (r & 0x80 ? NEGATIVE_FLAG : 0); } break;
+        case 0xD9: { uint8_t o = read_mem(get_absy_address(cpu)); uint8_t r = cpu->a - o;
+            cpu->status = (cpu->status & ~(CARRY_FLAG|ZERO_FLAG|NEGATIVE_FLAG))
+                        | ((cpu->a >= o) ? CARRY_FLAG : 0)
+                        | ((r == 0) ? ZERO_FLAG : 0)
+                        | (r & 0x80 ? NEGATIVE_FLAG : 0); } break;
+        case 0xC1: { uint8_t o = read_mem(get_indirect_x(cpu));   uint8_t r = cpu->a - o;
+            cpu->status = (cpu->status & ~(CARRY_FLAG|ZERO_FLAG|NEGATIVE_FLAG))
+                        | ((cpu->a >= o) ? CARRY_FLAG : 0)
+                        | ((r == 0) ? ZERO_FLAG : 0)
+                        | (r & 0x80 ? NEGATIVE_FLAG : 0); } break;
+        case 0xD1: { uint8_t o = read_mem(get_indirect_y(cpu));   uint8_t r = cpu->a - o;
+            cpu->status = (cpu->status & ~(CARRY_FLAG|ZERO_FLAG|NEGATIVE_FLAG))
+                        | ((cpu->a >= o) ? CARRY_FLAG : 0)
+                        | ((r == 0) ? ZERO_FLAG : 0)
+                        | (r & 0x80 ? NEGATIVE_FLAG : 0); } break;
+
+        // -- CPX
+        case 0xE4: { uint8_t o = read_mem(get_zpg_address(cpu));  uint8_t r = cpu->x - o;
+            cpu->status = (cpu->status & ~(CARRY_FLAG|ZERO_FLAG|NEGATIVE_FLAG))
+                        | ((cpu->x >= o) ? CARRY_FLAG : 0)
+                        | ((r == 0) ? ZERO_FLAG : 0)
+                        | (r & 0x80 ? NEGATIVE_FLAG : 0); } break;
+        case 0xEC: { uint8_t o = read_mem(get_abs_address(cpu));  uint8_t r = cpu->x - o;
+            cpu->status = (cpu->status & ~(CARRY_FLAG|ZERO_FLAG|NEGATIVE_FLAG))
+                        | ((cpu->x >= o) ? CARRY_FLAG : 0)
+                        | ((r == 0) ? ZERO_FLAG : 0)
+                        | (r & 0x80 ? NEGATIVE_FLAG : 0); } break;
+
+        // -- CPY
+        case 0xC4: { uint8_t o = read_mem(get_zpg_address(cpu));  uint8_t r = cpu->y - o;
+            cpu->status = (cpu->status & ~(CARRY_FLAG|ZERO_FLAG|NEGATIVE_FLAG))
+                        | ((cpu->y >= o) ? CARRY_FLAG : 0)
+                        | ((r == 0) ? ZERO_FLAG : 0)
+                        | (r & 0x80 ? NEGATIVE_FLAG : 0); } break;
+        case 0xCC: { uint8_t o = read_mem(get_abs_address(cpu));  uint8_t r = cpu->y - o;
+            cpu->status = (cpu->status & ~(CARRY_FLAG|ZERO_FLAG|NEGATIVE_FLAG))
+                        | ((cpu->y >= o) ? CARRY_FLAG : 0)
+                        | ((r == 0) ? ZERO_FLAG : 0)
+                        | (r & 0x80 ? NEGATIVE_FLAG : 0); } break;
+        // ADC
+        case 0x65: do_adc(cpu, read_mem(get_zpg_address(cpu)));  break;
+        case 0x75: do_adc(cpu, read_mem(get_zpgx_address(cpu))); break;
+        case 0x6D: do_adc(cpu, read_mem(get_abs_address(cpu)));  break;
+        case 0x7D: do_adc(cpu, read_mem(get_absx_address(cpu))); break;
+        case 0x79: do_adc(cpu, read_mem(get_absy_address(cpu))); break;
+
+        // SBC
+        case 0xE5: do_sbc(cpu, read_mem(get_zpg_address(cpu)));  break;
+        case 0xF5: do_sbc(cpu, read_mem(get_zpgx_address(cpu))); break;
+        case 0xED: do_sbc(cpu, read_mem(get_abs_address(cpu)));  break;
+        case 0xFD: do_sbc(cpu, read_mem(get_absx_address(cpu))); break;
+        case 0xF9: do_sbc(cpu, read_mem(get_absy_address(cpu))); break;
+
+        // ===== LSR (memory) =====
+        case 0x46: { uint16_t a = get_zpg_address(cpu);  uint8_t v = read_mem(a); lsr(cpu, &v); write_mem(a, v); } break;
+        case 0x56: { uint16_t a = get_zpgx_address(cpu); uint8_t v = read_mem(a); lsr(cpu, &v); write_mem(a, v); } break;
+        case 0x4E: { uint16_t a = get_abs_address(cpu);  uint8_t v = read_mem(a); lsr(cpu, &v); write_mem(a, v); } break;
+        case 0x5E: { uint16_t a = get_absx_address(cpu); uint8_t v = read_mem(a); lsr(cpu, &v); write_mem(a, v); } break;
+
+        // ===== ASL (memory) =====
+        case 0x0E: { uint16_t a = get_abs_address(cpu);  uint8_t v = read_mem(a); asl(cpu, &v); write_mem(a, v); } break;
+        case 0x16: { uint16_t a = get_zpgx_address(cpu); uint8_t v = read_mem(a); asl(cpu, &v); write_mem(a, v); } break;
+        case 0x1E: { uint16_t a = get_absx_address(cpu); uint8_t v = read_mem(a); asl(cpu, &v); write_mem(a, v); } break;
+
+        // ===== ROL (memory) =====
+        case 0x2E: { uint16_t a = get_abs_address(cpu);  uint8_t v = read_mem(a); rol(cpu, &v); write_mem(a, v); } break;
+        case 0x36: { uint16_t a = get_zpgx_address(cpu); uint8_t v = read_mem(a); rol(cpu, &v); write_mem(a, v); } break;
+        case 0x3E: { uint16_t a = get_absx_address(cpu); uint8_t v = read_mem(a); rol(cpu, &v); write_mem(a, v); } break;
+
+        // ===== INC/DEC abs,X =====
+        case 0xFE: { uint16_t a = get_absx_address(cpu); uint8_t v = read_mem(a) + 1; write_mem(a, v); set_zn_flags(cpu, v); } break;
+        case 0xDE: { uint16_t a = get_absx_address(cpu); uint8_t v = read_mem(a) - 1; write_mem(a, v); set_zn_flags(cpu, v); } break;
+
+        // ===== Undocumented NOPs (consume operands, do nothing) =====
+        // one-byte NOPs with a zpg operand
+        case 0x04: case 0x44: case 0x64: cpu->pc++; break;
+        // zpg,X operand
+        case 0x14: case 0x34: case 0x54: case 0x74: case 0xD4: case 0xF4:
+            cpu->pc++;
+            break;
+        // absolute operand (2 bytes)
+        case 0x0C: cpu->pc += 2; break;
+        // absolute,X operand (2 bytes)
+        case 0x1C: case 0x3C: case 0x5C: case 0x7C: case 0xDC: case 0xFC:
+            cpu->pc += 2;
+            break;
+
+        case 0x1A: case 0x3A: case 0x5A: case 0x7A: case 0xDA: case 0xFA:
+            /* do nothing */
+            break;
+        // ===== DCP (undocumented) = DEC mem then CMP A,mem =====
+        case 0xC7: { uint16_t a = get_zpg_address(cpu);  uint8_t m = read_mem(a)-1; write_mem(a,m);
+                    uint8_t r = cpu->a - m; cpu->status = (cpu->status & ~(CARRY_FLAG|ZERO_FLAG|NEGATIVE_FLAG))
+                    | ((cpu->a >= m)?CARRY_FLAG:0) | ((r==0)?ZERO_FLAG:0) | (r&0x80?NEGATIVE_FLAG:0); } break;
+        case 0xD7: { uint16_t a = get_zpgx_address(cpu); uint8_t m = read_mem(a)-1; write_mem(a,m);
+                    uint8_t r = cpu->a - m; cpu->status = (cpu->status & ~(CARRY_FLAG|ZERO_FLAG|NEGATIVE_FLAG))
+                    | ((cpu->a >= m)?CARRY_FLAG:0) | ((r==0)?ZERO_FLAG:0) | (r&0x80?NEGATIVE_FLAG:0); } break;
+        case 0xCF: { uint16_t a = get_abs_address(cpu);  uint8_t m = read_mem(a)-1; write_mem(a,m);
+                    uint8_t r = cpu->a - m; cpu->status = (cpu->status & ~(CARRY_FLAG|ZERO_FLAG|NEGATIVE_FLAG))
+                    | ((cpu->a >= m)?CARRY_FLAG:0) | ((r==0)?ZERO_FLAG:0) | (r&0x80?NEGATIVE_FLAG:0); } break;
+        case 0xDF: { uint16_t a = get_absx_address(cpu); uint8_t m = read_mem(a)-1; write_mem(a,m);
+                    uint8_t r = cpu->a - m; cpu->status = (cpu->status & ~(CARRY_FLAG|ZERO_FLAG|NEGATIVE_FLAG))
+                    | ((cpu->a >= m)?CARRY_FLAG:0) | ((r==0)?ZERO_FLAG:0) | (r&0x80?NEGATIVE_FLAG:0); } break;
+        case 0xDB: { uint16_t a = get_absy_address(cpu); uint8_t m = read_mem(a)-1; write_mem(a,m);
+                    uint8_t r = cpu->a - m; cpu->status = (cpu->status & ~(CARRY_FLAG|ZERO_FLAG|NEGATIVE_FLAG))
+                    | ((cpu->a >= m)?CARRY_FLAG:0) | ((r==0)?ZERO_FLAG:0) | (r&0x80?NEGATIVE_FLAG:0); } break;
+        case 0xC3: { uint16_t a = get_indirect_x(cpu);  uint8_t m = read_mem(a)-1; write_mem(a,m);
+                    uint8_t r = cpu->a - m; cpu->status = (cpu->status & ~(CARRY_FLAG|ZERO_FLAG|NEGATIVE_FLAG))
+                    | ((cpu->a >= m)?CARRY_FLAG:0) | ((r==0)?ZERO_FLAG:0) | (r&0x80?NEGATIVE_FLAG:0); } break;
+        case 0xD3: { uint16_t a = get_indirect_y(cpu);  uint8_t m = read_mem(a)-1; write_mem(a,m);
+                    uint8_t r = cpu->a - m; cpu->status = (cpu->status & ~(CARRY_FLAG|ZERO_FLAG|NEGATIVE_FLAG))
+                    | ((cpu->a >= m)?CARRY_FLAG:0) | ((r==0)?ZERO_FLAG:0) | (r&0x80?NEGATIVE_FLAG:0); } break;
+        
+        // ===== RLA (undocumented) =====
+        // Rotate Left memory, then AND with accumulator
+        case 0x27: { uint16_t a = get_zpg_address(cpu);  uint8_t v = read_mem(a); rol(cpu, &v); write_mem(a, v); cpu->a &= v; set_zn_flags(cpu, cpu->a); } break;
+        case 0x37: { uint16_t a = get_zpgx_address(cpu); uint8_t v = read_mem(a); rol(cpu, &v); write_mem(a, v); cpu->a &= v; set_zn_flags(cpu, cpu->a); } break;
+        case 0x2F: { uint16_t a = get_abs_address(cpu);  uint8_t v = read_mem(a); rol(cpu, &v); write_mem(a, v); cpu->a &= v; set_zn_flags(cpu, cpu->a); } break;
+        case 0x3F: { uint16_t a = get_absx_address(cpu); uint8_t v = read_mem(a); rol(cpu, &v); write_mem(a, v); cpu->a &= v; set_zn_flags(cpu, cpu->a); } break;
+        case 0x3B: { uint16_t a = get_absy_address(cpu); uint8_t v = read_mem(a); rol(cpu, &v); write_mem(a, v); cpu->a &= v; set_zn_flags(cpu, cpu->a); } break;
+        case 0x23: { uint16_t a = get_indirect_x(cpu);  uint8_t v = read_mem(a); rol(cpu, &v); write_mem(a, v); cpu->a &= v; set_zn_flags(cpu, cpu->a); } break;
+        case 0x33: { uint16_t a = get_indirect_y(cpu);  uint8_t v = read_mem(a); rol(cpu, &v); write_mem(a, v); cpu->a &= v; set_zn_flags(cpu, cpu->a); } break;
+        case 0x80: case 0x82: case 0x89: case 0xC2: case 0xE2:
+            cpu->pc++;  // consume the immediate operand
+            break;
+        case 0x02: case 0x12: case 0x22: case 0x32:
+        case 0x42: case 0x52: case 0x62: case 0x72:
+        case 0x92: case 0xB2: case 0xD2: case 0xF2:
+                /* do nothing */
+            break;
+
+        // ===== SLO (undocumented) : ASL mem; A |= mem =====
+        case 0x07: { uint16_t a=get_zpg_address(cpu);  uint8_t v=read_mem(a); asl(cpu,&v); write_mem(a,v); cpu->a |= v; set_zn_flags(cpu,cpu->a);} break; // zpg
+        case 0x17: { uint16_t a=get_zpgx_address(cpu); uint8_t v=read_mem(a); asl(cpu,&v); write_mem(a,v); cpu->a |= v; set_zn_flags(cpu,cpu->a);} break; // zpg,X
+        case 0x0F: { uint16_t a=get_abs_address(cpu);  uint8_t v=read_mem(a); asl(cpu,&v); write_mem(a,v); cpu->a |= v; set_zn_flags(cpu,cpu->a);} break; // abs
+        case 0x1F: { uint16_t a=get_absx_address(cpu); uint8_t v=read_mem(a); asl(cpu,&v); write_mem(a,v); cpu->a |= v; set_zn_flags(cpu,cpu->a);} break; // abs,X
+        case 0x1B: { uint16_t a=get_absy_address(cpu); uint8_t v=read_mem(a); asl(cpu,&v); write_mem(a,v); cpu->a |= v; set_zn_flags(cpu,cpu->a);} break; // abs,Y
+        case 0x03: { uint16_t a=get_indirect_x(cpu);  uint8_t v=read_mem(a); asl(cpu,&v); write_mem(a,v); cpu->a |= v; set_zn_flags(cpu,cpu->a);} break; // (ind,X)
+        case 0x13: { uint16_t a=get_indirect_y(cpu);  uint8_t v=read_mem(a); asl(cpu,&v); write_mem(a,v); cpu->a |= v; set_zn_flags(cpu,cpu->a);} break; // (ind),Y
+        // ===== SRE (undocumented) : LSR mem; A ^= mem =====
+        case 0x47: { uint16_t a=get_zpg_address(cpu);  uint8_t v=read_mem(a); lsr(cpu,&v); write_mem(a,v); cpu->a ^= v; set_zn_flags(cpu,cpu->a);} break; // zpg
+        case 0x57: { uint16_t a=get_zpgx_address(cpu); uint8_t v=read_mem(a); lsr(cpu,&v); write_mem(a,v); cpu->a ^= v; set_zn_flags(cpu,cpu->a);} break; // zpg,X
+        case 0x4F: { uint16_t a=get_abs_address(cpu);  uint8_t v=read_mem(a); lsr(cpu,&v); write_mem(a,v); cpu->a ^= v; set_zn_flags(cpu,cpu->a);} break; // abs
+        case 0x5F: { uint16_t a=get_absx_address(cpu); uint8_t v=read_mem(a); lsr(cpu,&v); write_mem(a,v); cpu->a ^= v; set_zn_flags(cpu,cpu->a);} break; // abs,X
+        case 0x5B: { uint16_t a=get_absy_address(cpu); uint8_t v=read_mem(a); lsr(cpu,&v); write_mem(a,v); cpu->a ^= v; set_zn_flags(cpu,cpu->a);} break; // abs,Y
+        case 0x43: { uint16_t a=get_indirect_x(cpu);  uint8_t v=read_mem(a); lsr(cpu,&v); write_mem(a,v); cpu->a ^= v; set_zn_flags(cpu,cpu->a);} break; // (ind,X)
+        case 0x53: { uint16_t a=get_indirect_y(cpu);  uint8_t v=read_mem(a); lsr(cpu,&v); write_mem(a,v); cpu->a ^= v; set_zn_flags(cpu,cpu->a);} break; // (ind),Y
+        
+        // ===== RRA (undocumented) : ROR mem; A += mem + C =====
+        case 0x67: { uint16_t a=get_zpg_address(cpu);  uint8_t v=read_mem(a); ror(cpu,&v); write_mem(a,v); do_adc(cpu, v);} break; // zpg
+        case 0x77: { uint16_t a=get_zpgx_address(cpu); uint8_t v=read_mem(a); ror(cpu,&v); write_mem(a,v); do_adc(cpu, v);} break; // zpg,X
+        case 0x6F: { uint16_t a=get_abs_address(cpu);  uint8_t v=read_mem(a); ror(cpu,&v); write_mem(a,v); do_adc(cpu, v);} break; // abs
+        case 0x7F: { uint16_t a=get_absx_address(cpu); uint8_t v=read_mem(a); ror(cpu,&v); write_mem(a,v); do_adc(cpu, v);} break; // abs,X
+        case 0x7B: { uint16_t a=get_absy_address(cpu); uint8_t v=read_mem(a); ror(cpu,&v); write_mem(a,v); do_adc(cpu, v);} break; // abs,Y
+        case 0x63: { uint16_t a=get_indirect_x(cpu);  uint8_t v=read_mem(a); ror(cpu,&v); write_mem(a,v); do_adc(cpu, v);} break; // (ind,X)
+        case 0x73: { uint16_t a=get_indirect_y(cpu);  uint8_t v=read_mem(a); ror(cpu,&v); write_mem(a,v); do_adc(cpu, v);} break; // (ind),Y
+
+        // ===== LAX (undocumented) : A=X=mem (or imm) =====
+        case 0xA7: { uint8_t v=read_mem(get_zpg_address(cpu));  cpu->a=cpu->x=v; set_zn_flags(cpu, v);} break; // zpg
+        case 0xB7: { uint8_t v=read_mem(get_zpgy_address(cpu)); cpu->a=cpu->x=v; set_zn_flags(cpu, v);} break; // zpg,Y
+        case 0xAF: { uint8_t v=read_mem(get_abs_address(cpu));  cpu->a=cpu->x=v; set_zn_flags(cpu, v);} break; // abs
+        case 0xBF: { uint8_t v=read_mem(get_absy_address(cpu)); cpu->a=cpu->x=v; set_zn_flags(cpu, v);} break; // abs,Y
+        case 0xA3: { uint8_t v=read_mem(get_indirect_x(cpu));   cpu->a=cpu->x=v; set_zn_flags(cpu, v);} break; // (ind,X)
+        case 0xB3: { uint8_t v=read_mem(get_indirect_y(cpu));   cpu->a=cpu->x=v; set_zn_flags(cpu, v);} break; // (ind),Y
+        case 0xAB: { uint8_t v=read_mem(cpu->pc++);             cpu->a=cpu->x=v; set_zn_flags(cpu, v);} break; // imm
+
+        // ===== SAX (undocumented) : mem = A & X =====
+        case 0x87: { write_mem(get_zpg_address(cpu),  cpu->a & cpu->x); } break; // zpg
+        case 0x97: { write_mem(get_zpgy_address(cpu), cpu->a & cpu->x); } break; // zpg,Y
+        case 0x8F: { write_mem(get_abs_address(cpu),  cpu->a & cpu->x); } break; // abs
+        case 0x83: { write_mem(get_indirect_x(cpu),   cpu->a & cpu->x); } break; // (ind,X)
+
+        // ===== ISC/ISB (undocumented): INC mem; SBC mem =====
+        case 0xE7: inc_then_sbc(cpu, get_zpg_address(cpu));  break;   // zpg
+        case 0xF7: inc_then_sbc(cpu, get_zpgx_address(cpu)); break;   // zpg,X
+        case 0xEF: inc_then_sbc(cpu, get_abs_address(cpu));  break;   // abs
+        case 0xFF: inc_then_sbc(cpu, get_absx_address(cpu)); break;   // abs,X
+        case 0xFB: inc_then_sbc(cpu, get_absy_address(cpu)); break;   // abs,Y
+        case 0xE3: inc_then_sbc(cpu, get_indirect_x(cpu));   break;   // (ind,X)
+        case 0xF3: inc_then_sbc(cpu, get_indirect_y(cpu));   break;   // (ind),Y
+
+        // ===== LAS/LAR (undocumented) : A=X=SP = mem[abs,Y] & SP =====
+        case 0xBB: {
+            uint8_t m = read_mem(get_absy_address(cpu));
+            uint8_t r = m & cpu->sp;
+            cpu->a = cpu->x = cpu->sp = r;
+            set_zn_flags(cpu, r);   // sets Z/N, others unaffected
+        } break;
+
+        // AHX/SHA abs,Y  (store (A & X & (high(addr)+1)) to [abs+Y])
+        case 0x9F: {
+            // compute effective address abs,Y without changing flags
+            uint16_t base = read_mem(cpu->pc) | (read_mem(cpu->pc + 1) << 8);
+            cpu->pc += 2;
+            uint16_t addr = base + cpu->y;
+            uint8_t high_plus1 = (uint8_t)(((addr >> 8) + 1) & 0xFF);
+            uint8_t v = (cpu->a & cpu->x & high_plus1);
+            write_mem(addr, v);
+        } break;
+
+        // AHX/SHA (ind),Y 0x93
+        case 0x93: {
+            uint16_t addr = get_indirect_y(cpu);
+            uint8_t high_plus1 = (uint8_t)(((addr >> 8) + 1) & 0xFF);
+            write_mem(addr, (cpu->a & cpu->x & high_plus1));
+        } break;
+
+        // SHX abs,Y 0x9E  (store X & (high(addr)+1))
+        case 0x9E: {
+            uint16_t base = read_mem(cpu->pc) | (read_mem(cpu->pc + 1) << 8);
+            cpu->pc += 2;
+            uint16_t addr = base + cpu->y;
+            uint8_t high_plus1 = (uint8_t)(((addr >> 8) + 1) & 0xFF);
+            write_mem(addr, (cpu->x & high_plus1));
+        } break;
+
+        // SHY abs,X 0x9C  (store Y & (high(addr)+1))
+        case 0x9C: {
+            uint16_t base = read_mem(cpu->pc) | (read_mem(cpu->pc + 1) << 8);
+            cpu->pc += 2;
+            uint16_t addr = base + cpu->x;
+            uint8_t high_plus1 = (uint8_t)(((addr >> 8) + 1) & 0xFF);
+            write_mem(addr, (cpu->y & high_plus1));
+        } break;
+
+        // TAS/SHS abs,Y 0x9B  (SP = A & X; store SP & (high(addr)+1))
+        case 0x9B: {
+            uint16_t base = read_mem(cpu->pc) | (read_mem(cpu->pc + 1) << 8);
+            cpu->pc += 2;
+            uint16_t addr = base + cpu->y;
+            cpu->sp = (cpu->a & cpu->x);
+            uint8_t high_plus1 = (uint8_t)(((addr >> 8) + 1) & 0xFF);
+            write_mem(addr, (cpu->sp & high_plus1));
+        } break;
+
+        // -- JMP
         default:
             printf("Invalid opcode encountered: 0x%02X at PC: 0x%04X\n", opcode, cpu->pc);
             break;

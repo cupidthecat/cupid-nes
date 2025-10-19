@@ -19,6 +19,7 @@ typedef enum {
     INTERRUPT_FLAG = 0x04,
     DECIMAL_FLAG   = 0x08,
     BREAK_FLAG     = 0x10,
+    UNUSED_FLAG    = 0x20,  
     OVERFLOW_FLAG  = 0x40,
     NEGATIVE_FLAG  = 0x80,
     JSR_OPCODE     = 0x20,
