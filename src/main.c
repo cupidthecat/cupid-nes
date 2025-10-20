@@ -6,6 +6,7 @@
 #include "ppu/ppu.h"
 #include "joypad/joypad.h"
 #include "../include/globals.h"
+#include "apu/apu.h"
 #include <time.h>
 
 // Constants for NTSC NES timing:
@@ -40,6 +41,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     ppu_reset(&ppu);
+    apu_reset(&apu);
     // Print header information for debugging
     printf("=== ROM Header Info ===\n");
     printf("Signature: %c%c%c 0x%02X\n", 

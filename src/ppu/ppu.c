@@ -126,16 +126,18 @@ void ppu_reg_write(uint16_t reg, uint8_t value) {
 
 // $4014 OAM DMA — copy 256 bytes from page value<<8 in CPU RAM
 extern uint8_t read_mem(uint16_t addr); // declare
+
 void ppu_oam_dma(uint8_t page) {
-    uint16_t base = (uint16_t)page << 8;
-    for (int i = 0; i < 256; i++)
-        ppu.oam[(ppu.oam_addr + i) & 0xFF] = read_mem(base + i);
-    ppu.oam_addr += 256;
+    uint16_t base = ((uint16_t)page) << 8;
+    for (int i = 0; i < 256; i++) {
+        uint8_t b = read_mem((uint16_t)(base + i)); // must go through CPU bus!
+        ppu.oam[(ppu.oam_addr + i) & 0xFF] = b;     // wrap in 256-byte OAM
+    }
+    // CPU stalls 513 or 514 cycles; OK to approximate for now
 }
 
 void ppu_begin_vblank(void) { ppu.status |= 0x80; }
 void ppu_end_vblank(void)   { ppu.status &= ~0x80; }
-
 
 //---------------------------------------------------------------------
 // Sample background palettes (4 background palettes, 4 colors each)

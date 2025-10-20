@@ -4,9 +4,33 @@
 #include <stdbool.h>
 #include "cpu.h"
 #include "../ppu/ppu.h"
+#include "../apu/apu.h"
 
 uint8_t ram[0x0800];        // 2KB internal RAM
-uint8_t apu_io[0x18];       // APU + I/O registers
+#define APU_IO_SIZE 0x20              // cover $4000-$401F
+uint8_t apu_io[APU_IO_SIZE];          // 32 bytes
+#define APU_IDX(a) ((uint16_t)((a) - 0x4000))  // index helper
+static uint8_t prg_ram[0x2000]; // 8 KiB
+
+// Cycles per opcode (officials; many unofficials match their closest base)
+static const uint8_t cyc[256] = {
+    /*00*/ 7,6,2,8,3,3,5,5,3,2,2,2,4,4,6,6,
+    /*10*/ 2,5,2,8,4,4,6,6,2,4,2,7,4,4,7,7,
+    /*20*/ 6,6,2,8,3,3,5,5,4,2,2,2,4,4,6,6,
+    /*30*/ 2,5,2,8,4,4,6,6,2,4,2,7,4,4,7,7,
+    /*40*/ 6,6,2,8,3,3,5,5,3,2,2,2,3,4,6,6,
+    /*50*/ 2,5,2,8,4,4,6,6,2,4,2,7,4,4,7,7,
+    /*60*/ 6,6,2,8,3,3,5,5,4,2,2,2,4,4,6,6,
+    /*70*/ 2,5,2,8,4,4,6,6,2,4,2,7,4,4,7,7,
+    /*80*/ 2,6,2,6,3,3,3,3,2,2,2,2,4,4,4,4,
+    /*90*/ 2,6,2,6,3,3,3,3,2,5,2,5,5,5,5,5,
+    /*A0*/ 2,6,2,6,3,3,3,3,2,2,2,2,4,4,4,4,
+    /*B0*/ 2,5,2,5,3,3,3,3,2,4,2,4,5,5,5,5,
+    /*C0*/ 2,6,2,8,3,3,5,5,2,2,2,2,4,4,6,6,
+    /*D0*/ 2,5,2,8,3,3,5,5,2,4,2,7,4,4,7,7,
+    /*E0*/ 2,6,2,8,3,3,5,5,2,2,2,2,4,4,6,6,
+    /*F0*/ 2,5,2,8,3,3,5,5,2,4,2,7,4,4,7,7
+};
 
 void cpu_reset(CPU* cpu) {
     cpu->a = 0;
@@ -16,33 +40,50 @@ void cpu_reset(CPU* cpu) {
     cpu->status = 0x24;
     // Read reset vector from PRG-ROM area
     cpu->pc = (prg_rom[0x7FFD] << 8) | prg_rom[0x7FFC];
+    cpu->irq_delay = 0;
+    cpu->sei_delay = 0;
 }
 
 uint8_t read_mem(uint16_t addr) {
-    // PPU regs: PPU handler manages open bus & side effects
     if (addr >= 0x2000 && addr <= 0x3FFF) {
         uint16_t reg = 0x2000 | (addr & 7);
         return ppu_reg_read(reg);
     }
 
-    // Normal CPU reads must NOT change ppu.open_bus
     if (addr <= 0x1FFF) return ram[addr & 0x07FF];
-    if (addr == 0x4016) return joypad_read(&pad1);
-    if (addr == 0x4017) return joypad_read(&pad2);
-    if (addr <= 0x401F) return apu_io[addr - 0x4000];
-    if (addr >= 0x8000)  return prg_rom[addr - 0x8000];
-    return 0x00;
+
+    // --- APU + I/O ---
+    if (addr >= 0x4000 && addr <= 0x4017) {
+        if (addr == 0x4016) return joypad_read(&pad1);
+        if (addr == 0x4015) return apu_read(addr);
+        // benign returns for others
+        return apu_read(addr);
+    }
+    if (addr >= 0x4018 && addr <= 0x401F) return 0x00;
+
+    if (addr >= 0x8000) return prg_rom[addr - 0x8000];
+
+    return 0x00; // $4020–$7FFF unmapped in NROM
 }
 
 void write_mem(uint16_t addr, uint8_t value) {
-    // Normal CPU writes must NOT change ppu.open_bus
     if (addr <= 0x1FFF) { ram[addr & 0x07FF] = value; return; }
-    if (addr >= 0x2000 && addr <= 0x3FFF) { ppu_reg_write(0x2000 | (addr & 7), value); return; }
-    if (addr == 0x4014) { ppu_oam_dma(value); return; }
-    if (addr == 0x4016) { joypad_write_strobe(&pad1, value); joypad_write_strobe(&pad2, value); return; }
-    if (addr <= 0x401F) { apu_io[addr - 0x4000] = value; return; }
-    // writes to $4020-$FFFF ignored
+
+    if (addr >= 0x2000 && addr <= 0x3FFF) {
+        ppu_reg_write(0x2000 | (addr & 7), value);
+        return;
+    }
+
+    if (addr >= 0x4000 && addr <= 0x4017) {
+        if (addr == 0x4014) { ppu_oam_dma(value); return; }
+        if (addr == 0x4016) { joypad_write_strobe(&pad1, value); joypad_write_strobe(&pad2, value); return; }
+        apu_write(addr, value); // $4000–$4013, $4015, $4017
+        return;
+    }
+
+    // $4018–$FFFF ignored here for NROM
 }
+
 
 // Helper function to read the next byte without advancing the PC
 static inline void dummy_read_next(CPU* cpu) {
@@ -51,11 +92,22 @@ static inline void dummy_read_next(CPU* cpu) {
 
 void cpu_nmi(CPU* cpu) {
     uint16_t pc = cpu->pc;
-    write_mem(0x0100 + cpu->sp--, (pc >> 8));
-    write_mem(0x0100 + cpu->sp--, (pc & 0xFF));
-    write_mem(0x0100 + cpu->sp--, cpu->status & ~BREAK_FLAG);
+    write_mem(0x0100 + cpu->sp--, (pc >> 8) & 0xFF);
+    write_mem(0x0100 + cpu->sp--, pc & 0xFF);
+    write_mem(0x0100 + cpu->sp--, (cpu->status & ~BREAK_FLAG) | UNUSED_FLAG);
     cpu->status |= INTERRUPT_FLAG;
     cpu->pc = read_mem(0xFFFA) | (read_mem(0xFFFB) << 8);
+}
+
+void cpu_irq(CPU* cpu) {
+    uint16_t pc = cpu->pc;
+    write_mem(0x0100 + cpu->sp--, (pc >> 8) & 0xFF);
+    write_mem(0x0100 + cpu->sp--, pc & 0xFF);
+    // Push P with B=0, U=1 for IRQ
+    uint8_t p = (cpu->status & ~BREAK_FLAG) | UNUSED_FLAG;
+    write_mem(0x0100 + cpu->sp--, p);
+    cpu->status |= INTERRUPT_FLAG;
+    cpu->pc = read_mem(0xFFFE) | (read_mem(0xFFFF) << 8);
 }
 
 // Helper function to set zero and negative flags
@@ -96,7 +148,12 @@ static uint16_t get_absy_address(CPU* cpu) {
 static void branch_if(CPU* cpu, bool condition) {
     int8_t offset = read_mem(cpu->pc++);
     if(condition) {
+        uint16_t old = cpu->pc;
         cpu->pc += offset;
+        cpu->extra_cycles += 1; // taken branch
+        if ((old & 0xFF00) != (cpu->pc & 0xFF00)) {
+            cpu->extra_cycles += 1; // page crossed
+        }
     }
 }
 
@@ -267,40 +324,53 @@ void execute(CPU* cpu, uint8_t opcode) {
         }
         break;
         case 0x40: // RTI - Return from Interrupt
-            dummy_read_next(cpu);
+        {
+            dummy_read_next(cpu);              // RTI dummy read
+            // Pull P (SP increments before each pull)
             cpu->sp++;
-            cpu->status = read_mem(0x0100 + cpu->sp);
+            uint8_t newP = read_mem(0x0100 + cpu->sp);
+            cpu->status = newP | UNUSED_FLAG;
+            // Cancel any pending CLI/PLP latency. After RTI no IRQ should be taken “ignoring I”.
+            cpu->irq_delay = 0;
+
+            // Pull PC — DO NOT add 1 (unlike RTS)
             cpu->sp++;
-            cpu->pc = read_mem(0x0100 + cpu->sp);
+            uint8_t pcl = read_mem(0x0100 + cpu->sp);
             cpu->sp++;
-            cpu->pc |= read_mem(0x0100 + cpu->sp) << 8;
-            break;
+            uint8_t pch = read_mem(0x0100 + cpu->sp);
+            cpu->pc = ((uint16_t)pch << 8) | pcl;
+        }
+        break;
 
         // ========== STACK OPERATIONS ==========
         case 0x48: // PHA - Push Accumulator
             dummy_read_next(cpu);  // Add dummy read for 1-byte PHA
-            if (cpu->sp == 0x00) { printf("Stack overflow!\n"); return; }
             write_mem(0x0100 + cpu->sp, cpu->a);
             cpu->sp--;
             break;
         case 0x68: // PLA - Pull Accumulator
             dummy_read_next(cpu);  // Add dummy read for 1-byte PLA
-            if (cpu->sp == 0xFF) { printf("Stack underflow!\n"); return; }
             cpu->sp++;
             cpu->a = read_mem(0x0100 + cpu->sp);
             set_zn_flags(cpu, cpu->a);
             break;
         case 0x08: // PHP - Push Processor Status
             dummy_read_next(cpu);  // Add dummy read for 1-byte PHP
-            if (cpu->sp == 0x00) { printf("Stack overflow!\n"); return; }
-            write_mem(0x0100 + cpu->sp, cpu->status);
+            write_mem(0x0100 + cpu->sp, cpu->status | BREAK_FLAG | UNUSED_FLAG);
             cpu->sp--;
             break;
         case 0x28: // PLP - Pull Processor Status
             dummy_read_next(cpu);  // Add dummy read for 1-byte PLP
-            if (cpu->sp == 0xFF) { printf("Stack underflow!\n"); return; }
             cpu->sp++;
-            cpu->status = read_mem(0x0100 + cpu->sp);
+            {
+                uint8_t oldP = cpu->status;
+                uint8_t newP = read_mem(0x0100 + cpu->sp);
+                cpu->status = newP | UNUSED_FLAG;            // force U=1
+                bool oldI = (oldP & INTERRUPT_FLAG) != 0;
+                bool newI = (newP & INTERRUPT_FLAG) != 0;
+                // Only SEI gets the 0→1 window; PLP should not open it.
+                if (oldI && !newI) cpu->irq_delay = 2;      // I: 1→0 deferral
+            }
             break;
 
         // ========== BRANCHES ==========
@@ -348,11 +418,19 @@ void execute(CPU* cpu, uint8_t opcode) {
             break;
         case 0x58: // CLI - Clear Interrupt Flag
             dummy_read_next(cpu);  // Add dummy read for 1-byte CLI
-            cpu->status &= ~INTERRUPT_FLAG;
+            {
+                bool was_set = (cpu->status & INTERRUPT_FLAG) != 0;
+                cpu->status &= ~INTERRUPT_FLAG;
+                // Start 2-phase CLI window: 2=block once, then 1=allow once ignoring I.
+                if (was_set) cpu->irq_delay = 2;
+            }
             break;
         case 0x78: // SEI - Set Interrupt Flag
             dummy_read_next(cpu);  // Add dummy read for 1-byte SEI
-            cpu->status |= INTERRUPT_FLAG;
+            { bool was_clear = (cpu->status & INTERRUPT_FLAG) == 0;
+              cpu->status |= INTERRUPT_FLAG;
+              cpu->sei_delay = was_clear ? 1 : 0;   // only create the 1-op window on 0→1
+            }
             break;
         case 0xB8: // CLV - Clear Overflow Flag
             dummy_read_next(cpu);  // Add dummy read for 1-byte CLV
@@ -1162,7 +1240,34 @@ void execute(CPU* cpu, uint8_t opcode) {
 }
 
 int cpu_step(CPU* cpu) {
+    uint16_t pc_before = cpu->pc;
     uint8_t opcode = read_mem(cpu->pc++);
+    cpu->extra_cycles = 0;
     execute(cpu, opcode);
-    return 1;
+
+    // How many cycles did that opcode consume?
+    int cycles = cyc[opcode] + cpu->extra_cycles;
+
+    // Advance APU timing by *actual* CPU cycles
+    apu_step(&apu, cycles);
+
+    // ----- IRQ decision (6502 latency) -----
+    int cli_phase = cpu->irq_delay;           // 2: block, 1: allow once ignoring I, 0: normal
+    if (cpu->irq_delay > 0) cpu->irq_delay--; // decay the phase
+
+    bool just_set_I = (cpu->sei_delay != 0);  // SEI creates a 0→1 window
+    bool irq_line   = apu_irq_pending(&apu);
+
+    // If SEI just executed, treat I as 0 for this boundary.
+    bool i_effective = (cpu->status & INTERRUPT_FLAG) && !just_set_I;
+
+    bool block_due_to_cli = (cli_phase == 2) && !just_set_I;   // SEI overrides CLI block
+    bool ignore_I_once    = (cli_phase == 1) || just_set_I;    // allow ignoring I
+
+    if (irq_line && !block_due_to_cli) {
+        bool gate = ignore_I_once ? false : i_effective;
+        if (!gate) cpu_irq(cpu);
+    }
+    cpu->sei_delay = 0; // consume the SEI one-shot
+    return cycles;
 }

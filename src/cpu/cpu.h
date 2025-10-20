@@ -4,13 +4,16 @@
 #include <stdint.h>
 #include "../joypad/joypad.h"
 
-typedef struct {
-    uint8_t a;     // Accumulator
-    uint8_t x;     // X register
-    uint8_t y;     // Y register
-    uint16_t pc;   // Program Counter
-    uint8_t sp;    // Stack Pointer
-    uint8_t status;// Status register (NV-BDIZC)
+typedef struct { 
+    uint8_t a;         // Accumulator
+    uint8_t x;         // X register
+    uint8_t y;         // Y register
+    uint16_t pc;       // Program Counter
+    uint8_t sp;        // Stack Pointer
+    uint8_t status;    // Status register (NV-BDIZC)
+    uint8_t irq_delay; // IRQ delay 
+    uint8_t sei_delay; // SEI delay 
+    int extra_cycles;  // extra cycles 
 } CPU;
 
 typedef enum {
@@ -38,4 +41,6 @@ void write_mem(uint16_t addr, uint8_t value);
 void execute(CPU* cpu, uint8_t opcode);
 int cpu_step(CPU* cpu);
 void cpu_nmi(CPU *cpu);
+void cpu_irq(CPU *cpu);
+
 #endif // CPU_H
