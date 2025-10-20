@@ -91,6 +91,11 @@ The nestest ROM validates CPU instruction execution, addressing modes, and flag 
 
 This test verifies proper CPU execution in PPU I/O space, ensuring correct memory mapping and register behavior.
 
+**CPU Execution Space APU Test**
+![CPU Execution Space APU](img/test_cpu_exec_space_apu.png)
+
+This test verifies proper CPU execution in APU (Audio Processing Unit) space, ensuring correct memory mapping and register behavior for audio-related operations.
+
 ### PPU and Graphics Tests
 
 **Color Test**
@@ -111,7 +116,6 @@ The project includes several test ROMs for validation:
 - `color_test.nes` - PPU color and palette testing
 - `test_cpu_exec_space_ppuio.nes` - CPU execution in PPU I/O space
 - `test_cpu_exec_space_apu.nes` - CPU execution in APU space
-
 
 All tests demonstrate successful emulation of the NES hardware components.
 
