@@ -2,13 +2,14 @@
 #include "ppu.h"
 #include "../rom/rom.h"
 #include "../../include/globals.h"
+#include "../rom/mapper.h"
 #include <stdbool.h>
 #include <stdio.h>
-#include "../rom/mapper.h"
-
+#include <string.h>
 // PPU Memory
 uint8_t ppu_vram[PPU_VRAM_SIZE];
 uint8_t ppu_palette[PPU_PALETTE_SIZE];
+uint8_t bg_opaque[256 * 240];
 
 // PPU Registers
 extern uint8_t ppu_vram[PPU_VRAM_SIZE];
@@ -207,54 +208,56 @@ static uint16_t mirror_nametable_addr(uint16_t addr) {
 // - The attribute table is located at 0x23C0–0x23FF for the first nametable.
 // - This function assumes a single nametable (NROM configuration).
 void render_background(uint32_t *framebuffer) {
-    const int tilesX = 32;
-    const int tilesY = 30;
-    const int tileSize = 8;
+    const int tilesX = 32, tilesY = 30, tileSize = 8;
 
-    // Get the base address of the background pattern table
+    // If BG is disabled, clear the mask and bail early (optional but accurate)
+    if (!(ppu.mask & 0x08)) {
+        memset(bg_opaque, 0, sizeof(bg_opaque));
+        return;
+    }
+
+    memset(bg_opaque, 0, sizeof(bg_opaque));
+
     uint16_t pattern_table_base = get_bg_pattern_table_base();
 
     for (int ty = 0; ty < tilesY; ty++) {
         for (int tx = 0; tx < tilesX; tx++) {
             uint16_t ntAddr = 0x2000 + ty * tilesX + tx;
-            uint8_t tileIndex = ppu_vram[mirror_nametable_addr(ntAddr)];
+            uint8_t  tileIndex = ppu_vram[mirror_nametable_addr(ntAddr)];
 
-            // Calculate attribute table address
-            int attrX = tx / 4;
-            int attrY = ty / 4;
+            int attrX = tx / 4, attrY = ty / 4;
             uint16_t attrAddr = 0x23C0 + attrY * 8 + attrX;
-            uint8_t attribute = ppu_vram[mirror_nametable_addr(attrAddr)];
+            uint8_t  attribute = ppu_vram[mirror_nametable_addr(attrAddr)];
 
-            // Determine palette index
             int quadX = (tx % 4) / 2;
             int quadY = (ty % 4) / 2;
             int shift = (quadY * 4) + (quadX * 2);
             uint8_t paletteIndex = (attribute >> shift) & 0x03;
 
-            // Calculate tile address in pattern table
             int tileAddress = pattern_table_base + tileIndex * 16;
 
-            // Render tile
             for (int row = 0; row < tileSize; row++) {
                 uint8_t plane0 = chr_rom[tileAddress + row];
                 uint8_t plane1 = chr_rom[tileAddress + row + 8];
-                
+
                 for (int col = 0; col < tileSize; col++) {
                     uint8_t bit0 = (plane0 >> (7 - col)) & 1;
                     uint8_t bit1 = (plane1 >> (7 - col)) & 1;
                     uint8_t pixelValue = (bit1 << 1) | bit0;
 
-                    // Use ROM-loaded palette RAM instead of dummy bg_palettes
+                    // Color index for the framebuffer (unchanged)
                     uint8_t palIndex = (pixelValue == 0)
-                        ? ppu_palette[0]  // universal background color at $3F00
+                        ? ppu_palette[0]
                         : ppu_palette[paletteIndex * 4 + pixelValue];
                     uint32_t color = get_color(palIndex);
 
                     int screenX = tx * tileSize + col;
                     int screenY = ty * tileSize + row;
-                    
                     if (screenX < SCREEN_WIDTH && screenY < SCREEN_HEIGHT) {
                         framebuffer[screenY * SCREEN_WIDTH + screenX] = color;
+
+                        // Mark BG as opaque for priority if pixelValue != 0
+                        bg_opaque[screenY * 256 + screenX] = (pixelValue != 0);
                     }
                 }
             }
@@ -263,30 +266,66 @@ void render_background(uint32_t *framebuffer) {
 }
 
 void render_sprites(uint32_t* fb) {
+    if (!(ppu.mask & 0x10)) return;   // sprites disabled
+
+    bool tall_sprites = (ppu.ctrl & 0x20) != 0;
+    int sprite_height  = tall_sprites ? 16 : 8;
     uint16_t base = (ppu.ctrl & 0x08) ? 0x1000 : 0x0000;
-    for (int i = 0; i < 64; i++) {
+
+    for (int i = 63; i >= 0; i--) {
         uint8_t y  = ppu.oam[i*4 + 0] + 1;
         uint8_t id = ppu.oam[i*4 + 1];
         uint8_t at = ppu.oam[i*4 + 2];
         uint8_t x  = ppu.oam[i*4 + 3];
-        uint8_t pal = (at & 0x03);  // sprite palette 0..3
 
-        int tileAddr = base + id * 16;
-        for (int row = 0; row < 8; row++) {
-            uint8_t p0 = chr_rom[tileAddr + row];
-            uint8_t p1 = chr_rom[tileAddr + row + 8];
-            for (int col = 0; col < 8; col++) {
-                uint8_t bit0 = (p0 >> (7-col)) & 1;
-                uint8_t bit1 = (p1 >> (7-col)) & 1;
-                uint8_t px   = (bit1<<1) | bit0;
-                if (!px) continue; // color 0 is transparent
-                uint8_t idx = ppu_palette[0x10 + pal*4 + px];
-                int sx = x + col, sy = y + row;
-                if (sx<256 && sy<240) fb[sy*256 + sx] = get_color(idx);
+        if (y >= 0xEF) continue;
+
+        uint8_t pal   = (at & 0x03);
+        bool priority = (at & 0x20) != 0; // 1 = behind background
+        bool flip_h   = (at & 0x40) != 0;
+        bool flip_v   = (at & 0x80) != 0;
+
+        if (tall_sprites) { base = (id & 0x01) ? 0x1000 : 0x0000; id &= 0xFE; }
+
+        for (int half = 0; half < (tall_sprites ? 2 : 1); half++) {
+            uint8_t  tile_id   = id + half;
+            uint16_t tile_addr = base + tile_id * 16;
+
+            for (int row = 0; row < 8; row++) {
+                int actual_row = flip_v ? (7 - row) : row;
+                int y_offset   = half * 8;
+
+                // (Optional but recommended: fetch via mapper)
+                uint8_t p0 = chr_rom[tile_addr + actual_row];
+                uint8_t p1 = chr_rom[tile_addr + actual_row + 8];
+
+                for (int col = 0; col < 8; col++) {
+                    int bit_pos = flip_h ? col : (7 - col);
+                    uint8_t bit0 = (p0 >> bit_pos) & 1;
+                    uint8_t bit1 = (p1 >> bit_pos) & 1;
+                    uint8_t px   = (bit1 << 1) | bit0;
+                    if (!px) continue;
+
+                    int sx = x + col;
+                    int sy = y + row + y_offset;
+                    if (sx >= 256 || sy >= 240) continue;
+
+                    // Honor left 8-pixel sprite mask
+                    if (!(ppu.mask & 0x04) && sx < 8) continue;
+
+                    // --- Priority: if behind background, only draw when BG is transparent for priority
+                    if (priority && (ppu.mask & 0x08)) {      // only matters if BG rendering is enabled
+                        if (bg_opaque[sy * 256 + sx]) continue;
+                    }
+
+                    uint8_t idx = ppu_palette[0x10 + pal * 4 + px];
+                    fb[sy * 256 + sx] = get_color(idx);
+                }
             }
         }
     }
 }
+
 
 // PPU Register Read
 uint8_t ppu_read(uint16_t addr) {

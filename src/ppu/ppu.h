@@ -83,5 +83,6 @@ void ppu_oam_dma(uint8_t page);
 void ppu_begin_vblank(void);
 void ppu_end_vblank(void);
 void render_sprites(uint32_t *framebuffer);
+extern uint8_t bg_opaque[256 * 240];
 
 #endif // PPU_H

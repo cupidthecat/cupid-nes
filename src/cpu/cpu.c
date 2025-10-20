@@ -55,41 +55,38 @@ uint8_t read_mem(uint16_t addr) {
 
     if (addr >= 0x2000 && addr <= 0x3FFF) {
         uint8_t v = ppu_reg_read(0x2000 | (addr & 7));
-        bus_set(v);
-        return v;
+        return v; // ppu_reg_read handles PPU open bus internally
     }
 
     // APU + I/O $4000-$4017
     if (addr >= 0x4000 && addr <= 0x4017) {
         if (addr == 0x4016) { uint8_t v = joypad_read(&pad1); bus_set(v); return v; }
         if (addr == 0x4015) { uint8_t v = apu_read(addr);    bus_set(v); return v; }
-        return bus_get(); // write-only APU regs read as open bus
+        return bus_get(); // write-only APU regs -> open bus
     }
 
-    // >>> Unallocated I/O/expansion window must be OPEN BUS on a stock NES
+    // *** Unallocated I/O space $4018-$40FF must read as open bus ***
     if (addr >= 0x4018 && addr <= 0x40FF) return bus_get();
 
-    // Expansion area -> cart (mappers etc.) starts effectively at $4100 here
+    // Expansion/cart space (mapper regs, PRG-RAM, etc.)
     if (addr >= 0x4100 && addr <= 0x5FFF) {
         uint8_t v = cart_cpu_read(addr);
         bus_set(v);
         return v;
     }
 
+    // Cart space $6000-$FFFF
     if (addr >= 0x6000) { uint8_t v = cart_cpu_read(addr); bus_set(v); return v; }
 
     return bus_get();
 }
 
 void write_mem(uint16_t addr, uint8_t value) {
-    bus_set(value);
+    bus_set(value); // writes still put value on the CPU bus latch
 
     if (addr <= 0x1FFF) { ram[addr & 0x07FF] = value; return; }
 
-    if (addr >= 0x2000 && addr <= 0x3FFF) { 
-        ppu_reg_write(0x2000 | (addr & 7), value); 
-        return; 
-    }
+    if (addr >= 0x2000 && addr <= 0x3FFF) { ppu_reg_write(0x2000 | (addr & 7), value); return; }
 
     if (addr >= 0x4000 && addr <= 0x4017) {
         if (addr == 0x4014) { ppu_oam_dma(value); return; }
@@ -98,15 +95,14 @@ void write_mem(uint16_t addr, uint8_t value) {
         return;
     }
 
-    // >>> Ignore $4018–$40FF writes (open bus area)
+    // *** Ignore writes to $4018-$40FF (unallocated I/O, open bus) ***
     if (addr >= 0x4018 && addr <= 0x40FF) return;
 
-    // Expansion area -> cart from $4100
+    // Expansion/cart
     if (addr >= 0x4100 && addr <= 0x5FFF) { cart_cpu_write(addr, value); return; }
 
     if (addr >= 0x6000) { cart_cpu_write(addr, value); return; }
 }
-
 
 // Helper function to read the next byte without advancing the PC
 static inline void dummy_read_next(CPU* cpu) {
@@ -416,22 +412,17 @@ void execute(CPU* cpu, uint8_t opcode) {
             write_mem(0x0100 + cpu->sp, cpu->status | BREAK_FLAG | UNUSED_FLAG);
             cpu->sp--;
             break;
-        case 0x28: // PLP
-            dummy_read_next(cpu);
+        case 0x28: // PLP - Pull Processor Status
+            dummy_read_next(cpu);  // Add dummy read for 1-byte PLP
             cpu->sp++;
             {
                 uint8_t oldP = cpu->status;
                 uint8_t newP = read_mem(0x0100 + cpu->sp);
-                cpu->status = newP | UNUSED_FLAG;     // force U=1
-        
+                cpu->status = newP | UNUSED_FLAG;            // force U=1
                 bool oldI = (oldP & INTERRUPT_FLAG) != 0;
                 bool newI = (newP & INTERRUPT_FLAG) != 0;
-        
-                // I: 1->0 => block one boundary (same as CLI)
-                if (oldI && !newI) cpu->irq_delay = 1;
-        
-                // I: 0->1 => allow one IRQ ignoring I (same as SEI)
-                if (!oldI && newI) cpu->sei_delay = 1;
+                // Only SEI gets the 0→1 window; PLP should not open it.
+                if (oldI && !newI) cpu->irq_delay = 2;      // I: 1→0 deferral
             }
             break;
 
@@ -484,13 +475,12 @@ void execute(CPU* cpu, uint8_t opcode) {
                 bool was_set = (cpu->status & INTERRUPT_FLAG) != 0;
                 cpu->status &= ~INTERRUPT_FLAG;
                 // Start 2-phase CLI window: 2=block once, then 1=allow once ignoring I.
-                if (was_set) cpu->irq_delay = 1;
+                if (was_set) cpu->irq_delay = 2;
             }
             break;
         case 0x78: // SEI - Set Interrupt Flag
             dummy_read_next(cpu);  // Add dummy read for 1-byte SEI
-            { 
-              bool was_clear = (cpu->status & INTERRUPT_FLAG) == 0;
+            { bool was_clear = (cpu->status & INTERRUPT_FLAG) == 0;
               cpu->status |= INTERRUPT_FLAG;
               cpu->sei_delay = was_clear ? 1 : 0;   // only create the 1-op window on 0→1
             }
@@ -1335,29 +1325,29 @@ int cpu_step(CPU* cpu) {
     cpu->extra_cycles = 0;
     execute(cpu, opcode);
 
+    // How many cycles did that opcode consume?
     int cycles = cyc[opcode] + cpu->extra_cycles;
+
+    // Advance APU timing by *actual* CPU cycles
     apu_step(&apu, cycles);
 
-    // ----- NMOS 6502 interrupt timing windows -----
-    // CLI/PLP (1->0): block once; SEI (0->1): allow once ignoring I
-    bool cli_block_once = false;
-    bool sei_allow_once = false;
+    // ----- IRQ decision (6502 latency) -----
+    int cli_phase = cpu->irq_delay;           // 2: block, 1: allow once ignoring I, 0: normal
+    if (cpu->irq_delay > 0) cpu->irq_delay--; // decay the phase
 
-    if (cpu->irq_delay) { cli_block_once = true; cpu->irq_delay = 0; }
-    if (cpu->sei_delay) { sei_allow_once = true; cpu->sei_delay = 0; }
+    bool just_set_I = (cpu->sei_delay != 0);  // SEI creates a 0→1 window
+    bool irq_line   = apu_irq_pending(&apu);
 
-    bool irq_line = apu_irq_pending(&apu);
-    bool I = (cpu->status & INTERRUPT_FLAG) != 0;
+    // If SEI just executed, treat I as 0 for this boundary.
+    bool i_effective = (cpu->status & INTERRUPT_FLAG) && !just_set_I;
 
-    if (irq_line) {
-        if (sei_allow_once) {
-            // SEI grace window: take one IRQ even though I=1
-            cpu_irq(cpu);
-        } else if (!I && !cli_block_once) {
-            // Normal IRQ entry when I clear and not in CLI latency
-            cpu_irq(cpu);
-        }
+    bool block_due_to_cli = (cli_phase == 2) && !just_set_I;   // SEI overrides CLI block
+    bool ignore_I_once    = (cli_phase == 1) || just_set_I;    // allow ignoring I
+
+    if (irq_line && !block_due_to_cli) {
+        bool gate = ignore_I_once ? false : i_effective;
+        if (!gate) cpu_irq(cpu);
     }
-
+    cpu->sei_delay = 0; // consume the SEI one-shot
     return cycles;
 }

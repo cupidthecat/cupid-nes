@@ -7,7 +7,8 @@ LDFLAGS = -lSDL2
 CPUDIR    = src/cpu
 PPUDIR    = src/ppu
 ROMDIR    = src/rom
-JOYPADDIR = src/joypad
+JOYPADDIR = src/joypad 
+APUDIR    = src/apu
 MAINDIR   = src
 TARGET    = cupid-nes
 
@@ -17,7 +18,14 @@ SRC     = $(wildcard $(CPUDIR)/*.c) \
           $(wildcard $(ROMDIR)/*.c) \
           $(wildcard $(JOYPADDIR)/*.c) \
           $(MAINDIR)/main.c
-OBJ     = $(SRC:.c=.o)
+OBJ = src/cpu/cpu.o \
+      src/ppu/ppu.o \
+      src/rom/rom.o \
+      src/rom/mapper.o \
+      src/joypad/joypad.o \
+      src/apu/apu.o \
+      src/main.o
+
 
 # Default target builds the executable
 all: $(TARGET)
