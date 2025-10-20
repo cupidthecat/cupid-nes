@@ -11,6 +11,8 @@ uint8_t ram[0x0800];        // 2KB internal RAM
 uint8_t apu_io[APU_IO_SIZE];          // 32 bytes
 #define APU_IDX(a) ((uint16_t)((a) - 0x4000))  // index helper
 static uint8_t prg_ram[0x2000]; // 8 KiB
+static inline uint8_t bus_get(void) { return ppu.open_bus; }
+static inline void    bus_set(uint8_t v) { ppu.open_bus = v; }
 
 // Cycles per opcode (officials; many unofficials match their closest base)
 static const uint8_t cyc[256] = {
@@ -45,28 +47,68 @@ void cpu_reset(CPU* cpu) {
 }
 
 uint8_t read_mem(uint16_t addr) {
+    // --- CPU RAM ($0000-$1FFF, mirrored every 2KB) ---
+    if (addr <= 0x1FFF) {
+        uint8_t v = ram[addr & 0x07FF];
+        bus_set(v);
+        return v;
+    }
+
+    // --- PPU regs ($2000-$3FFF, mirrored every 8 bytes) ---
     if (addr >= 0x2000 && addr <= 0x3FFF) {
         uint16_t reg = 0x2000 | (addr & 7);
-        return ppu_reg_read(reg);
+        // ppu_reg_read() already updates ppu.open_bus appropriately.
+        uint8_t v = ppu_reg_read(reg);
+        return v;
     }
 
-    if (addr <= 0x1FFF) return ram[addr & 0x07FF];
-
-    // --- APU + I/O ---
+    // --- APU + I/O ($4000-$4017) ---
     if (addr >= 0x4000 && addr <= 0x4017) {
-        if (addr == 0x4016) return joypad_read(&pad1);
-        if (addr == 0x4015) return apu_read(addr);
-        // benign returns for others
-        return apu_read(addr);
+        if (addr == 0x4016) {              // joypad
+            uint8_t v = joypad_read(&pad1);
+            bus_set(v);
+            return v;
+        }
+        if (addr == 0x4015) {              // readable APU status
+            uint8_t v = apu_read(addr);
+            bus_set(v);
+            return v;
+        }
+        // All other APU regs are write-only -> open bus on read
+        return bus_get();
     }
-    if (addr >= 0x4018 && addr <= 0x401F) return 0x00;
 
-    if (addr >= 0x8000) return prg_rom[addr - 0x8000];
+    // --- Unallocated I/O space MUST be open bus ($4018-$40FF) ---
+    if (addr >= 0x4018 && addr <= 0x40FF) {
+        return bus_get();
+    }
 
-    return 0x00; // $4020–$7FFF unmapped in NROM
+    // --- (Optional) most carts: expansion area often floats: keep open-bus for $4100-$5FFF ---
+    // if (addr >= 0x4100 && addr <= 0x5FFF) return bus_get();
+
+    // --- PRG-RAM ($6000-$7FFF) ---
+    if (addr >= 0x6000 && addr <= 0x7FFF) {
+        uint8_t v = prg_ram[addr - 0x6000];
+        bus_set(v);
+        return v;
+    }
+
+    // --- PRG-ROM ($8000-$FFFF) ---
+    if (addr >= 0x8000) {
+        uint8_t v = prg_rom[addr - 0x8000];
+        bus_set(v);
+        return v;
+    }
+
+    // Default: preserve bus (rarely hit)
+    return bus_get();
 }
 
 void write_mem(uint16_t addr, uint8_t value) {
+    // Writes put 'value' on the CPU data bus in practice.
+    // This helps tests that rely on open-bus being set by writes.
+    bus_set(value);
+
     if (addr <= 0x1FFF) { ram[addr & 0x07FF] = value; return; }
 
     if (addr >= 0x2000 && addr <= 0x3FFF) {
@@ -81,9 +123,11 @@ void write_mem(uint16_t addr, uint8_t value) {
         return;
     }
 
-    // $4018–$FFFF ignored here for NROM
-}
+    if (addr >= 0x6000 && addr <= 0x7FFF) { prg_ram[addr - 0x6000] = value; return; }
 
+    // $4018–$5FFF usually unmapped here for NROM; ignore
+    // $8000–$FFFF PRG-ROM is not writable on NROM
+}
 
 // Helper function to read the next byte without advancing the PC
 static inline void dummy_read_next(CPU* cpu) {
