@@ -58,6 +58,13 @@ int load_rom(const char *filename) {
     prg_size = (size_t)ines_header.prg_rom_chunks * PRG_ROM_BANK_SIZE;
     chr_size = (size_t)ines_header.chr_rom_chunks * CHR_ROM_BANK_SIZE;
 
+    // ---- HARD GUARDS to prevent overflow ----
+    if (prg_size == 0 || prg_size > sizeof(prg_rom)) {
+        fprintf(stderr, "Unsupported PRG size: %zu (max %zu)\n",
+                prg_size, sizeof(prg_rom));
+        fclose(fp);
+        return -1;
+    }
 
     if (fread(prg_rom, 1, prg_size, fp) != prg_size) {
         fprintf(stderr, "Failed to read PRG-ROM (%zu bytes)\n", prg_size);

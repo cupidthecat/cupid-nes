@@ -273,12 +273,14 @@ void render_sprites(uint32_t* fb) {
     uint16_t base = (ppu.ctrl & 0x08) ? 0x1000 : 0x0000;
 
     for (int i = 63; i >= 0; i--) {
-        uint8_t y  = ppu.oam[i*4 + 0] + 1;
+        uint8_t oam_y = ppu.oam[i*4 + 0];
+
+        if (oam_y >= 0xEF) continue;
+
+        int y  = (int)oam_y + 1;        // real screen Y, no wrap
         uint8_t id = ppu.oam[i*4 + 1];
         uint8_t at = ppu.oam[i*4 + 2];
         uint8_t x  = ppu.oam[i*4 + 3];
-
-        if (y >= 0xEF) continue;
 
         uint8_t pal   = (at & 0x03);
         bool priority = (at & 0x20) != 0; // 1 = behind background
@@ -295,6 +297,7 @@ void render_sprites(uint32_t* fb) {
                 int actual_row = flip_v ? (7 - row) : row;
                 int y_offset   = half * 8;
 
+                int sy = y + row + y_offset;
                 // (Optional but recommended: fetch via mapper)
                 uint8_t p0 = chr_rom[tile_addr + actual_row];
                 uint8_t p1 = chr_rom[tile_addr + actual_row + 8];
@@ -325,7 +328,6 @@ void render_sprites(uint32_t* fb) {
         }
     }
 }
-
 
 // PPU Register Read
 uint8_t ppu_read(uint16_t addr) {
