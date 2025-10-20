@@ -4,6 +4,7 @@
 #include "../../include/globals.h"
 #include <stdbool.h>
 #include <stdio.h>
+#include "../rom/mapper.h"
 
 // PPU Memory
 uint8_t ppu_vram[PPU_VRAM_SIZE];
@@ -21,12 +22,10 @@ static inline uint8_t get_open_bus(void)   { return ppu.open_bus; }
 // $2000–$2007
 uint8_t ppu_reg_read(uint16_t reg) {
     switch (reg & 7) {
-        case 0: // PPUCTRL (read = open bus)
-        case 1: // PPUMASK (read = open bus)
-        case 3: // OAMADDR (read = open bus)
-        case 5: // PPUSCROLL (read = open bus)
-        case 6: // PPUADDR (read = open bus)
-            return get_open_bus();
+        case 0: case 1: case 3: case 5: case 6: {
+            uint8_t v = get_open_bus(); // PPU's open-bus latch
+            return v;
+        }
 
         case 2: { // PPUSTATUS
             uint8_t ob = get_open_bus();
@@ -34,7 +33,6 @@ uint8_t ppu_reg_read(uint16_t reg) {
         
             // ✅ latch exactly what was on the CPU data bus
             set_open_bus(ret);
-        
             // side effects
             ppu.status &= ~0x80; // clear VBlank
             ppu.w = 0;           // reset $2005/$2006 toggle
@@ -51,16 +49,22 @@ uint8_t ppu_reg_read(uint16_t reg) {
             if (addr >= 0x3F00 && addr < 0x4000) {
                 // palette reads bypass the buffer
                 ret = ppu_read(addr);
-                set_open_bus(ret);
+                set_open_bus(ret); // PPU latch sees palette byte
             } else {
                 // CPU gets buffered old byte; bus sees the newly fetched one
                 ret = ppu.ppudata_buffer;
                 uint8_t fetched = ppu_read(addr);
                 ppu.ppudata_buffer = fetched;
-                set_open_bus(fetched);          // <-- important
+                set_open_bus(fetched); // PPU latch sees newly fetched byte
             }
             ppu.v += (ppu.ctrl & 0x04) ? 32 : 1;
             return ret;
+        }
+        default: {
+            // This should never happen since reg & 7 covers all cases 0-7
+            // But add it to satisfy the compiler
+            uint8_t v = get_open_bus();
+            return v;
         }
     }
 }
@@ -166,27 +170,26 @@ static uint16_t mirror_nametable_addr(uint16_t addr) {
         int innerOffset = offset % 0x400;
         
         // Handle mirroring based on ROM configuration
-        switch(mirroring_mode) {
-            case 0: // Horizontal mirroring
+        switch (cart_get_mirroring()) {
+            case MIRROR_HORIZONTAL: // Horizontal mirroring
                 // NT0 and NT1 are unique; NT2 mirrors NT0, NT3 mirrors NT1
-                if(nametable == 0 || nametable == 2)
-                    return 0x2000 + innerOffset;
-                else
-                    return 0x2400 + innerOffset;
+                if(nametable == 0 || nametable == 2) return 0x2000 + innerOffset;
+                else                                 return 0x2400 + innerOffset;
             
-            case 1: // Vertical mirroring
+            case MIRROR_VERTICAL: // Vertical mirroring
                 // NT0 and NT2 are unique; NT1 mirrors NT0, NT3 mirrors NT2
-                if(nametable == 0 || nametable == 1)
-                    return 0x2000 + innerOffset;
-                else
-                    return 0x2800 + innerOffset;
+                if(nametable == 0 || nametable == 1) return 0x2000 + innerOffset;
+                else                                 return 0x2800 + innerOffset;
             
-            case 2: // Single-screen mirroring (all nametables use NT0)
+            case MIRROR_SINGLE0: // Single-screen mirroring (all nametables use NT0)
                 return 0x2000 + innerOffset;
-            
-            case 3: // Single-screen mirroring (all nametables use NT1)
+
+            case MIRROR_SINGLE1: // Single-screen mirroring (all nametables use NT1)
                 return 0x2400 + innerOffset;
-            
+
+            case MIRROR_FOUR:
+                // (Four-screen uses external RAM; keep a simple fallback: no mirroring)
+                return 0x2000 + offset; // simple pass-through into the 2KB VRAM window
             default:
                 // Default to horizontal mirroring
                 if(nametable == 0 || nametable == 2)
@@ -298,14 +301,13 @@ uint8_t ppu_read(uint16_t addr) {
     }
 
     // Nametables 0x2000–0x3EFF (with mirroring)
-    if(addr >= 0x2000 && addr < 0x3F00) {
+    if (addr >= 0x2000 && addr < 0x3F00) {
         uint16_t effective_addr = mirror_nametable_addr(addr);
         return ppu_vram[effective_addr];
     }
 
-    // Pattern tables 0x0000–0x1FFF: come from CHR (ROM/RAM on cart)
-    // Index safely into 8KB (mask 0x1FFF).
-    return chr_rom[addr & 0x1FFF];
+   // Pattern tables 0x0000–0x1FFF: cart (CHR-ROM/RAM, banked)
+   return cart_ppu_read(addr & 0x1FFF);
 }
 
 // PPU Register Write
@@ -322,10 +324,7 @@ void ppu_write(uint16_t addr, uint8_t value) {
 
     // Pattern tables (CHR). If the cart uses CHR-RAM, writes should stick; with CHR-ROM they
     // are typically ignored. For the test ROMs, allowing writes is fine.
-    if (addr < 0x2000) {
-        chr_rom[addr & 0x1FFF] = value;
-        return;
-    }
+    if (addr < 0x2000) { cart_ppu_write(addr & 0x1FFF, value); return; }
 
     if(addr >= 0x2000 && addr < 0x3F00) {
         uint16_t effective_addr = mirror_nametable_addr(addr);

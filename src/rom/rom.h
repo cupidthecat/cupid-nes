@@ -16,6 +16,14 @@ typedef struct __attribute__((packed)) {
     uint8_t zero[5];
 } iNESHeader;
 
+typedef enum {
+    MIRROR_HORIZONTAL = 0,
+    MIRROR_VERTICAL   = 1,
+    MIRROR_SINGLE0    = 2,
+    MIRROR_SINGLE1    = 3,
+    MIRROR_FOUR       = 4
+} Mirroring;
+
 // expose sizes so CPU/PPU can reason about mirroring
 extern iNESHeader ines_header;
 extern size_t     prg_size;

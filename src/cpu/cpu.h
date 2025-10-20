@@ -29,8 +29,7 @@ typedef enum {
     RTS_OPCODE     = 0x60
 } StatusFlags;
 
-extern uint8_t memory[0x10000]; // 64KB memory
-extern uint8_t prg_rom[0x8000];
+extern uint8_t memory[0x10000];
 
 // Add joypad extern declarations
 extern Joypad pad1, pad2;

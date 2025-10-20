@@ -5,14 +5,16 @@
 #include "cpu.h"
 #include "../ppu/ppu.h"
 #include "../apu/apu.h"
+#include "../rom/mapper.h"
 
 uint8_t ram[0x0800];        // 2KB internal RAM
 #define APU_IO_SIZE 0x20              // cover $4000-$401F
 uint8_t apu_io[APU_IO_SIZE];          // 32 bytes
 #define APU_IDX(a) ((uint16_t)((a) - 0x4000))  // index helper
-static uint8_t prg_ram[0x2000]; // 8 KiB
-static inline uint8_t bus_get(void) { return ppu.open_bus; }
-static inline void    bus_set(uint8_t v) { ppu.open_bus = v; }
+// CPU-side open-bus latch (distinct from the PPU's $200x open-bus)
+static uint8_t cpu_open_bus = 0;
+static inline uint8_t bus_get(void) { return cpu_open_bus; }
+static inline void    bus_set(uint8_t v) { cpu_open_bus = v; }
 
 // Cycles per opcode (officials; many unofficials match their closest base)
 static const uint8_t cyc[256] = {
@@ -22,16 +24,16 @@ static const uint8_t cyc[256] = {
     /*30*/ 2,5,2,8,4,4,6,6,2,4,2,7,4,4,7,7,
     /*40*/ 6,6,2,8,3,3,5,5,3,2,2,2,3,4,6,6,
     /*50*/ 2,5,2,8,4,4,6,6,2,4,2,7,4,4,7,7,
-    /*60*/ 6,6,2,8,3,3,5,5,4,2,2,2,4,4,6,6,
+    /*60*/ 6,6,2,8,3,3,5,5,4,2,2,2,5,4,6,6,
     /*70*/ 2,5,2,8,4,4,6,6,2,4,2,7,4,4,7,7,
     /*80*/ 2,6,2,6,3,3,3,3,2,2,2,2,4,4,4,4,
-    /*90*/ 2,6,2,6,3,3,3,3,2,5,2,5,5,5,5,5,
+    /*90*/ 2,6,2,6,4,4,4,3,2,5,2,5,5,5,5,5,
     /*A0*/ 2,6,2,6,3,3,3,3,2,2,2,2,4,4,4,4,
-    /*B0*/ 2,5,2,5,3,3,3,3,2,4,2,4,5,5,5,5,
+    /*B0*/ 2,5,2,5,4,4,4,4,2,4,2,4,4,4,4,4,
     /*C0*/ 2,6,2,8,3,3,5,5,2,2,2,2,4,4,6,6,
-    /*D0*/ 2,5,2,8,3,3,5,5,2,4,2,7,4,4,7,7,
+    /*D0*/ 2,5,2,8,3,4,6,6,2,4,2,7,4,4,7,7,
     /*E0*/ 2,6,2,8,3,3,5,5,2,2,2,2,4,4,6,6,
-    /*F0*/ 2,5,2,8,3,3,5,5,2,4,2,7,4,4,7,7
+    /*F0*/ 2,5,2,8,4,4,6,6,2,4,2,7,4,4,7,7,
 };
 
 void cpu_reset(CPU* cpu) {
@@ -41,93 +43,70 @@ void cpu_reset(CPU* cpu) {
     cpu->sp = 0xFD;  // Initialize to 0xFD (valid stack range is 0x00-0xFF)
     cpu->status = 0x24;
     // Read reset vector from PRG-ROM area
-    cpu->pc = (prg_rom[0x7FFD] << 8) | prg_rom[0x7FFC];
+    uint8_t lo = cart_cpu_read(0xFFFC);
+    uint8_t hi = cart_cpu_read(0xFFFD);
+    cpu->pc = ((uint16_t)hi << 8) | lo;
     cpu->irq_delay = 0;
     cpu->sei_delay = 0;
 }
 
 uint8_t read_mem(uint16_t addr) {
-    // --- CPU RAM ($0000-$1FFF, mirrored every 2KB) ---
-    if (addr <= 0x1FFF) {
-        uint8_t v = ram[addr & 0x07FF];
-        bus_set(v);
-        return v;
-    }
+    if (addr <= 0x1FFF) { uint8_t v = ram[addr & 0x07FF]; bus_set(v); return v; }
 
-    // --- PPU regs ($2000-$3FFF, mirrored every 8 bytes) ---
     if (addr >= 0x2000 && addr <= 0x3FFF) {
-        uint16_t reg = 0x2000 | (addr & 7);
-        // ppu_reg_read() already updates ppu.open_bus appropriately.
-        uint8_t v = ppu_reg_read(reg);
+        uint8_t v = ppu_reg_read(0x2000 | (addr & 7));
+        bus_set(v);
         return v;
     }
 
-    // --- APU + I/O ($4000-$4017) ---
+    // APU + I/O $4000-$4017
     if (addr >= 0x4000 && addr <= 0x4017) {
-        if (addr == 0x4016) {              // joypad
-            uint8_t v = joypad_read(&pad1);
-            bus_set(v);
-            return v;
-        }
-        if (addr == 0x4015) {              // readable APU status
-            uint8_t v = apu_read(addr);
-            bus_set(v);
-            return v;
-        }
-        // All other APU regs are write-only -> open bus on read
-        return bus_get();
+        if (addr == 0x4016) { uint8_t v = joypad_read(&pad1); bus_set(v); return v; }
+        if (addr == 0x4015) { uint8_t v = apu_read(addr);    bus_set(v); return v; }
+        return bus_get(); // write-only APU regs read as open bus
     }
 
-    // --- Unallocated I/O space MUST be open bus ($4018-$40FF) ---
-    if (addr >= 0x4018 && addr <= 0x40FF) {
-        return bus_get();
-    }
+    // >>> Unallocated I/O/expansion window must be OPEN BUS on a stock NES
+    if (addr >= 0x4018 && addr <= 0x40FF) return bus_get();
 
-    // --- (Optional) most carts: expansion area often floats: keep open-bus for $4100-$5FFF ---
-    // if (addr >= 0x4100 && addr <= 0x5FFF) return bus_get();
-
-    // --- PRG-RAM ($6000-$7FFF) ---
-    if (addr >= 0x6000 && addr <= 0x7FFF) {
-        uint8_t v = prg_ram[addr - 0x6000];
+    // Expansion area -> cart (mappers etc.) starts effectively at $4100 here
+    if (addr >= 0x4100 && addr <= 0x5FFF) {
+        uint8_t v = cart_cpu_read(addr);
         bus_set(v);
         return v;
     }
 
-    // --- PRG-ROM ($8000-$FFFF) ---
-    if (addr >= 0x8000) {
-        uint8_t v = prg_rom[addr - 0x8000];
-        bus_set(v);
-        return v;
-    }
+    if (addr >= 0x6000) { uint8_t v = cart_cpu_read(addr); bus_set(v); return v; }
 
-    // Default: preserve bus (rarely hit)
     return bus_get();
 }
 
 void write_mem(uint16_t addr, uint8_t value) {
-    // Writes put 'value' on the CPU data bus in practice.
-    // This helps tests that rely on open-bus being set by writes.
     bus_set(value);
 
     if (addr <= 0x1FFF) { ram[addr & 0x07FF] = value; return; }
 
-    if (addr >= 0x2000 && addr <= 0x3FFF) {
-        ppu_reg_write(0x2000 | (addr & 7), value);
-        return;
+    if (addr >= 0x2000 && addr <= 0x3FFF) { 
+        ppu_reg_write(0x2000 | (addr & 7), value); 
+        return; 
     }
 
     if (addr >= 0x4000 && addr <= 0x4017) {
         if (addr == 0x4014) { ppu_oam_dma(value); return; }
         if (addr == 0x4016) { joypad_write_strobe(&pad1, value); joypad_write_strobe(&pad2, value); return; }
-        apu_write(addr, value); // $4000–$4013, $4015, $4017
+        apu_write(addr, value);
         return;
     }
 
-    if (addr >= 0x6000 && addr <= 0x7FFF) { prg_ram[addr - 0x6000] = value; return; }
+    // >>> Ignore $4018–$40FF writes (open bus area)
+    if (addr >= 0x4018 && addr <= 0x40FF) return;
 
-    // $4018–$5FFF usually unmapped here for NROM; ignore
-    // $8000–$FFFF PRG-ROM is not writable on NROM
+    // Expansion area -> cart from $4100
+    if (addr >= 0x4100 && addr <= 0x5FFF) { cart_cpu_write(addr, value); return; }
+
+    if (addr >= 0x6000) { cart_cpu_write(addr, value); return; }
 }
+
 
 // Helper function to read the next byte without advancing the PC
 static inline void dummy_read_next(CPU* cpu) {
@@ -159,6 +138,15 @@ static void set_zn_flags(CPU* cpu, uint8_t value) {
     cpu->status = (cpu->status & ~(ZERO_FLAG|NEGATIVE_FLAG)) |
                   (value == 0 ? ZERO_FLAG : 0) |
                   (value & 0x80 ? NEGATIVE_FLAG : 0);
+}
+
+// Helper function indirect Y with optional page-cross penalty for READS
+static uint16_t get_indirect_y_read(CPU* cpu) {
+    uint8_t zpg = read_mem(cpu->pc++);
+    uint16_t base = read_mem(zpg) | (read_mem((zpg + 1) & 0xFF) << 8);
+    uint16_t addr = base + cpu->y;
+    if ((base & 0xFF00) != (addr & 0xFF00)) cpu->extra_cycles += 1;  // add +1 on page cross
+    return addr;
 }
 
 // Addressing mode helpers
@@ -296,6 +284,31 @@ static inline void inc_then_sbc(CPU* cpu, uint16_t addr) {
     do_sbc(cpu, v);   // you already have do_sbc()
 }
 
+// Absolute,Y with page-cross penalty for READS
+static uint16_t get_absy_read(CPU* cpu) {
+    uint16_t lo = read_mem(cpu->pc);
+    uint16_t hi = read_mem(cpu->pc + 1);
+    cpu->pc += 2;
+    uint16_t base = (hi << 8) | lo;
+    uint16_t addr = base + cpu->y;
+    if ((base & 0xFF00) != (addr & 0xFF00)) cpu->extra_cycles += 1;
+    return addr;
+}
+
+static uint16_t get_absx_read(CPU* cpu) {
+    uint16_t lo = read_mem(cpu->pc);
+    uint16_t hi = read_mem(cpu->pc + 1);
+    cpu->pc += 2;
+    uint16_t base = (hi << 8) | lo;
+    uint16_t addr = base + cpu->x;
+    if ((base & 0xFF00) != (addr & 0xFF00)) cpu->extra_cycles += 1;
+    return addr;
+}
+
+static inline uint16_t get_absx_write(CPU* c){ uint16_t a = get_absx_address(c); (void)read_mem(a); return a; }
+static inline uint16_t get_absy_write(CPU* c){ uint16_t a = get_absy_address(c); (void)read_mem(a); return a; }
+static inline uint16_t get_indy_write(CPU* c){ uint16_t a = get_indirect_y(c);  (void)read_mem(a); return a; }
+
 void execute(CPU* cpu, uint8_t opcode) {
     switch(opcode) {
         // ========== CONTROL FLOW ==========
@@ -374,7 +387,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             cpu->sp++;
             uint8_t newP = read_mem(0x0100 + cpu->sp);
             cpu->status = newP | UNUSED_FLAG;
-            // Cancel any pending CLI/PLP latency. After RTI no IRQ should be taken “ignoring I”.
+            // Cancel any pending CLI/PLP latency. After RTI no IRQ should be taken "ignoring I".
             cpu->irq_delay = 0;
 
             // Pull PC — DO NOT add 1 (unlike RTS)
@@ -403,17 +416,22 @@ void execute(CPU* cpu, uint8_t opcode) {
             write_mem(0x0100 + cpu->sp, cpu->status | BREAK_FLAG | UNUSED_FLAG);
             cpu->sp--;
             break;
-        case 0x28: // PLP - Pull Processor Status
-            dummy_read_next(cpu);  // Add dummy read for 1-byte PLP
+        case 0x28: // PLP
+            dummy_read_next(cpu);
             cpu->sp++;
             {
                 uint8_t oldP = cpu->status;
                 uint8_t newP = read_mem(0x0100 + cpu->sp);
-                cpu->status = newP | UNUSED_FLAG;            // force U=1
+                cpu->status = newP | UNUSED_FLAG;     // force U=1
+        
                 bool oldI = (oldP & INTERRUPT_FLAG) != 0;
                 bool newI = (newP & INTERRUPT_FLAG) != 0;
-                // Only SEI gets the 0→1 window; PLP should not open it.
-                if (oldI && !newI) cpu->irq_delay = 2;      // I: 1→0 deferral
+        
+                // I: 1->0 => block one boundary (same as CLI)
+                if (oldI && !newI) cpu->irq_delay = 1;
+        
+                // I: 0->1 => allow one IRQ ignoring I (same as SEI)
+                if (!oldI && newI) cpu->sei_delay = 1;
             }
             break;
 
@@ -466,12 +484,13 @@ void execute(CPU* cpu, uint8_t opcode) {
                 bool was_set = (cpu->status & INTERRUPT_FLAG) != 0;
                 cpu->status &= ~INTERRUPT_FLAG;
                 // Start 2-phase CLI window: 2=block once, then 1=allow once ignoring I.
-                if (was_set) cpu->irq_delay = 2;
+                if (was_set) cpu->irq_delay = 1;
             }
             break;
         case 0x78: // SEI - Set Interrupt Flag
             dummy_read_next(cpu);  // Add dummy read for 1-byte SEI
-            { bool was_clear = (cpu->status & INTERRUPT_FLAG) == 0;
+            { 
+              bool was_clear = (cpu->status & INTERRUPT_FLAG) == 0;
               cpu->status |= INTERRUPT_FLAG;
               cpu->sei_delay = was_clear ? 1 : 0;   // only create the 1-op window on 0→1
             }
@@ -499,19 +518,18 @@ void execute(CPU* cpu, uint8_t opcode) {
             set_zn_flags(cpu, cpu->a);
             break;
         case 0xBD: // LDA Absolute,X
-            cpu->a = read_mem(get_absx_address(cpu));
+            cpu->a = read_mem(get_absx_read(cpu));
             set_zn_flags(cpu, cpu->a);
             break;
-        case 0xB9: // LDA Absolute,Y
-            cpu->a = read_mem(get_absy_address(cpu));
-            set_zn_flags(cpu, cpu->a);
+        case 0xB9: cpu->a = read_mem(get_absy_read(cpu)); set_zn_flags(cpu, cpu->a); 
             break;
+
         case 0xA1: // LDA (indirect,X)
             cpu->a = read_mem(get_indirect_x(cpu));
             set_zn_flags(cpu, cpu->a);
             break;
         case 0xB1: // LDA (indirect),Y
-            cpu->a = read_mem(get_indirect_y(cpu));
+            cpu->a = read_mem(get_indirect_y_read(cpu));
             set_zn_flags(cpu, cpu->a);
             break;
 
@@ -525,18 +543,21 @@ void execute(CPU* cpu, uint8_t opcode) {
         case 0x8D: // STA Absolute
             write_mem(get_abs_address(cpu), cpu->a);
             break;
-        case 0x9D: // STA Absolute,X
-            write_mem(get_absx_address(cpu), cpu->a);
-            break;
-        case 0x99: // STA Absolute,Y
-            write_mem(get_absy_address(cpu), cpu->a);
-            break;
+        case 0x9D: { // STA abs,X
+            uint16_t a = get_absx_write(cpu);
+            write_mem(a, cpu->a);
+        } break;
+        case 0x99: { // STA abs,Y
+            uint16_t a = get_absy_write(cpu);
+            write_mem(a, cpu->a);
+        } break;   
         case 0x81: // STA (indirect,X)
             write_mem(get_indirect_x(cpu), cpu->a);
             break;
-        case 0x91: // STA (indirect),Y
-            write_mem(get_indirect_y(cpu), cpu->a);
-            break;
+        case 0x91: { // STA (ind),Y
+            uint16_t a = get_indy_write(cpu);
+            write_mem(a, cpu->a);
+        } break;
 
         // ========== LOAD X REGISTER ==========
         case 0xA2: // LDX Immediate
@@ -556,7 +577,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             set_zn_flags(cpu, cpu->x);
             break;
         case 0xBE: // LDX Absolute,Y
-            cpu->x = read_mem(get_absy_address(cpu));
+            cpu->x = read_mem(get_absy_read(cpu));
             set_zn_flags(cpu, cpu->x);
             break;
 
@@ -589,7 +610,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             set_zn_flags(cpu, cpu->y);
             break;
         case 0xBC: // LDY Absolute,X
-            cpu->y = read_mem(get_absx_address(cpu));
+            cpu->y = read_mem(get_absx_read(cpu));
             set_zn_flags(cpu, cpu->y);
             break;
 
@@ -675,20 +696,17 @@ void execute(CPU* cpu, uint8_t opcode) {
             set_zn_flags(cpu, cpu->a);
             break;
         case 0x3D: // AND Absolute,X
-            cpu->a &= read_mem(get_absx_address(cpu));
+            cpu->a &= read_mem(get_absx_read(cpu));
             set_zn_flags(cpu, cpu->a);
             break;
-        case 0x39: // AND Absolute,Y
-            cpu->a &= read_mem(get_absy_address(cpu));
-            set_zn_flags(cpu, cpu->a);
+        case 0x39: cpu->a &= read_mem(get_absy_read(cpu)); set_zn_flags(cpu, cpu->a); 
             break;
+
         case 0x21: // AND (indirect,X)
             cpu->a &= read_mem(get_indirect_x(cpu));
             set_zn_flags(cpu, cpu->a);
             break;
-        case 0x31: // AND (indirect),Y
-            cpu->a &= read_mem(get_indirect_y(cpu));
-            set_zn_flags(cpu, cpu->a);
+        case 0x31: cpu->a &= read_mem(get_indirect_y_read(cpu)); set_zn_flags(cpu, cpu->a); 
             break;
 
         // ========== LOGICAL OPERATIONS - ORA ==========
@@ -708,22 +726,18 @@ void execute(CPU* cpu, uint8_t opcode) {
             cpu->a |= read_mem(get_abs_address(cpu));
             set_zn_flags(cpu, cpu->a);
             break;
-        case 0x1D: // ORA Absolute,X
-            cpu->a |= read_mem(get_absx_address(cpu));
+        case 0x1D:
+            cpu->a |= read_mem(get_absx_read(cpu));
             set_zn_flags(cpu, cpu->a);
             break;
-        case 0x19: // ORA Absolute,Y
-            cpu->a |= read_mem(get_absy_address(cpu));
-            set_zn_flags(cpu, cpu->a);
+        case 0x19: cpu->a |= read_mem(get_absy_read(cpu)); set_zn_flags(cpu, cpu->a); 
             break;
+
         case 0x01: // ORA (indirect,X)
             cpu->a |= read_mem(get_indirect_x(cpu));
             set_zn_flags(cpu, cpu->a);
             break;
-        case 0x11: // ORA (indirect),Y
-            cpu->a |= read_mem(get_indirect_y(cpu));
-            set_zn_flags(cpu, cpu->a);
-            break;
+        case 0x11: cpu->a |= read_mem(get_indirect_y_read(cpu)); set_zn_flags(cpu, cpu->a); break;
 
         // ========== LOGICAL OPERATIONS - EOR ==========
         case 0x49: // EOR Immediate
@@ -743,21 +757,17 @@ void execute(CPU* cpu, uint8_t opcode) {
             set_zn_flags(cpu, cpu->a);
             break;
         case 0x5D: // EOR Absolute,X
-            cpu->a ^= read_mem(get_absx_address(cpu));
+            cpu->a ^= read_mem(get_absx_read(cpu));
             set_zn_flags(cpu, cpu->a);
             break;
-        case 0x59: // EOR Absolute,Y
-            cpu->a ^= read_mem(get_absy_address(cpu));
-            set_zn_flags(cpu, cpu->a);
+        case 0x59: cpu->a ^= read_mem(get_absy_read(cpu)); set_zn_flags(cpu, cpu->a); 
             break;
+
         case 0x41: // EOR (indirect,X)
             cpu->a ^= read_mem(get_indirect_x(cpu));
             set_zn_flags(cpu, cpu->a);
             break;
-        case 0x51: // EOR (indirect),Y
-            cpu->a ^= read_mem(get_indirect_y(cpu));
-            set_zn_flags(cpu, cpu->a);
-            break;
+        case 0x51: cpu->a ^= read_mem(get_indirect_y_read(cpu)); set_zn_flags(cpu, cpu->a); break;
 
         // ========== ARITHMETIC - ADD ==========
         case 0x69: // ADC Immediate
@@ -772,11 +782,21 @@ void execute(CPU* cpu, uint8_t opcode) {
                 cpu->a = sum & 0xFF;
             }
             break;
-        case 0x65: do_adc(cpu, read_mem(get_zpg_address(cpu)));  break;
-        case 0x75: do_adc(cpu, read_mem(get_zpgx_address(cpu))); break;
-        case 0x6D: do_adc(cpu, read_mem(get_abs_address(cpu)));  break;
-        case 0x7D: do_adc(cpu, read_mem(get_absx_address(cpu))); break;
-        case 0x79: do_adc(cpu, read_mem(get_absy_address(cpu))); break;
+        case 0x65: 
+            do_adc(cpu, read_mem(get_zpg_address(cpu)));  
+            break;
+        case 0x75: 
+            do_adc(cpu, read_mem(get_zpgx_address(cpu))); 
+            break;
+        case 0x6D: 
+            do_adc(cpu, read_mem(get_abs_address(cpu)));  
+            break;
+        case 0x7D: 
+            do_adc(cpu, read_mem(get_absx_read(cpu)));
+            break;
+        case 0x79: 
+            do_adc(cpu, read_mem(get_absy_read(cpu)));
+            break;
         case 0x61: // ADC (indirect,X)
             {
                 uint8_t operand = read_mem(get_indirect_x(cpu));
@@ -791,7 +811,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             break;
         case 0x71: // ADC (indirect),Y
             {
-                uint8_t operand = read_mem(get_indirect_y(cpu));
+                uint8_t operand = read_mem(get_indirect_y_read(cpu));
                 uint16_t sum = cpu->a + operand + (cpu->status & CARRY_FLAG ? 1 : 0);
                 cpu->status = (cpu->status & ~(CARRY_FLAG|ZERO_FLAG|OVERFLOW_FLAG|NEGATIVE_FLAG)) |
                              (sum > 0xFF ? CARRY_FLAG : 0) |
@@ -827,11 +847,22 @@ void execute(CPU* cpu, uint8_t opcode) {
                 cpu->a = diff & 0xFF;
             }
             break;
-        case 0xE5: do_sbc(cpu, read_mem(get_zpg_address(cpu)));  break;
-        case 0xF5: do_sbc(cpu, read_mem(get_zpgx_address(cpu))); break;
-        case 0xED: do_sbc(cpu, read_mem(get_abs_address(cpu)));  break;
-        case 0xFD: do_sbc(cpu, read_mem(get_absx_address(cpu))); break;
-        case 0xF9: do_sbc(cpu, read_mem(get_absy_address(cpu))); break;
+        case 0xE5: 
+            do_sbc(cpu, read_mem(get_zpg_address(cpu)));  
+            break;
+        case 0xF5: 
+            do_sbc(cpu, read_mem(get_zpgx_address(cpu))); 
+            break;
+        case 0xED: 
+            do_sbc(cpu, read_mem(get_abs_address(cpu)));  
+            break;
+        case 0xFD: 
+            do_sbc(cpu, read_mem(get_absx_read(cpu)));
+            break;
+        case 0xF9: 
+            do_sbc(cpu, read_mem(get_absy_read(cpu))); 
+            break;
+
         case 0xE1: // SBC (indirect,X)
             {
                 uint16_t addr = get_indirect_x(cpu);
@@ -845,18 +876,8 @@ void execute(CPU* cpu, uint8_t opcode) {
                 cpu->a = diff & 0xFF;
             }
             break;
-        case 0xF1: // SBC (indirect),Y
-            {
-                uint16_t addr = get_indirect_y(cpu);
-                uint8_t operand = read_mem(addr);
-                uint16_t diff = cpu->a - operand - (cpu->status & CARRY_FLAG ? 0 : 1);
-                cpu->status = (cpu->status & ~(CARRY_FLAG|ZERO_FLAG|OVERFLOW_FLAG|NEGATIVE_FLAG)) |
-                             (diff < 0x100 ? CARRY_FLAG : 0) |
-                             ((diff & 0xFF) == 0 ? ZERO_FLAG : 0) |
-                             (((cpu->a ^ diff) & (~operand ^ diff) & 0x80) ? OVERFLOW_FLAG : 0) |
-                             (diff & 0x80 ? NEGATIVE_FLAG : 0);
-                cpu->a = diff & 0xFF;
-            }
+        case 0xF1:
+            do_sbc(cpu, read_mem(get_indirect_y_read(cpu)));
             break;
 
         // ========== COMPARISON ==========
@@ -885,22 +906,25 @@ void execute(CPU* cpu, uint8_t opcode) {
                         | ((cpu->a >= o) ? CARRY_FLAG : 0)
                         | ((r == 0) ? ZERO_FLAG : 0)
                         | (r & 0x80 ? NEGATIVE_FLAG : 0); } break;
-        case 0xDD: { uint8_t o = read_mem(get_absx_address(cpu)); uint8_t r = cpu->a - o;
+        case 0xDD: {
+            uint8_t o = read_mem(get_absx_read(cpu));
+            uint8_t r = cpu->a - o;
             cpu->status = (cpu->status & ~(CARRY_FLAG|ZERO_FLAG|NEGATIVE_FLAG))
                         | ((cpu->a >= o) ? CARRY_FLAG : 0)
                         | ((r == 0) ? ZERO_FLAG : 0)
-                        | (r & 0x80 ? NEGATIVE_FLAG : 0); } break;
-        case 0xD9: { uint8_t o = read_mem(get_absy_address(cpu)); uint8_t r = cpu->a - o;
+                        | (r & 0x80 ? NEGATIVE_FLAG : 0);
+        } break;
+        case 0xD9: { uint8_t o = read_mem(get_absy_read(cpu)); uint8_t r = cpu->a - o;
             cpu->status = (cpu->status & ~(CARRY_FLAG|ZERO_FLAG|NEGATIVE_FLAG))
-                        | ((cpu->a >= o) ? CARRY_FLAG : 0)
-                        | ((r == 0) ? ZERO_FLAG : 0)
+                        | ((cpu->a >= o)?CARRY_FLAG:0)
+                        | ((r==0)?ZERO_FLAG:0)
                         | (r & 0x80 ? NEGATIVE_FLAG : 0); } break;
         case 0xC1: { uint8_t o = read_mem(get_indirect_x(cpu));   uint8_t r = cpu->a - o;
             cpu->status = (cpu->status & ~(CARRY_FLAG|ZERO_FLAG|NEGATIVE_FLAG))
                         | ((cpu->a >= o) ? CARRY_FLAG : 0)
                         | ((r == 0) ? ZERO_FLAG : 0)
                         | (r & 0x80 ? NEGATIVE_FLAG : 0); } break;
-        case 0xD1: { uint8_t o = read_mem(get_indirect_y(cpu));   uint8_t r = cpu->a - o;
+        case 0xD1: { uint8_t o = read_mem(get_indirect_y_read(cpu));   uint8_t r = cpu->a - o;
             cpu->status = (cpu->status & ~(CARRY_FLAG|ZERO_FLAG|NEGATIVE_FLAG))
                         | ((cpu->a >= o) ? CARRY_FLAG : 0)
                         | ((r == 0) ? ZERO_FLAG : 0)
@@ -926,24 +950,18 @@ void execute(CPU* cpu, uint8_t opcode) {
                         | ((cpu->x >= o) ? CARRY_FLAG : 0)
                         | ((r == 0) ? ZERO_FLAG : 0)
                         | (r & 0x80 ? NEGATIVE_FLAG : 0); } break;
-
-        case 0xC0: // CPY Immediate
-            {
-                uint8_t operand = read_mem(cpu->pc++);
-                uint8_t result = cpu->y - operand;
+        case 0xC0: { uint8_t operand = read_mem(cpu->pc++); uint8_t result = cpu->y - operand;
                 cpu->status = (cpu->status & ~(CARRY_FLAG|ZERO_FLAG|NEGATIVE_FLAG)) |
                              ((cpu->y >= operand) ? CARRY_FLAG : 0) |
                              ((result == 0) ? ZERO_FLAG : 0) |
-                             (result & 0x80 ? NEGATIVE_FLAG : 0);
-            }
-            break;
+                             (result & 0x80 ? NEGATIVE_FLAG : 0); } break;
         case 0xC4: { uint8_t o = read_mem(get_zpg_address(cpu));  uint8_t r = cpu->y - o;
-            cpu->status = (cpu->status & ~(CARRY_FLAG|ZERO_FLAG|NEGATIVE_FLAG))
+                cpu->status = (cpu->status & ~(CARRY_FLAG|ZERO_FLAG|NEGATIVE_FLAG))
                         | ((cpu->y >= o) ? CARRY_FLAG : 0)
                         | ((r == 0) ? ZERO_FLAG : 0)
                         | (r & 0x80 ? NEGATIVE_FLAG : 0); } break;
         case 0xCC: { uint8_t o = read_mem(get_abs_address(cpu));  uint8_t r = cpu->y - o;
-            cpu->status = (cpu->status & ~(CARRY_FLAG|ZERO_FLAG|NEGATIVE_FLAG))
+                cpu->status = (cpu->status & ~(CARRY_FLAG|ZERO_FLAG|NEGATIVE_FLAG))
                         | ((cpu->y >= o) ? CARRY_FLAG : 0)
                         | ((r == 0) ? ZERO_FLAG : 0)
                         | (r & 0x80 ? NEGATIVE_FLAG : 0); } break;
@@ -1017,11 +1035,29 @@ void execute(CPU* cpu, uint8_t opcode) {
             }
             break;
         case 0x36: // ROL Zero Page,X
-            { uint16_t a = get_zpgx_address(cpu); uint8_t v = read_mem(a); rol(cpu, &v); write_mem(a, v); } break;
+            { 
+                uint16_t a = get_zpgx_address(cpu); 
+                uint8_t v = read_mem(a); 
+                rol(cpu, &v); 
+                write_mem(a, v); 
+            } 
+            break;
         case 0x2E: // ROL Absolute
-            { uint16_t a = get_abs_address(cpu);  uint8_t v = read_mem(a); rol(cpu, &v); write_mem(a, v); } break;
+            { 
+                uint16_t a = get_abs_address(cpu);  
+                uint8_t v = read_mem(a); 
+                rol(cpu, &v); 
+                write_mem(a, v); 
+            } 
+            break;
         case 0x3E: // ROL Absolute,X
-            { uint16_t a = get_absx_address(cpu); uint8_t v = read_mem(a); rol(cpu, &v); write_mem(a, v); } break;
+            { 
+                uint16_t a = get_absx_address(cpu); 
+                uint8_t v = read_mem(a); 
+                rol(cpu, &v); 
+                write_mem(a, v); 
+            } 
+            break;
 
         // ========== ROTATE RIGHT ==========
         case 0x6A: // ROR A
@@ -1087,7 +1123,12 @@ void execute(CPU* cpu, uint8_t opcode) {
             }
             break;
         case 0xFE: // INC Absolute,X
-            { uint16_t a = get_absx_address(cpu); uint8_t v = read_mem(a) + 1; write_mem(a, v); set_zn_flags(cpu, v); } break;
+            { uint16_t a = get_absx_address(cpu); 
+                uint8_t v = read_mem(a) + 1; 
+                write_mem(a, v); 
+                set_zn_flags(cpu, v); 
+            } 
+            break;
 
         // ========== DECREMENT MEMORY ==========
         case 0xC6: // DEC Zero Page
@@ -1115,7 +1156,12 @@ void execute(CPU* cpu, uint8_t opcode) {
             }
             break;
         case 0xDE: // DEC Absolute,X
-            { uint16_t a = get_absx_address(cpu); uint8_t v = read_mem(a) - 1; write_mem(a, v); set_zn_flags(cpu, v); } break;
+            { 
+                uint16_t a = get_absx_address(cpu); 
+                uint8_t v = read_mem(a) - 1; write_mem(a, v); 
+                set_zn_flags(cpu, v); 
+            } 
+            break;
 
         // ========== UNDOCUMENTED OPCODES - NOPs ==========
         // One-byte NOPs with zero page operand
@@ -1289,29 +1335,29 @@ int cpu_step(CPU* cpu) {
     cpu->extra_cycles = 0;
     execute(cpu, opcode);
 
-    // How many cycles did that opcode consume?
     int cycles = cyc[opcode] + cpu->extra_cycles;
-
-    // Advance APU timing by *actual* CPU cycles
     apu_step(&apu, cycles);
 
-    // ----- IRQ decision (6502 latency) -----
-    int cli_phase = cpu->irq_delay;           // 2: block, 1: allow once ignoring I, 0: normal
-    if (cpu->irq_delay > 0) cpu->irq_delay--; // decay the phase
+    // ----- NMOS 6502 interrupt timing windows -----
+    // CLI/PLP (1->0): block once; SEI (0->1): allow once ignoring I
+    bool cli_block_once = false;
+    bool sei_allow_once = false;
 
-    bool just_set_I = (cpu->sei_delay != 0);  // SEI creates a 0→1 window
-    bool irq_line   = apu_irq_pending(&apu);
+    if (cpu->irq_delay) { cli_block_once = true; cpu->irq_delay = 0; }
+    if (cpu->sei_delay) { sei_allow_once = true; cpu->sei_delay = 0; }
 
-    // If SEI just executed, treat I as 0 for this boundary.
-    bool i_effective = (cpu->status & INTERRUPT_FLAG) && !just_set_I;
+    bool irq_line = apu_irq_pending(&apu);
+    bool I = (cpu->status & INTERRUPT_FLAG) != 0;
 
-    bool block_due_to_cli = (cli_phase == 2) && !just_set_I;   // SEI overrides CLI block
-    bool ignore_I_once    = (cli_phase == 1) || just_set_I;    // allow ignoring I
-
-    if (irq_line && !block_due_to_cli) {
-        bool gate = ignore_I_once ? false : i_effective;
-        if (!gate) cpu_irq(cpu);
+    if (irq_line) {
+        if (sei_allow_once) {
+            // SEI grace window: take one IRQ even though I=1
+            cpu_irq(cpu);
+        } else if (!I && !cli_block_once) {
+            // Normal IRQ entry when I clear and not in CLI latency
+            cpu_irq(cpu);
+        }
     }
-    cpu->sei_delay = 0; // consume the SEI one-shot
+
     return cycles;
 }

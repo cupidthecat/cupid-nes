@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <string.h>
 #include "rom.h"
+#include "mapper.h"
 
 #define PRG_ROM_BANK_SIZE 0x4000  // 16KB
 #define CHR_ROM_BANK_SIZE 0x2000  // 8KB
@@ -57,13 +58,6 @@ int load_rom(const char *filename) {
     prg_size = (size_t)ines_header.prg_rom_chunks * PRG_ROM_BANK_SIZE;
     chr_size = (size_t)ines_header.chr_rom_chunks * CHR_ROM_BANK_SIZE;
 
-    // ---- HARD GUARDS to prevent overflow ----
-    if (prg_size == 0 || prg_size > sizeof(prg_rom)) {
-        fprintf(stderr, "Unsupported PRG size: %zu (max %zu)\n",
-                prg_size, sizeof(prg_rom));
-        fclose(fp);
-        return -1;
-    }
 
     if (fread(prg_rom, 1, prg_size, fp) != prg_size) {
         fprintf(stderr, "Failed to read PRG-ROM (%zu bytes)\n", prg_size);
@@ -91,11 +85,27 @@ int load_rom(const char *filename) {
 
     fclose(fp);
 
-    // If only one 16KB PRG bank, mirror it into the upper half
+    // If only one 16KB PRG bank, mirror it into the upper half (legacy convenience)
     if (prg_size == PRG_ROM_BANK_SIZE) {
         memcpy(&prg_rom[PRG_ROM_BANK_SIZE], prg_rom, PRG_ROM_BANK_SIZE);
-        prg_size = 0x8000; // now effectively 32KB mapped
+        prg_size = 0x8000;
     }
+
+    // ===== NEW: initialize cartridge mapper =====
+    int mapper_no = mapper_init_from_header(&ines_header, prg_rom, prg_size, chr_rom, chr_size);
+
+    // Keep the old global in sync so PPU mirroring stays correct
+    Mirroring m = cart_get_mirroring();
+    switch (m) {
+        case MIRROR_HORIZONTAL: mirroring_mode = 0; break;
+        case MIRROR_VERTICAL:   mirroring_mode = 1; break;
+        case MIRROR_SINGLE0:    mirroring_mode = 2; break;
+        case MIRROR_SINGLE1:    mirroring_mode = 3; break;
+        default:                /* four-screen */   mirroring_mode = 1; break;
+    }
+
+    printf("Mapper: %d  (CHR %s)\n", mapper_no, (ines_header.chr_rom_chunks==0) ? "RAM" : "ROM");
+    return 0;
 
     return 0;
 }

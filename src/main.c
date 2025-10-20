@@ -8,6 +8,7 @@
 #include "../include/globals.h"
 #include "apu/apu.h"
 #include <time.h>
+#include "rom/mapper.h"
 
 // Constants for NTSC NES timing:
 const double CPU_FREQ = 1789773.0;              // CPU frequency in Hz
@@ -62,6 +63,9 @@ int main(int argc, char *argv[]) {
         printf("If you haven't implemented mapper support, expect memory mapping issues (and segfaults).\n");
     }
     
+    printf("Mapper detected: %d\n", ((ines_header.flags7 & 0xF0) | ((ines_header.flags6 & 0xF0) >> 4)));
+
+
     // Initialize CPU
     CPU cpu = {0};
     printf("Resetting CPU...\n");
