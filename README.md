@@ -74,6 +74,47 @@ Supports loading NES ROMs in the standard iNES file format. The loader extracts:
 - Display of background and sprite layers
 - 2x pixel scaling for better visibility
 
+## Test Results
+
+The emulator has been tested with various NES test ROMs to verify correct implementation of CPU instructions, PPU functionality, and overall emulation accuracy.
+
+### CPU Tests
+
+**Nestest Results**
+![NES Test 1](img/nes_test1.png)
+![NES Test 2](img/nes_test2.png)
+
+The nestest ROM validates CPU instruction execution, addressing modes, and flag behavior. Both test screens show successful completion with all tests passing.
+
+**CPU Execution Space Tests**
+![CPU Execution Space PPU I/O](img/test_cpu_exec_space_ppuio.png)
+
+This test verifies proper CPU execution in PPU I/O space, ensuring correct memory mapping and register behavior.
+
+### PPU and Graphics Tests
+
+**Color Test**
+![Color Test](img/color_test.png)
+
+The color test validates the PPU's palette rendering capabilities, showing proper color output and palette management.
+
+**CLI Latency Test**
+![CLI Latency](img/1-cli_latency.png)
+
+This test verifies interrupt handling and timing accuracy, particularly for CLI (Clear Interrupt Disable) instruction behavior.
+
+### Test ROMs Included
+
+The project includes several test ROMs for validation:
+- `nestest.nes` - Comprehensive CPU instruction testing
+- `1-cli_latency.nes` - Interrupt timing validation
+- `color_test.nes` - PPU color and palette testing
+- `test_cpu_exec_space_ppuio.nes` - CPU execution in PPU I/O space
+- `test_cpu_exec_space_apu.nes` - CPU execution in APU space
+
+
+All tests demonstrate successful emulation of the NES hardware components.
+
 ## Project Structure
 
 ```
