@@ -14,52 +14,112 @@ extern uint8_t ppu_vram[PPU_VRAM_SIZE];
 extern uint8_t ppu_palette[PPU_PALETTE_SIZE];
 PPU ppu;
 
+// Helpers ----------------------------------------------------------------
+static inline void set_open_bus(uint8_t v) { ppu.open_bus = v; }
+static inline uint8_t get_open_bus(void)   { return ppu.open_bus; }
 
 // $2000–$2007
 uint8_t ppu_reg_read(uint16_t reg) {
     switch (reg & 7) {
+        case 0: // PPUCTRL (read = open bus)
+        case 1: // PPUMASK (read = open bus)
+        case 3: // OAMADDR (read = open bus)
+        case 5: // PPUSCROLL (read = open bus)
+        case 6: // PPUADDR (read = open bus)
+            return get_open_bus();
+
         case 2: { // PPUSTATUS
-            uint8_t s = ppu.status;
-            ppu.status &= ~0x80;     // clear VBlank flag on read
-            ppu.vram_latch = 0;      // reset address/scroll latch
-            return s;
+            uint8_t ob = get_open_bus();
+            uint8_t ret = (ppu.status & 0xE0) | (ob & 0x1F);
+        
+            // ✅ latch exactly what was on the CPU data bus
+            set_open_bus(ret);
+        
+            // side effects
+            ppu.status &= ~0x80; // clear VBlank
+            ppu.w = 0;           // reset $2005/$2006 toggle
+            return ret;
         }
-        case 4: return ppu.oam[ppu.oam_addr];
-        case 7: {
-            uint8_t v = ppu_read(ppu.vram_addr);
-            ppu.vram_addr += (ppu.ctrl & 0x04) ? 32 : 1;
+        case 4: { // OAMDATA
+            uint8_t v = ppu.oam[ppu.oam_addr];
+            set_open_bus(v);
             return v;
         }
-        default: return 0; // others are write-only or not needed for this ROM
+        case 7: { // PPUDATA (read)
+            uint16_t addr = ppu.v & 0x3FFF;
+            uint8_t ret;
+            if (addr >= 0x3F00 && addr < 0x4000) {
+                // palette reads bypass the buffer
+                ret = ppu_read(addr);
+                set_open_bus(ret);
+            } else {
+                // CPU gets buffered old byte; bus sees the newly fetched one
+                ret = ppu.ppudata_buffer;
+                uint8_t fetched = ppu_read(addr);
+                ppu.ppudata_buffer = fetched;
+                set_open_bus(fetched);          // <-- important
+            }
+            ppu.v += (ppu.ctrl & 0x04) ? 32 : 1;
+            return ret;
+        }
     }
 }
 
 void ppu_reg_write(uint16_t reg, uint8_t value) {
+    set_open_bus(value); // any write to PPU updates open bus
     switch (reg & 7) {
-        case 0: ppu.ctrl = value; break;           // PPUCTRL
-        case 1: ppu.mask = value; break;           // PPUMASK
-        case 3: ppu.oam_addr = value; break;       // OAMADDR
-        case 4: ppu.oam[ppu.oam_addr++] = value; break; // OAMDATA
-        case 5: {                                  // PPUSCROLL
-            if (!ppu.vram_latch) ppu.scroll_x = value;
-            else                 ppu.scroll_y = value;
-            ppu.vram_latch ^= 1;
+        case 0: // PPUCTRL
+            ppu.ctrl = value;
+            // t: ....BA.. ........ = value & 0x03 (nametable select)
+            ppu.t = (ppu.t & ~0x0C00) | ((value & 0x03) << 10);
             break;
-        }
-        case 6: {                                  // PPUADDR
-            if (!ppu.vram_latch) ppu.vram_addr = ((uint16_t)(value & 0x3F) << 8);
-            else                  ppu.vram_addr = (ppu.vram_addr & 0xFF00) | value;
-            ppu.vram_latch ^= 1;
+        case 1: // PPUMASK
+            ppu.mask = value;
             break;
-        }
-        case 7: {                                  // PPUDATA
-            // Debug probe for palette writes
-            if (ppu.vram_addr >= 0x3F00 && ppu.vram_addr < 0x3F20) {
-                printf("PAL[%04X] = %02X\n", ppu.vram_addr, value);
+        case 3: // OAMADDR
+            ppu.oam_addr = value;
+            break;
+        case 4: // OAMDATA
+            ppu.oam[ppu.oam_addr++] = value;
+            break;
+        case 5: { // PPUSCROLL
+            if (ppu.w == 0) {
+                // first write: X scroll and coarse X
+                ppu.x = value & 0x07;
+                ppu.t = (ppu.t & ~0x001F) | (value >> 3);
+                ppu.w = 1;
+            } else {
+                // second write: coarse Y and fine Y
+                ppu.t = (ppu.t & ~0x73E0)
+                      | ((value & 0x07) << 12)   // fine Y (bits 12-14)
+                      | ((value & 0xF8) << 2);   // coarse Y (bits 5-9)
+                ppu.w = 0;
             }
-            ppu_write(ppu.vram_addr, value);
-            ppu.vram_addr += (ppu.ctrl & 0x04) ? 32 : 1;
             break;
+        }
+        case 6: { // PPUADDR
+            if (ppu.w == 0) {
+                // high byte (masked to 6 bits)
+                ppu.t = (ppu.t & 0x00FF) | ((uint16_t)(value & 0x3F) << 8);
+                ppu.w = 1;
+            } else {
+                // low byte; commit to v
+                ppu.t = (ppu.t & 0xFF00) | value;
+                ppu.v = ppu.t;
+                ppu.w = 0;
+            }
+            break;
+        }
+        case 7: { // PPUDATA (write)
+            uint16_t addr = ppu.v & 0x3FFF;
+            ppu_write(addr, value);            
+        
+            // Common quirk: palette writes update the internal buffer as if reading $xF00
+            if (addr >= 0x3F00 && addr < 0x4000) {
+                ppu.ppudata_buffer = ppu_read(addr - 0x1000);
+            }
+            ppu.v += (ppu.ctrl & 0x04) ? 32 : 1;
+            break;                               // <-- no return here
         }
     }
 }
@@ -234,15 +294,16 @@ uint8_t ppu_read(uint16_t addr) {
         if((addr & 0x03) == 0) addr &= 0x0F;
         return ppu_palette[addr];
     }
-    
-    // Nametable read: apply mirroring.
+
+    // Nametables 0x2000–0x3EFF (with mirroring)
     if(addr >= 0x2000 && addr < 0x3F00) {
         uint16_t effective_addr = mirror_nametable_addr(addr);
         return ppu_vram[effective_addr];
     }
-    
-    // Pattern tables and others.
-    return ppu_vram[addr];
+
+    // Pattern tables 0x0000–0x1FFF: come from CHR (ROM/RAM on cart)
+    // Index safely into 8KB (mask 0x1FFF).
+    return chr_rom[addr & 0x1FFF];
 }
 
 // PPU Register Write
@@ -256,26 +317,37 @@ void ppu_write(uint16_t addr, uint8_t value) {
         ppu_palette[addr] = value;
         return;
     }
-    
+
+    // Pattern tables (CHR). If the cart uses CHR-RAM, writes should stick; with CHR-ROM they
+    // are typically ignored. For the test ROMs, allowing writes is fine.
+    if (addr < 0x2000) {
+        chr_rom[addr & 0x1FFF] = value;
+        return;
+    }
+
     if(addr >= 0x2000 && addr < 0x3F00) {
         uint16_t effective_addr = mirror_nametable_addr(addr);
         ppu_vram[effective_addr] = value;
         return;
     }
-    
-    ppu_vram[addr] = value;
+
+    // 0x3F00–0x3FFF handled above; nothing else is writable here.
 }
 
 // Reset PPU to initial state
 void ppu_reset(PPU* ppu) {
     ppu->ctrl = 0;
     ppu->mask = 0;
-    ppu->status = 0x00; // Status bits 5 and 7 are always set
+    ppu->status = 0x00;
     ppu->oam_addr = 0;
     ppu->scroll_x = 0;
     ppu->scroll_y = 0;
-    ppu->vram_addr = 0;
-    ppu->vram_latch = 0;
+    ppu->v = 0;
+    ppu->t = 0;
+    ppu->x = 0;
+    ppu->w = 0;
+    ppu->ppudata_buffer = 0;
+    ppu->open_bus = 0;
     
     // Clear OAM
     for (int i = 0; i < PPU_OAM_SIZE; i++) {

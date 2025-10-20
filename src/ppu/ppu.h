@@ -27,10 +27,19 @@ typedef struct {
     uint8_t mask;       // PPUMASK
     uint8_t status;     // PPUSTATUS
     uint8_t oam_addr;   // OAMADDR
-    uint8_t scroll_x;   // PPUSCROLL X
+    uint8_t scroll_x;   // PPUSCROLL X (fine X is 'x' below)
     uint8_t scroll_y;   // PPUSCROLL Y
-    uint16_t vram_addr; // PPUADDR
-    uint8_t vram_latch; // Internal VRAM address latch
+
+    // Loopy registers / VRAM addressing
+    uint16_t v;         // current VRAM address (15 bits)
+    uint16_t t;         // temporary VRAM address (15 bits)
+    uint8_t  x;         // fine X scroll (3 bits)
+    uint8_t  w;         // write toggle for $2005/$2006 (0 or 1)
+
+    // PPUDATA read buffer and open bus
+    uint8_t ppudata_buffer;
+    uint8_t open_bus;
+
     uint8_t oam[PPU_OAM_SIZE]; // Object Attribute Memory
     uint8_t secondary_oam[32]; // Secondary OAM for sprite evaluation
     uint8_t sprite_count;      // Number of sprites found on current scanline
@@ -38,6 +47,7 @@ typedef struct {
     uint8_t sprite_patterns[8];  // Sprite pattern data
     uint8_t sprite_attributes[8]; // Sprite attributes
     bool sprite_zero_hit;  // Sprite Zero Hit flag
+    
 } PPU;
 
 // PPU Memory
@@ -67,13 +77,11 @@ uint32_t get_color(uint8_t pixel);
 void render_background(uint32_t *framebuffer);
 void start_frame();
 void ppu_render_frame(SDL_Renderer *renderer, SDL_Texture *texture);
-
 uint8_t ppu_reg_read(uint16_t reg);
-void    ppu_reg_write(uint16_t reg, uint8_t value);
-void    ppu_oam_dma(uint8_t page);
-void    ppu_begin_vblank(void);
-void    ppu_end_vblank(void);
+void ppu_reg_write(uint16_t reg, uint8_t value);
+void ppu_oam_dma(uint8_t page);
+void ppu_begin_vblank(void);
+void ppu_end_vblank(void);
 void render_sprites(uint32_t *framebuffer);
-
 
 #endif // PPU_H

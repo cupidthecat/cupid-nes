@@ -19,33 +19,34 @@ void cpu_reset(CPU* cpu) {
 }
 
 uint8_t read_mem(uint16_t addr) {
-    if (addr <= 0x1FFF) return ram[addr & 0x07FF];
-    else if (addr >= 0x2000 && addr <= 0x3FFF) {
+    // PPU regs: PPU handler manages open bus & side effects
+    if (addr >= 0x2000 && addr <= 0x3FFF) {
         uint16_t reg = 0x2000 | (addr & 7);
         return ppu_reg_read(reg);
-    } else if (addr == 0x4016) {
-        return joypad_read(&pad1);  // Changed from apu_io[0x16]
-    } else if (addr == 0x4017) {
-        return joypad_read(&pad2);  // Added joypad 2 support
-    } else if (addr <= 0x401F) {
-        return apu_io[addr - 0x4000];
-    } else if (addr >= 0x8000) {
-        return prg_rom[addr - 0x8000];
     }
-    return 0;
+
+    // Normal CPU reads must NOT change ppu.open_bus
+    if (addr <= 0x1FFF) return ram[addr & 0x07FF];
+    if (addr == 0x4016) return joypad_read(&pad1);
+    if (addr == 0x4017) return joypad_read(&pad2);
+    if (addr <= 0x401F) return apu_io[addr - 0x4000];
+    if (addr >= 0x8000)  return prg_rom[addr - 0x8000];
+    return 0x00;
 }
 
 void write_mem(uint16_t addr, uint8_t value) {
+    // Normal CPU writes must NOT change ppu.open_bus
     if (addr <= 0x1FFF) { ram[addr & 0x07FF] = value; return; }
     if (addr >= 0x2000 && addr <= 0x3FFF) { ppu_reg_write(0x2000 | (addr & 7), value); return; }
-    if (addr == 0x4014) { ppu_oam_dma(value); return; }  // OAM DMA copy
-    if (addr == 0x4016) {          // STROBE
-        joypad_write_strobe(&pad1, value);
-        joypad_write_strobe(&pad2, value);
-        return;
-    }
+    if (addr == 0x4014) { ppu_oam_dma(value); return; }
+    if (addr == 0x4016) { joypad_write_strobe(&pad1, value); joypad_write_strobe(&pad2, value); return; }
     if (addr <= 0x401F) { apu_io[addr - 0x4000] = value; return; }
-    /* writes to ROM usually ignored */
+    // writes to $4020-$FFFF ignored
+}
+
+// Helper function to read the next byte without advancing the PC
+static inline void dummy_read_next(CPU* cpu) {
+    (void)read_mem(cpu->pc);   // PC already points to the byte after the opcode
 }
 
 void cpu_nmi(CPU* cpu) {
@@ -178,7 +179,8 @@ static uint16_t get_indirect_y(CPU* cpu) {
 
 // Absolute Indirect (for JMP)
 static uint16_t get_abs_indirect(CPU* cpu) {
-    uint16_t ptr = get_abs_address(cpu);
+    uint16_t ptr = read_mem(cpu->pc++);
+    ptr |= read_mem(cpu->pc++) << 8;
     // Handle 6502 page boundary bug
     return read_mem(ptr) | (read_mem((ptr & 0xFF00) | ((ptr + 1) & 0xFF)) << 8);
 }
@@ -196,15 +198,34 @@ static inline void inc_then_sbc(CPU* cpu, uint16_t addr) {
 void execute(CPU* cpu, uint8_t opcode) {
     switch(opcode) {
         // ========== CONTROL FLOW ==========
-        case 0x00: // BRK
-            cpu->status |= BREAK_FLAG;
-            break;
+        case 0x00: { // BRK
+            // 1) Dummy read of the signature byte *and* advance PC (BRK behaves like 2-byte)
+            (void)read_mem(cpu->pc++);
+        
+            // 2) Push return address = PC after the dummy read (i.e., address of next instruction)
+            uint16_t ret = cpu->pc;
+            write_mem(0x0100 + cpu->sp--, (ret >> 8) & 0xFF);
+            write_mem(0x0100 + cpu->sp--, ret & 0xFF);
+        
+            // 3) Push status with B=1, U=1
+            uint8_t p = (cpu->status | BREAK_FLAG | UNUSED_FLAG);
+            write_mem(0x0100 + cpu->sp--, p);
+        
+            // 4) Set I
+            cpu->status |= INTERRUPT_FLAG;
+        
+            // 5) Load IRQ/BRK vector
+            cpu->pc = read_mem(0xFFFE) | (read_mem(0xFFFF) << 8);
+        } break;        
         case 0xEA: // NOP
+            dummy_read_next(cpu);  // Add dummy read for 1-byte NOP
             break;
         case 0x4C: // JMP Absolute
             {
                 uint16_t addr = read_mem(cpu->pc);
-                addr |= read_mem(cpu->pc + 1) << 8;
+                cpu->pc++;
+                addr |= read_mem(cpu->pc) << 8;
+                cpu->pc++;
                 cpu->pc = addr;
             }
             break;
@@ -213,31 +234,40 @@ void execute(CPU* cpu, uint8_t opcode) {
             break;
 
         // ========== SUBROUTINES ==========
-        case JSR_OPCODE: // JSR - Jump to Subroutine
-            {
-                uint8_t low = read_mem(cpu->pc);
-                uint8_t high = read_mem(cpu->pc + 1);
-                cpu->pc += 2;
-                uint16_t target_addr = (high << 8) | low;
-                uint16_t return_addr = cpu->pc - 1;
-                write_mem(0x0100 + cpu->sp, (return_addr >> 8) & 0xFF);
-                cpu->sp--;
-                write_mem(0x0100 + cpu->sp, return_addr & 0xFF);
-                cpu->sp--;
-                cpu->pc = target_addr;
-            }
-            break;
-        case RTS_OPCODE: // RTS - Return from Subroutine
-            {
-                cpu->sp++;
-                uint8_t low = read_mem(0x0100 + cpu->sp);
-                cpu->sp++;
-                uint8_t high = read_mem(0x0100 + cpu->sp);
-                uint16_t return_addr = (high << 8) | low;
-                cpu->pc = return_addr + 1;
-            }
-            break;
+        case JSR_OPCODE: // 0x20
+        {
+            uint8_t low = read_mem(cpu->pc);
+            uint8_t high = read_mem(cpu->pc + 1);
+            cpu->pc += 2;  // PC now points to the instruction after JSR
+            
+            // Push return address (which is PC - 1, the last byte of JSR instruction)
+            uint16_t return_addr = cpu->pc - 1;
+            write_mem(0x0100 + cpu->sp, (return_addr >> 8) & 0xFF);
+            cpu->sp--;
+            write_mem(0x0100 + cpu->sp, return_addr & 0xFF);
+            cpu->sp--;
+            
+            uint16_t target_addr = (high << 8) | low;
+            cpu->pc = target_addr;
+        }
+        break;
+        
+        // FIXED: RTS - Return from Subroutine
+        case RTS_OPCODE: // 0x60
+        {
+            dummy_read_next(cpu);  // Required dummy fetch
+            cpu->sp++;
+            uint8_t low  = read_mem(0x0100 + cpu->sp);
+            cpu->sp++;
+            uint8_t high = read_mem(0x0100 + cpu->sp);
+            uint16_t return_addr = (high << 8) | low;
+            
+            // Return address on stack is the last byte of JSR, so add 1 to skip past it
+            cpu->pc = return_addr + 1;
+        }
+        break;
         case 0x40: // RTI - Return from Interrupt
+            dummy_read_next(cpu);
             cpu->sp++;
             cpu->status = read_mem(0x0100 + cpu->sp);
             cpu->sp++;
@@ -248,22 +278,26 @@ void execute(CPU* cpu, uint8_t opcode) {
 
         // ========== STACK OPERATIONS ==========
         case 0x48: // PHA - Push Accumulator
+            dummy_read_next(cpu);  // Add dummy read for 1-byte PHA
             if (cpu->sp == 0x00) { printf("Stack overflow!\n"); return; }
             write_mem(0x0100 + cpu->sp, cpu->a);
             cpu->sp--;
             break;
         case 0x68: // PLA - Pull Accumulator
+            dummy_read_next(cpu);  // Add dummy read for 1-byte PLA
             if (cpu->sp == 0xFF) { printf("Stack underflow!\n"); return; }
             cpu->sp++;
             cpu->a = read_mem(0x0100 + cpu->sp);
             set_zn_flags(cpu, cpu->a);
             break;
         case 0x08: // PHP - Push Processor Status
+            dummy_read_next(cpu);  // Add dummy read for 1-byte PHP
             if (cpu->sp == 0x00) { printf("Stack overflow!\n"); return; }
             write_mem(0x0100 + cpu->sp, cpu->status);
             cpu->sp--;
             break;
         case 0x28: // PLP - Pull Processor Status
+            dummy_read_next(cpu);  // Add dummy read for 1-byte PLP
             if (cpu->sp == 0xFF) { printf("Stack underflow!\n"); return; }
             cpu->sp++;
             cpu->status = read_mem(0x0100 + cpu->sp);
@@ -297,24 +331,31 @@ void execute(CPU* cpu, uint8_t opcode) {
 
         // ========== FLAGS ==========
         case 0x18: // CLC - Clear Carry Flag
+            dummy_read_next(cpu);  // Add dummy read for 1-byte CLC
             cpu->status &= ~CARRY_FLAG;
             break;
         case 0x38: // SEC - Set Carry Flag
+            dummy_read_next(cpu);  // Add dummy read for 1-byte SEC
             cpu->status |= CARRY_FLAG;
             break;
         case 0xD8: // CLD - Clear Decimal Flag
+            dummy_read_next(cpu);  // Add dummy read for 1-byte CLD
             cpu->status &= ~DECIMAL_FLAG;
             break;
         case 0xF8: // SED - Set Decimal Flag
+            dummy_read_next(cpu);  // Add dummy read for 1-byte SED
             cpu->status |= DECIMAL_FLAG;
             break;
         case 0x58: // CLI - Clear Interrupt Flag
+            dummy_read_next(cpu);  // Add dummy read for 1-byte CLI
             cpu->status &= ~INTERRUPT_FLAG;
             break;
         case 0x78: // SEI - Set Interrupt Flag
+            dummy_read_next(cpu);  // Add dummy read for 1-byte SEI
             cpu->status |= INTERRUPT_FLAG;
             break;
         case 0xB8: // CLV - Clear Overflow Flag
+            dummy_read_next(cpu);  // Add dummy read for 1-byte CLV
             cpu->status &= ~OVERFLOW_FLAG;
             break;
 
@@ -443,43 +484,53 @@ void execute(CPU* cpu, uint8_t opcode) {
 
         // ========== REGISTER TRANSFERS ==========
         case 0xAA: // TAX - Transfer A to X
+            dummy_read_next(cpu);  // Add dummy read for 1-byte TAX
             cpu->x = cpu->a;
             set_zn_flags(cpu, cpu->x);
             break;
         case 0x8A: // TXA - Transfer X to A
+            dummy_read_next(cpu);  // Add dummy read for 1-byte TXA
             cpu->a = cpu->x;
             set_zn_flags(cpu, cpu->a);
             break;
         case 0xA8: // TAY - Transfer A to Y
+            dummy_read_next(cpu);  // Add dummy read for 1-byte TAY
             cpu->y = cpu->a;
             set_zn_flags(cpu, cpu->y);
             break;
         case 0x98: // TYA - Transfer Y to A
+            dummy_read_next(cpu);  // Add dummy read for 1-byte TYA
             cpu->a = cpu->y;
             set_zn_flags(cpu, cpu->a);
             break;
         case 0xBA: // TSX - Transfer SP to X
+            dummy_read_next(cpu);  // Add dummy read for 1-byte TSX
             cpu->x = cpu->sp;
             set_zn_flags(cpu, cpu->x);
             break;
         case 0x9A: // TXS - Transfer X to SP
+            dummy_read_next(cpu);  // Add dummy read for 1-byte TXS
             cpu->sp = cpu->x;
             break;
 
         // ========== INCREMENT/DECREMENT REGISTERS ==========
         case 0xE8: // INX - Increment X
+            dummy_read_next(cpu);  // Add dummy read for 1-byte INX
             cpu->x++;
             set_zn_flags(cpu, cpu->x);
             break;
         case 0xCA: // DEX - Decrement X
+            dummy_read_next(cpu);  // Add dummy read for 1-byte DEX
             cpu->x--;
             set_zn_flags(cpu, cpu->x);
             break;
         case 0xC8: // INY - Increment Y
+            dummy_read_next(cpu);  // Add dummy read for 1-byte INY
             cpu->y++;
             set_zn_flags(cpu, cpu->y);
             break;
         case 0x88: // DEY - Decrement Y
+            dummy_read_next(cpu);  // Add dummy read for 1-byte DEY
             cpu->y--;
             set_zn_flags(cpu, cpu->y);
             break;
@@ -798,6 +849,7 @@ void execute(CPU* cpu, uint8_t opcode) {
 
         // ========== SHIFT LEFT ==========
         case 0x0A: // ASL A
+            dummy_read_next(cpu);  // Add dummy read for 1-byte ASL A
             asl(cpu, &cpu->a);
             break;
         case 0x06: // ASL Zero Page
@@ -817,6 +869,7 @@ void execute(CPU* cpu, uint8_t opcode) {
 
         // ========== SHIFT RIGHT ==========
         case 0x4A: // LSR A
+            dummy_read_next(cpu);  // Add dummy read for 1-byte LSR A
             lsr(cpu, &cpu->a);
             break;
         case 0x46: // LSR Zero Page
@@ -830,6 +883,7 @@ void execute(CPU* cpu, uint8_t opcode) {
 
         // ========== ROTATE LEFT ==========
         case 0x2A: // ROL A
+            dummy_read_next(cpu);  // Add dummy read for 1-byte ROL A
             rol(cpu, &cpu->a);
             break;
         case 0x26: // ROL Zero Page
@@ -849,6 +903,7 @@ void execute(CPU* cpu, uint8_t opcode) {
 
         // ========== ROTATE RIGHT ==========
         case 0x6A: // ROR A
+            dummy_read_next(cpu);  // Add dummy read for 1-byte ROR A
             ror(cpu, &cpu->a);
             break;
         case 0x66: // ROR Zero Page
@@ -957,13 +1012,15 @@ void execute(CPU* cpu, uint8_t opcode) {
         case 0x1C: case 0x3C: case 0x5C: case 0x7C: case 0xDC: case 0xFC:
             cpu->pc += 2;
             break;
-        // Implied NOPs (1 byte)
+        // Implied NOPs (1 byte) - Add dummy reads
         case 0x1A: case 0x3A: case 0x5A: case 0x7A: case 0xDA: case 0xFA:
+            dummy_read_next(cpu);  // Add dummy read for undocumented implied NOPs
             break;
-        // Halt-like opcodes
+        // Halt-like opcodes - Add dummy reads
         case 0x02: case 0x12: case 0x22: case 0x32:
         case 0x42: case 0x52: case 0x62: case 0x72:
         case 0x92: case 0xB2: case 0xD2: case 0xF2:
+            dummy_read_next(cpu);  // Add dummy read for halt-like opcodes
             break;
         // Immediate NOPs (consume operand)
         case 0x80: case 0x82: case 0x89: case 0xC2: case 0xE2:
