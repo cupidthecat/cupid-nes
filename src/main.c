@@ -15,6 +15,10 @@ const double CPU_FREQ = 1789773.0;              // CPU frequency in Hz
 const double FRAME_TIME_MS = 1000.0 / 60.0;       // ~16.67 ms per frame
 const double CPU_CYCLES_PER_FRAME = CPU_FREQ / 60.0;  // ~29796 cycles/frame
 
+// apu con
+#define AUDIO_SAMPLE_RATE 44100
+#define AUDIO_BUFFER_SAMPLES 1024
+
 // Framebuffer definition
 uint32_t framebuffer[SCREEN_WIDTH * SCREEN_HEIGHT];
 
@@ -31,6 +35,10 @@ const int CYCLES_VISIBLE = CPU_CYCLES_PER_FRAME_I * VISIBLE_SCANLINES / TOTAL_SC
 const int CYCLES_VBLANK  = CPU_CYCLES_PER_FRAME_I - CYCLES_VISIBLE;
 
 int main(int argc, char *argv[]) {
+    SDL_AudioSpec want;                 // uninitialized; we'll memset later
+    SDL_AudioSpec have;                 // "
+    SDL_AudioDeviceID audio_dev = 0;    // keep handle so we can check it
+
     if(argc < 2) {
         printf("Usage: %s <rom-file>\n", argv[0]);
         return 1;
@@ -79,10 +87,28 @@ int main(int argc, char *argv[]) {
     printf("  Status: 0x%02X\n", cpu.status);
 
     // Initialize SDL video
-    if(SDL_Init(SDL_INIT_VIDEO) != 0) {
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) != 0) {
         fprintf(stderr, "SDL_Init Error: %s\n", SDL_GetError());
         return 1;
     }
+
+   /* --- AUDIO SETUP (now safe for C90) --- */
+    memset(&want, 0, sizeof want);
+    memset(&have, 0, sizeof have);
+    want.freq = AUDIO_SAMPLE_RATE;
+    want.format = AUDIO_F32;     // float32 mono
+    want.channels = 1;
+    want.samples = AUDIO_BUFFER_SAMPLES;
+    want.callback = apu_sdl_audio_callback;   // from apu.h
+
+    audio_dev = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
+    if (!audio_dev) {
+        fprintf(stderr, "Warning: audio disabled (%s)\n", SDL_GetError());
+    } else {
+        apu_audio_init(have.freq);
+        SDL_PauseAudioDevice(audio_dev, 0);
+    }
+
     SDL_Window *window = SDL_CreateWindow("Cupid NES Emulator",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, SCREEN_WIDTH * 2, SCREEN_HEIGHT * 2, SDL_WINDOW_SHOWN);
     if(!window) {
