@@ -30,6 +30,7 @@ static uint8_t prg_ram[0x2000];
 // Helpers
 static inline Mirroring base_mirr(void) { return C.mirr_base; }
 Mirroring cart_get_mirroring(void) { return cart && cart->get_mirroring ? cart->get_mirroring() : base_mirr(); }
+void cart_set_mirroring(Mirroring m) { C.mirr_base = m; }
 uint8_t cart_cpu_read(uint16_t a) { return cart ? cart->cpu_read(a) : 0xFF; }
 void cart_cpu_write(uint16_t a, uint8_t v) { if (cart) cart->cpu_write(a, v); }
 uint8_t cart_ppu_read(uint16_t a) { return cart ? cart->ppu_read(a) : 0x00; }
@@ -709,8 +710,17 @@ int mapper_init_from_header(const iNESHeader *h,
     C.prg = prg; C.prg_sz = prg_sz;
     C.chr = chr; C.chr_sz = chr_sz ? chr_sz : CHR_BANK_8K;
     C.chr_is_ram = (h->chr_rom_chunks == 0);
-    C.mirr_base = (h->flags6 & 0x01) ? MIRROR_VERTICAL : MIRROR_HORIZONTAL;
-    if (h->flags6 & 0x08) C.mirr_base = MIRROR_FOUR;
+    
+    // iNES flags6:
+    // bit 0 = 1 -> VERTICAL mirroring, 0 -> HORIZONTAL mirroring
+    // bit 3 = 1 -> four-screen (overrides bit 0)
+    Mirroring mir;
+    if (h->flags6 & 0x08) {
+        mir = MIRROR_FOUR;
+    } else {
+        mir = (h->flags6 & 0x01) ? MIRROR_VERTICAL : MIRROR_HORIZONTAL;
+    }
+    cart_set_mirroring(mir);
 
     int mapper_no = ((h->flags7 & 0xF0) | ((h->flags6 & 0xF0) >> 4));
 

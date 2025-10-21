@@ -6,6 +6,7 @@
 #include "../ppu/ppu.h"
 #include "../apu/apu.h"
 #include "../rom/mapper.h"
+#include "../joypad/joypad.h"
 
 uint8_t ram[0x0800];        // 2KB internal RAM
 #define APU_IO_SIZE 0x20              // cover $4000-$401F
@@ -15,6 +16,8 @@ uint8_t apu_io[APU_IO_SIZE];          // 32 bytes
 static uint8_t cpu_open_bus = 0;
 static inline uint8_t bus_get(void) { return cpu_open_bus; }
 static inline void    bus_set(uint8_t v) { cpu_open_bus = v; }
+CPU cpu;
+extern Joypad pad1, pad2;
 
 // Cycles per opcode (officials; many unofficials match their closest base)
 static const uint8_t cyc[256] = {
@@ -61,8 +64,9 @@ uint8_t read_mem(uint16_t addr) {
     // APU + I/O $4000-$4017
     if (addr >= 0x4000 && addr <= 0x4017) {
         if (addr == 0x4016) { uint8_t v = joypad_read(&pad1); bus_set(v); return v; }
+        if (addr == 0x4017) { uint8_t v = joypad_read(&pad2); bus_set(v); return v; }  // NEW
         if (addr == 0x4015) { uint8_t v = apu_read(addr);    bus_set(v); return v; }
-        return bus_get(); // write-only APU regs -> open bus
+        return bus_get(); // write-only regs -> open bus
     }
 
     // *** Unallocated I/O space $4018-$40FF must read as open bus ***
@@ -1320,7 +1324,6 @@ void execute(CPU* cpu, uint8_t opcode) {
 }
 
 int cpu_step(CPU* cpu) {
-    uint16_t pc_before = cpu->pc;
     uint8_t opcode = read_mem(cpu->pc++);
     cpu->extra_cycles = 0;
     execute(cpu, opcode);

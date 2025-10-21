@@ -250,20 +250,22 @@ static inline void clock_triangle(Triangle* t){
         t->timer--;
     }
 }
+
 static inline void clock_noise(Noise* n){
     if (n->period == 0) return;
-    static uint16_t div = 0;
-    if (div == 0) div = n->period;
-    if (--div == 0) {
-        div = n->period;
+    // Remove: static uint16_t div = 0;
+    
+    if (n->timer == 0) {
+        n->timer = n->period;
         // XOR taps: 1 and 6 when mode=1 (7-bit), else 1 and 14 (15-bit)
         uint16_t bit0 = n->lfsr & 1;
         uint16_t bitX = (n->mode ? ((n->lfsr >> 6) & 1) : ((n->lfsr >> 14) & 1));
         uint16_t fb = bit0 ^ bitX;
         n->lfsr = (n->lfsr >> 1) | (fb << 14);
+    } else {
+        n->timer--;
     }
 }
-
 // DAC-ish sample (0..1 per channel)
 static inline float pulse_out(const Pulse* p){
     if (!p->enabled || p->lc.length == 0) return 0.0f;

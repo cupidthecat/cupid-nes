@@ -38,5 +38,6 @@ int mapper_init_from_header(const iNESHeader *h,
 
 // Current mirroring for PPU (keeps your existing mirroring_mode in sync)
 Mirroring cart_get_mirroring(void);
+void      cart_set_mirroring(Mirroring m);
 
 #endif

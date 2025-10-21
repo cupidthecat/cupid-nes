@@ -33,6 +33,7 @@ extern uint8_t memory[0x10000];
 
 // Add joypad extern declarations
 extern Joypad pad1, pad2;
+extern CPU cpu;
 
 void cpu_reset(CPU* cpu);
 uint8_t read_mem(uint16_t addr);

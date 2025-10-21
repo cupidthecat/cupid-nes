@@ -75,7 +75,6 @@ int main(int argc, char *argv[]) {
 
 
     // Initialize CPU
-    CPU cpu = {0};
     printf("Resetting CPU...\n");
     cpu_reset(&cpu);
     printf("CPU state after reset:\n");
@@ -133,7 +132,7 @@ int main(int argc, char *argv[]) {
     // In main.c (inside the main loop)
     while (running) {
         Uint32 frameStart = SDL_GetTicks();
-
+    
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT)
                 running = false;
@@ -141,7 +140,7 @@ int main(int argc, char *argv[]) {
             // Add SDL key mapping
             if (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP) {
                 int down = (e.type == SDL_KEYDOWN);
-
+    
                 switch (e.key.keysym.sym) {
                     case SDLK_z:        joypad_set(&pad1, BTN_A,      down); break; // Z = A
                     case SDLK_x:        joypad_set(&pad1, BTN_B,      down); break; // X = B
@@ -155,28 +154,37 @@ int main(int argc, char *argv[]) {
                 }
             }
         }
-
-        // --- visible period: no vblank ---
-        ppu_end_vblank();
-        for (int c = 0; c < CYCLES_VISIBLE; ) c += cpu_step(&cpu);
-
-        // --- vblank period: set the flag, maybe fire NMI, and LET THE CPU RUN WHILE IT'S HIGH ---
-        ppu_begin_vblank();
-        if (ppu.ctrl & 0x80) {
-            cpu_nmi(&cpu);
+    
+    // --- visible period: no vblank ---
+    ppu_end_vblank();
+    ppu_predict_sprite0_split_for_frame();
+    
+    // Execute visible scanlines and check for sprite-0 hit at the right CPU cycle
+    for (int c = 0; c < CYCLES_VISIBLE; ) {
+        // Check if we should assert sprite-0 hit at this CPU cycle
+        if (ppu.have_split && ppu.split_cpu_cycles >= 0 && c >= ppu.split_cpu_cycles) {
+            if (!ppu.sprite_zero_hit && !(ppu.status & 0x80)) {
+                ppu.status |= 0x40;          // Set bit 6: sprite-0 hit
+                ppu.sprite_zero_hit = true;
+            }
         }
-        for (int c = 0; c < CYCLES_VBLANK; ) c += cpu_step(&cpu);
-
-        ppu_end_vblank();
-
-        // render after the ROM has had a chance to write during vblank
+        c += cpu_step(&cpu);
+    }
+    
+        // render BEFORE vblank (while CPU is still processing visible scanlines)
         render_background(framebuffer);
         render_sprites(framebuffer);
         SDL_UpdateTexture(texture, NULL, framebuffer, SCREEN_WIDTH * sizeof(uint32_t));
         SDL_RenderClear(renderer);
         SDL_RenderCopy(renderer, texture, NULL, NULL);
         SDL_RenderPresent(renderer);
-
+    
+        // --- vblank period: set the flag, maybe fire NMI, and LET THE CPU RUN WHILE IT'S HIGH ---
+        ppu_begin_vblank();
+        for (int c = 0; c < CYCLES_VBLANK; ) c += cpu_step(&cpu);
+    
+        // DON'T call ppu_end_vblank() here - it happens at the start of next frame
+    
         Uint32 frameTime = SDL_GetTicks() - frameStart;
         if (frameTime < FRAME_TIME_MS) SDL_Delay((Uint32)(FRAME_TIME_MS - frameTime));
     }
@@ -188,3 +196,4 @@ int main(int argc, char *argv[]) {
     SDL_Quit();
     return 0;
 }
+

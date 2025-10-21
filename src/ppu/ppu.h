@@ -6,7 +6,7 @@
 #include <SDL2/SDL.h>
 
 // PPU Memory Sizes
-#define PPU_VRAM_SIZE 0x4000  // 16KB VRAM
+#define NT_RAM_SIZE 0x1000    // 4KB nametable RAM (supports four-screen; normal carts use 2KB)
 #define PPU_OAM_SIZE 0x100    // 256 bytes OAM
 #define PPU_PALETTE_SIZE 0x20 // 32 bytes palette RAM
 
@@ -47,11 +47,27 @@ typedef struct {
     uint8_t sprite_patterns[8];  // Sprite pattern data
     uint8_t sprite_attributes[8]; // Sprite attributes
     bool sprite_zero_hit;  // Sprite Zero Hit flag
+    bool nmi_out; 
+
+    bool   have_split;
+    int split_x;     // pixel 0..255 where first opaque overlap occurs
+    int split_y;     // scanline 0..239
+    int split_cpu_cycles; // when to assert hit this frame (CPU cycles since start of visible)
+
+    uint16_t t_pre,  t_post;
+    uint8_t  x_pre,  x_post;
+    uint8_t  ctrl_pre, ctrl_post;
+    bool     post_scroll_valid;
+    bool     pre_scroll_valid;
     
+    // Track post-hit writes separately
+    bool     wrote_2000_post;     // saw $2000 after sprite 0 hit (this frame, before vblank)
+    bool     wrote_2005_x_post;   // saw first $2005 after sprite 0 hit
+    bool     wrote_2005_y_post;   // saw second $2005 after sprite 0 hit (vertical; for completeness)
 } PPU;
 
 // PPU Memory
-extern uint8_t ppu_vram[PPU_VRAM_SIZE];      // VRAM (pattern tables, nametables, attribute tables)
+extern uint8_t ppu_vram[NT_RAM_SIZE];        // Nametable RAM only
 extern uint8_t ppu_palette[PPU_PALETTE_SIZE];  // Palette RAM
 extern PPU ppu;  // PPU registers global variable
 
@@ -84,5 +100,7 @@ void ppu_begin_vblank(void);
 void ppu_end_vblank(void);
 void render_sprites(uint32_t *framebuffer);
 extern uint8_t bg_opaque[256 * 240];
+void ppu_predict_sprite0_split_for_frame(void);
+void ppu_latch_pre_for_visible(void);
 
 #endif // PPU_H

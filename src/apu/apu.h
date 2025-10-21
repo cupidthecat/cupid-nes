@@ -67,6 +67,7 @@ typedef struct {
     uint16_t lfsr;       // 15-bit shift register
     uint16_t period;     // current period from table
     uint8_t  period_idx; // 0..15
+    uint16_t timer;      // ADD THIS LINE - timer countdown
     bool     enabled;
 } Noise;
 

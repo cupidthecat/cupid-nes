@@ -3,22 +3,46 @@
 #include "../rom/rom.h"
 #include "../../include/globals.h"
 #include "../rom/mapper.h"
+#include "../cpu/cpu.h"
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 // PPU Memory
-uint8_t ppu_vram[PPU_VRAM_SIZE];
+uint8_t ppu_vram[NT_RAM_SIZE];
 uint8_t ppu_palette[PPU_PALETTE_SIZE];
 uint8_t bg_opaque[256 * 240];
 
 // PPU Registers
-extern uint8_t ppu_vram[PPU_VRAM_SIZE];
-extern uint8_t ppu_palette[PPU_PALETTE_SIZE];
 PPU ppu;
+extern CPU cpu;
 
 // Helpers ----------------------------------------------------------------
 static inline void set_open_bus(uint8_t v) { ppu.open_bus = v; }
 static inline uint8_t get_open_bus(void)   { return ppu.open_bus; }
+
+static inline void ppu_eval_nmi(void){
+    bool want = (ppu.ctrl & 0x80) && (ppu.status & 0x80);
+    if (want && !ppu.nmi_out) cpu_nmi(&cpu);  // fire on rising edge only
+    ppu.nmi_out = want;
+}
+
+static inline bool in_vblank_now(void) { return (ppu.status & 0x80) != 0; }
+
+static inline bool ppu_show_bg_px(int x) {
+    // BG enabled AND (not in left 8 unless left-8-BG mask is on)
+    return (ppu.mask & 0x08) && (x >= 8 || (ppu.mask & 0x02));
+}
+
+static inline bool ppu_show_sp_px(int x) {
+    // Sprites enabled AND (not in left 8 unless left-8-sprite mask is on)
+    return (ppu.mask & 0x10) && (x >= 8 || (ppu.mask & 0x04));
+}
+
+void ppu_latch_pre_for_visible(void) {
+    ppu.t_pre    = ppu.t;
+    ppu.x_pre    = ppu.x;
+    ppu.ctrl_pre = ppu.ctrl;
+}
 
 // $2000–$2007
 uint8_t ppu_reg_read(uint16_t reg) {
@@ -31,12 +55,10 @@ uint8_t ppu_reg_read(uint16_t reg) {
         case 2: { // PPUSTATUS
             uint8_t ob = get_open_bus();
             uint8_t ret = (ppu.status & 0xE0) | (ob & 0x1F);
-        
-            // ✅ latch exactly what was on the CPU data bus
             set_open_bus(ret);
-            // side effects
-            ppu.status &= ~0x80; // clear VBlank
-            ppu.w = 0;           // reset $2005/$2006 toggle
+            ppu.status &= ~0x80;       // clear VBlank
+            ppu.w = 0;
+            ppu_eval_nmi();            // output may drop
             return ret;
         }
         case 4: { // OAMDATA
@@ -73,11 +95,23 @@ uint8_t ppu_reg_read(uint16_t reg) {
 void ppu_reg_write(uint16_t reg, uint8_t value) {
     set_open_bus(value); // any write to PPU updates open bus
     switch (reg & 7) {
-        case 0: // PPUCTRL
+        case 0: { // PPUCTRL
             ppu.ctrl = value;
-            // t: ....BA.. ........ = value & 0x03 (nametable select)
             ppu.t = (ppu.t & ~0x0C00) | ((value & 0x03) << 10);
-            break;
+            
+            if (ppu.have_split && !(ppu.status & 0x80)) {
+                ppu.ctrl_post = value;
+                
+                // Update only NT bits in the queued post state
+                ppu.t_post = (ppu.t_post & ~0x0C00) | ((value & 0x03) << 10);
+                
+                ppu.wrote_2000_post = true;
+                ppu.post_scroll_valid = true;   // horizontal copy at 257 can proceed
+            }
+            
+            if (in_vblank_now()) ppu_latch_pre_for_visible();   // refresh pre-latch during vblank
+            ppu_eval_nmi();
+        } break;
         case 1: // PPUMASK
             ppu.mask = value;
             break;
@@ -87,21 +121,38 @@ void ppu_reg_write(uint16_t reg, uint8_t value) {
         case 4: // OAMDATA
             ppu.oam[ppu.oam_addr++] = value;
             break;
-        case 5: { // PPUSCROLL
+        case 5: {
             if (ppu.w == 0) {
-                // first write: X scroll and coarse X
+                // first write: fine X + coarse X
                 ppu.x = value & 0x07;
                 ppu.t = (ppu.t & ~0x001F) | (value >> 3);
                 ppu.w = 1;
+                
+                if (ppu.have_split && !(ppu.status & 0x80)) {
+                    // queue only horizontal pieces
+                    ppu.x_post = ppu.x;
+                    ppu.t_post = (ppu.t_post & ~0x001F) | (ppu.t & 0x001F);
+                    
+                    ppu.wrote_2005_x_post = true;
+                    ppu.post_scroll_valid = true;   // enough for the 257 horizontal copy
+                }
             } else {
-                // second write: coarse Y and fine Y
+                // second write: fine Y + coarse Y
                 ppu.t = (ppu.t & ~0x73E0)
-                      | ((value & 0x07) << 12)   // fine Y (bits 12-14)
-                      | ((value & 0xF8) << 2);   // coarse Y (bits 5-9)
+                      | ((value & 0x07) << 12)   // fine Y
+                      | ((value & 0xF8) << 2);   // coarse Y
                 ppu.w = 0;
+                
+                if (ppu.have_split && !(ppu.status & 0x80)) {
+                    // queue vertical pieces for next pre-render copy (not for 257)
+                    ppu.t_post = (ppu.t_post & ~0x73E0) | (ppu.t & 0x73E0);
+                    ppu.wrote_2005_y_post = true;
+                    // do NOT change post_scroll_valid here; vertical doesn't apply at 257
+                }
             }
-            break;
-        }
+            if (in_vblank_now()) ppu_latch_pre_for_visible();   // refresh pre-latch during vblank
+        } break;
+            
         case 6: { // PPUADDR
             if (ppu.w == 0) {
                 // high byte (masked to 6 bits)
@@ -141,9 +192,14 @@ void ppu_oam_dma(uint8_t page) {
     // CPU stalls 513 or 514 cycles; OK to approximate for now
 }
 
-void ppu_begin_vblank(void) { ppu.status |= 0x80; }
-void ppu_end_vblank(void)   { ppu.status &= ~0x80; }
-
+// begin vblank sets the flag and evaluates NMI
+void ppu_begin_vblank(void){ ppu.status |= 0x80; ppu_eval_nmi(); }
+void ppu_end_vblank(void){
+    ppu.status &= ~0x80;
+    ppu_eval_nmi();
+    // NEW: freeze $2000/$2005 for the HUD/top part
+    ppu_latch_pre_for_visible();
+}
 //---------------------------------------------------------------------
 // Sample background palettes (4 background palettes, 4 colors each)
 // Note: Palette[0][0] is the universal background color.
@@ -156,50 +212,35 @@ uint32_t bg_palettes[4][4] = {
 };
 
 // Get the base address of the background pattern table based on PPUCTRL
-static uint16_t get_bg_pattern_table_base() {
-    // Bit 4 of PPUCTRL controls which pattern table is used for backgrounds
-    return (ppu.ctrl & 0x10) ? 0x1000 : 0x0000;
+// Currently unused, but kept for potential future use
+// static uint16_t get_bg_pattern_table_base() {
+//     // Bit 4 of PPUCTRL controls which pattern table is used for backgrounds
+//     return (ppu.ctrl & 0x10) ? 0x1000 : 0x0000;
+// }
+
+// $2000–$2FFF -> nametable RAM index, obeying mirroring
+static inline uint16_t nt_index(uint16_t addr) {
+    // collapse 0x2000–0x3EFF to a 4-Nametable window (0..0x0FFF)
+    uint16_t off = (addr - 0x2000) & 0x0FFF;  // 4 * 0x400
+    uint16_t nt  = (off >> 10) & 3;           // which table 0..3
+    uint16_t in  =  off & 0x03FF;             // offset inside table
+
+    switch (cart_get_mirroring()) {
+        case MIRROR_HORIZONTAL: // 0,1 share; 2,3 share   (top/bottom)
+            return ((nt & 2) ? 0x400 : 0x000) + in;
+        case MIRROR_VERTICAL:   // 0,2 share; 1,3 share   (left/right)  <-- SMB
+            return ((nt & 1) ? 0x400 : 0x000) + in;
+        case MIRROR_SINGLE0:    return in;
+        case MIRROR_SINGLE1:    return 0x400 + in;
+        case MIRROR_FOUR:       return (nt * 0x400) + in; // needs 4 KiB backing
+    }
+    return in;
 }
 
-static uint16_t mirror_nametable_addr(uint16_t addr) {
-    // addr is already masked to 0x3FFF in ppu_read/ppu_write
-    // For addresses in 0x2000-0x3EFF (nametables and mirrors):
-    if(addr >= 0x2000 && addr < 0x3F00) {
-        uint16_t offset = addr - 0x2000;
-        // Determine which nametable (0-3)
-        int nametable = offset / 0x400;
-        int innerOffset = offset % 0x400;
-        
-        // Handle mirroring based on ROM configuration
-        switch (cart_get_mirroring()) {
-            case MIRROR_HORIZONTAL: // Horizontal mirroring
-                // NT0 and NT1 are unique; NT2 mirrors NT0, NT3 mirrors NT1
-                if(nametable == 0 || nametable == 2) return 0x2000 + innerOffset;
-                else                                 return 0x2400 + innerOffset;
-            
-            case MIRROR_VERTICAL: // Vertical mirroring
-                // NT0 and NT2 are unique; NT1 mirrors NT0, NT3 mirrors NT2
-                if(nametable == 0 || nametable == 1) return 0x2000 + innerOffset;
-                else                                 return 0x2800 + innerOffset;
-            
-            case MIRROR_SINGLE0: // Single-screen mirroring (all nametables use NT0)
-                return 0x2000 + innerOffset;
-
-            case MIRROR_SINGLE1: // Single-screen mirroring (all nametables use NT1)
-                return 0x2400 + innerOffset;
-
-            case MIRROR_FOUR:
-                // (Four-screen uses external RAM; keep a simple fallback: no mirroring)
-                return 0x2000 + offset; // simple pass-through into the 2KB VRAM window
-            default:
-                // Default to horizontal mirroring
-                if(nametable == 0 || nametable == 2)
-                    return 0x2000 + innerOffset;
-                else
-                    return 0x2400 + innerOffset;
-        }
-    }
-    return addr; // Other areas are not modified
+// Clear the framebuffer to the universal background color each frame
+static inline void clear_framebuffer(uint32_t *fb) {
+    uint32_t bg = get_color(ppu_palette[0]); // universal background ($3F00)
+    for (int i = 0; i < 256*240; ++i) fb[i] = bg;
 }
 
 // render_background()
@@ -208,121 +249,130 @@ static uint16_t mirror_nametable_addr(uint16_t addr) {
 // - The attribute table is located at 0x23C0–0x23FF for the first nametable.
 // - This function assumes a single nametable (NROM configuration).
 void render_background(uint32_t *framebuffer) {
-    const int tilesX = 32, tilesY = 30, tileSize = 8;
-
-    // If BG is disabled, clear the mask and bail early (optional but accurate)
-    if (!(ppu.mask & 0x08)) {
-        memset(bg_opaque, 0, sizeof(bg_opaque));
-        return;
-    }
-
+    const int W = 256, H = 240;
+    
+    // Clear framebuffer to universal background color each frame
+    clear_framebuffer(framebuffer);
+    
     memset(bg_opaque, 0, sizeof(bg_opaque));
+    if (!(ppu.mask & 0x08)) return;  // BG disabled
+    for (int sy = 0; sy < H; sy++) {
+        // If we predicted a split and the game completed both $2005 writes,
+        // switch to the post scroll starting on the *next* line.
+        if (ppu.have_split && ppu.post_scroll_valid && sy == ppu.split_y) {
+            // 257 behavior: v.horz := t.horz (coarse X + NT-X), fine X := x
+            ppu.t_pre    = (ppu.t_pre & ~0x041F) | (ppu.t_post & 0x041F);
+            ppu.x_pre    = ppu.x_post;
+            
+            // If the game also changed pattern-table select or other ctrl bits we use for rendering,
+            // reflect that here (safe; this matches how your code uses ctrl_* in rendering):
+            ppu.ctrl_pre = ppu.ctrl_post;
+        }
 
-    uint16_t pattern_table_base = get_bg_pattern_table_base();
+        // choose scroll for this line
+        uint16_t T         = ppu.t_pre;
+        uint8_t  fineX     = ppu.x_pre;
+        uint8_t  ctrl_here = ppu.ctrl_pre;
 
-    for (int ty = 0; ty < tilesY; ty++) {
-        for (int tx = 0; tx < tilesX; tx++) {
-            uint16_t ntAddr = 0x2000 + ty * tilesX + tx;
-            uint8_t  tileIndex = ppu_vram[mirror_nametable_addr(ntAddr)];
+        int coarseX =  T        & 0x1F;
+        int coarseY = (T >> 5)  & 0x1F;
+        int fineY0  = (T >> 12) & 0x07;
+        int ntx0    = (T >> 10) & 1;
+        int nty0    = (T >> 11) & 1;
 
-            int attrX = tx / 4, attrY = ty / 4;
-            uint16_t attrAddr = 0x23C0 + attrY * 8 + attrX;
-            uint8_t  attribute = ppu_vram[mirror_nametable_addr(attrAddr)];
+        int scrollX = coarseX * 8 + (fineX & 7);
+        int scrollY = coarseY * 8 + fineY0;
 
-            int quadX = (tx % 4) / 2;
-            int quadY = (ty % 4) / 2;
-            int shift = (quadY * 4) + (quadX * 2);
-            uint8_t paletteIndex = (attribute >> shift) & 0x03;
+        uint16_t bgPT = (ctrl_here & 0x10) ? 0x1000 : 0x0000;
 
-            int tileAddress = pattern_table_base + tileIndex * 16;
+        // Carry base nametable selection directly into world coords
+        int wy = scrollY + sy + (nty0 * 240);  // 0..479 plus base 240 if NTY=1
+        int ty = (wy / 8)   % 30;              // tile Y
+        int fy =  wy        & 7;               // fine Y
 
-            for (int row = 0; row < tileSize; row++) {
-                uint8_t plane0 = chr_rom[tileAddress + row];
-                uint8_t plane1 = chr_rom[tileAddress + row + 8];
+        for (int sx = 0; sx < W; sx++) {
+            if (!(ppu.mask & 0x02) && sx < 8) continue; // left-8 BG mask
 
-                for (int col = 0; col < tileSize; col++) {
-                    uint8_t bit0 = (plane0 >> (7 - col)) & 1;
-                    uint8_t bit1 = (plane1 >> (7 - col)) & 1;
-                    uint8_t pixelValue = (bit1 << 1) | bit0;
+            int wx = scrollX + sx + (ntx0 * 256);   // 0..511 plus base 256 if NTX=1
+            int tx = (wx / 8)   % 32;          // tile X
+            int fx =  wx        & 7;           // fine X
 
-                    // Color index for the framebuffer (unchanged)
-                    uint8_t palIndex = (pixelValue == 0)
-                        ? ppu_palette[0]
-                        : ppu_palette[paletteIndex * 4 + pixelValue];
-                    uint32_t color = get_color(palIndex);
+            int nt_x = (wx / 256) & 1;
+            int nt_y = (wy / 240) & 1;
+            uint16_t ntBase = 0x2000 + ((nt_y << 1) | nt_x) * 0x400;
 
-                    int screenX = tx * tileSize + col;
-                    int screenY = ty * tileSize + row;
-                    if (screenX < SCREEN_WIDTH && screenY < SCREEN_HEIGHT) {
-                        framebuffer[screenY * SCREEN_WIDTH + screenX] = color;
+            uint8_t  tileIdx = ppu_vram[nt_index(ntBase + ty * 32 + tx)];
+            
+            // attribute address derived the same way the PPU does it
+            uint16_t atAddr = ntBase + 0x3C0
+                            + ((ty >> 2) * 8)           // attribute row (each 4 tiles tall)
+                            +  (tx >> 2);               // attribute col (each 4 tiles wide)
+            
+            uint8_t atByte = ppu_vram[nt_index(atAddr)];
+            uint8_t shift  = ((ty & 2) << 1) | (tx & 2);  // {00,10,01,11} * 2 -> {0,2,4,6}
+            uint8_t palSel = (atByte >> shift) & 0x03;
 
-                        // Mark BG as opaque for priority if pixelValue != 0
-                        bg_opaque[screenY * 256 + screenX] = (pixelValue != 0);
-                    }
-                }
-            }
+            uint16_t tileAddr = bgPT + tileIdx * 16;
+            uint8_t  p0 = cart_ppu_read(tileAddr + fy);
+            uint8_t  p1 = cart_ppu_read(tileAddr + fy + 8);
+            uint8_t  bit = 7 - fx;
+            uint8_t  px  = ((p1 >> bit) & 1) << 1 | ((p0 >> bit) & 1);
+
+            uint8_t palIndex = (px == 0) ? ppu_palette[0] : ppu_palette[(palSel * 4) + px];
+            framebuffer[sy * W + sx] = get_color(palIndex);
+            if (px) bg_opaque[sy * 256 + sx] = 1;
         }
     }
 }
 
-void render_sprites(uint32_t* fb) {
-    if (!(ppu.mask & 0x10)) return;   // sprites disabled
 
-    bool tall_sprites = (ppu.ctrl & 0x20) != 0;
-    int sprite_height  = tall_sprites ? 16 : 8;
-    uint16_t base = (ppu.ctrl & 0x08) ? 0x1000 : 0x0000;
+void render_sprites(uint32_t* fb) {
+    if (!(ppu.mask & 0x10)) return;   // sprites disabled by PPUMASK
+    const bool tall = (ppu.ctrl & 0x20) != 0;
 
     for (int i = 63; i >= 0; i--) {
-        uint8_t oam_y = ppu.oam[i*4 + 0];
-
-        if (oam_y >= 0xEF) continue;
-
-        int y  = (int)oam_y + 1;        // real screen Y, no wrap
+        uint8_t y0 = ppu.oam[i*4 + 0];
+        if (y0 >= 0xEF) continue;                 // offscreen
+        int baseY = (int)y0 + 1;
         uint8_t id = ppu.oam[i*4 + 1];
         uint8_t at = ppu.oam[i*4 + 2];
-        uint8_t x  = ppu.oam[i*4 + 3];
+        uint8_t x0 = ppu.oam[i*4 + 3];
 
         uint8_t pal   = (at & 0x03);
-        bool priority = (at & 0x20) != 0; // 1 = behind background
+        bool prio     = (at & 0x20) != 0;         // behind background
         bool flip_h   = (at & 0x40) != 0;
         bool flip_v   = (at & 0x80) != 0;
 
-        if (tall_sprites) { base = (id & 0x01) ? 0x1000 : 0x0000; id &= 0xFE; }
+        uint16_t base = (ppu.ctrl & 0x08) ? 0x1000 : 0x0000;
+        if (tall) { base = (id & 1) ? 0x1000 : 0x0000; id &= 0xFE; }
 
-        for (int half = 0; half < (tall_sprites ? 2 : 1); half++) {
-            uint8_t  tile_id   = id + half;
-            uint16_t tile_addr = base + tile_id * 16;
+        for (int half = 0; half < (tall ? 2 : 1); half++) {
+            uint16_t tile = id + half;
+            uint16_t addr = base + tile * 16;
 
             for (int row = 0; row < 8; row++) {
-                int actual_row = flip_v ? (7 - row) : row;
-                int y_offset   = half * 8;
+                int rr = flip_v ? (7 - row) : row;
+                uint8_t p0 = cart_ppu_read(addr + rr);
+                uint8_t p1 = cart_ppu_read(addr + rr + 8);
 
-                int sy = y + row + y_offset;
-                // (Optional but recommended: fetch via mapper)
-                uint8_t p0 = chr_rom[tile_addr + actual_row];
-                uint8_t p1 = chr_rom[tile_addr + actual_row + 8];
-
+                int sy = baseY + row + (half * 8);
+                if (sy >= 240) continue;
                 for (int col = 0; col < 8; col++) {
-                    int bit_pos = flip_h ? col : (7 - col);
-                    uint8_t bit0 = (p0 >> bit_pos) & 1;
-                    uint8_t bit1 = (p1 >> bit_pos) & 1;
-                    uint8_t px   = (bit1 << 1) | bit0;
+                    int bit = flip_h ? col : (7 - col);
+                    uint8_t px = ((p1 >> bit) & 1) << 1 | ((p0 >> bit) & 1);
                     if (!px) continue;
-
-                    int sx = x + col;
-                    int sy = y + row + y_offset;
-                    if (sx >= 256 || sy >= 240) continue;
-
-                    // Honor left 8-pixel sprite mask
-                    if (!(ppu.mask & 0x04) && sx < 8) continue;
-
-                    // --- Priority: if behind background, only draw when BG is transparent for priority
-                    if (priority && (ppu.mask & 0x08)) {      // only matters if BG rendering is enabled
-                        if (bg_opaque[sy * 256 + sx]) continue;
-                    }
-
-                    uint8_t idx = ppu_palette[0x10 + pal * 4 + px];
-                    fb[sy * 256 + sx] = get_color(idx);
+                
+                int sx = x0 + col;
+                if (sx >= 256) continue;
+                if (!(ppu.mask & 0x04) && sx < 8) continue;  // left-8 sprite mask
+            
+                // Sprite-0 hit is now handled in the main CPU loop at the correct cycle
+                // (removed from here to fix timing issues)
+            
+                if (prio && (ppu.mask & 0x08) && bg_opaque[sy*256 + sx]) continue;
+                
+                    uint8_t idx = ppu_palette[0x10 + pal*4 + px];
+                    fb[sy*256 + sx] = get_color(idx);
                 }
             }
         }
@@ -343,8 +393,7 @@ uint8_t ppu_read(uint16_t addr) {
 
     // Nametables 0x2000–0x3EFF (with mirroring)
     if (addr >= 0x2000 && addr < 0x3F00) {
-        uint16_t effective_addr = mirror_nametable_addr(addr);
-        return ppu_vram[effective_addr];
+        return ppu_vram[nt_index(addr)];
     }
 
    // Pattern tables 0x0000–0x1FFF: cart (CHR-ROM/RAM, banked)
@@ -368,8 +417,7 @@ void ppu_write(uint16_t addr, uint8_t value) {
     if (addr < 0x2000) { cart_ppu_write(addr & 0x1FFF, value); return; }
 
     if(addr >= 0x2000 && addr < 0x3F00) {
-        uint16_t effective_addr = mirror_nametable_addr(addr);
-        ppu_vram[effective_addr] = value;
+        ppu_vram[nt_index(addr)] = value;
         return;
     }
 
@@ -390,7 +438,8 @@ void ppu_reset(PPU* ppu) {
     ppu->w = 0;
     ppu->ppudata_buffer = 0;
     ppu->open_bus = 0;
-    
+    ppu->nmi_out = false;
+
     // Clear OAM
     for (int i = 0; i < PPU_OAM_SIZE; i++) {
         ppu->oam[i] = 0xFF;
@@ -517,5 +566,133 @@ void render_tiles() {
     printf("NES Palette Colors:\n");
     for (int i = 0; i < 16; i++) {  // Print first 16 colors
         printf("Color %02d: 0x%08X\n", i, nes_palette[i]);
+    }
+}
+
+void start_frame(void) {
+    ppu.v = ppu.t;
+
+    ppu.status &= ~0x40;
+    ppu.sprite_zero_hit = false;
+
+    ppu.have_split = false;
+    ppu.post_scroll_valid = false;
+    ppu.split_y = 240;
+    
+    // Reset post-hit write tracking
+    ppu.wrote_2000_post = false;
+    ppu.wrote_2005_x_post = false;
+    ppu.wrote_2005_y_post = false;
+
+    // remember the scroll/ctrl for the *top* region
+    // (we'll re-latch these right before rendering; see Fix #2)
+    // ppu.t_pre    = ppu.t;      // <-- remove these three lines here
+    // ppu.x_pre    = ppu.x;      //     (don't latch yet)
+    // ppu.ctrl_pre = ppu.ctrl;
+
+    // NEW: sane defaults for the bottom region
+    ppu.t_post    = ppu.t;
+    ppu.x_post    = ppu.x;
+    ppu.ctrl_post = ppu.ctrl;
+}
+
+// Predict the first scanline after the sprite-0 collision for this frame,
+// using the *top-of-frame* scroll/nametable (pre state).
+void ppu_predict_sprite0_split_for_frame(void) {
+    // Clear any old hit for this new frame's visible period
+    ppu.status &= ~0x40;
+    ppu.sprite_zero_hit = false;
+    ppu.have_split = false;
+    ppu.split_y = 240;
+    ppu.split_x = 0;
+    ppu.split_cpu_cycles = -1;
+    // Need both BG and sprites visible for a hit to matter
+    if (!(ppu.mask & 0x08) || !(ppu.mask & 0x10)) return;
+
+    // Sprite #0 from OAM
+    uint8_t y0 = ppu.oam[0];
+    if (y0 >= 0xEF) return;                  // offscreen
+    int baseY    = (int)y0 + 1;
+    uint8_t id   = ppu.oam[1];
+    uint8_t at   = ppu.oam[2];
+    uint8_t x0   = ppu.oam[3];
+    bool flip_h  = (at & 0x40) != 0;
+    bool flip_v  = (at & 0x80) != 0;
+    bool tall    = (ppu.ctrl & 0x20) != 0;
+
+    // Pre (top) scroll/ctrl for this frame
+    uint16_t T   = ppu.t;
+    uint8_t  fxX = ppu.x & 7;
+    uint8_t  C   = ppu.ctrl;
+
+    int coarseX =  T        & 0x1F;
+    int coarseY = (T >> 5)  & 0x1F;
+    int fineY0  = (T >> 12) & 0x07;
+    int ntx0    = (T >> 10) & 1;
+    int nty0    = (T >> 11) & 1;
+
+    int scrollX = coarseX * 8 + fxX;
+    int scrollY = coarseY * 8 + fineY0;
+
+    uint16_t bgPT = (C & 0x10) ? 0x1000 : 0x0000;
+    uint16_t spBase;
+    if (tall) spBase = (id & 1) ? 0x1000 : 0x0000;
+    else      spBase = (C & 0x08) ? 0x1000 : 0x0000;
+
+    // Scan sprite 0 coverage and check the BG pixel beneath it
+    for (int half = 0; half < (tall ? 2 : 1); ++half) {
+        uint16_t tile = tall ? ((id & 0xFE) + half) : id;
+        uint16_t addr = spBase + tile * 16;
+
+        for (int row = 0; row < 8; ++row) {
+            int sy = baseY + row + (half * 8);
+            if (sy < 0 || sy >= 240) continue;
+
+            int rr  = flip_v ? (7 - row) : row;
+            uint8_t p0 = cart_ppu_read(addr + rr);
+            uint8_t p1 = cart_ppu_read(addr + rr + 8);
+
+            for (int col = 0; col < 8; ++col) {
+                int sx = x0 + col;
+                if (sx >= 256) break;
+                if (!(ppu.mask & 0x04) && sx < 8) continue;   // left-8 sprite mask
+                if (!((ppu.mask & 0x10) && (sx >= 8 || (ppu.mask & 0x04)))) continue;
+
+                int bit = flip_h ? col : (7 - col);
+                uint8_t sp_px = ((p1 >> bit) & 1) << 1 | ((p0 >> bit) & 1);
+                if (!sp_px) continue;
+
+                if (!((ppu.mask & 0x08) && (sx >= 8 || (ppu.mask & 0x02)))) continue; // BG visibility
+
+                // BG pixel at (sx, sy) with *pre* scroll
+                int wx = scrollX + sx + (ntx0 * 256);
+                int wy = scrollY + sy + (nty0 * 240);
+                int tx = (wx / 8) % 32, ty = (wy / 8) % 30;
+                int fx = wx & 7,       fy = wy & 7;
+
+                int nt_x = (wx / 256) & 1;
+                int nt_y = (wy / 240) & 1;
+                uint16_t ntBase = 0x2000 + ((nt_y << 1) | nt_x) * 0x400;
+
+                uint8_t  tileIdx = ppu_vram[nt_index(ntBase + ty * 32 + tx)];
+
+                uint16_t tileAddr = bgPT + tileIdx * 16;
+                uint8_t  b0 = cart_ppu_read(tileAddr + fy);
+                uint8_t  b1 = cart_ppu_read(tileAddr + fy + 8);
+                uint8_t  bg_px = (((b1 >> (7 - fx)) & 1) << 1) | ((b0 >> (7 - fx)) & 1);
+
+                if (bg_px) {
+                    ppu.have_split = true;
+                    ppu.split_y = sy + 1;
+                    ppu.split_x = sx;
+                    // schedule time of the hit in CPU cycles
+                    const double CPU_PER_SCANLINE = CPU_CYCLES_PER_FRAME / 262.0;   // ~113.667
+                    const double CPU_PER_DOT      = CPU_PER_SCANLINE / 341.0;       // ~0.333
+                    ppu.split_cpu_cycles = (int)(sy * CPU_PER_SCANLINE + sx * CPU_PER_DOT);
+                    // don't set status bit-6 here
+                    return;
+                }
+            }
+        }
     }
 }
