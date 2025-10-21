@@ -6,8 +6,13 @@ Cupid NES Emulator is a minimal NES emulator implemented in C. It is designed as
 
 **BREAKTHROUGH:** The emulator can now successfully run and play Donkey Kong! This represents a major achievement in NES emulation, demonstrating that the core CPU, PPU, and memory systems are working correctly enough to run one of the most iconic NES games.
 
-![Donkey Kong Gameplay 1](img/donkykong1.png)
-![Donkey Kong Gameplay 2](img/donkykong2.png)
+<p align="center">
+  <img src="img/donkykong1.png" alt="Donkey Kong Gameplay 1">
+</p>
+
+<p align="center">
+  <img src="img/donkykong2.png" alt="Donkey Kong Gameplay 2">
+</p>
 
 This milestone validates:
 - ✅ Complete 6502 CPU instruction set implementation
@@ -32,8 +37,7 @@ Implements a comprehensive 6502 instruction set including:
 - **Stack Operations:** PHP/PLP, PHA/PLA, TSX/TXS
 - **Shift/Rotate:** ASL, LSR, ROL, ROR
 - **Undocumented Instructions:** DCP, RLA, SLO, SRE, RRA, SAX, ISC, SHX, SHY, SHA, TAS, LAS, and various undocumented NOPs
-- **Control Flow:** BRK, NMI/IRQ interrupt handling with accurate timing
-- **Interrupt Latency:** Proper CLI/SEI/PLP timing windows for accurate interrupt behavior
+- **Control Flow:** BRK, NMI interrupt handling
 
 ### Multiple Addressing Modes
 
@@ -62,9 +66,8 @@ Supports loading NES ROMs in the standard iNES file format. The loader extracts:
 
 - PRG-ROM data (16KB per bank)
 - CHR-ROM data (8KB per bank) or CHR-RAM if no CHR-ROM is present
-- Mirroring mode (Horizontal/Vertical/Single-Screen/Four-Screen) based on header flags
+- Mirroring mode (Horizontal/Vertical) based on header flags
 - Automatic PRG-ROM mirroring for single-bank ROMs (NROM)
-- Mapper identification and initialization
 
 ### PPU Emulation
 
@@ -85,41 +88,11 @@ Supports loading NES ROMs in the standard iNES file format. The loader extracts:
 - Proper strobe and shift register behavior matching NES hardware
 - SDL keyboard mapping for intuitive control
 
-### Mapper Support
-
-The emulator includes support for multiple memory mappers, enabling compatibility with a wide range of NES games:
-
-- **Mapper 0 (NROM):** Basic mapper with 16KB or 32KB PRG-ROM
-- **Mapper 1 (MMC1/SxROM):** Configurable PRG/CHR banking with programmable mirroring
-- **Mapper 2 (UxROM):** Switchable 16KB PRG banks with fixed upper bank
-- **Mapper 3 (CNROM):** Simple CHR-ROM banking
-- **Mapper 4 (MMC3/TxROM):** Advanced mapper with IRQ support (partial)
-- **Mapper 5 (MMC5/ExROM):** Simplified implementation for expansion audio games
-- **Mapper 7 (AOROM):** 32KB PRG banking with single-screen mirroring control
-- **Mapper 9 (MMC2/PxROM):** Latch-based CHR switching (Punch-Out!!)
-- **Mapper 10 (MMC4/FxROM):** Similar to MMC2 with extended banking
-- **Mapper 11 (Color Dreams):** Simple PRG and CHR banking
-- **Mapper 13 (CPROM):** CHR-RAM banking (Videomation)
-- **Mapper 15 (100-in-1):** Multi-mode mapper for multicarts
-
-### APU (Audio Processing Unit) Emulation
-
-Full implementation of the NES APU with all sound channels:
-
-- **Pulse Channels (2):** Duty cycle control, envelope, sweep, and length counter
-- **Triangle Channel:** Linear counter and frequency control
-- **Noise Channel:** Configurable period and mode (15-bit/7-bit LFSR)
-- **Frame Sequencer:** Both 4-step and 5-step modes with IRQ support
-- **Audio Output:** Real-time audio playback via SDL2 at 44.1kHz
-- **Accurate Timing:** Envelope, sweep, and length counter clocking synced to CPU cycles
-- **Nonlinear Mixing:** Proper NES audio mixing formula for authentic sound
-
 ### Graphical Output
 
 - Real-time rendering via SDL2
-- Display of background and sprite layers with proper priority
+- Display of background and sprite layers
 - 2x pixel scaling for better visibility
-- Color emphasis support (red, green, blue tinting via PPUMASK)
 
 ## Test Results
 
@@ -128,25 +101,40 @@ The emulator has been tested with various NES test ROMs to verify correct implem
 ### CPU Tests
 
 **Nestest Results**
-![NES Test 1](img/nes_test1.png)
-![NES Test 2](img/nes_test2.png)
+
+<p align="center">
+  <img src="img/nes_test1.png" alt="NES Test 1">
+</p>
+
+<p align="center">
+  <img src="img/nes_test2.png" alt="NES Test 2">
+</p>
 
 The nestest ROM validates CPU instruction execution, addressing modes, and flag behavior. Both test screens show successful completion with all tests passing.
 
 **CPU Execution Space Tests**
-![CPU Execution Space PPU I/O](img/test_cpu_exec_space_ppuio.png)
+
+<p align="center">
+  <img src="img/test_cpu_exec_space_ppuio.png" alt="CPU Execution Space PPU I/O">
+</p>
 
 This test verifies proper CPU execution in PPU I/O space, ensuring correct memory mapping and register behavior.
 
 ### PPU and Graphics Tests
 
 **Color Test**
-![Color Test](img/color_test.png)
+
+<p align="center">
+  <img src="img/color_test.png" alt="Color Test">
+</p>
 
 The color test validates the PPU's palette rendering capabilities, showing proper color output and palette management.
 
 **CLI Latency Test**
-![CLI Latency](img/1-cli_latency.png)
+
+<p align="center">
+  <img src="img/1-cli_latency.png" alt="CLI Latency">
+</p>
 
 This test verifies interrupt handling and timing accuracy, particularly for CLI (Clear Interrupt Disable) instruction behavior.
 
@@ -177,14 +165,9 @@ cupid-nes/
     ├── ppu/
     │   ├── ppu.c            # PPU functionality, rendering, mirroring, and VBlank
     │   └── ppu.h            # PPU interface
-    ├── apu/
-    │   ├── apu.c            # APU sound generation and channel management
-    │   └── apu.h            # APU interface and data structures
     ├── rom/
     │   ├── rom.c            # ROM loading and iNES header parsing
-    │   ├── rom.h            # ROM interface and iNES header structure
-    │   ├── mapper.c         # Mapper implementations (0-15)
-    │   └── mapper.h         # Mapper interface and abstractions
+    │   └── rom.h            # ROM interface and iNES header structure
     └── joypad/
         ├── joypad.c         # Joypad controller state management
         └── joypad.h         # Joypad interface
@@ -253,22 +236,18 @@ The CPU includes proper 6502 quirks:
 
 ### PPU Memory Management
 
-- Nametable mirroring respects ROM configuration (horizontal/vertical/single-screen/four-screen)
+- Nametable mirroring respects ROM configuration (horizontal/vertical)
 - Palette RAM with special $3F10/$3F14/$3F18/$3F1C mirroring to $3F00
 - Proper VRAM address latching for $2005 (scroll) and $2006 (address) writes
 - Read buffer behavior for $2007 (palette reads bypass buffer)
-- Open bus behavior for unused register reads
-- Sprite priority handling (background vs foreground)
 
 ## Limitations and Future Improvements
 
-- **Mapper Support:** Currently supports mappers 0-4, 7, 9-11, 13, and 15. Additional mappers would expand ROM compatibility
+- **Mapper Support:** Currently supports NROM only. Additional mappers (MMC1, MMC3, etc.) would expand ROM compatibility
 - **Cycle Accuracy:** Current timing is approximate; true cycle-accurate emulation would improve compatibility
-- **APU Features:** DMC (sample playback) channel is stubbed out and not fully implemented
-- **MMC3 IRQ:** Mapper 4 IRQ support is implemented but may need refinement for some games
+- **Full APU Emulation:** Audio is not yet implemented
 - **Debugging Tools:** An integrated debugger with breakpoints and memory inspection would aid development
 - **Performance:** Further optimization for high-resolution or high-speed rendering
-- **Save States:** Not yet implemented
 
 ## Contributing
 
@@ -290,5 +269,4 @@ This project is open source under the GNU v3 License. See the [LICENSE](LICENSE)
 - [6502 CPU Documentation](http://www.6502.org/tutorials/6502opcodes.html)
 - [SDL2 Documentation](https://wiki.libsdl.org/)
 - [NES PPU Documentation](https://www.nesdev.org/wiki/PPU)
-- [NES APU Documentation](https://www.nesdev.org/wiki/APU)
 - [Undocumented 6502 Instructions](https://www.nesdev.org/undocumented_opcodes)
