@@ -4,7 +4,7 @@ Cupid NES Emulator is a feature-rich NES emulator implemented in C. It accuratel
 
 ## 🎮 MAJOR MILESTONE: Super Mario Bros Fully Playable!
 
-**BREAKTHROUGH ACHIEVEMENT:** The emulator can now successfully run and play Super Mario Bros, one of the most iconic and demanding NES games! This represents a monumental achievement in NES emulation, validating that all core systems-CPU, PPU, APU, memory mapping, and timing-are working together with commercial-game accuracy.
+**BREAKTHROUGH ACHIEVEMENT:** The emulator can now successfully run and play Super Mario Bros, one of the most iconic and fun NES games! This represents a monumental achievement in NES emulation, validating that all core systems-CPU, PPU, APU, memory mapping, and timing-are working together with commercial-game accuracy.
 
 <p align="center">
   <img src="img/smb.gif" alt="Super Mario Bros Gameplay">
