@@ -2,6 +2,42 @@
 
 Cupid NES Emulator is a feature-rich NES emulator implemented in C. It accurately emulates the 6502 CPU architecture, PPU graphics system, APU audio subsystem, and supports multiple mapper configurations. The project demonstrates advanced NES hardware emulation with the ability to run commercial NES games.
 
+## Table of Contents
+
+- [🎮 MAJOR MILESTONE: Super Mario Bros Fully Playable!](#-major-milestone-super-mario-bros-fully-playable)
+- [Features](#features)
+  - [6502 CPU Emulation](#6502-cpu-emulation)
+  - [Multiple Addressing Modes](#multiple-addressing-modes)
+  - [Memory Map Simulation](#memory-map-simulation)
+  - [Advanced Mapper Support](#advanced-mapper-support)
+  - [ROM Loading](#rom-loading)
+  - [PPU Emulation](#ppu-emulation)
+  - [APU (Audio Processing Unit) Emulation](#apu-audio-processing-unit-emulation)
+  - [Joypad Input](#joypad-input)
+  - [Graphical Output](#graphical-output)
+- [Test Results](#test-results)
+  - [CPU Tests](#cpu-tests)
+  - [PPU and Graphics Tests](#ppu-and-graphics-tests)
+  - [Commercial Game Tests](#commercial-game-tests)
+  - [Test ROMs Included](#test-roms-included)
+- [Project Structure](#project-structure)
+- [Requirements](#requirements)
+- [Installation & Usage](#installation--usage)
+  - [Building the Emulator](#building-the-emulator)
+  - [Running with a ROM](#running-with-a-rom)
+  - [Keyboard Controls](#keyboard-controls)
+  - [Runtime Palette Editor](#runtime-palette-editor)
+- [Emulation Details](#emulation-details)
+  - [CPU Cycle Timing](#cpu-cycle-timing)
+  - [Addressing Mode Implementation](#addressing-mode-implementation)
+  - [PPU Memory Management](#ppu-memory-management)
+  - [APU Audio Generation](#apu-audio-generation)
+  - [Mapper Architecture](#mapper-architecture)
+- [Limitations and Future Improvements](#limitations-and-future-improvements)
+- [Contributing](#contributing)
+- [License](#license)
+- [Resources](#resources)
+
 ## 🎮 MAJOR MILESTONE: Super Mario Bros Fully Playable!
 
 **BREAKTHROUGH ACHIEVEMENT:** The emulator can now successfully run and play Super Mario Bros, one of the most iconic and demanding NES games! This represents a monumental achievement in NES emulation, validating that all core systems-CPU, PPU, APU, memory mapping, and timing-are working together with commercial-game accuracy.
@@ -213,10 +249,13 @@ Donkey Kong runs perfectly, demonstrating accurate CPU, PPU, and memory system i
 The project includes several test ROMs for validation:
 - `nestest.nes` - Comprehensive CPU instruction testing
 - `1-cli_latency.nes` - Interrupt timing validation
+- `2-nmi_and_brk.nes` - NMI and BRK instruction testing
 - `color_test.nes` - PPU color and palette testing
 - `test_cpu_exec_space_ppuio.nes` - CPU execution in PPU I/O space
 - `test_cpu_exec_space_apu.nes` - CPU execution in APU space
+- `cpu_interrupts.nes` - Interrupt handling verification
 - `cpu_timing_test.nes` - CPU cycle timing tests
+- `ram_retain.nes` - RAM retention testing
 
 All tests demonstrate successful emulation of the NES hardware components.
 
