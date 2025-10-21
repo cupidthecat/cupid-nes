@@ -1,4 +1,27 @@
-// rom.h
+/*
+ * rom.h - NES ROM and iNES format header
+ * 
+ * Author: @frankischilling
+ * 
+ * This header defines the iNES header structure, mirroring modes, and ROM data structures
+ * for the NES emulator. Provides interfaces for ROM loading and accessing PRG/CHR data.
+ * 
+ * This file is part of Cupid NES Emulator.
+ * 
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 #ifndef ROM_H
 #define ROM_H
 #include <stdint.h>

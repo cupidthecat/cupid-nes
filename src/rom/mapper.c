@@ -1,4 +1,29 @@
-// rom/mapper.c - Extended implementation with mappers 0-15
+/*
+ * mapper.c - NES cartridge mapper implementations
+ * 
+ * Author: @frankischilling
+ * 
+ * This file implements various NES cartridge mappers (0-15) including NROM, MMC1, UxROM,
+ * CNROM, MMC3, MMC5, AxROM, MMC2, MMC4, Color Dreams, CPROM, and others. Each mapper
+ * handles bank switching, PRG-ROM/CHR-ROM mapping, and mirroring control according to
+ * the specific hardware behavior.
+ * 
+ * This file is part of Cupid NES Emulator.
+ * 
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 #include <string.h>
 #include <stdlib.h>
 #include "mapper.h"

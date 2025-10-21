@@ -1,3 +1,28 @@
+/*
+ * cpu_test.c - 6502 CPU instruction test suite
+ * 
+ * Author: @frankischilling
+ * 
+ * This file contains comprehensive tests for the 6502 CPU emulator. It tests all addressing
+ * modes, arithmetic operations, logical operations, branches, jumps, stack operations, and
+ * flag manipulations. Each test verifies correct instruction behavior and flag settings.
+ * 
+ * This file is part of Cupid NES Emulator.
+ * 
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>

@@ -1,4 +1,29 @@
-// cpu.c
+/*
+ * cpu.c - 6502 CPU emulation core
+ * 
+ * Author: @frankischilling
+ * 
+ * This file implements the MOS 6502 CPU emulator used in the NES. It handles instruction
+ * execution, memory access, addressing modes, CPU registers, and interrupt handling (NMI, IRQ, BRK).
+ * Includes support for all official opcodes and many unofficial ones, with accurate cycle counting
+ * and timing behavior including edge cases for interrupt latency.
+ * 
+ * This file is part of Cupid NES Emulator.
+ * 
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 #include <stdint.h>
 #include <stdio.h>
 #include <stdbool.h>

@@ -1,4 +1,29 @@
-// ppu.c
+/*
+ * ppu.c - Picture Processing Unit (PPU) emulation
+ * 
+ * Author: @frankischilling
+ * 
+ * This file implements the NES PPU (Picture Processing Unit) which handles graphics rendering.
+ * It manages background and sprite rendering, nametable memory, palette memory, VRAM addressing,
+ * scrolling, sprite-0 collision detection, and timing (VBlank, NMI generation). Supports
+ * various mirroring modes and split-screen scrolling effects.
+ * 
+ * This file is part of Cupid NES Emulator.
+ * 
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 #include "ppu.h"
 #include "../rom/rom.h"
 #include "../../include/globals.h"
