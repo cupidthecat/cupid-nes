@@ -406,6 +406,7 @@ void apu_step(APU *a, int cpu_cycles){
 
 // ---------------- SDL callback ----------------
 void apu_sdl_audio_callback(void *userdata, Uint8 *stream, int len){
+    (void)userdata;
     float *out = (float*)stream;
     int frames = len / sizeof(float);
     int got = rb_pull(&apu, out, frames);

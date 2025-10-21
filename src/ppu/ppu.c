@@ -32,6 +32,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 // PPU Memory
 uint8_t ppu_vram[NT_RAM_SIZE];
 uint8_t ppu_palette[PPU_PALETTE_SIZE];
@@ -40,6 +41,14 @@ uint8_t bg_opaque[256 * 240];
 // PPU Registers
 PPU ppu;
 extern CPU cpu;
+
+// -------------------------------------------------------------------------
+// Runtime palette storage
+// Active base palette (no-emphasis) and optional emphasis tables (8 variants)
+// Colors are stored as ARGB 0xFFRRGGBB for direct use by the renderer.
+uint32_t ppu__active_palette_base[64];
+uint32_t ppu__emphasis_palettes[8][64];
+bool     ppu__have_emphasis_tables = false;
 
 // Helpers ----------------------------------------------------------------
 static inline void set_open_bus(uint8_t v) { ppu.open_bus = v; }
@@ -468,39 +477,240 @@ void ppu_reset(PPU* ppu) {
     for (int i = 0; i < PPU_OAM_SIZE; i++) {
         ppu->oam[i] = 0xFF;
     }
+
+    // Initialize runtime palette to built-in defaults
+    ppu_palette_reset_default();
 }
 
 // Convert a pixel value (0-3 or an index into the NES palette) to an ARGB color
 uint32_t get_color(uint8_t idx) {
+    // Runtime palette system -------------------------------------------------
+    // We keep a mutable active palette and optional 1536-byte emphasis tables.
+    // Declarations (internal linkage) placed near top of file; define once.
+    extern uint32_t ppu__active_palette_base[64];
+    extern uint32_t ppu__emphasis_palettes[8][64];
+    extern bool     ppu__have_emphasis_tables;
+
     idx &= 0x3F;
 
     // PPUMASK bit 0: grayscale
     if (ppu.mask & 0x01) idx &= 0x30;
 
-    uint32_t c = nes_palette[idx];
+    // If we have emphasis tables, pick the one matching PPUMASK emphasis bits.
+    if (ppu__have_emphasis_tables) {
+        int e = ((ppu.mask & 0x20) ? 1 : 0)
+              | ((ppu.mask & 0x40) ? 2 : 0)
+              | ((ppu.mask & 0x80) ? 4 : 0);
+        return ppu__emphasis_palettes[e][idx];
+    }
+
+    // Otherwise, use the active base palette and apply software emphasis.
+    uint32_t c = ppu__active_palette_base[idx];
     float r = (float)((c >> 16) & 0xFF);
     float g = (float)((c >>  8) & 0xFF);
     float b = (float)((c      ) & 0xFF);
 
-    // Stronger, NES-like emphasis: emphasized channel stays,
-    // the other two are attenuated noticeably.
     const float ATTEN = 0.60f;
+    if (ppu.mask & 0x20) { g *= ATTEN; b *= ATTEN; }  // emphasize RED
+    if (ppu.mask & 0x40) { r *= ATTEN; b *= ATTEN; }  // emphasize GREEN
+    if (ppu.mask & 0x80) { r *= ATTEN; g *= ATTEN; }  // emphasize BLUE
 
-    if (ppu.mask & 0x20) {           // emphasize RED
-        g *= ATTEN; b *= ATTEN;
-    }
-    if (ppu.mask & 0x40) {           // emphasize GREEN
-        r *= ATTEN; b *= ATTEN;
-    }
-    if (ppu.mask & 0x80) {           // emphasize BLUE
-        r *= ATTEN; g *= ATTEN;
-    }
-
-    // clamp
     int R = (int)(r < 0 ? 0 : (r > 255 ? 255 : r));
     int G = (int)(g < 0 ? 0 : (g > 255 ? 255 : g));
     int B = (int)(b < 0 ? 0 : (b > 255 ? 255 : b));
     return 0xFF000000u | (R << 16) | (G << 8) | B;
+}
+
+// -------------------------------------------------------------------------
+// Palette tool APIs
+
+static inline uint32_t rgb_bytes_to_argb(uint8_t r, uint8_t g, uint8_t b) {
+    return 0xFF000000u | ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+}
+
+void ppu_palette_reset_default(void) {
+    for (int i = 0; i < 64; ++i) ppu__active_palette_base[i] = nes_palette[i];
+    ppu__have_emphasis_tables = false;
+}
+
+void ppu_palette_get(uint32_t out[64]) {
+    if (!out) return;
+    for (int i = 0; i < 64; ++i) out[i] = ppu__active_palette_base[i];
+}
+
+bool ppu_palette_has_emphasis_tables(void) {
+    return ppu__have_emphasis_tables;
+}
+
+int ppu_palette_set_color(int index, uint8_t r, uint8_t g, uint8_t b) {
+    if (index < 0 || index >= 64) return -1;
+    uint32_t argb = rgb_bytes_to_argb(r,g,b);
+    ppu__active_palette_base[index] = argb;
+    if (ppu__have_emphasis_tables) {
+        ppu__emphasis_palettes[0][index] = argb;
+    }
+    return 0;
+}
+
+// Read whole file into memory buffer (malloc'd). Returns 0 on success.
+static int read_entire_file(const char *path, uint8_t **out_data, size_t *out_size) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return -2; }
+    long sz = ftell(f);
+    if (sz < 0) { fclose(f); return -3; }
+    if (fseek(f, 0, SEEK_SET) != 0) { fclose(f); return -4; }
+    uint8_t *buf = (uint8_t*)malloc((size_t)sz);
+    if (!buf) { fclose(f); return -5; }
+    size_t rd = fread(buf, 1, (size_t)sz, f);
+    fclose(f);
+    if (rd != (size_t)sz) { free(buf); return -6; }
+    *out_data = buf; *out_size = (size_t)sz; return 0;
+}
+
+int ppu_palette_load_pal_file(const char *path) {
+    if (!path) return -1;
+    uint8_t *data = NULL; size_t size = 0; int rc = read_entire_file(path, &data, &size);
+    if (rc != 0) return rc;
+
+    if (size == 192) {
+        for (int i = 0; i < 64; ++i) {
+            uint8_t r = data[i*3 + 0];
+            uint8_t g = data[i*3 + 1];
+            uint8_t b = data[i*3 + 2];
+            ppu__active_palette_base[i] = rgb_bytes_to_argb(r,g,b);
+        }
+        ppu__have_emphasis_tables = false;
+        free(data);
+        return 0;
+    } else if (size == 1536) {
+        // 8 emphasis sets * 64 entries * 3 bytes
+        for (int e = 0; e < 8; ++e) {
+            for (int i = 0; i < 64; ++i) {
+                size_t off = (size_t)e*64*3 + (size_t)i*3;
+                uint8_t r = data[off + 0];
+                uint8_t g = data[off + 1];
+                uint8_t b = data[off + 2];
+                uint32_t argb = rgb_bytes_to_argb(r,g,b);
+                ppu__emphasis_palettes[e][i] = argb;
+                if (e == 0) ppu__active_palette_base[i] = argb;
+            }
+        }
+        ppu__have_emphasis_tables = true;
+        free(data);
+        return 0;
+    } else {
+        free(data);
+        return -7; // unsupported size
+    }
+}
+
+static int hex_digit(int c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
+    if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
+    return -1;
+}
+
+// Try parsing as 64 tokens of RRGGBB (optionally prefixed by # or 0x/$)
+static int try_parse_hex_tokens(const char *s) {
+    uint32_t tmp[64];
+    int count = 0;
+    const char *p = s;
+    while (*p && count < 64) {
+        while (*p && (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t' || *p == ',' || *p == ';')) p++;
+        if (!*p) break;
+        // skip prefixes
+        if (*p == '#') p++;
+        if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) p += 2;
+        if (*p == '$') p++;
+        // need 6 hex digits
+        int h[6];
+        for (int i = 0; i < 6; ++i) {
+            int d = hex_digit(p[i]);
+            if (d < 0) return -1;
+            h[i] = d;
+        }
+        p += 6;
+        uint8_t r = (uint8_t)((h[0] << 4) | h[1]);
+        uint8_t g = (uint8_t)((h[2] << 4) | h[3]);
+        uint8_t b = (uint8_t)((h[4] << 4) | h[5]);
+        tmp[count++] = rgb_bytes_to_argb(r,g,b);
+        // consume trailing token separators if any
+        while (*p && ((*p >= '0' && *p <= '9') || (*p >= 'A' && *p <= 'F') || (*p >= 'a' && *p <= 'f'))) {
+            // If there are more than 6 consecutive hex digits without separators,
+            // this wasn't tokenized; fall back to raw parsing.
+            return -1;
+        }
+    }
+    if (count == 64) {
+        for (int i = 0; i < 64; ++i) ppu__active_palette_base[i] = tmp[i];
+        ppu__have_emphasis_tables = false;
+        return 0;
+    }
+    return -1;
+}
+
+// Parse raw byte hex: accept any non-hex separators, gather hex pairs
+static int try_parse_raw_hex_bytes(const char *s) {
+    // Collect hex digits
+    size_t cap = 2048; // enough for 1536*2 digits
+    char *digits = (char*)malloc(cap);
+    if (!digits) return -1;
+    size_t n = 0;
+    for (const char *p = s; *p; ++p) {
+        if (hex_digit(*p) >= 0) {
+            if (n >= cap) { free(digits); return -1; }
+            digits[n++] = *p;
+        }
+    }
+    if ((n & 1) != 0) { free(digits); return -1; }
+    size_t bytes = n / 2;
+    if (!(bytes == 192 || bytes == 1536)) { free(digits); return -1; }
+    uint8_t *buf = (uint8_t*)malloc(bytes);
+    if (!buf) { free(digits); return -1; }
+    for (size_t i = 0; i < bytes; ++i) {
+        int hi = hex_digit(digits[i*2]);
+        int lo = hex_digit(digits[i*2+1]);
+        buf[i] = (uint8_t)((hi << 4) | lo);
+    }
+    free(digits);
+
+    if (bytes == 192) {
+        for (int i = 0; i < 64; ++i) {
+            uint8_t r = buf[i*3 + 0];
+            uint8_t g = buf[i*3 + 1];
+            uint8_t b = buf[i*3 + 2];
+            ppu__active_palette_base[i] = rgb_bytes_to_argb(r,g,b);
+        }
+        ppu__have_emphasis_tables = false;
+        free(buf);
+        return 0;
+    } else if (bytes == 1536) {
+        for (int e = 0; e < 8; ++e) {
+            for (int i = 0; i < 64; ++i) {
+                size_t off = (size_t)e*64*3 + (size_t)i*3;
+                uint8_t r = buf[off + 0];
+                uint8_t g = buf[off + 1];
+                uint8_t b = buf[off + 2];
+                uint32_t argb = rgb_bytes_to_argb(r,g,b);
+                ppu__emphasis_palettes[e][i] = argb;
+                if (e == 0) ppu__active_palette_base[i] = argb;
+            }
+        }
+        ppu__have_emphasis_tables = true;
+        free(buf);
+        return 0;
+    }
+    free(buf);
+    return -1;
+}
+
+int ppu_palette_load_hex_string(const char *hex_text) {
+    if (!hex_text) return -1;
+    if (try_parse_hex_tokens(hex_text) == 0) return 0;
+    if (try_parse_raw_hex_bytes(hex_text) == 0) return 0;
+    return -1;
 }
 
 // Render the first pattern table (first 4KB of CHR-ROM) as a grid of 16x16 8x8 tiles.

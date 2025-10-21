@@ -4,7 +4,7 @@ Cupid NES Emulator is a feature-rich NES emulator implemented in C. It accuratel
 
 ## 🎮 MAJOR MILESTONE: Super Mario Bros Fully Playable!
 
-**BREAKTHROUGH ACHIEVEMENT:** The emulator can now successfully run and play Super Mario Bros, one of the most iconic and fun NES games! This represents a monumental achievement in NES emulation, validating that all core systems-CPU, PPU, APU, memory mapping, and timing-are working together with commercial-game accuracy.
+**BREAKTHROUGH ACHIEVEMENT:** The emulator can now successfully run and play Super Mario Bros, one of the most iconic and demanding NES games! This represents a monumental achievement in NES emulation, validating that all core systems-CPU, PPU, APU, memory mapping, and timing-are working together with commercial-game accuracy.
 
 <p align="center">
   <img src="img/smb.gif" alt="Super Mario Bros Gameplay">
@@ -300,6 +300,63 @@ The emulator will:
 - **Right Shift** – Select button
 - **Enter** – Start button
 - **Arrow Keys** – D-Pad (Up, Down, Left, Right)
+
+### Runtime Palette Editor
+
+The emulator includes a built-in **palette editor tool** that lets you customize NES colors on the fly without recompiling. Perfect for experimenting with different color palettes or creating custom visual styles.
+
+#### Features
+
+- **Interactive color picker**: Click any of the 64 NES palette colors to open an HSV color picker with live preview
+- **Visual palette overlay**: Press **F7** to toggle a color swatch grid showing all 64 active colors
+- **Smart color suggestions**: The picker shows 4 brightness variants from the original NES palette for quick access to authentic-looking colors
+- **Multiple input methods**:
+  - Click and drag in the HSV picker for precise control
+  - Drag-and-drop `.pal` files (192 or 1536 bytes) onto the window
+  - Paste palette data from clipboard (**Ctrl+V**) in multiple formats
+- **Instant preview**: Changes are applied immediately to the running game
+- **Non-destructive**: Reset to default with **F6** at any time
+
+#### Controls
+
+- **F7** – Toggle palette overlay (shows current 64 NES colors)
+- **F6** – Reset to built-in default palette
+- **Left-click** – Select a color swatch to edit
+- **Drag** – Adjust hue/saturation/value in the color picker
+- **Click suggestions** – Apply recommended NES-like colors
+- **Ctrl+V** – Paste palette from clipboard
+
+#### Supported Formats
+
+**Drag-and-drop `.pal` files:**
+- 192 bytes: 64 colors × 3 bytes (R, G, B)
+- 1536 bytes: 8 emphasis variants × 64 colors × 3 bytes
+
+**Clipboard paste (Ctrl+V):**
+- 64 space/comma-separated `RRGGBB` tokens (e.g., `FF0000 00FF00 0000FF ...`)
+- Also accepts `#RRGGBB`, `$RRGGBB`, or `0xRRGGBB` prefixes
+- Raw hex string of 192 or 1536 bytes (whitespace ignored)
+
+#### Emphasis Handling
+
+- **1536-byte palettes**: Use pre-computed emphasis tables for authentic hardware behavior
+- **192-byte palettes**: Apply software emphasis simulation (60% attenuation)
+- **Grayscale mode**: PPUMASK bit 0 respected in all modes
+
+#### Developer API
+
+Palette functions are exposed in `src/ppu/ppu.h`:
+
+```c
+int  ppu_palette_load_pal_file(const char *path);      // Load .pal file
+int  ppu_palette_load_hex_string(const char *text);    // Parse hex string
+void ppu_palette_reset_default(void);                  // Reset to default
+void ppu_palette_get(uint32_t out[64]);                // Get active palette (ARGB)
+int  ppu_palette_set_color(int index, uint8_t r, uint8_t g, uint8_t b);  // Set individual color
+bool ppu_palette_has_emphasis_tables(void);            // Check emphasis mode
+```
+
+The palette tool UI is implemented in `src/ui/palette_tool.{c,h}` as a self-contained module.
 
 ## Emulation Details
 

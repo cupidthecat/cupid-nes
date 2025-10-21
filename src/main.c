@@ -35,6 +35,9 @@
 #include "apu/apu.h"
 #include <time.h>
 #include "rom/mapper.h"
+#include <math.h>
+#include "ui/palette_tool.h"
+#include "ui/palette_tool.h"
 
 // Constants for NTSC NES timing:
 const double CPU_FREQ = 1789773.0;              // CPU frequency in Hz
@@ -153,6 +156,8 @@ int main(int argc, char *argv[]) {
 
     bool running = true;
     SDL_Event e;
+
+    palette_tool_init();
     
     // In main.c (inside the main loop)
     while (running) {
@@ -161,11 +166,19 @@ int main(int argc, char *argv[]) {
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT)
                 running = false;
+            // Mouse interactions for palette overlay and picker
+            palette_tool_handle_event(&e, renderer);
             
             if (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP) {
                 int down = (e.type == SDL_KEYDOWN);
     
                 switch (e.key.keysym.sym) {
+                    case SDLK_F7:
+                        if (down) { palette_tool_toggle_overlay(); }
+                        break;
+                    case SDLK_F6:
+                        if (down) { ppu_palette_reset_default(); palette_tool_flash(true); }
+                        break;
                     case SDLK_z:        joypad_set(&pad1, BTN_A,      down); break; // Z = A
                     case SDLK_x:        joypad_set(&pad1, BTN_B,      down); break; // X = B
                     case SDLK_RSHIFT:   joypad_set(&pad1, BTN_SELECT, down); break; // Right Shift = Select
@@ -175,6 +188,39 @@ int main(int argc, char *argv[]) {
                     case SDLK_LEFT:     joypad_set(&pad1, BTN_LEFT,   down); break;
                     case SDLK_RIGHT:    joypad_set(&pad1, BTN_RIGHT,  down); break;
                     default: break;
+                }
+
+                // Clipboard paste: Ctrl+V for hex palette text
+                if (down && (e.key.keysym.sym == SDLK_v)) {
+                    const SDL_Keymod mods = SDL_GetModState();
+                    if ((mods & KMOD_CTRL) != 0) {
+                        if (SDL_HasClipboardText()) {
+                            char *txt = SDL_GetClipboardText();
+                            if (txt) {
+                                int rc = ppu_palette_load_hex_string(txt);
+                                palette_tool_flash(rc == 0);
+                                SDL_free(txt);
+                                if (rc != 0) {
+                                    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "Palette Paste Error",
+                                        "Clipboard text did not contain a valid palette.\n\nAccepts: 64 x RRGGBB tokens, or raw 192/1536 hex bytes.", NULL);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Drag-and-drop .pal files
+            if (e.type == SDL_DROPFILE) {
+                char *dropped_f = e.drop.file;
+                if (dropped_f) {
+                    int rc = ppu_palette_load_pal_file(dropped_f);
+                    palette_tool_flash(rc == 0);
+                    if (rc != 0) {
+                        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Palette Load Error",
+                            "Failed to load .pal file. Expected 192 or 1536 bytes.", NULL);
+                    }
+                    SDL_free(dropped_f);
                 }
             }
         }
@@ -201,6 +247,8 @@ int main(int argc, char *argv[]) {
         SDL_UpdateTexture(texture, NULL, framebuffer, SCREEN_WIDTH * sizeof(uint32_t));
         SDL_RenderClear(renderer);
         SDL_RenderCopy(renderer, texture, NULL, NULL);
+        int ww = 0, hh = 0; SDL_GetRendererOutputSize(renderer, &ww, &hh);
+        if (palette_tool_is_visible()) { palette_tool_draw(renderer, ww, hh); }
         SDL_RenderPresent(renderer);
     
         // --- vblank period: set the flag, maybe fire NMI, and LET THE CPU RUN WHILE IT'S HIGH ---
@@ -210,6 +258,7 @@ int main(int argc, char *argv[]) {
         // DON'T call ppu_end_vblank() here - it happens at the start of next frame
     
         Uint32 frameTime = SDL_GetTicks() - frameStart;
+        palette_tool_tick(frameTime);
         if (frameTime < FRAME_TIME_MS) SDL_Delay((Uint32)(FRAME_TIME_MS - frameTime));
     }
 
