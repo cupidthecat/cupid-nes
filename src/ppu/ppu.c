@@ -222,7 +222,6 @@ void ppu_begin_vblank(void){ ppu.status |= 0x80; ppu_eval_nmi(); }
 void ppu_end_vblank(void){
     ppu.status &= ~0x80;
     ppu_eval_nmi();
-    // NEW: freeze $2000/$2005 for the HUD/top part
     ppu_latch_pre_for_visible();
 }
 //---------------------------------------------------------------------
@@ -485,7 +484,7 @@ uint32_t get_color(uint8_t idx) {
 
     // Stronger, NES-like emphasis: emphasized channel stays,
     // the other two are attenuated noticeably.
-    const float ATTEN = 0.60f;  // try 0.55–0.70 if you want to tweak
+    const float ATTEN = 0.60f;
 
     if (ppu.mask & 0x20) {           // emphasize RED
         g *= ATTEN; b *= ATTEN;
@@ -609,13 +608,7 @@ void start_frame(void) {
     ppu.wrote_2005_x_post = false;
     ppu.wrote_2005_y_post = false;
 
-    // remember the scroll/ctrl for the *top* region
-    // (we'll re-latch these right before rendering; see Fix #2)
-    // ppu.t_pre    = ppu.t;      // <-- remove these three lines here
-    // ppu.x_pre    = ppu.x;      //     (don't latch yet)
-    // ppu.ctrl_pre = ppu.ctrl;
 
-    // NEW: sane defaults for the bottom region
     ppu.t_post    = ppu.t;
     ppu.x_post    = ppu.x;
     ppu.ctrl_post = ppu.ctrl;
@@ -624,7 +617,6 @@ void start_frame(void) {
 // Predict the first scanline after the sprite-0 collision for this frame,
 // using the *top-of-frame* scroll/nametable (pre state).
 void ppu_predict_sprite0_split_for_frame(void) {
-    // Clear any old hit for this new frame's visible period
     ppu.status &= ~0x40;
     ppu.sprite_zero_hit = false;
     ppu.have_split = false;

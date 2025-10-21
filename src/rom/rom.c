@@ -116,13 +116,11 @@ int load_rom(const char *filename) {
 
     fclose(fp);
 
-    // If only one 16KB PRG bank, mirror it into the upper half (legacy convenience)
     if (prg_size == PRG_ROM_BANK_SIZE) {
         memcpy(&prg_rom[PRG_ROM_BANK_SIZE], prg_rom, PRG_ROM_BANK_SIZE);
         prg_size = 0x8000;
     }
 
-    // ===== NEW: initialize cartridge mapper =====
     int mapper_no = mapper_init_from_header(&ines_header, prg_rom, prg_size, chr_rom, chr_size);
 
     // Keep the old global in sync so PPU mirroring stays correct

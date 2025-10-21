@@ -92,11 +92,10 @@ typedef struct {
     uint16_t lfsr;       // 15-bit shift register
     uint16_t period;     // current period from table
     uint8_t  period_idx; // 0..15
-    uint16_t timer;      // ADD THIS LINE - timer countdown
+    uint16_t timer;
     bool     enabled;
 } Noise;
 
-// Minimal (stub) DMC holder; implement later if you want DK SFX perfect
 typedef struct {
     bool enabled;
 } DMC;

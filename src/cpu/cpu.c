@@ -36,7 +36,7 @@
 uint8_t ram[0x0800];        // 2KB internal RAM
 #define APU_IO_SIZE 0x20              // cover $4000-$401F
 uint8_t apu_io[APU_IO_SIZE];          // 32 bytes
-#define APU_IDX(a) ((uint16_t)((a) - 0x4000))  // index helper
+#define APU_IDX(a) ((uint16_t)((a) - 0x4000))
 // CPU-side open-bus latch (distinct from the PPU's $200x open-bus)
 static uint8_t cpu_open_bus = 0;
 static inline uint8_t bus_get(void) { return cpu_open_bus; }
@@ -89,7 +89,7 @@ uint8_t read_mem(uint16_t addr) {
     // APU + I/O $4000-$4017
     if (addr >= 0x4000 && addr <= 0x4017) {
         if (addr == 0x4016) { uint8_t v = joypad_read(&pad1); bus_set(v); return v; }
-        if (addr == 0x4017) { uint8_t v = joypad_read(&pad2); bus_set(v); return v; }  // NEW
+        if (addr == 0x4017) { uint8_t v = joypad_read(&pad2); bus_set(v); return v; }
         if (addr == 0x4015) { uint8_t v = apu_read(addr);    bus_set(v); return v; }
         return bus_get(); // write-only regs -> open bus
     }
@@ -133,7 +133,6 @@ void write_mem(uint16_t addr, uint8_t value) {
     if (addr >= 0x6000) { cart_cpu_write(addr, value); return; }
 }
 
-// Helper function to read the next byte without advancing the PC
 static inline void dummy_read_next(CPU* cpu) {
     (void)read_mem(cpu->pc);   // PC already points to the byte after the opcode
 }
@@ -158,14 +157,12 @@ void cpu_irq(CPU* cpu) {
     cpu->pc = read_mem(0xFFFE) | (read_mem(0xFFFF) << 8);
 }
 
-// Helper function to set zero and negative flags
 static void set_zn_flags(CPU* cpu, uint8_t value) {
     cpu->status = (cpu->status & ~(ZERO_FLAG|NEGATIVE_FLAG)) |
                   (value == 0 ? ZERO_FLAG : 0) |
                   (value & 0x80 ? NEGATIVE_FLAG : 0);
 }
 
-// Helper function indirect Y with optional page-cross penalty for READS
 static uint16_t get_indirect_y_read(CPU* cpu) {
     uint8_t zpg = read_mem(cpu->pc++);
     uint16_t base = read_mem(zpg) | (read_mem((zpg + 1) & 0xFF) << 8);
@@ -174,7 +171,6 @@ static uint16_t get_indirect_y_read(CPU* cpu) {
     return addr;
 }
 
-// Addressing mode helpers
 static uint16_t get_zpg_address(CPU* cpu) {
     return read_mem(cpu->pc++);
 }
@@ -261,7 +257,6 @@ static inline void do_sbc(CPU* cpu, uint8_t o) {
     cpu->a = r;
 }
 
-// Helper function for ROR
 static void ror(CPU* cpu, uint8_t* value) {
     // Save the old carry.
     uint8_t old_carry = (cpu->status & CARRY_FLAG) ? 1 : 0;

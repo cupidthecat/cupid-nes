@@ -34,7 +34,6 @@
 extern uint8_t prg_rom[0x8000];
 extern uint8_t ram[0x0800];
 
-// Reset test helper: clears memory and resets CPU to a known state.
 void reset_test(CPU *cpu) {
     for (int i = 0; i < 0x0800; i++)
         ram[i] = 0;
@@ -543,7 +542,7 @@ void test_JMP_absolute() {
 void test_JMP_indirect() {
     CPU cpu;
     reset_test(&cpu);
-    // Setup pointer in RAM: at $0200 -> $1234 (this test is fine as-is because it uses RAM)
+    // Setup pointer in RAM: at $0200 -> $1234
     ram[0x0200] = 0x34;
     ram[0x0201] = 0x12;
     prg_rom[0] = 0x6C; // JMP Indirect opcode

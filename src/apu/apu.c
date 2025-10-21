@@ -279,7 +279,6 @@ static inline void clock_triangle(Triangle* t){
 
 static inline void clock_noise(Noise* n){
     if (n->period == 0) return;
-    // Remove: static uint16_t div = 0;
     
     if (n->timer == 0) {
         n->timer = n->period;

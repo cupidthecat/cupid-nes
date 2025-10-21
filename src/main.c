@@ -48,7 +48,6 @@ const double CPU_CYCLES_PER_FRAME = CPU_FREQ / 60.0;  // ~29796 cycles/frame
 // Framebuffer definition
 uint32_t framebuffer[SCREEN_WIDTH * SCREEN_HEIGHT];
 
-// Add joypad instances globally
 Joypad pad1 = {0}, pad2 = {0};
 
 // --- timing (NTSC) ---
@@ -61,9 +60,9 @@ const int CYCLES_VISIBLE = CPU_CYCLES_PER_FRAME_I * VISIBLE_SCANLINES / TOTAL_SC
 const int CYCLES_VBLANK  = CPU_CYCLES_PER_FRAME_I - CYCLES_VISIBLE;
 
 int main(int argc, char *argv[]) {
-    SDL_AudioSpec want;                 // uninitialized; we'll memset later
-    SDL_AudioSpec have;                 // "
-    SDL_AudioDeviceID audio_dev = 0;    // keep handle so we can check it
+    SDL_AudioSpec want;
+    SDL_AudioSpec have;
+    SDL_AudioDeviceID audio_dev = 0;
 
     if(argc < 2) {
         printf("Usage: %s <rom-file>\n", argv[0]);
@@ -163,7 +162,6 @@ int main(int argc, char *argv[]) {
             if (e.type == SDL_QUIT)
                 running = false;
             
-            // Add SDL key mapping
             if (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP) {
                 int down = (e.type == SDL_KEYDOWN);
     
