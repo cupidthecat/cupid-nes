@@ -213,13 +213,10 @@ Donkey Kong runs perfectly, demonstrating accurate CPU, PPU, and memory system i
 The project includes several test ROMs for validation:
 - `nestest.nes` - Comprehensive CPU instruction testing
 - `1-cli_latency.nes` - Interrupt timing validation
-- `2-nmi_and_brk.nes` - NMI and BRK instruction testing
 - `color_test.nes` - PPU color and palette testing
 - `test_cpu_exec_space_ppuio.nes` - CPU execution in PPU I/O space
 - `test_cpu_exec_space_apu.nes` - CPU execution in APU space
-- `cpu_interrupts.nes` - Interrupt handling verification
 - `cpu_timing_test.nes` - CPU cycle timing tests
-- `ram_retain.nes` - RAM retention testing
 
 All tests demonstrate successful emulation of the NES hardware components.
 
