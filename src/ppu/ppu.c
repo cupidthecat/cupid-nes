@@ -104,8 +104,9 @@ uint8_t ppu_reg_read(uint16_t reg) {
             uint16_t addr = ppu.v & 0x3FFF;
             uint8_t ret;
             if (addr >= 0x3F00 && addr < 0x4000) {
-                // palette reads bypass the buffer
+                // palette reads return palette immediately but also update buffer with mirrored nametable
                 ret = ppu_read(addr);
+                ppu.ppudata_buffer = ppu_read(addr - 0x1000); // fill buffer with nametable mirror
                 set_open_bus(ret); // PPU latch sees palette byte
             } else {
                 // CPU gets buffered old byte; bus sees the newly fetched one
@@ -276,137 +277,124 @@ static inline void clear_framebuffer(uint32_t *fb) {
     for (int i = 0; i < 256*240; ++i) fb[i] = bg;
 }
 
-// render_background()
-// Renders a full background (256×240 pixels) using the nametable and attribute table.
-// - The nametable is located in VRAM at 0x2000–0x23BF (mirrored into 0x2400–0x2FFF).
-// - The attribute table is located at 0x23C0–0x23FF for the first nametable.
-// - This function assumes a single nametable (NROM configuration).
-void render_background(uint32_t *framebuffer) {
-    const int W = 256, H = 240;
-    
-    // Clear framebuffer to universal background color each frame
-    clear_framebuffer(framebuffer);
-    
+
+
+// (removed old full-frame renderers; replaced by scanline versions)
+
+// ------------------- Scanline-based rendering -------------------
+void ppu_begin_frame_render(uint32_t *fb) {
+    clear_framebuffer(fb);
     memset(bg_opaque, 0, sizeof(bg_opaque));
+}
+
+void ppu_render_scanline_bg(int sy, uint32_t *framebuffer) {
+    const int W = 256;
+    if (sy < 0 || sy >= 240) return;
     if (!(ppu.mask & 0x08)) return;  // BG disabled
-    for (int sy = 0; sy < H; sy++) {
-        // If we predicted a split and the game completed both $2005 writes,
-        // switch to the post scroll starting on the *next* line.
-        if (ppu.have_split && ppu.post_scroll_valid && sy == ppu.split_y) {
-            // 257 behavior: v.horz := t.horz (coarse X + NT-X), fine X := x
-            ppu.t_pre    = (ppu.t_pre & ~0x041F) | (ppu.t_post & 0x041F);
-            ppu.x_pre    = ppu.x_post;
-            
-            // If the game also changed pattern-table select or other ctrl bits we use for rendering,
-            // reflect that here (safe; this matches how your code uses ctrl_* in rendering):
-            ppu.ctrl_pre = ppu.ctrl_post;
-        }
 
-        // choose scroll for this line
-        uint16_t T         = ppu.t_pre;
-        uint8_t  fineX     = ppu.x_pre;
-        uint8_t  ctrl_here = ppu.ctrl_pre;
+    // Split handling: if we predicted a split and this line is where it begins,
+    // apply the queued post-scroll and ctrl for subsequent pixels/lines.
+    if (ppu.have_split && ppu.post_scroll_valid && sy == ppu.split_y) {
+        ppu.t_pre    = (ppu.t_pre & ~0x041F) | (ppu.t_post & 0x041F);
+        ppu.x_pre    = ppu.x_post;
+        ppu.ctrl_pre = ppu.ctrl_post;
+    }
 
-        int coarseX =  T        & 0x1F;
-        int coarseY = (T >> 5)  & 0x1F;
-        int fineY0  = (T >> 12) & 0x07;
-        int ntx0    = (T >> 10) & 1;
-        int nty0    = (T >> 11) & 1;
+    uint16_t T         = ppu.t_pre;
+    uint8_t  fineX     = ppu.x_pre;
+    uint8_t  ctrl_here = ppu.ctrl_pre;
 
-        int scrollX = coarseX * 8 + (fineX & 7);
-        int scrollY = coarseY * 8 + fineY0;
+    int coarseX =  T        & 0x1F;
+    int coarseY = (T >> 5)  & 0x1F;
+    int fineY0  = (T >> 12) & 0x07;
+    int ntx0    = (T >> 10) & 1;
+    int nty0    = (T >> 11) & 1;
 
-        uint16_t bgPT = (ctrl_here & 0x10) ? 0x1000 : 0x0000;
+    int scrollX = coarseX * 8 + (fineX & 7);
+    int scrollY = coarseY * 8 + fineY0;
 
-        // Carry base nametable selection directly into world coords
-        int wy = scrollY + sy + (nty0 * 240);  // 0..479 plus base 240 if NTY=1
-        int ty = (wy / 8)   % 30;              // tile Y
-        int fy =  wy        & 7;               // fine Y
+    uint16_t bgPT = (ctrl_here & 0x10) ? 0x1000 : 0x0000;
 
-        for (int sx = 0; sx < W; sx++) {
-            if (!(ppu.mask & 0x02) && sx < 8) continue; // left-8 BG mask
+    int wy = scrollY + sy + (nty0 * 240);
+    int ty = (wy / 8)   % 30;
+    int fy =  wy        & 7;
 
-            int wx = scrollX + sx + (ntx0 * 256);   // 0..511 plus base 256 if NTX=1
-            int tx = (wx / 8)   % 32;          // tile X
-            int fx =  wx        & 7;           // fine X
+    for (int sx = 0; sx < W; sx++) {
+        if (!(ppu.mask & 0x02) && sx < 8) continue; // left-8 BG mask
 
-            int nt_x = (wx / 256) & 1;
-            int nt_y = (wy / 240) & 1;
-            uint16_t ntBase = 0x2000 + ((nt_y << 1) | nt_x) * 0x400;
+        int wx = scrollX + sx + (ntx0 * 256);
+        int tx = (wx / 8)   % 32;
+        int fx =  wx        & 7;
 
-            uint8_t  tileIdx = ppu_vram[nt_index(ntBase + ty * 32 + tx)];
-            
-            // attribute address derived the same way the PPU does it
-            uint16_t atAddr = ntBase + 0x3C0
-                            + ((ty >> 2) * 8)           // attribute row (each 4 tiles tall)
-                            +  (tx >> 2);               // attribute col (each 4 tiles wide)
-            
-            uint8_t atByte = ppu_vram[nt_index(atAddr)];
-            uint8_t shift  = ((ty & 2) << 1) | (tx & 2);  // {00,10,01,11} * 2 -> {0,2,4,6}
-            uint8_t palSel = (atByte >> shift) & 0x03;
+        int nt_x = (wx / 256) & 1;
+        int nt_y = (wy / 240) & 1;
+        uint16_t ntBase = 0x2000 + ((nt_y << 1) | nt_x) * 0x400;
 
-            uint16_t tileAddr = bgPT + tileIdx * 16;
-            uint8_t  p0 = cart_ppu_read(tileAddr + fy);
-            uint8_t  p1 = cart_ppu_read(tileAddr + fy + 8);
-            uint8_t  bit = 7 - fx;
-            uint8_t  px  = ((p1 >> bit) & 1) << 1 | ((p0 >> bit) & 1);
+        uint8_t  tileIdx = ppu_vram[nt_index(ntBase + ty * 32 + tx)];
 
-            uint8_t palIndex = (px == 0) ? ppu_palette[0] : ppu_palette[(palSel * 4) + px];
-            framebuffer[sy * W + sx] = get_color(palIndex);
-            if (px) bg_opaque[sy * 256 + sx] = 1;
-        }
+        uint16_t tileAddr = bgPT + tileIdx * 16;
+        uint8_t  p0 = cart_ppu_read(tileAddr + fy);
+        uint8_t  p1 = cart_ppu_read(tileAddr + fy + 8);
+        uint8_t  bit = 7 - fx;
+        uint8_t  px  = ((p1 >> bit) & 1) << 1 | ((p0 >> bit) & 1);
+
+        // Attribute lookup
+        uint16_t atAddr = ntBase + 0x3C0 + ((ty >> 2) * 8) + (tx >> 2);
+        uint8_t atByte = ppu_vram[nt_index(atAddr)];
+        uint8_t shift  = ((ty & 2) << 1) | (tx & 2);
+        uint8_t palSel = (atByte >> shift) & 0x03;
+
+        uint8_t palIndex = (px == 0) ? ppu_palette[0] : ppu_palette[(palSel * 4) + px];
+        framebuffer[sy * W + sx] = get_color(palIndex);
+        if (px) bg_opaque[sy * 256 + sx] = 1;
     }
 }
 
-
-void render_sprites(uint32_t* fb) {
+void ppu_render_scanline_sprites(int sy, uint32_t *fb) {
+    if (sy < 0 || sy >= 240) return;
     if (!(ppu.mask & 0x10)) return;   // sprites disabled by PPUMASK
-    const bool tall = (ppu.ctrl & 0x20) != 0;
 
+    const bool tall = (ppu.ctrl & 0x20) != 0;
     for (int i = 63; i >= 0; i--) {
         uint8_t y0 = ppu.oam[i*4 + 0];
-        if (y0 >= 0xEF) continue;                 // offscreen
+        if (y0 >= 0xEF) continue;
         int baseY = (int)y0 + 1;
+        if (sy < baseY || sy >= baseY + (tall ? 16 : 8)) continue; // not on this line
+
         uint8_t id = ppu.oam[i*4 + 1];
         uint8_t at = ppu.oam[i*4 + 2];
         uint8_t x0 = ppu.oam[i*4 + 3];
 
         uint8_t pal   = (at & 0x03);
-        bool prio     = (at & 0x20) != 0;         // behind background
+        bool prio     = (at & 0x20) != 0;
         bool flip_h   = (at & 0x40) != 0;
         bool flip_v   = (at & 0x80) != 0;
 
         uint16_t base = (ppu.ctrl & 0x08) ? 0x1000 : 0x0000;
         if (tall) { base = (id & 1) ? 0x1000 : 0x0000; id &= 0xFE; }
 
+        int row_in_sprite = sy - baseY;
         for (int half = 0; half < (tall ? 2 : 1); half++) {
+            if (row_in_sprite < half*8 || row_in_sprite >= (half+1)*8) continue;
+            int row = row_in_sprite - half*8;
+            int rr = flip_v ? (7 - row) : row;
             uint16_t tile = id + half;
             uint16_t addr = base + tile * 16;
+            uint8_t p0 = cart_ppu_read(addr + rr);
+            uint8_t p1 = cart_ppu_read(addr + rr + 8);
 
-            for (int row = 0; row < 8; row++) {
-                int rr = flip_v ? (7 - row) : row;
-                uint8_t p0 = cart_ppu_read(addr + rr);
-                uint8_t p1 = cart_ppu_read(addr + rr + 8);
+            for (int col = 0; col < 8; col++) {
+                int bit = flip_h ? col : (7 - col);
+                uint8_t px = ((p1 >> bit) & 1) << 1 | ((p0 >> bit) & 1);
+                if (!px) continue;
 
-                int sy = baseY + row + (half * 8);
-                if (sy >= 240) continue;
-                for (int col = 0; col < 8; col++) {
-                    int bit = flip_h ? col : (7 - col);
-                    uint8_t px = ((p1 >> bit) & 1) << 1 | ((p0 >> bit) & 1);
-                    if (!px) continue;
-                
                 int sx = x0 + col;
-                if (sx >= 256) continue;
+                if (sx < 0 || sx >= 256) continue;
                 if (!(ppu.mask & 0x04) && sx < 8) continue;  // left-8 sprite mask
-            
-                // Sprite-0 hit is now handled in the main CPU loop at the correct cycle
-                // (removed from here to fix timing issues)
-            
                 if (prio && (ppu.mask & 0x08) && bg_opaque[sy*256 + sx]) continue;
-                
-                    uint8_t idx = ppu_palette[0x10 + pal*4 + px];
-                    fb[sy*256 + sx] = get_color(idx);
-                }
+
+                uint8_t idx = ppu_palette[0x10 + pal*4 + px];
+                fb[sy*256 + sx] = get_color(idx);
             }
         }
     }
@@ -417,7 +405,7 @@ uint8_t ppu_read(uint16_t addr) {
     addr &= 0x3FFF;
 
     // Handle palette mirroring
-    if(addr >= 0x3F00 && addr < 0x3F20) {
+    if(addr >= 0x3F00 && addr < 0x4000) {
         addr &= 0x1F;
         // Special case: address 0x3F10, 0x3F14, 0x3F18, 0x3F1C mirror 0x3F00
         if((addr & 0x03) == 0) addr &= 0x0F;
@@ -437,7 +425,7 @@ uint8_t ppu_read(uint16_t addr) {
 void ppu_write(uint16_t addr, uint8_t value) {
     addr &= 0x3FFF;
 
-    if(addr >= 0x3F00 && addr < 0x3F20) {
+    if(addr >= 0x3F00 && addr < 0x4000) {
         addr &= 0x1F;
         // Special case: address 0x3F10, 0x3F14, 0x3F18, 0x3F1C mirror 0x3F00
         if((addr & 0x03) == 0) addr &= 0x0F;
@@ -476,6 +464,18 @@ void ppu_reset(PPU* ppu) {
     // Clear OAM
     for (int i = 0; i < PPU_OAM_SIZE; i++) {
         ppu->oam[i] = 0xFF;
+    }
+
+    // Initialize palette RAM with power-up values that match Blargg's NES
+    // These are the actual values found in Blargg's test NES at power-up
+    static const uint8_t power_up_palette[PPU_PALETTE_SIZE] = {
+        0x09, 0x01, 0x00, 0x01, 0x00, 0x02, 0x02, 0x0D,
+        0x08, 0x10, 0x08, 0x24, 0x00, 0x00, 0x04, 0x2C,
+        0x09, 0x01, 0x34, 0x03, 0x00, 0x04, 0x00, 0x14,
+        0x08, 0x3A, 0x00, 0x02, 0x00, 0x20, 0x2C, 0x08
+    };
+    for (int i = 0; i < PPU_PALETTE_SIZE; i++) {
+        ppu_palette[i] = power_up_palette[i];
     }
 
     // Initialize runtime palette to built-in defaults

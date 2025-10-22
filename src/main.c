@@ -41,8 +41,9 @@
 
 // Constants for NTSC NES timing:
 const double CPU_FREQ = 1789773.0;              // CPU frequency in Hz
-const double FRAME_TIME_MS = 1000.0 / 60.0;       // ~16.67 ms per frame
-const double CPU_CYCLES_PER_FRAME = CPU_FREQ / 60.0;  // ~29796 cycles/frame
+const double ACTUAL_FPS = 60.0988;                  // Actual NTSC NES frame rate
+const double FRAME_TIME_MS = 1000.0 / ACTUAL_FPS;  // ~16.639 ms per frame  
+const double CPU_CYCLES_PER_FRAME = CPU_FREQ / ACTUAL_FPS;  // ~29780.5 cycles/frame
 
 // apu con
 #define AUDIO_SAMPLE_RATE 44100
@@ -55,12 +56,15 @@ Joypad pad1 = {0}, pad2 = {0};
 
 // --- timing (NTSC) ---
 const int TOTAL_SCANLINES = 262;
-const int VBLANK_SCANLINES = 20;        // lines 241–260
-const int VISIBLE_SCANLINES = TOTAL_SCANLINES - VBLANK_SCANLINES;
+const int VISIBLE_SCANLINES = 240;      // lines 0-239
+const int POST_RENDER_SCANLINES = 1;    // line 240
+const int VBLANK_SCANLINES = 20;        // lines 241-260
+const int PRE_RENDER_SCANLINES = 1;     // line 261
 
 const int CPU_CYCLES_PER_FRAME_I = (int)CPU_CYCLES_PER_FRAME;
-const int CYCLES_VISIBLE = CPU_CYCLES_PER_FRAME_I * VISIBLE_SCANLINES / TOTAL_SCANLINES;
-const int CYCLES_VBLANK  = CPU_CYCLES_PER_FRAME_I - CYCLES_VISIBLE;
+const int CYCLES_VISIBLE = CPU_CYCLES_PER_FRAME_I * (VISIBLE_SCANLINES + POST_RENDER_SCANLINES) / TOTAL_SCANLINES;
+const int CYCLES_VBLANK  = CPU_CYCLES_PER_FRAME_I * VBLANK_SCANLINES / TOTAL_SCANLINES;
+const int CYCLES_PRERENDER = CPU_CYCLES_PER_FRAME_I - CYCLES_VISIBLE - CYCLES_VBLANK;
 
 int main(int argc, char *argv[]) {
     SDL_AudioSpec want;
@@ -132,6 +136,11 @@ int main(int argc, char *argv[]) {
     if (!audio_dev) {
         fprintf(stderr, "Warning: audio disabled (%s)\n", SDL_GetError());
     } else {
+        printf("=== Audio Info ===\n");
+        printf("Requested: %d Hz, Got: %d Hz\n", want.freq, have.freq);
+        printf("Requested: %d samples buffer, Got: %d samples\n", want.samples, have.samples);
+        printf("Cycles per sample: %.6f\n", 1789773.0 / have.freq);
+        printf("==================\n");
         apu_audio_init(have.freq);
         SDL_PauseAudioDevice(audio_dev, 0);
     }
@@ -225,25 +234,35 @@ int main(int argc, char *argv[]) {
             }
         }
     
-    // --- visible period: no vblank ---
-    ppu_end_vblank();
+    // --- visible + post-render (scanlines 0-240): no vblank ---
     ppu_predict_sprite0_split_for_frame();
-    
-    // Execute visible scanlines and check for sprite-0 hit at the right CPU cycle
-    for (int c = 0; c < CYCLES_VISIBLE; ) {
-        // Check if we should assert sprite-0 hit at this CPU cycle
-        if (ppu.have_split && ppu.split_cpu_cycles >= 0 && c >= ppu.split_cpu_cycles) {
-            if (!ppu.sprite_zero_hit && !(ppu.status & 0x80)) {
-                ppu.status |= 0x40;          // Set bit 6: sprite-0 hit
-                ppu.sprite_zero_hit = true;
+    ppu_begin_frame_render(framebuffer);
+
+    const double CPU_PER_SCANLINE = CPU_CYCLES_PER_FRAME / 262.0;
+    double scan_acc = 0.0;
+    int c_visible = 0; // CPU cycles since start of visible area (line 0, dot 0)
+
+    for (int sy = 0; sy < (VISIBLE_SCANLINES + POST_RENDER_SCANLINES); sy++) {
+        scan_acc += CPU_PER_SCANLINE;
+        int boundary = (int)scan_acc; // target cycles since visible start by end of this scanline
+        while (c_visible < boundary) {
+            if (ppu.have_split && ppu.split_cpu_cycles >= 0 && c_visible >= ppu.split_cpu_cycles) {
+                if (!ppu.sprite_zero_hit && !(ppu.status & 0x80)) {
+                    ppu.status |= 0x40;
+                    ppu.sprite_zero_hit = true;
+                }
             }
+            c_visible += cpu_step(&cpu);
         }
-        c += cpu_step(&cpu);
+
+        // draw only visible scanlines 0..239
+        if (sy < VISIBLE_SCANLINES) {
+            ppu_render_scanline_bg(sy, framebuffer);
+            ppu_render_scanline_sprites(sy, framebuffer);
+        }
     }
-    
-        // render BEFORE vblank (while CPU is still processing visible scanlines)
-        render_background(framebuffer);
-        render_sprites(framebuffer);
+
+        // present the composed frame
         SDL_UpdateTexture(texture, NULL, framebuffer, SCREEN_WIDTH * sizeof(uint32_t));
         SDL_RenderClear(renderer);
         SDL_RenderCopy(renderer, texture, NULL, NULL);
@@ -251,22 +270,29 @@ int main(int argc, char *argv[]) {
         if (palette_tool_is_visible()) { palette_tool_draw(renderer, ww, hh); }
         SDL_RenderPresent(renderer);
     
-        // --- vblank period: set the flag, maybe fire NMI, and LET THE CPU RUN WHILE IT'S HIGH ---
+        // --- vblank period (scanlines 241-260): set the flag, fire NMI, and let CPU run ---
         ppu_begin_vblank();
-        for (int c = 0; c < CYCLES_VBLANK; ) c += cpu_step(&cpu);
-    
-        // DON'T call ppu_end_vblank() here - it happens at the start of next frame
+        // VBL flag should be cleared ~2270 CPU cycles after NMI (at scanline 261, dot 1)
+        // Clear it after exactly 2270 cycles for accurate timing
+        const int VBL_CLEAR_CYCLES = 2270;
+        const int REMAINING_CYCLES = CYCLES_VBLANK + CYCLES_PRERENDER - VBL_CLEAR_CYCLES;
+        
+        for (int c = 0; c < VBL_CLEAR_CYCLES; ) c += cpu_step(&cpu);
+        
+        // --- clear VBL flag at scanline 261, dot 1 ---
+        ppu_end_vblank();
+        
+        // Complete the pre-render scanline
+        for (int c = 0; c < REMAINING_CYCLES; ) c += cpu_step(&cpu);
     
         Uint32 frameTime = SDL_GetTicks() - frameStart;
         palette_tool_tick(frameTime);
         if (frameTime < FRAME_TIME_MS) SDL_Delay((Uint32)(FRAME_TIME_MS - frameTime));
     }
 
-    
     SDL_DestroyTexture(texture);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();
     return 0;
 }
-

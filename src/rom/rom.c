@@ -63,12 +63,8 @@ int load_rom(const char *filename) {
         return -1;
     }
 
-    if (is_nes20(&ines_header)) {
-        fprintf(stderr, "NES 2.0 not supported in this loader (yet)\n");
-        fclose(fp);
-        return -1;
-    }
-
+    int is_nes2 = is_nes20(&ines_header);
+    
     mirroring_mode = (ines_header.flags6 & 0x01) ? 1 : 0;
 
     if (ines_header.flags6 & 0x04) { // trainer
@@ -79,8 +75,36 @@ int load_rom(const char *filename) {
         }
     }
 
-    prg_size = (size_t)ines_header.prg_rom_chunks * PRG_ROM_BANK_SIZE;
-    chr_size = (size_t)ines_header.chr_rom_chunks * CHR_ROM_BANK_SIZE;
+    // Calculate PRG and CHR sizes based on format
+    if (is_nes2) {
+        // NES 2.0: use extended size fields
+        int prg_msb = (ines_header.flags9 & 0x0F);
+        int chr_msb = (ines_header.flags9 & 0xF0) >> 4;
+        
+        if (prg_msb == 0x0F) {
+            // Exponent-multiplier notation (rarely used)
+            int exp = (ines_header.prg_rom_chunks & 0xFC) >> 2;
+            int mul = (ines_header.prg_rom_chunks & 0x03);
+            prg_size = (size_t)(1 << exp) * (mul * 2 + 1);
+        } else {
+            prg_size = (size_t)((prg_msb << 8) | ines_header.prg_rom_chunks) * PRG_ROM_BANK_SIZE;
+        }
+        
+        if (chr_msb == 0x0F) {
+            // Exponent-multiplier notation
+            int exp = (ines_header.chr_rom_chunks & 0xFC) >> 2;
+            int mul = (ines_header.chr_rom_chunks & 0x03);
+            chr_size = (size_t)(1 << exp) * (mul * 2 + 1);
+        } else {
+            chr_size = (size_t)((chr_msb << 8) | ines_header.chr_rom_chunks) * CHR_ROM_BANK_SIZE;
+        }
+        
+        printf("NES 2.0 format detected\n");
+    } else {
+        // iNES 1.0: use original fields
+        prg_size = (size_t)ines_header.prg_rom_chunks * PRG_ROM_BANK_SIZE;
+        chr_size = (size_t)ines_header.chr_rom_chunks * CHR_ROM_BANK_SIZE;
+    }
 
     // ---- HARD GUARDS to prevent overflow ----
     if (prg_size == 0 || prg_size > sizeof(prg_rom)) {

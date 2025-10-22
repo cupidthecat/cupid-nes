@@ -127,8 +127,10 @@ This mapper support enables compatibility with a wide range of commercial NES ga
 
 ### ROM Loading
 
-Supports loading NES ROMs in the standard iNES file format. The loader extracts:
+Supports loading NES ROMs in both iNES 1.0 and NES 2.0 formats. The loader extracts:
 
+- **Format Support:** Automatic detection of iNES 1.0 and NES 2.0 formats
+- **Extended Sizes:** NES 2.0 support for larger PRG/CHR ROMs (up to 12-bit size fields)
 - PRG-ROM data (8KB, 16KB, or 32KB per bank)
 - CHR-ROM data (1KB, 2KB, 4KB, or 8KB per bank) or CHR-RAM if no CHR-ROM is present
 - Mirroring mode (Horizontal/Vertical/Single-screen/Four-screen) based on header flags
@@ -143,14 +145,15 @@ Full Picture Processing Unit implementation with advanced features:
 - **PPU Registers:** Full implementation of $2000–$2007 with proper scroll and address handling
 - **Loopy Registers:** Accurate VRAM address register (v, t, x, w) implementation for scrolling
 - **OAM DMA:** Full 256-byte DMA transfer via $4014
-- **Background Rendering:** Renders full 256×240 background using nametables, attribute tables, and pattern tables
-- **Sprite Rendering:** Renders up to 64 sprites from OAM with proper palette lookup and priority
-- **Sprite 0 Hit Detection:** Accurate sprite 0 hit timing for split-screen effects (critical for SMB status bar)
+- **Scanline-Based Rendering:** CPU executes per scanline with immediate rendering for accurate timing and raster effects
+- **Background Rendering:** Per-scanline background rendering using nametables, attribute tables, and pattern tables
+- **Sprite Rendering:** Per-scanline sprite rendering with up to 64 sprites from OAM with proper palette lookup and priority
+- **Sprite 0 Hit Detection:** Cycle-accurate sprite 0 hit timing synchronized with CPU execution for split-screen effects (critical for SMB status bar)
 - **VBlank Interrupt:** NMI generation at VBlank based on PPUCTRL bit 7
-- **Palette Support:** Full 64-color NES palette with palette mirroring
+- **Palette Support:** Full 64-color NES palette with palette mirroring and runtime read buffer behavior
 - **Nametable Mirroring:** Configurable horizontal/vertical/single-screen/four-screen mirroring modes
-- **Scrolling:** Proper PPUSCROLL handling with fine X/Y and coarse coordinate management
-- **Cycle Timing:** Accurate NTSC timing with VBlank scheduling and sprite 0 hit prediction
+- **Scrolling:** Proper PPUSCROLL handling with fine X/Y and coarse coordinate management including mid-frame scroll changes
+- **Cycle Timing:** Accurate NTSC timing with scanline-synchronized CPU execution and sprite 0 hit prediction
 - **Open Bus Behavior:** Proper PPU open bus simulation for accuracy
 
 ### APU (Audio Processing Unit) Emulation
@@ -222,6 +225,41 @@ This test verifies proper CPU execution in PPU I/O space, ensuring correct memor
 
 The color test validates the PPU's palette rendering capabilities, showing proper color output and palette management.
 
+**Blargg PPU Tests**
+
+The emulator passes the Blargg PPU test suite (`blargg_ppu_tests_2005.09.15b`):
+
+- **palette_ram**
+  - Palette read/write functionality
+  - Palette mirroring within $3F00-$3FFF
+  - Special mirroring between $3F00/$3F10, $3F04/$3F14, $3F08/$3F18, $3F0C/$3F1C
+  - Palette reads bypass VRAM buffer (not buffered like other VRAM reads)
+
+- **power_up_palette**
+  - Palette RAM initialized with correct power-up values matching test hardware
+
+- **sprite_ram**
+  - Basic OAM read/write via $2004 (OAMDATA)
+  - Address increment on $2004 write
+  - Address non-increment on $2004 read
+  - Sprite byte 2 masking with $E3 on read
+  - $4014 (OAMDMA) full 256-byte DMA copy
+  - DMA starts at $2003 (OAMADDR) value and wraps correctly
+  - DMA preserves $2003 value after completion
+
+- **vram_access**
+  - PPU VRAM read/write operations
+  - Internal read buffer operation
+  - Palette reads update VRAM read buffer with mirrored nametable data
+  - Proper VRAM addressing and mirroring behavior
+
+- **oam_read**
+  - OAM (Object Attribute Memory) read operations via $2004
+  - Proper OAM address handling and increment behavior
+  - Sprite data retrieval and memory access patterns
+
+This validates accurate PPU palette RAM implementation, OAM (sprite) memory management, DMA functionality, VRAM read buffer behavior, OAM read operations, and precise VBlank timing.
+
 **CLI Latency Test**
 
 <p align="center">
@@ -249,13 +287,15 @@ Donkey Kong runs perfectly, demonstrating accurate CPU, PPU, and memory system i
 The project includes several test ROMs for validation:
 - `nestest.nes` - Comprehensive CPU instruction testing
 - `1-cli_latency.nes` - Interrupt timing validation
-- `2-nmi_and_brk.nes` - NMI and BRK instruction testing
 - `color_test.nes` - PPU color and palette testing
+- `blargg_ppu_tests_2005.09.15b/palette_ram.nes` - PPU palette RAM mirroring tests
+- `blargg_ppu_tests_2005.09.15b/power_up_palette.nes` - PPU power-up palette state
+- `blargg_ppu_tests_2005.09.15b/sprite_ram.nes` - OAM (sprite) RAM and DMA tests
+- `blargg_ppu_tests_2005.09.15b/vram_access.nes` - PPU VRAM read/write and read buffer tests
+- `blargg_ppu_tests_2005.09.15b/oam_read.nes` - OAM read operations and address handling tests
 - `test_cpu_exec_space_ppuio.nes` - CPU execution in PPU I/O space
 - `test_cpu_exec_space_apu.nes` - CPU execution in APU space
-- `cpu_interrupts.nes` - Interrupt handling verification
 - `cpu_timing_test.nes` - CPU cycle timing tests
-- `ram_retain.nes` - RAM retention testing
 
 All tests demonstrate successful emulation of the NES hardware components.
 
