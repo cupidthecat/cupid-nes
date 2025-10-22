@@ -44,6 +44,9 @@ static inline void    bus_set(uint8_t v) { cpu_open_bus = v; }
 CPU cpu;
 extern Joypad pad1, pad2;
 
+// Global CPU cycle counter
+uint64_t cpu_total_cycles = 0;
+
 // Cycles per opcode (officials; many unofficials match their closest base)
 static const uint8_t cyc[256] = {
     /*00*/ 7,6,2,8,3,3,5,5,3,2,2,2,4,4,6,6,
@@ -325,9 +328,37 @@ static uint16_t get_absx_read(CPU* cpu) {
     return addr;
 }
 
-static inline uint16_t get_absx_write(CPU* c){ uint16_t a = get_absx_address(c); (void)read_mem(a); return a; }
-static inline uint16_t get_absy_write(CPU* c){ uint16_t a = get_absy_address(c); (void)read_mem(a); return a; }
-static inline uint16_t get_indy_write(CPU* c){ uint16_t a = get_indirect_y(c);  (void)read_mem(a); return a; }
+// For writes, the 6502 does a dummy read from the address using the *original* high byte.
+static inline uint16_t get_absx_write(CPU* cpu) {
+    uint16_t lo = read_mem(cpu->pc);
+    uint16_t hi = read_mem(cpu->pc + 1);
+    cpu->pc += 2;
+    uint16_t base  = (hi << 8) | lo;
+    uint16_t addr  = base + cpu->x;
+    uint16_t dummy = (base & 0xFF00) | (addr & 0x00FF); // no carry into high byte
+    (void)read_mem(dummy);
+    return addr;
+}
+
+static inline uint16_t get_absy_write(CPU* cpu) {
+    uint16_t lo = read_mem(cpu->pc);
+    uint16_t hi = read_mem(cpu->pc + 1);
+    cpu->pc += 2;
+    uint16_t base  = (hi << 8) | lo;
+    uint16_t addr  = base + cpu->y;
+    uint16_t dummy = (base & 0xFF00) | (addr & 0x00FF); // no carry into high byte
+    (void)read_mem(dummy);
+    return addr;
+}
+
+static inline uint16_t get_indy_write(CPU* cpu) {
+    uint8_t  zpg  = read_mem(cpu->pc++);
+    uint16_t base = read_mem(zpg) | (read_mem((zpg + 1) & 0xFF) << 8);
+    uint16_t addr = base + cpu->y;
+    uint16_t dummy = (base & 0xFF00) | (addr & 0x00FF); // no carry into high byte
+    (void)read_mem(dummy);
+    return addr;
+}
 
 void execute(CPU* cpu, uint8_t opcode) {
     switch(opcode) {
@@ -1853,6 +1884,9 @@ int cpu_step(CPU* cpu) {
 
     // Advance APU timing by *actual* CPU cycles
     apu_step(&apu, cycles);
+
+    // accumulate master CPU cycles
+    cpu_total_cycles += (uint64_t)cycles;
 
     // ----- IRQ decision (6502 latency) -----
     int cli_phase = cpu->irq_delay;           // 2: block, 1: allow once ignoring I, 0: normal

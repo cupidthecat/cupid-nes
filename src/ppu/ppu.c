@@ -29,10 +29,20 @@
 #include "../../include/globals.h"
 #include "../rom/mapper.h"
 #include "../cpu/cpu.h"
+#include "../ui/palette_tool.h"
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+
+// External CPU cycle counter
+extern uint64_t cpu_total_cycles;
+
+// 1 second in CPU cycles (NTSC ~1.789773 MHz)
+#define OPEN_BUS_DECAY_CPU_CYCLES 1789773ULL
+
+// Per-bit expiry times (in CPU cycles). If now >= expire, that bit has decayed to 0.
+static uint64_t ppu_ob_expire[8];
 // PPU Memory
 uint8_t ppu_vram[NT_RAM_SIZE];
 uint8_t ppu_palette[PPU_PALETTE_SIZE];
@@ -42,17 +52,32 @@ uint8_t bg_opaque[256 * 240];
 PPU ppu;
 extern CPU cpu;
 
-// -------------------------------------------------------------------------
-// Runtime palette storage
-// Active base palette (no-emphasis) and optional emphasis tables (8 variants)
-// Colors are stored as ARGB 0xFFRRGGBB for direct use by the renderer.
-uint32_t ppu__active_palette_base[64];
-uint32_t ppu__emphasis_palettes[8][64];
-bool     ppu__have_emphasis_tables = false;
-
 // Helpers ----------------------------------------------------------------
-static inline void set_open_bus(uint8_t v) { ppu.open_bus = v; }
-static inline uint8_t get_open_bus(void)   { return ppu.open_bus; }
+// Helper to recompute current open-bus value from per-bit timers
+static inline uint8_t ppu_open_bus_current(void) {
+    uint64_t now = cpu_total_cycles;
+    uint8_t out = 0;
+    for (int b = 0; b < 8; ++b) {
+        if (ppu_ob_expire[b] > now) out |= (uint8_t)(1u << b);
+    }
+    return out;
+}
+
+static inline void set_open_bus(uint8_t v) {
+    uint64_t now = cpu_total_cycles;
+    // Any bit driven high is refreshed for 1 second; zeros are immediately low.
+    for (int b = 0; b < 8; ++b) {
+        if (v & (1u << b)) ppu_ob_expire[b] = now + OPEN_BUS_DECAY_CPU_CYCLES;
+        else               ppu_ob_expire[b] = 0;
+    }
+    ppu.open_bus = v; // remember the last driven value (not strictly required, but handy)
+}
+
+static inline uint8_t get_open_bus(void) {
+    uint8_t cur = ppu_open_bus_current();
+    ppu.open_bus = cur;   // keep the cached byte in sync with the decayed value
+    return cur;
+}
 
 static inline void ppu_eval_nmi(void){
     bool want = (ppu.ctrl & 0x80) && (ppu.status & 0x80);
@@ -72,6 +97,19 @@ static inline bool ppu_show_sp_px(int x) {
     return (ppu.mask & 0x10) && (x >= 8 || (ppu.mask & 0x04));
 }
 
+// Refresh only the bits actually driven by the PPU; leave others untouched.
+static inline void set_open_bus_masked(uint8_t v, uint8_t mask) {
+    uint64_t now = cpu_total_cycles;
+    for (int b = 0; b < 8; ++b) {
+        if (mask & (1u << b)) {
+            if (v & (1u << b)) ppu_ob_expire[b] = now + OPEN_BUS_DECAY_CPU_CYCLES; // driven high -> refresh
+            else               ppu_ob_expire[b] = 0;                                // driven low  -> immediate 0
+        }
+    }
+    // Recompute current value from timers; undriven bits continue decaying.
+    ppu.open_bus = ppu_open_bus_current();
+}
+
 void ppu_latch_pre_for_visible(void) {
     ppu.t_pre    = ppu.t;
     ppu.x_pre    = ppu.x;
@@ -89,7 +127,7 @@ uint8_t ppu_reg_read(uint16_t reg) {
         case 2: { // PPUSTATUS
             uint8_t ob = get_open_bus();
             uint8_t ret = (ppu.status & 0xE0) | (ob & 0x1F);
-            set_open_bus(ret);
+            set_open_bus_masked(ret, 0xE0); // only bits 7-5 are driven by PPUSTATUS
             ppu.status &= ~0x80;       // clear VBlank
             ppu.w = 0;
             ppu_eval_nmi();            // output may drop
@@ -97,23 +135,28 @@ uint8_t ppu_reg_read(uint16_t reg) {
         }
         case 4: { // OAMDATA
             uint8_t v = ppu.oam[ppu.oam_addr];
-            set_open_bus(v);
+            if ((ppu.oam_addr & 3) == 2) {   // attribute byte (Y,ID,ATTR,X -> index 2)
+                v &= 0xE3;                   // clear bits 2–4 on read
+            }
+            set_open_bus(v);                 // OAMDATA drives all 8 bits
             return v;
         }
         case 7: { // PPUDATA (read)
             uint16_t addr = ppu.v & 0x3FFF;
             uint8_t ret;
             if (addr >= 0x3F00 && addr < 0x4000) {
-                // palette reads return palette immediately but also update buffer with mirrored nametable
-                ret = ppu_read(addr);
-                ppu.ppudata_buffer = ppu_read(addr - 0x1000); // fill buffer with nametable mirror
-                set_open_bus(ret); // PPU latch sees palette byte
+                // Palette reads: PPU drives only D0–D5; D6–D7 come from open-bus decay.
+                uint8_t ob  = get_open_bus();
+                uint8_t pal = ppu_read(addr) & 0x3F;               // palette is 6-bit wide
+                ret = pal | (ob & 0xC0);                           // high 2 bits from decay
+                ppu.ppudata_buffer = ppu_read(addr - 0x1000);      // buffer gets nametable mirror
+                set_open_bus_masked(ret, 0x3F);                    // refresh only D0–D5
             } else {
                 // CPU gets buffered old byte; bus sees the newly fetched one
                 ret = ppu.ppudata_buffer;
                 uint8_t fetched = ppu_read(addr);
                 ppu.ppudata_buffer = fetched;
-                set_open_bus(fetched); // PPU latch sees newly fetched byte
+                set_open_bus(ret); // refresh with the value the CPU actually reads
             }
             ppu.v += (ppu.ctrl & 0x04) ? 32 : 1;
             return ret;
@@ -234,24 +277,6 @@ void ppu_end_vblank(void){
     ppu_eval_nmi();
     ppu_latch_pre_for_visible();
 }
-//---------------------------------------------------------------------
-// Sample background palettes (4 background palettes, 4 colors each)
-// Note: Palette[0][0] is the universal background color.
-// For simplicity these are dummy ARGB colors.
-uint32_t bg_palettes[4][4] = {
-    { 0xFF757575, 0xFF271B8F, 0xFF0000AB, 0xFF47009F },
-    { 0xFF757575, 0xFF006400, 0xFF13A1A1, 0xFF000000 },
-    { 0xFF757575, 0xFF8B0000, 0xFFB22222, 0xFFFF0000 },
-    { 0xFF757575, 0xFF00008B, 0xFF0000CD, 0xFF4169E1 }
-};
-
-// Get the base address of the background pattern table based on PPUCTRL
-// Currently unused, but kept for potential future use
-// static uint16_t get_bg_pattern_table_base() {
-//     // Bit 4 of PPUCTRL controls which pattern table is used for backgrounds
-//     return (ppu.ctrl & 0x10) ? 0x1000 : 0x0000;
-// }
-
 // $2000–$2FFF -> nametable RAM index, obeying mirroring
 static inline uint16_t nt_index(uint16_t addr) {
     // collapse 0x2000–0x3EFF to a 4-Nametable window (0..0x0FFF)
@@ -276,10 +301,6 @@ static inline void clear_framebuffer(uint32_t *fb) {
     uint32_t bg = get_color(ppu_palette[0]); // universal background ($3F00)
     for (int i = 0; i < 256*240; ++i) fb[i] = bg;
 }
-
-
-
-// (removed old full-frame renderers; replaced by scanline versions)
 
 // ------------------- Scanline-based rendering -------------------
 void ppu_begin_frame_render(uint32_t *fb) {
@@ -357,7 +378,7 @@ void ppu_render_scanline_sprites(int sy, uint32_t *fb) {
     const bool tall = (ppu.ctrl & 0x20) != 0;
     for (int i = 63; i >= 0; i--) {
         uint8_t y0 = ppu.oam[i*4 + 0];
-        if (y0 >= 0xEF) continue;
+        if (y0 >= 0xF0) continue;
         int baseY = (int)y0 + 1;
         if (sy < baseY || sy >= baseY + (tall ? 16 : 8)) continue; // not on this line
 
@@ -460,6 +481,9 @@ void ppu_reset(PPU* ppu) {
     ppu->ppudata_buffer = 0;
     ppu->open_bus = 0;
     ppu->nmi_out = false;
+    
+    // Initialize open bus decay timers
+    for (int i = 0; i < 8; ++i) ppu_ob_expire[i] = 0;
 
     // Clear OAM
     for (int i = 0; i < PPU_OAM_SIZE; i++) {
@@ -484,13 +508,6 @@ void ppu_reset(PPU* ppu) {
 
 // Convert a pixel value (0-3 or an index into the NES palette) to an ARGB color
 uint32_t get_color(uint8_t idx) {
-    // Runtime palette system -------------------------------------------------
-    // We keep a mutable active palette and optional 1536-byte emphasis tables.
-    // Declarations (internal linkage) placed near top of file; define once.
-    extern uint32_t ppu__active_palette_base[64];
-    extern uint32_t ppu__emphasis_palettes[8][64];
-    extern bool     ppu__have_emphasis_tables;
-
     idx &= 0x3F;
 
     // PPUMASK bit 0: grayscale
@@ -519,288 +536,6 @@ uint32_t get_color(uint8_t idx) {
     int G = (int)(g < 0 ? 0 : (g > 255 ? 255 : g));
     int B = (int)(b < 0 ? 0 : (b > 255 ? 255 : b));
     return 0xFF000000u | (R << 16) | (G << 8) | B;
-}
-
-// -------------------------------------------------------------------------
-// Palette tool APIs
-
-static inline uint32_t rgb_bytes_to_argb(uint8_t r, uint8_t g, uint8_t b) {
-    return 0xFF000000u | ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
-}
-
-void ppu_palette_reset_default(void) {
-    for (int i = 0; i < 64; ++i) ppu__active_palette_base[i] = nes_palette[i];
-    ppu__have_emphasis_tables = false;
-}
-
-void ppu_palette_get(uint32_t out[64]) {
-    if (!out) return;
-    for (int i = 0; i < 64; ++i) out[i] = ppu__active_palette_base[i];
-}
-
-bool ppu_palette_has_emphasis_tables(void) {
-    return ppu__have_emphasis_tables;
-}
-
-int ppu_palette_set_color(int index, uint8_t r, uint8_t g, uint8_t b) {
-    if (index < 0 || index >= 64) return -1;
-    uint32_t argb = rgb_bytes_to_argb(r,g,b);
-    ppu__active_palette_base[index] = argb;
-    if (ppu__have_emphasis_tables) {
-        ppu__emphasis_palettes[0][index] = argb;
-    }
-    return 0;
-}
-
-// Read whole file into memory buffer (malloc'd). Returns 0 on success.
-static int read_entire_file(const char *path, uint8_t **out_data, size_t *out_size) {
-    FILE *f = fopen(path, "rb");
-    if (!f) return -1;
-    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return -2; }
-    long sz = ftell(f);
-    if (sz < 0) { fclose(f); return -3; }
-    if (fseek(f, 0, SEEK_SET) != 0) { fclose(f); return -4; }
-    uint8_t *buf = (uint8_t*)malloc((size_t)sz);
-    if (!buf) { fclose(f); return -5; }
-    size_t rd = fread(buf, 1, (size_t)sz, f);
-    fclose(f);
-    if (rd != (size_t)sz) { free(buf); return -6; }
-    *out_data = buf; *out_size = (size_t)sz; return 0;
-}
-
-int ppu_palette_load_pal_file(const char *path) {
-    if (!path) return -1;
-    uint8_t *data = NULL; size_t size = 0; int rc = read_entire_file(path, &data, &size);
-    if (rc != 0) return rc;
-
-    if (size == 192) {
-        for (int i = 0; i < 64; ++i) {
-            uint8_t r = data[i*3 + 0];
-            uint8_t g = data[i*3 + 1];
-            uint8_t b = data[i*3 + 2];
-            ppu__active_palette_base[i] = rgb_bytes_to_argb(r,g,b);
-        }
-        ppu__have_emphasis_tables = false;
-        free(data);
-        return 0;
-    } else if (size == 1536) {
-        // 8 emphasis sets * 64 entries * 3 bytes
-        for (int e = 0; e < 8; ++e) {
-            for (int i = 0; i < 64; ++i) {
-                size_t off = (size_t)e*64*3 + (size_t)i*3;
-                uint8_t r = data[off + 0];
-                uint8_t g = data[off + 1];
-                uint8_t b = data[off + 2];
-                uint32_t argb = rgb_bytes_to_argb(r,g,b);
-                ppu__emphasis_palettes[e][i] = argb;
-                if (e == 0) ppu__active_palette_base[i] = argb;
-            }
-        }
-        ppu__have_emphasis_tables = true;
-        free(data);
-        return 0;
-    } else {
-        free(data);
-        return -7; // unsupported size
-    }
-}
-
-static int hex_digit(int c) {
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
-    if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
-    return -1;
-}
-
-// Try parsing as 64 tokens of RRGGBB (optionally prefixed by # or 0x/$)
-static int try_parse_hex_tokens(const char *s) {
-    uint32_t tmp[64];
-    int count = 0;
-    const char *p = s;
-    while (*p && count < 64) {
-        while (*p && (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t' || *p == ',' || *p == ';')) p++;
-        if (!*p) break;
-        // skip prefixes
-        if (*p == '#') p++;
-        if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) p += 2;
-        if (*p == '$') p++;
-        // need 6 hex digits
-        int h[6];
-        for (int i = 0; i < 6; ++i) {
-            int d = hex_digit(p[i]);
-            if (d < 0) return -1;
-            h[i] = d;
-        }
-        p += 6;
-        uint8_t r = (uint8_t)((h[0] << 4) | h[1]);
-        uint8_t g = (uint8_t)((h[2] << 4) | h[3]);
-        uint8_t b = (uint8_t)((h[4] << 4) | h[5]);
-        tmp[count++] = rgb_bytes_to_argb(r,g,b);
-        // consume trailing token separators if any
-        while (*p && ((*p >= '0' && *p <= '9') || (*p >= 'A' && *p <= 'F') || (*p >= 'a' && *p <= 'f'))) {
-            // If there are more than 6 consecutive hex digits without separators,
-            // this wasn't tokenized; fall back to raw parsing.
-            return -1;
-        }
-    }
-    if (count == 64) {
-        for (int i = 0; i < 64; ++i) ppu__active_palette_base[i] = tmp[i];
-        ppu__have_emphasis_tables = false;
-        return 0;
-    }
-    return -1;
-}
-
-// Parse raw byte hex: accept any non-hex separators, gather hex pairs
-static int try_parse_raw_hex_bytes(const char *s) {
-    // Collect hex digits
-    size_t cap = 2048; // enough for 1536*2 digits
-    char *digits = (char*)malloc(cap);
-    if (!digits) return -1;
-    size_t n = 0;
-    for (const char *p = s; *p; ++p) {
-        if (hex_digit(*p) >= 0) {
-            if (n >= cap) { free(digits); return -1; }
-            digits[n++] = *p;
-        }
-    }
-    if ((n & 1) != 0) { free(digits); return -1; }
-    size_t bytes = n / 2;
-    if (!(bytes == 192 || bytes == 1536)) { free(digits); return -1; }
-    uint8_t *buf = (uint8_t*)malloc(bytes);
-    if (!buf) { free(digits); return -1; }
-    for (size_t i = 0; i < bytes; ++i) {
-        int hi = hex_digit(digits[i*2]);
-        int lo = hex_digit(digits[i*2+1]);
-        buf[i] = (uint8_t)((hi << 4) | lo);
-    }
-    free(digits);
-
-    if (bytes == 192) {
-        for (int i = 0; i < 64; ++i) {
-            uint8_t r = buf[i*3 + 0];
-            uint8_t g = buf[i*3 + 1];
-            uint8_t b = buf[i*3 + 2];
-            ppu__active_palette_base[i] = rgb_bytes_to_argb(r,g,b);
-        }
-        ppu__have_emphasis_tables = false;
-        free(buf);
-        return 0;
-    } else if (bytes == 1536) {
-        for (int e = 0; e < 8; ++e) {
-            for (int i = 0; i < 64; ++i) {
-                size_t off = (size_t)e*64*3 + (size_t)i*3;
-                uint8_t r = buf[off + 0];
-                uint8_t g = buf[off + 1];
-                uint8_t b = buf[off + 2];
-                uint32_t argb = rgb_bytes_to_argb(r,g,b);
-                ppu__emphasis_palettes[e][i] = argb;
-                if (e == 0) ppu__active_palette_base[i] = argb;
-            }
-        }
-        ppu__have_emphasis_tables = true;
-        free(buf);
-        return 0;
-    }
-    free(buf);
-    return -1;
-}
-
-int ppu_palette_load_hex_string(const char *hex_text) {
-    if (!hex_text) return -1;
-    if (try_parse_hex_tokens(hex_text) == 0) return 0;
-    if (try_parse_raw_hex_bytes(hex_text) == 0) return 0;
-    return -1;
-}
-
-// Render the first pattern table (first 4KB of CHR-ROM) as a grid of 16x16 8x8 tiles.
-// Each tile is decoded from 16 bytes (8 bytes for plane 0 and 8 bytes for plane 1).
-// The resulting image is 128x128 pixels and is centered in the 256x240 screen.
-void render_tiles() {
-    if (!chr_rom) {
-        // Fallback to test pattern if no CHR-ROM data
-        for (int i = 0; i < SCREEN_WIDTH * SCREEN_HEIGHT; i++)
-            framebuffer[i] = 0xFF0000FF; // solid blue, for example
-        return;
-    }
-
-    const int tileWidth = 8;
-    const int tileHeight = 8;
-    const int tilesPerRow = 16;
-    const int gridWidth = tilesPerRow * tileWidth; // 128 pixels
-    const int gridHeight = tilesPerRow * tileHeight; // 128 pixels (16 rows)
-
-    // Compute top-left corner to center the grid on the screen
-    int offsetX = (SCREEN_WIDTH - gridWidth) / 2;
-    int offsetY = (SCREEN_HEIGHT - gridHeight) / 2;
-
-    // Clear framebuffer (set to black)
-    for (int i = 0; i < SCREEN_WIDTH * SCREEN_HEIGHT; i++) {
-        framebuffer[i] = 0xFF000000;
-    }
-
-    // For each tile in the first pattern table (4KB of data = 256 tiles)
-    for (int tile = 0; tile < 256; tile++) {
-        int tileX = (tile % tilesPerRow) * tileWidth;
-        int tileY = (tile / tilesPerRow) * tileHeight;
-        int tileOffset = tile * 16;  // each tile uses 16 bytes
-
-        // For each row in the tile (0 to 7)
-        for (int row = 0; row < tileHeight; row++) {
-            // The two bit planes: first 8 bytes and second 8 bytes.
-            uint8_t plane0 = chr_rom[tileOffset + row];
-            uint8_t plane1 = chr_rom[tileOffset + row + 8];
-
-            // For each pixel in the row (0 to 7)
-            for (int col = 0; col < tileWidth; col++) {
-                // The bit for this pixel is the (7-col) bit of each plane.
-                uint8_t bit0 = (plane0 >> (7 - col)) & 1;
-                uint8_t bit1 = (plane1 >> (7 - col)) & 1;
-                uint8_t pixelValue = (bit1 << 1) | bit0;
-
-                // Compute the position in the framebuffer:
-                int screenX = offsetX + tileX + col;
-                int screenY = offsetY + tileY + row;
-                if (screenX < 0 || screenX >= SCREEN_WIDTH ||
-                    screenY < 0 || screenY >= SCREEN_HEIGHT) {
-                    continue;
-                }
-                framebuffer[screenY * SCREEN_WIDTH + screenX] = get_color(pixelValue);
-            }
-        }
-    }
-
-    // Print first few bytes of CHR-ROM
-    printf("First 16 bytes of CHR-ROM:\n");
-    for (int i = 0; i < 16; i++) {
-        printf("%02X ", chr_rom[i]);
-    }
-    printf("\n\n");
-
-    // Print pixel values for first few tiles
-    printf("Pixel values for first 3 tiles:\n");
-    for (int tile = 0; tile < 3; tile++) {
-        printf("Tile %d:\n", tile);
-        int tileOffset = tile * 16;
-        for (int row = 0; row < 8; row++) {
-            uint8_t plane0 = chr_rom[tileOffset + row];
-            uint8_t plane1 = chr_rom[tileOffset + row + 8];
-            for (int col = 0; col < 8; col++) {
-                uint8_t bit0 = (plane0 >> (7 - col)) & 1;
-                uint8_t bit1 = (plane1 >> (7 - col)) & 1;
-                uint8_t pixelValue = (bit1 << 1) | bit0;
-                printf("%d ", pixelValue);
-            }
-            printf("\n");
-        }
-        printf("\n");
-    }
-
-    // Print palette colors
-    printf("NES Palette Colors:\n");
-    for (int i = 0; i < 16; i++) {  // Print first 16 colors
-        printf("Color %02d: 0x%08X\n", i, nes_palette[i]);
-    }
 }
 
 void start_frame(void) {
@@ -838,7 +573,7 @@ void ppu_predict_sprite0_split_for_frame(void) {
 
     // Sprite #0 from OAM
     uint8_t y0 = ppu.oam[0];
-    if (y0 >= 0xEF) return;                  // offscreen
+    if (y0 >= 0xF0) return;                  // offscreen
     int baseY    = (int)y0 + 1;
     uint8_t id   = ppu.oam[1];
     uint8_t at   = ppu.oam[2];
@@ -881,7 +616,8 @@ void ppu_predict_sprite0_split_for_frame(void) {
 
             for (int col = 0; col < 8; ++col) {
                 int sx = x0 + col;
-                if (sx >= 256) break;
+                if (sx >= 256) break;        // off right edge
+                if (sx == 255) continue;     // PPU never sets sprite-0 hit on dot 255
                 if (!(ppu.mask & 0x04) && sx < 8) continue;   // left-8 sprite mask
                 if (!((ppu.mask & 0x10) && (sx >= 8 || (ppu.mask & 0x04)))) continue;
 

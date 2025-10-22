@@ -258,7 +258,12 @@ The emulator passes the Blargg PPU test suite (`blargg_ppu_tests_2005.09.15b`):
   - Proper OAM address handling and increment behavior
   - Sprite data retrieval and memory access patterns
 
-This validates accurate PPU palette RAM implementation, OAM (sprite) memory management, DMA functionality, VRAM read buffer behavior, OAM read operations, and precise VBlank timing.
+- **ppu_open_bus**
+  - PPU open bus behavior validation
+  - Proper handling of unused register bits and open bus states
+  - Accurate simulation of PPU register read behavior when not actively driven
+
+This validates accurate PPU palette RAM implementation, OAM (sprite) memory management, DMA functionality, VRAM read buffer behavior, OAM read operations, precise VBlank timing, and proper open bus behavior.
 
 **CLI Latency Test**
 
@@ -293,9 +298,11 @@ The project includes several test ROMs for validation:
 - `blargg_ppu_tests_2005.09.15b/sprite_ram.nes` - OAM (sprite) RAM and DMA tests
 - `blargg_ppu_tests_2005.09.15b/vram_access.nes` - PPU VRAM read/write and read buffer tests
 - `blargg_ppu_tests_2005.09.15b/oam_read.nes` - OAM read operations and address handling tests
+- `blargg_ppu_tests_2005.09.15b/ppu_open_bus.nes` - PPU open bus behavior validation tests
 - `test_cpu_exec_space_ppuio.nes` - CPU execution in PPU I/O space
 - `test_cpu_exec_space_apu.nes` - CPU execution in APU space
 - `cpu_timing_test.nes` - CPU cycle timing tests
+- `test_ppu_read_buffer.nes` - Comprehensive PPU read buffer tests
 
 All tests demonstrate successful emulation of the NES hardware components.
 

@@ -113,10 +113,8 @@ static const uint32_t nes_palette[64] = {
 uint8_t ppu_read(uint16_t addr);
 void ppu_write(uint16_t addr, uint8_t value);
 void ppu_reset(PPU* ppu);
-void render_tiles();
 uint32_t get_color(uint8_t pixel);
 void start_frame();
-void ppu_render_frame(SDL_Renderer *renderer, SDL_Texture *texture);
 // Scanline-based rendering API
 void ppu_begin_frame_render(uint32_t *framebuffer);
 void ppu_render_scanline_bg(int sy, uint32_t *framebuffer);
@@ -129,20 +127,5 @@ void ppu_end_vblank(void);
 extern uint8_t bg_opaque[256 * 240];
 void ppu_predict_sprite0_split_for_frame(void);
 void ppu_latch_pre_for_visible(void);
-
-// Runtime palette control (GUI/tool hooks)
-// Load a .pal file (192 or 1536 bytes). Returns 0 on success, non-zero on failure.
-int ppu_palette_load_pal_file(const char *path);
-// Parse a hex table from text (accepts 64 x RRGGBB, or 192/1536 raw hex bytes). 0 on success.
-int ppu_palette_load_hex_string(const char *hex_text);
-// Revert to the built-in palette.
-void ppu_palette_reset_default(void);
-// Copy the currently active (no-emphasis) 64-color ARGB palette into out[64].
-void ppu_palette_get(uint32_t out[64]);
-// Whether 1536-byte emphasis tables are loaded.
-bool ppu_palette_has_emphasis_tables(void);
-// Set a single palette color (index 0..63) using RGB 0-255. Updates active base; if emphasis tables
-// exist, also updates the no-emphasis table entry.
-int ppu_palette_set_color(int index, uint8_t r, uint8_t g, uint8_t b);
 
 #endif // PPU_H
