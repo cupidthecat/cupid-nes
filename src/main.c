@@ -100,7 +100,6 @@ int main(int argc, char *argv[]) {
     if (ines_header.prg_rom_chunks > 1 || (ines_header.flags6 & 0xF0)) {
         printf("WARNING: This ROM likely uses a mapper (mapper number: %d).\n",
             (ines_header.flags7 & 0xF0) | ((ines_header.flags6 & 0xF0) >> 4));
-        printf("If you haven't implemented mapper support, expect memory mapping issues (and segfaults).\n");
     }
     
     printf("Mapper detected: %d\n", ((ines_header.flags7 & 0xF0) | ((ines_header.flags6 & 0xF0) >> 4)));
@@ -234,33 +233,13 @@ int main(int argc, char *argv[]) {
             }
         }
     
-    // --- visible + post-render (scanlines 0-240): no vblank ---
-    ppu_predict_sprite0_split_for_frame();
-    ppu_begin_frame_render(framebuffer);
-
-    const double CPU_PER_SCANLINE = CPU_CYCLES_PER_FRAME / 262.0;
-    double scan_acc = 0.0;
-    int c_visible = 0; // CPU cycles since start of visible area (line 0, dot 0)
-
-    for (int sy = 0; sy < (VISIBLE_SCANLINES + POST_RENDER_SCANLINES); sy++) {
-        scan_acc += CPU_PER_SCANLINE;
-        int boundary = (int)scan_acc; // target cycles since visible start by end of this scanline
-        while (c_visible < boundary) {
-            if (ppu.have_split && ppu.split_cpu_cycles >= 0 && c_visible >= ppu.split_cpu_cycles) {
-                if (!ppu.sprite_zero_hit && !(ppu.status & 0x80)) {
-                    ppu.status |= 0x40;
-                    ppu.sprite_zero_hit = true;
-                }
-            }
-            c_visible += cpu_step(&cpu);
+        // Run CPU and PPU in lockstep until the PPU marks a frame complete
+        ppu_begin_frame_render(framebuffer);
+        start_frame();
+        while (!ppu.frame_complete) {
+            int cy = cpu_step(&cpu);
+            ppu_step(cy);
         }
-
-        // draw only visible scanlines 0..239
-        if (sy < VISIBLE_SCANLINES) {
-            ppu_render_scanline_bg(sy, framebuffer);
-            ppu_render_scanline_sprites(sy, framebuffer);
-        }
-    }
 
         // present the composed frame
         SDL_UpdateTexture(texture, NULL, framebuffer, SCREEN_WIDTH * sizeof(uint32_t));
@@ -269,21 +248,6 @@ int main(int argc, char *argv[]) {
         int ww = 0, hh = 0; SDL_GetRendererOutputSize(renderer, &ww, &hh);
         if (palette_tool_is_visible()) { palette_tool_draw(renderer, ww, hh); }
         SDL_RenderPresent(renderer);
-    
-        // --- vblank period (scanlines 241-260): set the flag, fire NMI, and let CPU run ---
-        ppu_begin_vblank();
-        // VBL flag should be cleared ~2270 CPU cycles after NMI (at scanline 261, dot 1)
-        // Clear it after exactly 2270 cycles for accurate timing
-        const int VBL_CLEAR_CYCLES = 2270;
-        const int REMAINING_CYCLES = CYCLES_VBLANK + CYCLES_PRERENDER - VBL_CLEAR_CYCLES;
-        
-        for (int c = 0; c < VBL_CLEAR_CYCLES; ) c += cpu_step(&cpu);
-        
-        // --- clear VBL flag at scanline 261, dot 1 ---
-        ppu_end_vblank();
-        
-        // Complete the pre-render scanline
-        for (int c = 0; c < REMAINING_CYCLES; ) c += cpu_step(&cpu);
     
         Uint32 frameTime = SDL_GetTicks() - frameStart;
         palette_tool_tick(frameTime);

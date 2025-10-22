@@ -145,15 +145,15 @@ Full Picture Processing Unit implementation with advanced features:
 - **PPU Registers:** Full implementation of $2000–$2007 with proper scroll and address handling
 - **Loopy Registers:** Accurate VRAM address register (v, t, x, w) implementation for scrolling
 - **OAM DMA:** Full 256-byte DMA transfer via $4014
-- **Scanline-Based Rendering:** CPU executes per scanline with immediate rendering for accurate timing and raster effects
-- **Background Rendering:** Per-scanline background rendering using nametables, attribute tables, and pattern tables
-- **Sprite Rendering:** Per-scanline sprite rendering with up to 64 sprites from OAM with proper palette lookup and priority
+- **Cycle-Stepped Rendering:** CPU executes per PPU cycle with pixel-based rendering for accurate timing and raster effects
+- **Background Rendering:** Dot-based background rendering using nametables, attribute tables, and pattern tables
+- **Sprite Rendering:** Dot-based sprite rendering with up to 64 sprites from OAM with proper palette lookup and priority
 - **Sprite 0 Hit Detection:** Cycle-accurate sprite 0 hit timing synchronized with CPU execution for split-screen effects (critical for SMB status bar)
 - **VBlank Interrupt:** NMI generation at VBlank based on PPUCTRL bit 7
 - **Palette Support:** Full 64-color NES palette with palette mirroring and runtime read buffer behavior
 - **Nametable Mirroring:** Configurable horizontal/vertical/single-screen/four-screen mirroring modes
 - **Scrolling:** Proper PPUSCROLL handling with fine X/Y and coarse coordinate management including mid-frame scroll changes
-- **Cycle Timing:** Accurate NTSC timing with scanline-synchronized CPU execution and sprite 0 hit prediction
+- **Cycle Timing:** Accurate NTSC timing with cycle-synchronized CPU execution and sprite 0 hit prediction
 - **Open Bus Behavior:** Proper PPU open bus simulation for accuracy
 
 ### APU (Audio Processing Unit) Emulation
@@ -471,7 +471,7 @@ The CPU includes proper 6502 quirks:
 - Palette RAM with special $3F10/$3F14/$3F18/$3F1C mirroring to $3F00
 - Proper VRAM address latching for $2005 (scroll) and $2006 (address) writes
 - Read buffer behavior for $2007 (palette reads bypass buffer)
-- Sprite 0 hit detection with scanline and pixel-accurate prediction
+- Sprite 0 hit detection with cycle and pixel-accurate prediction
 - Open bus behavior for unused register bits
 
 ### APU Audio Generation

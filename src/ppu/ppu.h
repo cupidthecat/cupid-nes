@@ -72,6 +72,7 @@ typedef struct {
     uint8_t sprite_patterns[8];  // Sprite pattern data
     uint8_t sprite_attributes[8]; // Sprite attributes
     bool sprite_zero_hit;  // Sprite Zero Hit flag
+    bool sprite_zero_on_line; // True if sprite 0 is in secondary OAM for current scanline
     bool nmi_out; 
 
     bool   have_split;
@@ -89,6 +90,26 @@ typedef struct {
     bool     wrote_2000_post;     // saw $2000 after sprite 0 hit (this frame, before vblank)
     bool     wrote_2005_x_post;   // saw first $2005 after sprite 0 hit
     bool     wrote_2005_y_post;   // saw second $2005 after sprite 0 hit (vertical; for completeness)
+    
+    // Cycle-stepped timing
+    int      scanline;       // -1..261 (we use 261 for pre-render)
+    int      dot;            // 0..340
+    bool     odd_frame;      // parity for skipped dot behavior (optional)
+    bool     frame_complete; // set true at end of pre-render to signal frame done
+    
+    // Background tile fetch pipeline (for per-dot rendering)
+    uint8_t  nt_byte;        // Nametable byte latch
+    uint8_t  at_byte;        // Attribute byte latch
+    uint8_t  pt_lo;          // Pattern table low byte latch
+    uint8_t  pt_hi;          // Pattern table high byte latch
+    
+    // Background shifters (16-bit for 2 tiles)
+    uint16_t bg_shift_lo;    // Pattern low shifter
+    uint16_t bg_shift_hi;    // Pattern high shifter
+    uint16_t at_shift_lo;    // Attribute low shifter (bits expand to fill)
+    uint16_t at_shift_hi;    // Attribute high shifter
+    uint8_t  at_latch_lo;    // Attribute latch for next tile
+    uint8_t  at_latch_hi;    // Attribute latch for next tile
 } PPU;
 
 // PPU Memory
@@ -115,10 +136,8 @@ void ppu_write(uint16_t addr, uint8_t value);
 void ppu_reset(PPU* ppu);
 uint32_t get_color(uint8_t pixel);
 void start_frame();
-// Scanline-based rendering API
+// Cycle-stepped rendering API
 void ppu_begin_frame_render(uint32_t *framebuffer);
-void ppu_render_scanline_bg(int sy, uint32_t *framebuffer);
-void ppu_render_scanline_sprites(int sy, uint32_t *framebuffer);
 uint8_t ppu_reg_read(uint16_t reg);
 void ppu_reg_write(uint16_t reg, uint8_t value);
 void ppu_oam_dma(uint8_t page);
@@ -127,5 +146,8 @@ void ppu_end_vblank(void);
 extern uint8_t bg_opaque[256 * 240];
 void ppu_predict_sprite0_split_for_frame(void);
 void ppu_latch_pre_for_visible(void);
+
+// Cycle-stepped API
+void ppu_step(int cpu_cycles);
 
 #endif // PPU_H
