@@ -37,13 +37,9 @@
 #include "rom/mapper.h"
 #include <math.h>
 #include "ui/palette_tool.h"
-#include "ui/palette_tool.h"
 
 // Constants for NTSC NES timing:
-const double CPU_FREQ = 1789773.0;              // CPU frequency in Hz
-const double ACTUAL_FPS = 60.0988;                  // Actual NTSC NES frame rate
-const double FRAME_TIME_MS = 1000.0 / ACTUAL_FPS;  // ~16.639 ms per frame  
-const double CPU_CYCLES_PER_FRAME = CPU_FREQ / ACTUAL_FPS;  // ~29780.5 cycles/frame
+const double FRAME_TIME_MS = 1000.0 / ACTUAL_FPS;  // ~16.639 ms per frame
 
 // apu con
 #define AUDIO_SAMPLE_RATE 44100
