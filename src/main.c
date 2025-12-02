@@ -39,7 +39,10 @@
 #include "ui/palette_tool.h"
 
 // Constants for NTSC NES timing:
-const double FRAME_TIME_MS = 1000.0 / ACTUAL_FPS;  // ~16.639 ms per frame
+#define ACTUAL_FPS 60.0988  // NTSC frame rate
+const double CPU_FREQ = 1789773.0;  // CPU frequency in Hz (NTSC) - matches extern in globals.h
+const double CPU_CYCLES_PER_FRAME = 1789773.0 / 60.0988;  // ~29780.5 cycles per frame
+const double FRAME_TIME_MS = 1000.0 / 60.0988;  // ~16.639 ms per frame
 
 // apu con
 #define AUDIO_SAMPLE_RATE 44100
@@ -49,18 +52,6 @@ const double FRAME_TIME_MS = 1000.0 / ACTUAL_FPS;  // ~16.639 ms per frame
 uint32_t framebuffer[SCREEN_WIDTH * SCREEN_HEIGHT];
 
 Joypad pad1 = {0}, pad2 = {0};
-
-// --- timing (NTSC) ---
-const int TOTAL_SCANLINES = 262;
-const int VISIBLE_SCANLINES = 240;      // lines 0-239
-const int POST_RENDER_SCANLINES = 1;    // line 240
-const int VBLANK_SCANLINES = 20;        // lines 241-260
-const int PRE_RENDER_SCANLINES = 1;     // line 261
-
-const int CPU_CYCLES_PER_FRAME_I = (int)CPU_CYCLES_PER_FRAME;
-const int CYCLES_VISIBLE = CPU_CYCLES_PER_FRAME_I * (VISIBLE_SCANLINES + POST_RENDER_SCANLINES) / TOTAL_SCANLINES;
-const int CYCLES_VBLANK  = CPU_CYCLES_PER_FRAME_I * VBLANK_SCANLINES / TOTAL_SCANLINES;
-const int CYCLES_PRERENDER = CPU_CYCLES_PER_FRAME_I - CYCLES_VISIBLE - CYCLES_VBLANK;
 
 int main(int argc, char *argv[]) {
     SDL_AudioSpec want;
