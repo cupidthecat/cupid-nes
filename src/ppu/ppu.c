@@ -354,25 +354,6 @@ void ppu_end_vblank(void){
     ppu_eval_nmi();
     ppu_latch_pre_for_visible();
 }
-// $2000–$2FFF -> nametable RAM index, obeying mirroring
-static inline uint16_t nt_index(uint16_t addr) {
-    // collapse 0x2000–0x3EFF to a 4-Nametable window (0..0x0FFF)
-    uint16_t off = (addr - 0x2000) & 0x0FFF;  // 4 * 0x400
-    uint16_t nt  = (off >> 10) & 3;           // which table 0..3
-    uint16_t in  =  off & 0x03FF;             // offset inside table
-
-    switch (cart_get_mirroring()) {
-        case MIRROR_HORIZONTAL: // 0,1 share; 2,3 share   (top/bottom)
-            return ((nt & 2) ? 0x400 : 0x000) + in;
-        case MIRROR_VERTICAL:   // 0,2 share; 1,3 share   (left/right)  <-- SMB
-            return ((nt & 1) ? 0x400 : 0x000) + in;
-        case MIRROR_SINGLE0:    return in;
-        case MIRROR_SINGLE1:    return 0x400 + in;
-        case MIRROR_FOUR:       return (nt * 0x400) + in; // needs 4 KiB backing
-    }
-    return in;
-}
-
 // Clear the framebuffer to the universal background color each frame
 static inline void clear_framebuffer(uint32_t *fb) {
     uint32_t bg = get_color(ppu_palette[0]); // universal background ($3F00)
@@ -442,11 +423,12 @@ uint8_t ppu_read(uint16_t addr) {
 
     // Nametables 0x2000–0x3EFF (with mirroring)
     if (addr >= 0x2000 && addr < 0x3F00) {
-        return ppu_vram[nt_index(addr)];
+        return cart_nt_read(addr, ppu_vram);
     }
 
-   // Pattern tables 0x0000–0x1FFF: cart (CHR-ROM/RAM, banked)
-   return cart_ppu_read(addr & 0x1FFF);
+    // Pattern tables 0x0000–0x1FFF: cart (CHR-ROM/RAM, banked)
+    cart_set_ppu_fetch_source(CART_PPU_FETCH_CPU);
+    return cart_ppu_read(addr & 0x1FFF);
 }
 
 // PPU Register Write
@@ -463,10 +445,14 @@ void ppu_write(uint16_t addr, uint8_t value) {
 
     // Pattern tables (CHR). If the cart uses CHR-RAM, writes should stick; with CHR-ROM they
     // are typically ignored. For the test ROMs, allowing writes is fine.
-    if (addr < 0x2000) { cart_ppu_write(addr & 0x1FFF, value); return; }
+    if (addr < 0x2000) {
+        cart_set_ppu_fetch_source(CART_PPU_FETCH_CPU);
+        cart_ppu_write(addr & 0x1FFF, value);
+        return;
+    }
 
     if(addr >= 0x2000 && addr < 0x3F00) {
-        ppu_vram[nt_index(addr)] = value;
+        cart_nt_write(addr, value, ppu_vram);
         return;
     }
 
@@ -655,6 +641,7 @@ void ppu_predict_sprite0_split_for_frame(void) {
 
                 uint16_t tile = tall ? ((id & 0xFE) + use_half) : id;
                 uint16_t addr = spBase + tile * 16;
+                cart_set_ppu_fetch_source(CART_PPU_FETCH_SPRITE);
                 uint8_t p0 = cart_ppu_read(addr + rr);
                 uint8_t p1 = cart_ppu_read(addr + rr + 8);
 
@@ -688,6 +675,7 @@ void ppu_predict_sprite0_split_for_frame(void) {
 
                     uint16_t tile = tall ? ((id & 0xFE) + use_half) : id;
                     uint16_t addr = spBase + tile * 16;
+                    cart_set_ppu_fetch_source(CART_PPU_FETCH_SPRITE);
                     uint8_t p0 = cart_ppu_read(addr + rr);
                     uint8_t p1 = cart_ppu_read(addr + rr + 8);
 
@@ -717,8 +705,9 @@ void ppu_predict_sprite0_split_for_frame(void) {
             int nt_y = (wy / 240) & 1;
             uint16_t ntBase = 0x2000 + ((nt_y << 1) | nt_x) * 0x400;
             
-            uint8_t tileIdx = ppu_vram[nt_index(ntBase + ty * 32 + tx)];
+            uint8_t tileIdx = cart_nt_read((uint16_t)(ntBase + ty * 32 + tx), ppu_vram);
             uint16_t tileAddr = bgPT + tileIdx * 16;
+            cart_set_ppu_fetch_source((ppu.ctrl & 0x20) ? CART_PPU_FETCH_BG : CART_PPU_FETCH_SPRITE);
             uint8_t b0 = cart_ppu_read(tileAddr + fy);
             uint8_t b1 = cart_ppu_read(tileAddr + fy + 8);
             uint8_t bg_px = (((b1 >> (7 - fx)) & 1) << 1) | ((b0 >> (7 - fx)) & 1);
@@ -729,7 +718,7 @@ void ppu_predict_sprite0_split_for_frame(void) {
                 ppu.split_x = sx;
                 // schedule time of the hit in CPU cycles
                 const double CPU_PER_SCANLINE = CPU_CYCLES_PER_FRAME / 262.0;   // ~113.667
-                const double CPU_PER_DOT = CPU_PER_SCANLINE / 341.0;       // ~0.333
+                const double CPU_PER_DOT = CPU_PER_SCANLINE / 341.0;       // ~0.333c
                 ppu.split_cpu_cycles = (int)(sy * CPU_PER_SCANLINE + sx * CPU_PER_DOT);
                 return;
             }
@@ -786,6 +775,7 @@ static inline void ppu_fetch_pt_lo(void) {
     uint16_t base = (ppu.ctrl & 0x10) ? 0x1000 : 0x0000;
     uint16_t fine_y = (ppu.v >> 12) & 0x07;
     uint16_t addr = base + ppu.nt_byte * 16 + fine_y;
+    cart_set_ppu_fetch_source((ppu.ctrl & 0x20) ? CART_PPU_FETCH_BG : CART_PPU_FETCH_SPRITE);
     ppu.pt_lo = cart_ppu_read(addr);
 }
 
@@ -793,6 +783,7 @@ static inline void ppu_fetch_pt_hi(void) {
     uint16_t base = (ppu.ctrl & 0x10) ? 0x1000 : 0x0000;
     uint16_t fine_y = (ppu.v >> 12) & 0x07;
     uint16_t addr = base + ppu.nt_byte * 16 + fine_y + 8;
+    cart_set_ppu_fetch_source((ppu.ctrl & 0x20) ? CART_PPU_FETCH_BG : CART_PPU_FETCH_SPRITE);
     ppu.pt_hi = cart_ppu_read(addr);
 }
 
@@ -886,6 +877,7 @@ static inline void ppu_render_dot(uint32_t *fb, int sl, int dotx) {
             if (tall) { base = (id & 1) ? 0x1000 : 0x0000; tile = (id & 0xFE) + half; }
 
             uint16_t addr = base + tile * 16;
+            cart_set_ppu_fetch_source(CART_PPU_FETCH_SPRITE);
             uint8_t p0 = cart_ppu_read(addr + rr);
             uint8_t p1 = cart_ppu_read(addr + rr + 8);
 
@@ -1023,6 +1015,7 @@ void ppu_step(int cpu_cycles) {
 
         // Dot-specific actions
         if (sl == 241 && dot == 1) {
+            cart_notify_vblank_start();
             // Enter VBlank at the canonical PPU timing point.
             ppu_begin_vblank();
             PPU_LOG("enter_vblank status=%02X nmi_out=%d", ppu.status, ppu.nmi_out ? 1 : 0);
@@ -1042,7 +1035,10 @@ void ppu_step(int cpu_cycles) {
                 ppu_copy_vertical();
             }
         } else if (sl >= 0 && sl <= 240) { // visible + post-render
-            if (dot == 257 && rendering) {
+            if (dot == 3 && rendering && sl < 240) {
+                cart_notify_scanline_early();
+            }
+            if (dot == 257 && rendering && sl < 240) {
                 ppu_copy_horizontal();
             }
             if (dot == 260 && rendering) {

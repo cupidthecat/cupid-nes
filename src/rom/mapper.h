@@ -49,11 +49,22 @@ typedef struct Mapper {
 // Global “inserted” cart
 extern Mapper *cart;
 
+typedef enum {
+    CART_PPU_FETCH_CPU = 0,
+    CART_PPU_FETCH_BG,
+    CART_PPU_FETCH_SPRITE
+} CartPpuFetchSource;
+
 // Front door used by CPU/PPU
 uint8_t cart_cpu_read (uint16_t addr);
 void    cart_cpu_write(uint16_t addr, uint8_t v);
 uint8_t cart_ppu_read (uint16_t addr);
 void    cart_ppu_write(uint16_t addr, uint8_t v);
+void    cart_set_ppu_fetch_source(CartPpuFetchSource src);
+
+// Mapper-aware nametable access ($2000-$2FFF decoded by PPU)
+uint8_t cart_nt_read (uint16_t addr, uint8_t *nt_ram);
+void    cart_nt_write(uint16_t addr, uint8_t v, uint8_t *nt_ram);
 
 // Mapper IRQ line helpers (for IRQ-capable mappers such as MMC3)
 bool cart_irq_pending(void);
@@ -61,6 +72,15 @@ void cart_irq_ack(void);
 
 // Notify mapper about end-of-scanline timing event (used by MMC3 IRQ)
 void cart_notify_scanline(void);
+// Optional early-scanline timing event (used by MMC5 timing tweaks)
+void cart_notify_scanline_early(void);
+// Notify mapper when vblank starts (MMC5 in-frame/IRQ state)
+void cart_notify_vblank_start(void);
+
+// Battery-backed PRG-RAM persistence (.sav)
+void cart_battery_configure(const char *rom_path, bool has_battery);
+void cart_battery_flush(void);
+void cart_battery_shutdown(void);
 
 // Init from iNES 1.0 header + loaded PRG/CHR blobs
 int mapper_init_from_header(const iNESHeader *h,

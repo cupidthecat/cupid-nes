@@ -1,62 +1,10 @@
 # Cupid NES Emulator
 
-Cupid NES Emulator is a feature-rich NES emulator implemented in C. It accurately emulates the 6502 CPU architecture, PPU graphics system, APU audio subsystem, and supports multiple mapper configurations. The project demonstrates advanced NES hardware emulation with the ability to run commercial NES games.
+Cupid is an NES emulator written in C with SDL2 for video, input, and audio.
 
-## Table of Contents
+Current focus is practical game compatibility and hardware-behavior fidelity (CPU/PPU/APU timing quirks, mapper behavior, IRQ/NMI behavior), while keeping the code straightforward to build and debug.
 
-- [🎮 MAJOR MILESTONE: Super Mario Bros Fully Playable!](#-major-milestone-super-mario-bros-fully-playable)
-- [Features](#features)
-  - [6502 CPU Emulation](#6502-cpu-emulation)
-  - [Multiple Addressing Modes](#multiple-addressing-modes)
-  - [Memory Map Simulation](#memory-map-simulation)
-  - [Advanced Mapper Support](#advanced-mapper-support)
-  - [ROM Loading](#rom-loading)
-  - [PPU Emulation](#ppu-emulation)
-  - [APU (Audio Processing Unit) Emulation](#apu-audio-processing-unit-emulation)
-  - [Joypad Input](#joypad-input)
-  - [Graphical Output](#graphical-output)
-- [Test Results](#test-results)
-  - [CPU Tests](#cpu-tests)
-  - [PPU and Graphics Tests](#ppu-and-graphics-tests)
-  - [Commercial Game Tests](#commercial-game-tests)
-  - [Test ROMs Included](#test-roms-included)
-- [Project Structure](#project-structure)
-- [Requirements](#requirements)
-- [Installation & Usage](#installation--usage)
-  - [Building the Emulator](#building-the-emulator)
-  - [Running with a ROM](#running-with-a-rom)
-  - [Keyboard Controls](#keyboard-controls)
-  - [Runtime Palette Editor](#runtime-palette-editor)
-- [Emulation Details](#emulation-details)
-  - [CPU Cycle Timing](#cpu-cycle-timing)
-  - [Addressing Mode Implementation](#addressing-mode-implementation)
-  - [PPU Memory Management](#ppu-memory-management)
-  - [APU Audio Generation](#apu-audio-generation)
-  - [Mapper Architecture](#mapper-architecture)
-- [Limitations and Future Improvements](#limitations-and-future-improvements)
-- [Contributing](#contributing)
-- [License](#license)
-- [Resources](#resources)
-
-## 🎮 MAJOR MILESTONE: Super Mario Bros Fully Playable!
-
-**BREAKTHROUGH ACHIEVEMENT:** The emulator can now successfully run and play Super Mario Bros, one of the most iconic and demanding NES games! This represents a monumental achievement in NES emulation, validating that all core systems-CPU, PPU, APU, memory mapping, and timing-are working together with commercial-game accuracy.
-
-<p align="center">
-  <img src="img/smb.gif" alt="Super Mario Bros Gameplay">
-</p>
-
-<p align="center">
-  <img src="img/smb1.png" alt="Super Mario Bros Title Screen">
-</p>
-
-<p align="center">
-  <img src="img/smb2.png" alt="Super Mario Bros Level 1-1">
-</p>
-
-<p align="center">
-  <img src="img/smb3.png" alt="Super Mario Bros Gameplay">
-</p>
+**Playable examples for Cupid NES:** `Super Mario Bros. 3.nes`, `Legend of Zelda, The (USA).nes`, `smb.nes`, `kirby.nes`, `Castlevania III - Dracula's Curse.nes` and more!
 
 <p align="center">
   <img src="img/smb33.png" alt="Super Mario Bros 3 Gameplay">
@@ -66,34 +14,312 @@ Cupid NES Emulator is a feature-rich NES emulator implemented in C. It accuratel
   <img src="img/loz.png" alt="The Legend of Zelda Gameplay">
 </p>
 
-This milestone validates:
-- ✅ Complete 6502 CPU instruction set with cycle-accurate timing
-- ✅ Advanced PPU background and sprite rendering with scrolling
-- ✅ Sprite 0 hit detection for split-screen effects
-- ✅ Full APU audio implementation with all 5 channels
-- ✅ Accurate mapper support (NROM, MMC1, MMC3, and more)
-- ✅ Precise memory mapping and ROM loading
-- ✅ Super Mario Bros. 3 (MMC3 / Mapper 4) boots and runs with correct mapper banking/IRQ behavior
-- ✅ Working joypad input system
-- ✅ Correct frame timing and NMI/IRQ interrupt handling
-- ✅ Full compatibility with commercial NES games
+## What is implemented
 
-## Features
+### CPU (6502)
+- Mainline instruction execution used by commercial NES titles
+- Interrupt behavior: NMI, IRQ, BRK, delayed interrupt edge cases
+- Addressing behavior including page-cross penalties and dummy-read sensitive paths
+- Several undocumented opcodes used by games/test ROMs
 
-### 6502 CPU Emulation
+### PPU
+- Cycle-stepped frame rendering
+- Scroll/address latch behavior (`$2000-$2007`), read-buffer behavior, and open-bus behavior
+- Sprite evaluation, sprite priority, and sprite-0 hit timing
+- OAM DMA via `$4014`
+- Nametable mirroring modes (horizontal/vertical/single/four-screen)
+- Mapper-aware scanline notifications for IRQ-capable boards (e.g. MMC3/MMC5)
 
-Implements a comprehensive 6502 instruction set including:
+### APU
+- Pulse 1/2, Triangle, Noise, and DMC channel framework
+- Frame sequencer (4-step / 5-step)
+- Length/envelope/sweep behavior and frame IRQ path
+- SDL2 audio callback output with CPU-cycle-based sampling
 
-- **Data Transfer:** LDA, STA, TAX, TXA, LDY, LDX, STX, STY, LAX (undocumented)
-- **Arithmetic:** ADC, SBC, INC, DEC, INX, INY, DEX, DEY
-- **Logical:** AND, ORA, EOR, BIT
-- **Comparison:** CMP, CPX, CPY
-- **Branching:** BEQ, BNE, BCC, BCS, BMI, BPL, BVS, BVC
-- **Jump/Call:** JMP (Absolute, Indirect), JSR/RTS, RTI
-- **Stack Operations:** PHP/PLP, PHA/PLA, TSX/TXS
-- **Shift/Rotate:** ASL, LSR, ROL, ROR
-- **Undocumented Instructions:** DCP, RLA, SLO, SRE, RRA, SAX, ISC, SHX, SHY, SHA, TAS, LAS, and various undocumented NOPs
-- **Interrupt Handling:** BRK, NMI, IRQ with proper timing delays
+### Cartridge / ROM support
+- iNES 1.0 loading
+- Basic NES 2.0 size-field handling (extended PRG/CHR sizing)
+- CHR-ROM and CHR-RAM cartridges
+- Battery-backed PRG-RAM (`.sav` files beside ROMs)
+
+### Implemented mappers
+- 0 (NROM)
+- 1 (MMC1 / SxROM)
+- 2 (UxROM)
+- 3 (CNROM)
+- 4 (MMC3 / TxROM)
+- 5 (MMC5)
+- 7 (AxROM / AOROM)
+- 9 (MMC2)
+- 10 (MMC4)
+- 11 (Color Dreams)
+- 13 (CPROM)
+- 15 (100-in-1 / Contra Function 16)
+
+If a mapper is not implemented, the emulator currently falls back to NROM behavior.
+
+## Runtime features
+
+### Input controls
+- `Z` = A
+- `X` = B
+- `Right Shift` = Select
+- `Enter` = Start
+- `Arrow Keys` = D-pad
+- `R` = Reset CPU + PPU + APU
+
+### Palette tool (runtime)
+- `F7` toggles palette overlay/editor
+- `F6` resets to default palette
+- `Ctrl+V` accepts supported hex palette text
+- Drag-and-drop `.pal` files (192 or 1536 bytes) onto the emulator window
+
+Palette tool code lives in `src/ui/palette_tool.c` and `src/ui/palette_tool.h`.
+
+## Build and run
+
+### Requirements
+- GCC
+- Make
+- SDL2 development libraries
+- Linux/WSL (project is developed/tested in this environment)
+
+Ubuntu/WSL example:
+```bash
+sudo apt update
+sudo apt install -y build-essential libsdl2-dev
+```
+
+### Build
+```bash
+make
+```
+
+### Run
+```bash
+./cupid-nes path/to/rom.nes
+```
+
+Example:
+```bash
+./cupid-nes "Super Mario Bros. 3.nes"
+```
+
+## Save files (`.sav`)
+
+For cartridges with battery-backed PRG-RAM (iNES `flags6` bit 1), save RAM is persisted automatically:
+- File path: same directory + same ROM stem + `.sav`
+- Loaded on ROM startup if present
+- Flushed on emulator shutdown
+
+Examples already in this repo:
+- `kirby.sav`
+- `Legend of Zelda, The (USA).sav`
+
+## Testing notes
+
+This repository includes many validation ROMs under `test-roms/` (timing, IRQ/NMI, DMA, palette/PPU behavior, and mapper checks), plus additional local game ROMs used for manual compatibility testing.
+
+There is also a CPU test source file at `src/tests/cpu_test.c`, but it is not part of the default `make` target.
+
+## Project layout
+
+```text
+cupid-nes/
+├── Makefile
+├── include/
+│   └── globals.h
+├── src/
+│   ├── main.c
+│   ├── cpu/
+│   ├── ppu/
+│   ├── apu/
+│   ├── rom/
+│   ├── joypad/
+│   ├── ui/
+│   └── tests/
+├── test-roms/
+└── img/
+```
+
+## Known limitations
+
+- Not cycle-perfect in every subsystem edge case
+- Mapper coverage is limited to the list above
+- PAL timing is not a current target (NTSC-focused)
+- No save-state system yet
+
+## License
+
+GPL-3.0 (see `LICENSE`).
+
+## References
+
+- [NESdev Wiki](https://www.nesdev.org/wiki/Nintendo_Entertainment_System)
+- [NES PPU docs](https://www.nesdev.org/wiki/PPU)
+- [NES APU docs](https://www.nesdev.org/wiki/APU)
+- [NES mapper docs](https://www.nesdev.org/wiki/Mapper)
+# Cupid NES Emulator
+
+Cupid is an NES emulator written in C with SDL2 for video/input/audio.
+
+Current focus is practical game compatibility and hardware behavior fidelity (CPU/PPU/APU timing quirks, mapper behavior, IRQ/NMI behavior), while still being straightforward to build and debug.
+
+**Playable examples for Cupid-:** `Super Mario Bros. 3.nes`, `Legend of Zelda, The (USA).nes`, `smb.nes`, `kirby.nes`.
+
+<p align="center">
+  <img src="img/smb33.png" alt="Super Mario Bros 3 Gameplay">
+</p>
+
+<p align="center">
+  <img src="img/loz.png" alt="The Legend of Zelda Gameplay">
+</p>
+
+## What is implemented
+
+### CPU (6502)
+- Full mainline instruction execution used by commercial NES titles
+- Interrupt behavior: NMI, IRQ, BRK, delayed interrupt edge cases
+- Addressing behavior including page-cross penalties and dummy-read sensitive paths
+- Several undocumented opcodes used by games/test ROMs
+
+### PPU
+- Cycle-stepped frame rendering
+- Scroll/address latch behavior (`$2000-$2007`), read buffer behavior, and open-bus behavior
+- Sprite evaluation, sprite priority, and sprite-0 hit timing
+- OAM DMA via `$4014`
+- Nametable mirroring modes (horizontal/vertical/single/four-screen)
+- Mapper-aware scanline notifications for IRQ-capable boards (e.g. MMC3/MMC5)
+
+### APU
+- Pulse 1/2, Triangle, Noise, and DMC channel framework
+- Frame sequencer (4-step / 5-step)
+- Length/envelope/sweep behavior and frame IRQ path
+- SDL2 audio callback output with CPU-cycle-based sampling
+
+### Cartridge / ROM support
+- iNES 1.0 loading
+- Basic NES 2.0 size-field handling (extended PRG/CHR sizing)
+- CHR-ROM and CHR-RAM cartridges
+- Battery-backed PRG-RAM (`.sav` files beside ROMs)
+
+### Implemented mappers
+- 0 (NROM)
+- 1 (MMC1 / SxROM)
+- 2 (UxROM)
+- 3 (CNROM)
+- 4 (MMC3 / TxROM)
+- 5 (MMC5)
+- 7 (AxROM / AOROM)
+- 9 (MMC2)
+- 10 (MMC4)
+- 11 (Color Dreams)
+- 13 (CPROM)
+- 15 (100-in-1 / Contra Function 16)
+
+If a mapper is not implemented, the emulator currently falls back to NROM behavior.
+
+## Runtime features
+
+### Input controls
+- `Z` = A
+- `X` = B
+- `Right Shift` = Select
+- `Enter` = Start
+- `Arrow Keys` = D-pad
+- `R` = Reset CPU + PPU + APU
+
+### Palette tool (runtime)
+- `F7` toggles palette overlay/editor
+- `F6` resets to default palette
+- `Ctrl+V` accepts supported hex palette text
+- Drag-and-drop `.pal` files (192 or 1536 bytes) onto the emulator window
+
+Palette tool code lives in `src/ui/palette_tool.c` and `src/ui/palette_tool.h`.
+
+## Build and run
+
+### Requirements
+- GCC
+- Make
+- SDL2 development libraries
+- Linux/WSL (project is developed/tested in this environment)
+
+Ubuntu/WSL example:
+```bash
+sudo apt update
+sudo apt install -y build-essential libsdl2-dev
+```
+
+### Build
+```bash
+make
+```
+
+### Run
+```bash
+./cupid-nes path/to/rom.nes
+```
+
+Example:
+```bash
+./cupid-nes "Super Mario Bros. 3.nes"
+```
+
+## Save files (`.sav`)
+
+For cartridges with battery-backed PRG-RAM (iNES `flags6` bit 1), save RAM is persisted automatically:
+- File path: same directory + same ROM stem + `.sav`
+- Loaded on ROM startup if present
+- Flushed on emulator shutdown
+
+Examples already in this repo:
+- `kirby.sav`
+- `Legend of Zelda, The (USA).sav`
+
+## Testing notes
+
+This repository includes many validation ROMs under `test-roms/` (timing, IRQ/NMI, DMA, palette/PPU behavior, and mapper checks), plus additional local game ROMs used for manual compatibility testing.
+
+There is also a CPU test source file at `src/tests/cpu_test.c`, but it is not part of the default `make` target.
+
+## Project layout
+
+```text
+cupid-nes/
+├── Makefile
+├── include/
+│   └── globals.h
+├── src/
+│   ├── main.c
+│   ├── cpu/
+│   ├── ppu/
+│   ├── apu/
+│   ├── rom/
+│   ├── joypad/
+│   ├── ui/
+│   └── tests/
+├── test-roms/
+└── img/
+```
+
+## Known limitations
+
+- Not cycle-perfect in every subsystem edge case
+- Mapper coverage is limited to the list above
+- PAL timing is not a current target (NTSC-focused)
+- No save-state system yet
+
+## License
+
+GPL-3.0 (see `LICENSE`).
+
+## References
+
+- [NESdev Wiki](https://www.nesdev.org/wiki/Nintendo_Entertainment_System)
+- [NES PPU docs](https://www.nesdev.org/wiki/PPU)
+- [NES APU docs](https://www.nesdev.org/wiki/APU)
+- [NES mapper docs](https://www.nesdev.org/wiki/Mapper)
 
 ### Multiple Addressing Modes
 
@@ -147,6 +373,7 @@ Supports loading NES ROMs in both iNES 1.0 and NES 2.0 formats. The loader extra
 - Mirroring mode (Horizontal/Vertical/Single-screen/Four-screen) based on header flags
 - Automatic mapper detection and initialization from iNES header
 - PRG-RAM support for games requiring save data
+- Battery-backed PRG-RAM persistence (`flags6` bit 1): loads/saves `.sav` beside the ROM
 
 ### iNES PRG-RAM Compatibility Note
 
@@ -391,6 +618,18 @@ The emulator will:
 - Open an SDL window and begin execution
 - Display background and sprite graphics in real time
 - Output audio through your system's audio device
+
+### Battery Saves
+
+Battery-backed cartridges (iNES header `flags6` bit 1 set) automatically persist PRG-RAM to a `.sav` file.
+
+- Save file path: same directory and filename stem as the ROM, with `.sav` extension
+  - Example: `Legend of Zelda, The (USA).nes` -> `Legend of Zelda, The (USA).sav`
+- On ROM load: if the `.sav` file exists, its contents are loaded into PRG-RAM
+- On exit/ROM unload: dirty PRG-RAM is written back to the `.sav` file
+- New save files are created automatically when needed
+
+Note: force-closing the emulator can skip the final save write.
 
 ### Keyboard Controls
 

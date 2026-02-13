@@ -48,6 +48,8 @@ static int is_nes20(const iNESHeader *h) {
 }
 
 int load_rom(const char *filename) {
+    cart_battery_shutdown();
+
     FILE *fp = fopen(filename, "rb");
     if (!fp) { perror("open"); return -1; }
 
@@ -174,6 +176,7 @@ int load_rom(const char *filename) {
     }
 
     int mapper_no = mapper_init_from_header(&ines_header, prg_rom, prg_size, chr_rom, chr_size);
+    cart_battery_configure(filename, (ines_header.flags6 & 0x02u) != 0);
 
     // Keep the old global in sync so PPU mirroring stays correct
     Mirroring m = cart_get_mirroring();
@@ -186,7 +189,5 @@ int load_rom(const char *filename) {
     }
 
     printf("Mapper: %d  (CHR %s)\n", mapper_no, (ines_header.chr_rom_chunks==0) ? "RAM" : "ROM");
-    return 0;
-
     return 0;
 }

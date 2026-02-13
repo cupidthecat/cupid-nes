@@ -244,6 +244,7 @@ int main(int argc, char *argv[]) {
     SDL_DestroyTexture(texture);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
+    cart_battery_shutdown();
     SDL_Quit();
     return 0;
 }
