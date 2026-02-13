@@ -27,7 +27,21 @@
 #include "apu.h"
 #include <string.h>
 #include <math.h>
+#include <stdio.h>
 #include <SDL2/SDL.h>
+
+extern uint64_t cpu_total_cycles;
+extern uint8_t read_mem(uint16_t addr);
+
+#define APU_LOG(...) do {} while (0)
+
+static bool apu_irq_probe_active = false;
+static uint32_t apu_irq_probe_count = 0;
+static uint64_t apu_irq_probe_start = 0;
+
+static inline void apu_log_frame_irq_event(const char *src) {
+    (void)src;
+}
 
 APU apu;
 
@@ -49,6 +63,18 @@ static const uint8_t LENGTH_TABLE[32] = {
 static const uint16_t NOISE_PERIOD[16] = {
     4,8,16,32,64,96,128,160,202,254,380,508,762,1016,2034,4068
 };
+
+// DMC rates (NTSC CPU cycles per output bit)
+static const uint16_t DMC_PERIOD[16] = {
+    428, 380, 340, 320, 286, 254, 226, 214,
+    190, 160, 142, 128, 106,  85,  72,  54
+};
+
+static void sweep_clock(Pulse* p, bool is_ch2);
+static void tri_linear_clock(Triangle* t);
+static void dmc_restart_sample(DMC* d);
+static void dmc_try_fill_buffer(APU* a);
+static void dmc_clock_output(APU* a);
 
 // ---------------- Ring buffer ----------------
 static inline uint32_t rb_next(uint32_t v){ return (v+1) & (APU_RING_CAP-1); }
@@ -93,6 +119,22 @@ static inline void length_clock(LengthCounter* l){
     if (!l->halt && l->length > 0) l->length--;
 }
 
+static inline void apu_clock_quarter_frame(APU *a) {
+    env_clock(&a->pulse1.env);
+    env_clock(&a->pulse2.env);
+    env_clock(&a->noise.env);
+    tri_linear_clock(&a->tri);
+}
+
+static inline void apu_clock_half_frame(APU *a) {
+    length_clock(&a->pulse1.lc);
+    length_clock(&a->pulse2.lc);
+    length_clock(&a->tri.lc);
+    length_clock(&a->noise.lc);
+    sweep_clock(&a->pulse1, false);
+    sweep_clock(&a->pulse2, true);
+}
+
 // ---------------- Sweep (pulse) ----------------
 static inline uint16_t sweep_target(uint16_t t, const Sweep* s, bool ch2){
     uint16_t change = t >> s->shift;
@@ -134,8 +176,13 @@ static void tri_linear_clock(Triangle* t){
 // ---------------- Reset & init ----------------
 void apu_reset(APU *a) {
     memset(a, 0, sizeof(*a));
-    a->dmc.enabled = false;
     a->noise.lfsr = 1; // cannot be 0
+    a->dmc.enabled = false;
+    a->dmc.sample_buffer_empty = true;
+    a->dmc.silence = true;
+    a->dmc.bits_remaining = 8;
+    a->dmc.timer_reload = DMC_PERIOD[0];
+    a->dmc.timer = a->dmc.timer_reload;
     a->cycles_per_sample = 1789773.0 / 44100.0;
     a->sample_rate = 44100.0;
 }
@@ -149,10 +196,37 @@ void apu_audio_init(int sample_rate) {
 // ---------------- Reads/Writes ----------------
 static inline void apu_write_4017(APU *a, uint8_t v) {
     a->regs[0x17] = v;
-    a->five_step   = (v & 0x80) != 0;
+    bool new_five_step = (v & 0x80) != 0;
+    bool write_odd = ((cpu_total_cycles & 1ULL) != 0);
     a->irq_inhibit = (v & 0x40) != 0;
-    if (a->irq_inhibit) a->frame_irq = false;
-    a->cycle_in_seq = 0;
+    a->frame_irq = false;
+    a->frame_irq_delay = 0;
+
+    // In 5-step mode, writing $4017 clocks quarter+half frame immediately.
+    if (new_five_step) {
+        apu_clock_quarter_frame(a);
+        apu_clock_half_frame(a);
+    }
+
+    a->five_step = new_five_step;
+    if (!new_five_step) {
+        a->mode0_first_frame = true;
+    }
+
+    // Frame sequencer reset occurs after 3 or 4 CPU cycles (clock jitter).
+    // Even cycle write => 4-cycle delay, odd cycle write => 3-cycle delay.
+        a->frame_reset_delay = write_odd ? 3 : 4;
+    a->frame_reset_pending = true;
+    APU_LOG("write $4017=%02X five=%d inhibit=%d odd=%d reset_delay=%u", v,
+            new_five_step ? 1 : 0, a->irq_inhibit ? 1 : 0,
+            write_odd ? 1 : 0, a->frame_reset_delay);
+
+    if ((v & 0x80) == 0 && (v & 0x40) == 0) {
+        apu_irq_probe_active = true;
+        apu_irq_probe_count = 0;
+        apu_irq_probe_start = cpu_total_cycles;
+        APU_LOG("irq_probe armed (mode0, irq enabled)");
+    }
 }
 static inline uint8_t apu_read_4015(APU *a) {
     uint8_t s = 0;
@@ -160,10 +234,73 @@ static inline uint8_t apu_read_4015(APU *a) {
     if (a->pulse2.lc.length) s |= 0x02;
     if (a->tri.lc.length)    s |= 0x04;
     if (a->noise.lc.length)  s |= 0x08;
+    if (a->dmc.bytes_remaining > 0) s |= 0x10;
     if (a->frame_irq)        s |= 0x40;
-    // DMC IRQ would be bit7
+    if (a->dmc.irq_flag)     s |= 0x80;
+    if (s & 0x40) {
+        APU_LOG("read $4015 -> %02X (frame_irq consumed)", s);
+    }
     a->frame_irq = false;
     return s;
+}
+
+static void dmc_restart_sample(DMC* d) {
+    d->current_addr = d->sample_addr;
+    d->bytes_remaining = d->sample_len;
+}
+
+static void dmc_try_fill_buffer(APU* a) {
+    DMC* d = &a->dmc;
+    if (!d->enabled) return;
+    if (!d->sample_buffer_empty) return;
+    if (d->bytes_remaining == 0) return;
+
+    d->sample_buffer = read_mem(d->current_addr);
+    d->sample_buffer_empty = false;
+    a->dmc_dma_stall_cycles += 4;
+
+    d->current_addr++;
+    if (d->current_addr == 0) d->current_addr = 0x8000;
+
+    d->bytes_remaining--;
+    if (d->bytes_remaining == 0) {
+        if (d->loop) {
+            dmc_restart_sample(d);
+        } else if (d->irq_enable) {
+            d->irq_flag = true;
+        }
+    }
+}
+
+static void dmc_clock_output(APU* a) {
+    DMC* d = &a->dmc;
+
+    if (d->bits_remaining == 0) {
+        d->bits_remaining = 8;
+        if (d->sample_buffer_empty) {
+            d->silence = true;
+        } else {
+            d->silence = false;
+            d->shift_reg = d->sample_buffer;
+            d->sample_buffer_empty = true;
+            dmc_try_fill_buffer(a);
+        }
+    }
+
+    if (!d->silence) {
+        if (d->shift_reg & 1) {
+            if (d->output_level <= 125) d->output_level += 2;
+        } else {
+            if (d->output_level >= 2) d->output_level -= 2;
+        }
+    }
+
+    d->shift_reg >>= 1;
+    if (d->bits_remaining > 0) d->bits_remaining--;
+
+    if (d->bits_remaining == 0 && d->sample_buffer_empty && d->bytes_remaining == 0 && !d->loop && d->irq_enable) {
+        d->irq_flag = true;
+    }
 }
 static void pulse_write(Pulse* p, uint16_t reg, uint8_t v){
     switch (reg & 3) {
@@ -237,16 +374,37 @@ void apu_write(uint16_t addr, uint8_t v){
     else if (addr <= 0x4007)   pulse_write(&apu.pulse2, addr, v);
     else if (addr <= 0x400B)   triangle_write(&apu.tri, addr, v);
     else if (addr <= 0x400F)   noise_write(&apu.noise, addr, v);
-    else if (addr == 0x4010) { /* DMC cfg (stub) */ }
-    else if (addr == 0x4011) { /* DMC DAC (stub) */ }
-    else if (addr == 0x4012) { /* DMC addr (stub) */ }
-    else if (addr == 0x4013) { /* DMC len  (stub) */ }
+    else if (addr == 0x4010) {
+        apu.dmc.irq_enable = (v & 0x80) != 0;
+        apu.dmc.loop = (v & 0x40) != 0;
+        apu.dmc.rate_index = v & 0x0F;
+        apu.dmc.timer_reload = DMC_PERIOD[apu.dmc.rate_index];
+        if (!apu.dmc.irq_enable) apu.dmc.irq_flag = false;
+    }
+    else if (addr == 0x4011) {
+        apu.dmc.output_level = v & 0x7F;
+    }
+    else if (addr == 0x4012) {
+        apu.dmc.sample_addr_reg = v;
+        apu.dmc.sample_addr = (uint16_t)(0xC000u + ((uint16_t)v << 6));
+    }
+    else if (addr == 0x4013) {
+        apu.dmc.sample_len_reg = v;
+        apu.dmc.sample_len = (uint16_t)(((uint16_t)v << 4) + 1u);
+    }
     else if (addr == 0x4015) {
         apu.pulse1.enabled = (v & 0x01) != 0; if (!apu.pulse1.enabled) apu.pulse1.lc.length = 0;
         apu.pulse2.enabled = (v & 0x02) != 0; if (!apu.pulse2.enabled) apu.pulse2.lc.length = 0;
         apu.tri.enabled    = (v & 0x04) != 0; if (!apu.tri.enabled)    apu.tri.lc.length = 0;
         apu.noise.enabled  = (v & 0x08) != 0; if (!apu.noise.enabled)  apu.noise.lc.length = 0;
-        apu.dmc.enabled    = (v & 0x10) != 0; // stub
+        apu.dmc.enabled    = (v & 0x10) != 0;
+        apu.dmc.irq_flag = false;
+        if (!apu.dmc.enabled) {
+            apu.dmc.bytes_remaining = 0;
+        } else if (apu.dmc.bytes_remaining == 0) {
+            dmc_restart_sample(&apu.dmc);
+            dmc_try_fill_buffer(&apu);
+        }
     } else if (addr == 0x4017) {
         apu_write_4017(&apu, v);
     }
@@ -316,10 +474,17 @@ static inline float noise_out(const Noise* n){
     return env_output(&n->env) / 15.0f;
 }
 
+static inline float dmc_out(const DMC* d){
+    if (!d->enabled && d->bytes_remaining == 0 && d->sample_buffer_empty && d->silence) {
+        return d->output_level / 127.0f;
+    }
+    return d->output_level / 127.0f;
+}
+
 // Nonlinear mixer (NESdev): pulse & TND
-static inline float mix_sample(float p1, float p2, float tri, float noi /*, float dmc*/){
+static inline float mix_sample(float p1, float p2, float tri, float noi, float dmc){
     float pulse = (p1 + p2);
-    float tnd   = tri/8227.0f + noi/12241.0f /* + dmc/22638.0f*/;
+    float tnd   = tri/8227.0f + noi/12241.0f + dmc/22638.0f;
     float pulse_v = (pulse <= 0.0f) ? 0.0f : 95.88f / (8128.0f / pulse + 100.0f);
     float tnd_v   = (tnd   <= 0.0f) ? 0.0f : 159.79f / (1.0f / tnd + 100.0f);
     float s = pulse_v + tnd_v;
@@ -331,59 +496,69 @@ static inline float mix_sample(float p1, float p2, float tri, float noi /*, floa
 
 void apu_step(APU *a, int cpu_cycles){
     for (int i=0; i<cpu_cycles; ++i) {
-        // tick sequencers
-        clock_pulse(&a->pulse1);
-        clock_pulse(&a->pulse2);
-        clock_triangle(&a->tri);
-        clock_noise(&a->noise);
+        if (a->frame_irq_delay > 0) {
+            a->frame_irq_delay--;
+            if (a->frame_irq_delay == 0 && !a->irq_inhibit) {
+                a->frame_irq = true;
+                APU_LOG("frame_irq asserted");
+                apu_log_frame_irq_event("delay");
+            }
+        }
 
-        // frame sequencer timing
+        // Timer domains:
+        // - Pulse + Noise run on APU cycles (every other CPU cycle)
+        // - Triangle + DMC run on CPU cycles
+        if (!a->cpu_cycle_odd) {
+            clock_pulse(&a->pulse1);
+            clock_pulse(&a->pulse2);
+            clock_noise(&a->noise);
+        }
+        clock_triangle(&a->tri);
+        dmc_try_fill_buffer(a);
+        if (a->dmc.timer == 0) {
+            a->dmc.timer = a->dmc.timer_reload;
+            dmc_clock_output(a);
+        } else {
+            a->dmc.timer--;
+        }
+
+        // frame sequencer timing (CPU-cycle domain)
         a->cycle_in_seq++;
-        // Quarter @ 3729, 11186; Quarter+Half @ 7457, 14916
+        // 4-step: quarter @ 7457, 22371; quarter+half @ 14913, 29829; wrap at 29832.
+        // Terminal IRQ edge: first frame after $4017 reset at 29829, then 29830.
         if (!a->five_step) {
-            if (a->cycle_in_seq == 3729u || a->cycle_in_seq == 11186u) {
+            const uint32_t term_irq_cycle = a->mode0_first_frame ? 29829u : 29830u;
+            if (a->cycle_in_seq == 7457u || a->cycle_in_seq == 22371u) {
                 // quarter: envelopes + triangle linear
-                env_clock(&a->pulse1.env);
-                env_clock(&a->pulse2.env);
-                env_clock(&a->noise.env);
-                tri_linear_clock(&a->tri);
-            } else if (a->cycle_in_seq == 7457u) {
+                apu_clock_quarter_frame(a);
+            } else if (a->cycle_in_seq == 14913u) {
                 // quarter+half
-                env_clock(&a->pulse1.env);
-                env_clock(&a->pulse2.env);
-                env_clock(&a->noise.env);
-                tri_linear_clock(&a->tri);
-                length_clock(&a->pulse1.lc);
-                length_clock(&a->pulse2.lc);
-                length_clock(&a->tri.lc);
-                length_clock(&a->noise.lc);
-                sweep_clock(&a->pulse1, false);
-                sweep_clock(&a->pulse2, true);
-            } else if (a->cycle_in_seq == 14916u) {
-                // quarter+half + IRQ edge
-                env_clock(&a->pulse1.env);
-                env_clock(&a->pulse2.env);
-                env_clock(&a->noise.env);
-                tri_linear_clock(&a->tri);
-                length_clock(&a->pulse1.lc);
-                length_clock(&a->pulse2.lc);
-                length_clock(&a->tri.lc);
-                length_clock(&a->noise.lc);
-                sweep_clock(&a->pulse1, false);
-                sweep_clock(&a->pulse2, true);
-                if (!a->irq_inhibit) a->frame_irq = true;
+                apu_clock_quarter_frame(a);
+                apu_clock_half_frame(a);
+            } else if (a->cycle_in_seq == term_irq_cycle) {
+                // terminal IRQ edge
+                if (!a->irq_inhibit) {
+                    a->frame_irq = true;
+                    a->frame_irq_delay = 0;
+                    APU_LOG("frame_irq asserted at terminal edge");
+                    apu_log_frame_irq_event("terminal");
+                }
+            } else if (a->cycle_in_seq == 29829u) {
+                // terminal quarter+half clock
+                apu_clock_quarter_frame(a);
+                apu_clock_half_frame(a);
+            }
+            if (a->cycle_in_seq >= APU_4STEP_PERIOD) {
                 a->cycle_in_seq = 0;
+                a->mode0_first_frame = false;
             }
         } else {
-            // 5-step (no IRQ), extra quarter at 18640
-            if (a->cycle_in_seq == 3729u || a->cycle_in_seq == 11186u || a->cycle_in_seq == 18640u) {
-                env_clock(&a->pulse1.env); env_clock(&a->pulse2.env); env_clock(&a->noise.env);
-                tri_linear_clock(&a->tri);
-                if (a->cycle_in_seq == 7457u || a->cycle_in_seq == 18640u) {
-                    length_clock(&a->pulse1.lc); length_clock(&a->pulse2.lc);
-                    length_clock(&a->tri.lc);    length_clock(&a->noise.lc);
-                    sweep_clock(&a->pulse1, false); sweep_clock(&a->pulse2, true);
-                }
+            // 5-step (no IRQ): quarter @ 7457, 22371, 37281; half @ 14913, 37281
+            if (a->cycle_in_seq == 7457u || a->cycle_in_seq == 22371u || a->cycle_in_seq == 37281u) {
+                apu_clock_quarter_frame(a);
+            }
+            if (a->cycle_in_seq == 14913u || a->cycle_in_seq == 37281u) {
+                apu_clock_half_frame(a);
             }
             if (a->cycle_in_seq >= APU_5STEP_PERIOD) a->cycle_in_seq = 0;
         }
@@ -397,11 +572,31 @@ void apu_step(APU *a, int cpu_cycles){
             float p2 = pulse_out(&a->pulse2);
             float tr = triangle_out(&a->tri);
             float nz = noise_out(&a->noise);
-            float s  = mix_sample(p1, p2, tr, nz);
+            float dm = dmc_out(&a->dmc);
+            float s  = mix_sample(p1, p2, tr, nz, dm);
 
             rb_push(a, s);
         }
+
+        if (a->frame_reset_pending) {
+            if (a->frame_reset_delay > 0) {
+                a->frame_reset_delay--;
+            }
+            if (a->frame_reset_delay == 0) {
+                a->cycle_in_seq = 0;
+                a->frame_reset_pending = false;
+                APU_LOG("frame_reset applied");
+            }
+        }
+
+        a->cpu_cycle_odd = !a->cpu_cycle_odd;
     }
+}
+
+int apu_take_dmc_dma_stall_cycles(APU *a) {
+    int v = (int)a->dmc_dma_stall_cycles;
+    a->dmc_dma_stall_cycles = 0;
+    return v;
 }
 
 // ---------------- SDL callback ----------------

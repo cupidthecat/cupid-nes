@@ -58,6 +58,14 @@ Cupid NES Emulator is a feature-rich NES emulator implemented in C. It accuratel
   <img src="img/smb3.png" alt="Super Mario Bros Gameplay">
 </p>
 
+<p align="center">
+  <img src="img/smb33.png" alt="Super Mario Bros 3 Gameplay">
+</p>
+
+<p align="center">
+  <img src="img/loz.png" alt="The Legend of Zelda Gameplay">
+</p>
+
 This milestone validates:
 - ✅ Complete 6502 CPU instruction set with cycle-accurate timing
 - ✅ Advanced PPU background and sprite rendering with scrolling
@@ -65,6 +73,7 @@ This milestone validates:
 - ✅ Full APU audio implementation with all 5 channels
 - ✅ Accurate mapper support (NROM, MMC1, MMC3, and more)
 - ✅ Precise memory mapping and ROM loading
+- ✅ Super Mario Bros. 3 (MMC3 / Mapper 4) boots and runs with correct mapper banking/IRQ behavior
 - ✅ Working joypad input system
 - ✅ Correct frame timing and NMI/IRQ interrupt handling
 - ✅ Full compatibility with commercial NES games
@@ -125,6 +134,8 @@ The emulator now supports multiple mapper configurations for broad ROM compatibi
 
 This mapper support enables compatibility with a wide range of commercial NES games, including Super Mario Bros (NROM), and many others.
 
+Recent validation includes **Super Mario Bros. 3** on Mapper 4 (MMC3), including PRG bank switching, CHR bank switching, and IRQ-driven timing behavior used by commercial games.
+
 ### ROM Loading
 
 Supports loading NES ROMs in both iNES 1.0 and NES 2.0 formats. The loader extracts:
@@ -136,6 +147,11 @@ Supports loading NES ROMs in both iNES 1.0 and NES 2.0 formats. The loader extra
 - Mirroring mode (Horizontal/Vertical/Single-screen/Four-screen) based on header flags
 - Automatic mapper detection and initialization from iNES header
 - PRG-RAM support for games requiring save data
+
+### iNES PRG-RAM Compatibility Note
+
+For iNES 1.0 ROMs, a header value of `PRG RAM size = 0` is treated as the common default of **8KB PRG-RAM** (instead of “no RAM”).
+This improves compatibility with commercial cartridges that rely on WRAM at `$6000-$7FFF` but omit explicit size metadata in the header.
 
 ### PPU Emulation
 

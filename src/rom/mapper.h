@@ -55,6 +55,13 @@ void    cart_cpu_write(uint16_t addr, uint8_t v);
 uint8_t cart_ppu_read (uint16_t addr);
 void    cart_ppu_write(uint16_t addr, uint8_t v);
 
+// Mapper IRQ line helpers (for IRQ-capable mappers such as MMC3)
+bool cart_irq_pending(void);
+void cart_irq_ack(void);
+
+// Notify mapper about end-of-scanline timing event (used by MMC3 IRQ)
+void cart_notify_scanline(void);
+
 // Init from iNES 1.0 header + loaded PRG/CHR blobs
 int mapper_init_from_header(const iNESHeader *h,
                             uint8_t *prg, size_t prg_sz,

@@ -38,11 +38,8 @@
 #include <math.h>
 #include "ui/palette_tool.h"
 
-// Constants for NTSC NES timing:
-#define ACTUAL_FPS 60.0988  // NTSC frame rate
-const double CPU_FREQ = 1789773.0;  // CPU frequency in Hz (NTSC) - matches extern in globals.h
-const double CPU_CYCLES_PER_FRAME = 1789773.0 / 60.0988;  // ~29780.5 cycles per frame
-const double FRAME_TIME_MS = 1000.0 / 60.0988;  // ~16.639 ms per frame
+// Constants for NTSC NES timing (CPU_FREQ/ACTUAL_FPS come from globals.h)
+const double FRAME_TIME_MS = 1000.0 / ACTUAL_FPS;  // ~16.639 ms per frame
 
 // apu con
 #define AUDIO_SAMPLE_RATE 44100
@@ -173,6 +170,9 @@ int main(int argc, char *argv[]) {
                         break;
                     case SDLK_F6:
                         if (down) { ppu_palette_reset_default(); palette_tool_flash(true); }
+                        break;
+                    case SDLK_r:
+                        if (down) { cpu_reset(&cpu); ppu_reset(&ppu); apu_reset(&apu); }
                         break;
                     case SDLK_z:        joypad_set(&pad1, BTN_A,      down); break; // Z = A
                     case SDLK_x:        joypad_set(&pad1, BTN_B,      down); break; // X = B

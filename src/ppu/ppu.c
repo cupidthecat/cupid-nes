@@ -38,11 +38,55 @@
 // External CPU cycle counter
 extern uint64_t cpu_total_cycles;
 
+#ifdef VBL_TIMING_LOG
+static uint32_t vbl_log_count = 0;
+static const uint32_t vbl_log_limit = 4000;
+#define VBL_LOG(fmt, ...) do { \
+    if (vbl_log_count < vbl_log_limit) { \
+        fprintf(stderr, "[VBL cpu=%llu sl=%d dot=%d] " fmt "\n", \
+                (unsigned long long)cpu_total_cycles, ppu.scanline, ppu.dot, ##__VA_ARGS__); \
+        vbl_log_count++; \
+    } \
+} while (0)
+#else
+#define VBL_LOG(...) do {} while (0)
+#endif
+
+#ifdef PPU_DEBUG_LOG
+static uint32_t ppu_dbg_log_count = 0;
+static const uint32_t ppu_dbg_log_limit = 25000;
+static uint64_t ppu_dbg_frame_counter = 0;
+static uint32_t ppu_reg_log_count = 0;
+static const uint32_t ppu_reg_log_limit = 3000;
+#define PPU_LOG(fmt, ...) do { \
+    if (ppu_dbg_log_count < ppu_dbg_log_limit) { \
+        fprintf(stderr, "[PPU f=%llu cpu=%llu sl=%d dot=%d] " fmt "\n", \
+                (unsigned long long)ppu_dbg_frame_counter, \
+                (unsigned long long)cpu_total_cycles, ppu.scanline, ppu.dot, ##__VA_ARGS__); \
+        ppu_dbg_log_count++; \
+    } \
+} while (0)
+#define PPU_REG_LOG(fmt, ...) do { \
+    if (ppu_reg_log_count < ppu_reg_log_limit) { \
+        fprintf(stderr, "[PPU-REG f=%llu cpu=%llu sl=%d dot=%d] " fmt "\n", \
+                (unsigned long long)ppu_dbg_frame_counter, \
+                (unsigned long long)cpu_total_cycles, ppu.scanline, ppu.dot, ##__VA_ARGS__); \
+        ppu_reg_log_count++; \
+    } \
+} while (0)
+#else
+#define PPU_LOG(...) do {} while (0)
+#define PPU_REG_LOG(...) do {} while (0)
+#endif
+
 // 1 second in CPU cycles (NTSC ~1.789773 MHz)
 #define OPEN_BUS_DECAY_CPU_CYCLES 1789773ULL
 
 // Per-bit expiry times (in CPU cycles). If now >= expire, that bit has decayed to 0.
 static uint64_t ppu_ob_expire[8];
+static bool ppu_step_active = false;
+static int ppu_step_subcycle = 0;
+static int ppu_step_total_subcycles = 0;
 // PPU Memory
 uint8_t ppu_vram[NT_RAM_SIZE];
 uint8_t ppu_palette[PPU_PALETTE_SIZE];
@@ -79,9 +123,27 @@ static inline uint8_t get_open_bus(void) {
     return cur;
 }
 
+static int ppu_count_opaque_pixels(void) {
+    int count = 0;
+    for (int i = 0; i < 256 * 240; ++i) {
+        if (bg_opaque[i]) count++;
+    }
+    return count;
+}
+
 static inline void ppu_eval_nmi(void){
     bool want = (ppu.ctrl & 0x80) && (ppu.status & 0x80);
-    if (want && !ppu.nmi_out) cpu_nmi(&cpu);  // fire on rising edge only
+    if (want && !ppu.nmi_out) {
+        uint8_t defer_boundaries = 0;
+        if (ppu_step_active) {
+            int remaining = ppu_step_total_subcycles - 1 - ppu_step_subcycle;
+            // Late edge sampling: the later the edge in the current instruction,
+            // the more likely visibility slips by one additional boundary.
+            if (remaining < 3)      defer_boundaries = 2; // extremely late
+            else if (remaining < 12) defer_boundaries = 1; // late
+        }
+        cpu_request_nmi_timed_defer(defer_boundaries);
+    }
     ppu.nmi_out = want;
 }
 
@@ -128,6 +190,7 @@ uint8_t ppu_reg_read(uint16_t reg) {
             uint8_t ob = get_open_bus();
             uint8_t ret = (ppu.status & 0xE0) | (ob & 0x1F);
             set_open_bus_masked(ret, 0xE0); // only bits 7-5 are driven by PPUSTATUS
+            if (ppu.status & 0x80) VBL_LOG("$2002 read clears VBL");
             ppu.status &= ~0x80;       // clear VBlank
             ppu.w = 0;
             ppu_eval_nmi();            // output may drop
@@ -156,7 +219,7 @@ uint8_t ppu_reg_read(uint16_t reg) {
                 ret = ppu.ppudata_buffer;
                 uint8_t fetched = ppu_read(addr);
                 ppu.ppudata_buffer = fetched;
-                set_open_bus(ret); // refresh with the value the CPU actually reads
+                set_open_bus(fetched); // PPUDATA read drives PPU bus with newly fetched byte
             }
             ppu.v += (ppu.ctrl & 0x04) ? 32 : 1;
             return ret;
@@ -175,6 +238,7 @@ void ppu_reg_write(uint16_t reg, uint8_t value) {
     switch (reg & 7) {
         case 0: { // PPUCTRL
             ppu.ctrl = value;
+            PPU_REG_LOG("write $2000=%02X", value);
             ppu.t = (ppu.t & ~0x0C00) | ((value & 0x03) << 10);
             
             if (ppu.have_split && !(ppu.status & 0x80)) {
@@ -192,6 +256,8 @@ void ppu_reg_write(uint16_t reg, uint8_t value) {
         } break;
         case 1: // PPUMASK
             ppu.mask = value;
+            PPU_REG_LOG("write $2001=%02X (bg=%d sp=%d)", value,
+                        (value & 0x08) ? 1 : 0, (value & 0x10) ? 1 : 0);
             break;
         case 3: // OAMADDR
             ppu.oam_addr = value;
@@ -200,6 +266,7 @@ void ppu_reg_write(uint16_t reg, uint8_t value) {
             ppu.oam[ppu.oam_addr++] = value;
             break;
         case 5: {
+            PPU_REG_LOG("write $2005=%02X w=%d", value, ppu.w);
             if (ppu.w == 0) {
                 // first write: fine X + coarse X
                 ppu.x = value & 0x07;
@@ -232,6 +299,7 @@ void ppu_reg_write(uint16_t reg, uint8_t value) {
         } break;
             
         case 6: { // PPUADDR
+            PPU_REG_LOG("write $2006=%02X w=%d", value, ppu.w);
             if (ppu.w == 0) {
                 // high byte (masked to 6 bits)
                 ppu.t = (ppu.t & 0x00FF) | ((uint16_t)(value & 0x3F) << 8);
@@ -270,12 +338,18 @@ void ppu_oam_dma(uint8_t page) {
         uint8_t b = read_mem((uint16_t)(base + i)); // must go through CPU bus with side effects!
         ppu.oam[(ppu.oam_addr + i) & 0xFF] = b;     // wrap in 256-byte OAM
     }
-    // CPU stalls 513 or 514 cycles; OK to approximate for now
+    // CPU stalls 513 or 514 cycles depending on alignment.
+    cpu_schedule_oam_dma_stall();
 }
 
 // begin vblank sets the flag and evaluates NMI
-void ppu_begin_vblank(void){ ppu.status |= 0x80; ppu_eval_nmi(); }
+void ppu_begin_vblank(void){
+    ppu.status |= 0x80;
+    VBL_LOG("VBL set");
+    ppu_eval_nmi();
+}
 void ppu_end_vblank(void){
+    if (ppu.status & 0x80) VBL_LOG("VBL clear (pre-render)");
     ppu.status &= ~0x80;
     ppu_eval_nmi();
     ppu_latch_pre_for_visible();
@@ -309,6 +383,8 @@ static inline void clear_framebuffer(uint32_t *fb) {
 void ppu_begin_frame_render(uint32_t *fb) {
     clear_framebuffer(fb);
     memset(bg_opaque, 0, sizeof(bg_opaque));
+    PPU_LOG("begin_frame_render ctrl=%02X mask=%02X status=%02X v=%04X t=%04X x=%u mir=%d",
+            ppu.ctrl, ppu.mask, ppu.status, ppu.v, ppu.t, ppu.x, (int)cart_get_mirroring());
 }
 
 // Cycle-stepped sprite evaluation
@@ -453,6 +529,7 @@ void ppu_reset(PPU* ppu) {
     ppu->at_shift_hi = 0;
     ppu->at_latch_lo = 0;
     ppu->at_latch_hi = 0;
+    ppu_dbg_frame_counter = 0;
 }
 
 // Convert a pixel value (0-3 or an index into the NES palette) to an ARGB color
@@ -513,6 +590,9 @@ void start_frame(void) {
     // New frame bookkeeping
     ppu.frame_complete = false;
     ppu.odd_frame = !ppu.odd_frame;
+        ppu_dbg_frame_counter++;
+        PPU_LOG("start_frame odd=%d ctrl=%02X mask=%02X status=%02X v=%04X t=%04X x=%u",
+            ppu.odd_frame ? 1 : 0, ppu.ctrl, ppu.mask, ppu.status, ppu.v, ppu.t, ppu.x);
 
     // Predict split for this frame based on pre state
     ppu_predict_sprite0_split_for_frame();
@@ -852,7 +932,10 @@ static inline void ppu_render_dot(uint32_t *fb, int sl, int dotx) {
 
 void ppu_step(int cpu_cycles) {
     // Advance PPU 3x the CPU cycles
+    ppu_step_active = true;
+    ppu_step_total_subcycles = cpu_cycles * 3;
     for (int c = 0; c < cpu_cycles * 3; ++c) {
+        ppu_step_subcycle = c;
         int sl = ppu.scanline;
         int dot = ppu.dot; // 0..340
         bool rendering = (ppu.mask & 0x18) != 0;
@@ -868,6 +951,11 @@ void ppu_step(int cpu_cycles) {
         // Build secondary OAM regardless of current sprite enable; rendering still honors PPUMASK
         if (sl >= 0 && sl < 240 && dot == 1) {
             ppu_evaluate_sprites();
+            if ((sl % 60) == 0) {
+                PPU_LOG("scanline=%d render=%d sprite_count=%d sprite0_line=%d ctrl=%02X mask=%02X v=%04X",
+                        sl, rendering ? 1 : 0, ppu.sprite_count,
+                        ppu.sprite_zero_on_line ? 1 : 0, ppu.ctrl, ppu.mask, ppu.v);
+            }
         }
 
         // Render visible pixels (dots 1-256 on scanlines 0-239)
@@ -934,11 +1022,18 @@ void ppu_step(int cpu_cycles) {
         }
 
         // Dot-specific actions
+        if (sl == 241 && dot == 1) {
+            // Enter VBlank at the canonical PPU timing point.
+            ppu_begin_vblank();
+            PPU_LOG("enter_vblank status=%02X nmi_out=%d", ppu.status, ppu.nmi_out ? 1 : 0);
+        }
+
         if (sl == 261) { // pre-render line
             if (dot == 1) {
-                ppu.status &= ~(0x80 | 0x40 | 0x20); // clear VBL, sprite0, overflow
+                ppu_end_vblank();                    // clear VBL and reevaluate NMI output
+                ppu.status &= ~(0x40 | 0x20);       // clear sprite0, overflow
                 ppu.sprite_zero_hit = false;
-                ppu_latch_pre_for_visible();
+                PPU_LOG("end_vblank status=%02X nmi_out=%d", ppu.status, ppu.nmi_out ? 1 : 0);
             }
             if (dot == 257 && rendering) {
                 ppu_copy_horizontal();
@@ -950,6 +1045,9 @@ void ppu_step(int cpu_cycles) {
             if (dot == 257 && rendering) {
                 ppu_copy_horizontal();
             }
+            if (dot == 260 && rendering) {
+                cart_notify_scanline();
+            }
         }
 
         // Increment dot/scanline with odd frame skip
@@ -959,14 +1057,15 @@ void ppu_step(int cpu_cycles) {
             ppu.scanline++;
 
 
-            if (ppu.scanline == 241) {
-                // Enter VBlank
-                ppu_begin_vblank();
-            } else if (ppu.scanline == 262) {
+            if (ppu.scanline == 262) {
                 // End of pre-render for next frame; signal frame complete
                 ppu.scanline = 0;
                 ppu.frame_complete = true;
+                PPU_LOG("frame_complete opaque_bg=%d sprite0_hit=%d status=%02X ctrl=%02X mask=%02X",
+                        ppu_count_opaque_pixels(), ppu.sprite_zero_hit ? 1 : 0,
+                        ppu.status, ppu.ctrl, ppu.mask);
             }
         }
     }
+    ppu_step_active = false;
 } 

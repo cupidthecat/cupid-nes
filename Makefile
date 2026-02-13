@@ -1,6 +1,7 @@
 # Compiler and flags
 CC      = gcc
-CFLAGS  = -Wall -Wextra -O2
+CFLAGS  = -Wall -Wextra -O2 -DPPU_DEBUG_LOG=1
+
 LDFLAGS = -lSDL2 -lm
 
 # Directories and files

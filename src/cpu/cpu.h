@@ -66,6 +66,10 @@ void write_mem(uint16_t addr, uint8_t value);
 void execute(CPU* cpu, uint8_t opcode);
 int cpu_step(CPU* cpu);
 void cpu_nmi(CPU *cpu);
+void cpu_request_nmi(void);
+void cpu_request_nmi_timed(bool defer_one_instruction);
+void cpu_request_nmi_timed_defer(uint8_t defer_boundaries);
+void cpu_schedule_oam_dma_stall(void);
 void cpu_irq(CPU *cpu);
 
 #endif // CPU_H

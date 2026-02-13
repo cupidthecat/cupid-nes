@@ -33,7 +33,7 @@
 #define PRG_ROM_BANK_SIZE 0x4000  // 16KB
 #define CHR_ROM_BANK_SIZE 0x2000  // 8KB
 
-uint8_t  prg_rom[0x8000];
+uint8_t *prg_rom = NULL;
 uint8_t *chr_rom = NULL;
 iNESHeader ines_header;
 
@@ -50,6 +50,15 @@ static int is_nes20(const iNESHeader *h) {
 int load_rom(const char *filename) {
     FILE *fp = fopen(filename, "rb");
     if (!fp) { perror("open"); return -1; }
+
+    if (prg_rom) {
+        free(prg_rom);
+        prg_rom = NULL;
+    }
+    if (chr_rom) {
+        free(chr_rom);
+        chr_rom = NULL;
+    }
 
     if (fread(&ines_header, sizeof(ines_header), 1, fp) != 1) {
         fprintf(stderr, "Failed to read iNES header\n");
@@ -106,26 +115,40 @@ int load_rom(const char *filename) {
         chr_size = (size_t)ines_header.chr_rom_chunks * CHR_ROM_BANK_SIZE;
     }
 
-    // ---- HARD GUARDS to prevent overflow ----
-    if (prg_size == 0 || prg_size > sizeof(prg_rom)) {
-        fprintf(stderr, "Unsupported PRG size: %zu (max %zu)\n",
-                prg_size, sizeof(prg_rom));
+    if (prg_size == 0) {
+        fprintf(stderr, "Unsupported PRG size: %zu\n", prg_size);
+        fclose(fp);
+        return -1;
+    }
+
+    size_t prg_alloc_size = (prg_size == PRG_ROM_BANK_SIZE) ? (PRG_ROM_BANK_SIZE * 2) : prg_size;
+    prg_rom = (uint8_t*)malloc(prg_alloc_size);
+    if (!prg_rom) {
+        fprintf(stderr, "PRG alloc failed (%zu bytes)\n", prg_alloc_size);
         fclose(fp);
         return -1;
     }
 
     if (fread(prg_rom, 1, prg_size, fp) != prg_size) {
         fprintf(stderr, "Failed to read PRG-ROM (%zu bytes)\n", prg_size);
+        free(prg_rom);
+        prg_rom = NULL;
         fclose(fp);
         return -1;
     }
 
     if (chr_size > 0) {
         chr_rom = (uint8_t*)malloc(chr_size);
-        if (!chr_rom) { fprintf(stderr, "CHR alloc failed\n"); fclose(fp); return -1; }
+        if (!chr_rom) {
+            fprintf(stderr, "CHR alloc failed\n");
+            free(prg_rom); prg_rom = NULL;
+            fclose(fp);
+            return -1;
+        }
         if (fread(chr_rom, 1, chr_size, fp) != chr_size) {
             fprintf(stderr, "Failed to read CHR-ROM (%zu bytes)\n", chr_size);
             free(chr_rom); chr_rom = NULL;
+            free(prg_rom); prg_rom = NULL;
             fclose(fp);
             return -1;
         }
@@ -135,7 +158,12 @@ int load_rom(const char *filename) {
         // CHR-RAM
         chr_size = CHR_ROM_BANK_SIZE;
         chr_rom = (uint8_t*)calloc(1, chr_size);
-        if (!chr_rom) { fprintf(stderr, "CHR-RAM alloc failed\n"); fclose(fp); return -1; }
+        if (!chr_rom) {
+            fprintf(stderr, "CHR-RAM alloc failed\n");
+            free(prg_rom); prg_rom = NULL;
+            fclose(fp);
+            return -1;
+        }
     }
 
     fclose(fp);

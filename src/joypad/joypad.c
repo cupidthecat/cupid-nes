@@ -37,7 +37,7 @@ void joypad_write_strobe(Joypad* jp, uint8_t v){
 }
   
 uint8_t joypad_read(Joypad* jp){
-    uint8_t ret = (jp->shift & 1u) | 0x40;     // LSB first, bit6=1 (open bus)
+    uint8_t ret = (jp->shift & 1u);             // LSB first; CPU bus layer supplies open-bus bits
     if (!jp->strobe) jp->shift = (jp->shift >> 1) | 0x80; // shift in 1s after 8 reads
     else             jp->shift = jp->buttons;             // strobe=1 -> always A
     return ret;

@@ -51,7 +51,7 @@ typedef enum {
 extern iNESHeader ines_header;
 extern size_t     prg_size;
 extern size_t     chr_size;
-extern uint8_t    prg_rom[0x8000];  // fixed 32KB buffer
+extern uint8_t   *prg_rom;
 extern uint8_t   *chr_rom;
 
 int load_rom(const char *filename);
