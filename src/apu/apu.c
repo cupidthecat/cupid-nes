@@ -91,6 +91,47 @@ static inline int rb_pull(APU* a, float* out, int n){
     return got;
 }
 
+static inline float one_pole_hp(float x, float alpha, float *prev_in, float *prev_out) {
+    float y = alpha * ((*prev_out) + x - (*prev_in));
+    *prev_in = x;
+    *prev_out = y;
+    return y;
+}
+
+static inline float one_pole_lp(float x, float alpha, float *prev_out) {
+    float y = (*prev_out) + alpha * (x - (*prev_out));
+    *prev_out = y;
+    return y;
+}
+
+static void apu_init_filter_coeffs(APU *a) {
+    const double sr = (a->sample_rate > 1.0) ? a->sample_rate : 44100.0;
+    const double dt = 1.0 / sr;
+    const double pi = 3.14159265358979323846;
+
+    const double rc_hp90 = 1.0 / (2.0 * pi * 90.0);
+    const double rc_hp440 = 1.0 / (2.0 * pi * 440.0);
+    const double rc_lp14k = 1.0 / (2.0 * pi * 14000.0);
+
+    a->hp90_alpha = (float)(rc_hp90 / (rc_hp90 + dt));
+    a->hp440_alpha = (float)(rc_hp440 / (rc_hp440 + dt));
+    a->lp14k_alpha = (float)(dt / (rc_lp14k + dt));
+
+    a->hp90_prev_in = 0.0f;
+    a->hp90_prev_out = 0.0f;
+    a->hp440_prev_in = 0.0f;
+    a->hp440_prev_out = 0.0f;
+    a->lp14k_prev_out = 0.0f;
+    a->last_output_sample = 0.0f;
+}
+
+static inline float apu_post_filter(APU *a, float s) {
+    s = one_pole_hp(s, a->hp90_alpha, &a->hp90_prev_in, &a->hp90_prev_out);
+    s = one_pole_hp(s, a->hp440_alpha, &a->hp440_prev_in, &a->hp440_prev_out);
+    s = one_pole_lp(s, a->lp14k_alpha, &a->lp14k_prev_out);
+    return s;
+}
+
 // ---------------- Envelope ----------------
 static void env_clock(Envelope* e) {
     if (e->start_flag) {
@@ -185,12 +226,14 @@ void apu_reset(APU *a) {
     a->dmc.timer = a->dmc.timer_reload;
     a->cycles_per_sample = 1789773.0 / 44100.0;
     a->sample_rate = 44100.0;
+    apu_init_filter_coeffs(a);
 }
 void apu_audio_init(int sample_rate) {
     apu.sample_rate = (double)sample_rate;
     apu.cycles_per_sample = 1789773.0 / apu.sample_rate;
     apu.sample_accum = 0.0;
     apu.ring_w = apu.ring_r = 0;
+    apu_init_filter_coeffs(&apu);
 }
 
 // ---------------- Reads/Writes ----------------
@@ -455,8 +498,7 @@ static inline float pulse_out(const Pulse* p){
     if (p->timer_reload < 8 || p->timer_reload > 0x7FF) return 0.0f;
     uint8_t gate = DUTY_SEQ[p->duty][p->duty_step];
     if (!gate) return 0.0f;
-    float vol = env_output(&p->env) / 15.0f;
-    return vol; // raw before nonlinear mixer
+    return (float)env_output(&p->env); // 0..15 raw DAC domain for nonlinear mixer
 }
 static inline float triangle_out(const Triangle* t){
     if (!t->enabled || t->lc.length == 0 || t->linear_counter == 0) return 0.0f;
@@ -465,20 +507,17 @@ static inline float triangle_out(const Triangle* t){
         15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0,
          0, 1, 2, 3, 4, 5,6,7,8,9,10,11,12,13,14,15
     };
-    return TRI_SEQ[t->step] / 15.0f;
+    return (float)TRI_SEQ[t->step]; // 0..15
 }
 static inline float noise_out(const Noise* n){
     if (!n->enabled || n->lc.length == 0) return 0.0f;
     // if lfsr bit0 is 1 -> output 0, else envelope
     if (n->lfsr & 1) return 0.0f;
-    return env_output(&n->env) / 15.0f;
+    return (float)env_output(&n->env); // 0..15
 }
 
 static inline float dmc_out(const DMC* d){
-    if (!d->enabled && d->bytes_remaining == 0 && d->sample_buffer_empty && d->silence) {
-        return d->output_level / 127.0f;
-    }
-    return d->output_level / 127.0f;
+    return (float)d->output_level; // 0..127
 }
 
 // Nonlinear mixer (NESdev): pulse & TND
@@ -574,6 +613,11 @@ void apu_step(APU *a, int cpu_cycles){
             float nz = noise_out(&a->noise);
             float dm = dmc_out(&a->dmc);
             float s  = mix_sample(p1, p2, tr, nz, dm);
+            s = apu_post_filter(a, s);
+
+            if (s > 1.0f) s = 1.0f;
+            if (s < -1.0f) s = -1.0f;
+            a->last_output_sample = s;
 
             rb_push(a, s);
         }
@@ -605,5 +649,5 @@ void apu_sdl_audio_callback(void *userdata, Uint8 *stream, int len){
     float *out = (float*)stream;
     int frames = len / sizeof(float);
     int got = rb_pull(&apu, out, frames);
-    for (int i=got; i<frames; ++i) out[i] = 0.0f;
+    for (int i=got; i<frames; ++i) out[i] = apu.last_output_sample;
 }
