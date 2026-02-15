@@ -150,6 +150,17 @@ typedef struct {
     double   cycles_per_sample; // CPU cycles per audio sample
     double   sample_accum;   // accum CPU cycles towards next sample
 
+    // Output filter state/coefs (NES-like analog chain approximation)
+    float hp90_alpha;
+    float hp440_alpha;
+    float lp14k_alpha;
+    float hp90_prev_in;
+    float hp90_prev_out;
+    float hp440_prev_in;
+    float hp440_prev_out;
+    float lp14k_prev_out;
+    float last_output_sample;
+
     // Lockless ring buffer (very simple)
     #define APU_RING_CAP 8192
     float    ring[APU_RING_CAP];
