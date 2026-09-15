@@ -22,6 +22,7 @@ int run_mmc3_diagnostic_rom(const char *path, unsigned frame_limit);
 int run_legacy_pal_diagnostic_rom(const char *path, unsigned frame_limit);
 int run_legacy_diagnostic_rom(const char *path, unsigned frame_limit);
 int render_diagnostic_rom(const char *path, unsigned frames, const char *output);
+int run_accuracycoin_rom(const char *path, unsigned frames, const char *output);
 
 int main(int argc, char **argv) {
     if (argc > 1) {
@@ -31,6 +32,7 @@ int main(int argc, char **argv) {
             return result;
         }
         if (argc >= 4 && (strcmp(argv[1], "--rom") == 0 || strcmp(argv[1], "--render") == 0
+            || strcmp(argv[1], "--accuracycoin") == 0
             || strcmp(argv[1], "--mmc3-rom") == 0 || strcmp(argv[1], "--legacy-pal-rom") == 0
             || strcmp(argv[1], "--legacy-rom") == 0)) {
             char *end;
@@ -42,6 +44,10 @@ int main(int argc, char **argv) {
             if (strcmp(argv[1], "--render") == 0) {
                 if (argc != 5) return 2;
                 return render_diagnostic_rom(argv[3], (unsigned)frames, argv[4]);
+            }
+            if (strcmp(argv[1], "--accuracycoin") == 0) {
+                if (argc > 5) return 2;
+                return run_accuracycoin_rom(argv[3], (unsigned)frames, argc == 5 ? argv[4] : NULL);
             }
             int failed = 0;
             for (int i = 3; i < argc; ++i) {
@@ -57,7 +63,7 @@ int main(int argc, char **argv) {
             printf("Diagnostic ROMs: %d passed, %d failed or unfinished\n", argc - 3 - failed, failed);
             return failed ? 1 : 0;
         }
-        fprintf(stderr, "Usage: %s [--trace ROM LOG | --rom FRAMES ROM... | --mmc3-rom FRAMES ROM... | --legacy-pal-rom FRAMES ROM... | --legacy-rom FRAMES ROM... | --render FRAMES ROM OUTPUT.ppm]\n", argv[0]);
+        fprintf(stderr, "Usage: %s [--trace ROM LOG | --rom FRAMES ROM... | --mmc3-rom FRAMES ROM... | --legacy-pal-rom FRAMES ROM... | --legacy-rom FRAMES ROM... | --render FRAMES ROM OUTPUT.ppm | --accuracycoin FRAMES ROM [OUTPUT.ppm]]\n", argv[0]);
         return 2;
     }
     int failures = 0;

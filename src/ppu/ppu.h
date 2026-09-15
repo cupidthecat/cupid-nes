@@ -64,6 +64,10 @@ typedef struct {
     uint8_t ppudata_buffer;
     uint8_t open_bus;
     uint16_t bus_address;
+    uint8_t vram_address_latch;
+    uint8_t vram_bus_data;
+    bool bus_ale_this_dot;
+    bool bus_read_this_dot;
     uint16_t address_write_value;
     uint8_t address_write_delay;
     uint8_t data_read_delay;
@@ -85,18 +89,28 @@ typedef struct {
     uint8_t sprite_counting_mask;
     uint8_t sprite_expired_mask;
     uint8_t sprite_skip_clocks;
+    uint8_t sprite_status_pending; // Sprite status bits staged for the next PPU clock
     bool sprite_zero_hit;  // Sprite Zero Hit flag
     bool sprite_zero_on_line; // True if sprite 0 is in secondary OAM for current scanline
     bool nmi_out; 
 
     uint8_t oam_bus;
+    uint8_t oam_read_latch; // CPU-visible OAM output from the preceding PPU clock
     uint8_t secondary_index;
     uint8_t overflow_count;
     bool eval_in_range;
     bool eval_done;
+    bool secondary_oam_full;
+    bool secondary_oam_overflowed;
     bool secondary_sprite_zero;
+    uint8_t sprite_fetch_y;
+    uint8_t sprite_fetch_tile;
+    uint8_t sprite_fetch_attr;
+    uint8_t sprite_fetch_x;
     uint16_t sprite_fetch_addr;
     bool sprite_fetch_valid;
+    bool oam_corruption_pending;
+    uint8_t oam_corruption_row;
     bool suppress_vblank;
     bool rendering_enabled;
     bool fetches_enabled;
@@ -155,6 +169,7 @@ void start_frame();
 // Cycle-stepped rendering API
 void ppu_begin_frame_render(uint32_t *framebuffer);
 uint8_t ppu_reg_read(uint16_t reg);
+uint8_t ppu_reg_read_finish(uint16_t reg, uint8_t value);
 void ppu_reg_write(uint16_t reg, uint8_t value);
 void ppu_oam_dma(uint8_t page);
 void ppu_begin_vblank(void);

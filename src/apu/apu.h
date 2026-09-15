@@ -129,6 +129,8 @@ typedef struct {
     uint8_t start_delay;
     uint8_t disable_delay;
     bool dma_pending;
+    bool dma_halt_started;
+    bool dma_abort_requested;
 } DMC;
 
 typedef struct {
@@ -137,6 +139,7 @@ typedef struct {
     bool five_step;
     bool irq_inhibit;
     bool frame_irq;
+    uint8_t frame_irq_clear_delay;
     uint8_t frame_reset_delay;
     bool frame_reset_pending;
     bool cpu_cycle_odd;
@@ -191,8 +194,11 @@ uint8_t apu_read(uint16_t addr);
 void apu_step(APU *a, int cpu_cycles);
 
 // IRQ
-static inline bool apu_irq_pending(const APU *a) { return a->frame_irq || a->dmc.irq_flag; }
-static inline void apu_clear_frame_irq(APU *a)   { ((APU*)a)->frame_irq = false; }
+static inline bool apu_irq_pending(const APU *a) { return (a->frame_irq && !a->irq_inhibit) || a->dmc.irq_flag; }
+static inline void apu_clear_frame_irq(APU *a) {
+    ((APU*)a)->frame_irq = false;
+    ((APU*)a)->frame_irq_clear_delay = 0;
+}
 bool apu_dmc_dma_pending(const APU *a);
 uint16_t apu_dmc_dma_address(const APU *a);
 void apu_dmc_dma_complete(APU *a, uint8_t value);

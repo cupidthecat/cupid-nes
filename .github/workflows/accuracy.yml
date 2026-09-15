@@ -37,9 +37,20 @@ jobs:
           ref: 95d8f621ae55cee0d09b91519a8989ae0e64753b
           path: build/diagnostic-roms
           persist-credentials: false
+      - name: Check out AccuracyCoin
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: 100thCoin/AccuracyCoin
+          ref: 9bc42d1e3acbeeaea215b1011d58f4ce72a8a49e
+          path: build/accuracycoin
+          persist-credentials: false
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y build-essential clang libsdl2-dev
       - name: Build emulator and run hardware regressions
         run: make -j2 CC='${{ matrix.compiler }}' CFLAGS='${{ matrix.flags }}' all test
       - name: Check CPU trace and diagnostic ROMs
         run: python3 scripts/run-diagnostics.py build/accuracy-tests build/diagnostic-roms
+      - name: Check all 144 AccuracyCoin tests
+        run: |
+          echo '7e25ac08d2e7ed14c9b1f16bd853148fef09a824452164f8e0d69fd2bd96176c  build/accuracycoin/AccuracyCoin.nes' | sha256sum --check --strict
+          build/accuracy-tests --accuracycoin 12000 build/accuracycoin/AccuracyCoin.nes build/accuracycoin.ppm

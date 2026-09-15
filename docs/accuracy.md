@@ -18,13 +18,19 @@ The final scanline is pre-render. Only NTSC rendering skips a clock on odd frame
 
 OAM DMA begins when a CPU read can be halted. PAL DMA starts are restricted to opcode-fetch cycles, including the initial interrupt-sequence fetch. DMC requests go through the same bus scheduler. The scheduler handles alignment, DMC priority, OAM data puts, and canceled requests. Initial DMC divider phase keeps its output clocks aligned with CPU get cycles.
 
-PPU pattern reads occur in the background and sprite fetch slots. Sprite pixels use the previously fetched bytes. Nametable reads at dots 337 and 339 also supply the address driven at the following scanline's dot zero; that address change matters to cartridge IRQ circuitry even though it does not read another CHR byte.
+The CPU keeps separate internal and external data-bus latches. `$4015` updates the internal latch, including its floating bit 5, while DMA conflicts can drive a different byte on the external bus. Undocumented masked stores respond to a DMA stall during their indexed dummy read. Controller strobe writes commit on the APU output boundary, so consecutive writes can replace a pending value.
+
+Reading `$4015` schedules the frame-IRQ flag clear for the next get cycle. The flag can remain visible in a consecutive read on the intervening put cycle. DMC cancellation distinguishes requests that have not halted the CPU from transfers already in progress; the one-byte reload case includes the early CPU variant's one-cycle aborted DMA.
+
+PPU fetches put an address on the external bus on one clock and read the data on the next. The low address byte stays latched while the high address bits can change. This models hybrid addresses and overlapping address-latch/read strobes. Cartridge A12 notifications follow address changes; the mapper sees one read per data phase. The final nametable fetches begin at dots 337 and 339 and read at 338 and 340. An odd-frame skip omits the last data phase. The fetched tile also supplies the address driven at the next scanline's dot zero.
 
 The second `$2006` write loads the current address after three PPU clocks. `$2007` transfers complete after five clocks and increment the address on the next clock. Reads within the six-clock recovery interval return the I/O latch without starting another transfer. These operations use the physical PPU bus address, including rendering collisions and cartridge address notifications. Sprite X counters keep counting while rendering is disabled, while the pattern shifters hold their data.
 
-Power-on and soft reset are distinct operations. CPU reset reads the current PC twice, reads three stack locations while decrementing SP, and reads the reset vector. Soft reset keeps CPU registers and RAM, PPU palette/nametable/OAM memory, and mapper state. PPU bus timestamps remain monotonic through reset. Initial memory contents and CPU/PPU alignment are deterministic; they do not simulate random power-up state across console revisions.
+Secondary OAM keeps its address and increment-freeze state across rendering changes. Disabling rendering records the row affected by OAM corruption; the copy occurs on the next active rendering clock. Sprite fetches walk the actual secondary-OAM address, including its dot-321 wrap. The CPU-facing OAM output latch follows the internal OAM bus one PPU clock later. `$2004` samples that output at the end of a CPU read. `$2002` latches vblank at the start of the read and sprite flags at the end. Sprite-zero and overflow conditions reach their status outputs on the following PPU clock; pre-render dot 1 clears both the flags and any pending output.
 
-MMC5 detects scanline boundaries from repeated nametable reads and leaves the frame state after three CPU clocks without a PPU read. Address-only notifications do not count as reads. The mapper supplies extended attributes, vertical-split tile data, separate CHR banking for large sprites, ExRAM permissions and persistence, and expansion pulse/PCM output. NMI-vector reads clear its frame IRQ state. PCM status follows the documented MMC5A revision, including its revision bit.
+Power-on and soft reset are distinct operations. The fixed startup alignment lets the PPU run one clock before the CPU begins its seven reset bus cycles. CPU reset reads the current PC twice, reads three stack locations while decrementing SP, and reads the reset vector. Soft reset preserves the running divider phase, CPU registers and RAM, PPU palette/nametable/OAM memory, and mapper state. PPU bus timestamps remain monotonic through reset. Initial memory contents and alignment are deterministic; they do not simulate random power-up state across console revisions.
+
+MMC5 detects scanline boundaries from repeated nametable reads and leaves the frame state after three CPU clocks without a PPU read. Address-only notifications do not count as reads. Extended attributes consume the next three physical reads after a qualifying nametable fetch, including reads that cross between the nametable and CHR ports. The mapper also supplies vertical-split tile data, separate CHR banking for large sprites, ExRAM permissions and persistence, and expansion pulse/PCM output. NMI-vector reads clear its frame IRQ state. PCM status follows the documented MMC5A revision, including its revision bit.
 
 MMC5 pulse length reloads and halt changes commit at the end of the CPU clock. A simultaneous frame-counter decrement of a nonzero length takes precedence over its pending reload. Trainer initialization uses the RAM bank mapped at CPU `$7000-$71FF`, including the battery-backed socket on a two-socket MMC5 board.
 
@@ -61,6 +67,10 @@ The canonical `nestest` comparison checks 8,991 PC/register/status/stack/cycle s
 
 The script runs 91 diagnostic ROMs and fails if expected files are missing. The runner waits for a final result and returns a nonzero exit code for failure, timeout, or a missing result protocol. It honors `$6000=$81` reset requests after at least 100 milliseconds of emulated time, once per request, with a maximum of sixteen resets. The total frame limit still applies. A 7,200-frame limit accommodates the read-buffer test, which takes more than 1,200 frames.
 
+The separate `--accuracycoin` mode runs the 144-test cartridge at commit `9bc42d1e3acbeeaea215b1011d58f4ce72a8a49e`. Its ROM has SHA-256 `7e25ac08d2e7ed14c9b1f16bd853148fef09a824452164f8e0d69fd2bd96176c`. The runner reads the cartridge's test descriptors, presses Start through the controller, and waits for the complete result screen. It checks every stored result against the cartridge's final pass tally and requires all 144 tests to pass. Success codes for documented hardware variants count as passes; skipped tests do not. The optional PPM output contains the rendered framebuffer.
+
+The current core passes all 144 AccuracyCoin tests with zero skipped or unfinished results, along with the 91-ROM collection and canonical CPU trace. The internal suite passes 18 CPU/controller groups, 228 APU checks, 497 PPU checks, and 37 mapper groups. `img/coin.png` is the rendered result from the production core.
+
 ## Reproducing checks
 
 On Linux:
@@ -69,6 +79,7 @@ On Linux:
 make clean
 make CFLAGS='-std=c11 -Wall -Wextra -Werror -O2' all test
 python3 scripts/run-diagnostics.py build/accuracy-tests build/diagnostic-roms
+build/accuracy-tests --accuracycoin 12000 build/accuracycoin/AccuracyCoin.nes build/accuracycoin.ppm
 ```
 
 For memory and undefined-behavior checks:
@@ -77,6 +88,7 @@ For memory and undefined-behavior checks:
 make clean
 make CC=clang CFLAGS='-std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer' all test
 ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 python3 scripts/run-diagnostics.py build/accuracy-tests build/diagnostic-roms
+ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 build/accuracy-tests --accuracycoin 12000 build/accuracycoin/AccuracyCoin.nes
 ```
 
 On Windows, the PowerShell build script accepts `-Sanitize` and writes the test executable to `build/windows-sanitized/accuracy-tests.exe`. Windows AddressSanitizer does not provide the Linux leak check. The Linux workflow enables leak detection explicitly.
@@ -92,6 +104,8 @@ After the 60 ordinary runs, the script executes `mmc3_test_2` tests 1 through 5 
 The ten `pal_apu_tests` images have legacy headers without the PAL flag and report their result at `$F8`. `--legacy-pal-rom` selects PAL timing explicitly. The runner accepts the result only after the CPU reaches a stable terminal `JMP` loop with interrupts disabled; a temporary subtest value at `$F8` cannot pass the test. Code 1 means success in that older convention. This mode accepts only NROM images and does not change normal ROM-header handling.
 
 The eleven `sprite_hit_tests_2005.10.05` and five `sprite_overflow_tests` images use the same `$F8` result convention. `--legacy-rom` applies that result check while retaining the ROM header's timing region. These suites cover sprite/background alignment, flips, clipping, 8x16 sprites, hit timing, overflow timing, and the overflow circuit's diagonal OAM scan.
+
+The older `5.Emulator` overflow test depends on startup alignment. Its rendering-disable sequence can seed an OAM row copy that replaces two of the nine sprites it later expects to overflow. It passes under the fixed startup alignment described above. Both the OAM corruption model and the CPU's page-crossing cycle penalties remain active during the diagnostic runs.
 
 The old test labeled `6-MMC6` expects an alternative MMC3 IRQ-counter revision; the later collection calls it `6-MMC3_alt`. It is not the acceptance test for NES 2.0 mapper 4/submapper 1. MMC6 here uses the Sharp counter behavior and has separate tests for its 1 KiB RAM and per-half permissions. See the [hardware retest discussion](https://forums.nesdev.org/viewtopic.php?t=6467) and [NES 2.0 board definitions](https://www.nesdev.org/wiki/NES_2.0_submappers).
 

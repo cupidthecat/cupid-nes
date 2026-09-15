@@ -57,6 +57,30 @@ static void ppu_set_bus_address(uint16_t address) {
     cart_notify_ppu_address(ppu.bus_address, ppu.total_cycles);
 }
 
+static void ppu_bus_address_phase(uint16_t address) {
+    address &= 0x3FFF;
+    uint8_t low = (uint8_t)address;
+    if (ppu.data_read_delay == 1 && rendering_active()) low = ppu.vram_bus_data;
+    ppu.vram_address_latch = low;
+    ppu_set_bus_address((address & 0x3F00) | low);
+    ppu.bus_ale_this_dot = true;
+}
+
+static uint8_t ppu_bus_read_phase(uint16_t par_address, CartPpuFetchSource source) {
+    uint16_t address = (par_address & 0x3F00) | ppu.vram_address_latch;
+    uint8_t value;
+    if (address < 0x2000) {
+        cart_set_ppu_fetch_source(source);
+        value = cart_ppu_read(address);
+    } else {
+        value = cart_nt_read(address, ppu_vram);
+    }
+    ppu.vram_bus_data = value;
+    ppu.bus_address = (uint16_t)((address & 0x3F00) | value);
+    ppu.bus_read_this_dot = true;
+    return value;
+}
+
 static uint8_t get_open_bus(void) {
     uint8_t value = 0;
     for (int bit = 0; bit < 8; ++bit)
@@ -121,16 +145,37 @@ static void ppu_increment_data_address(void) {
     }
 }
 
+static void ppu_increment_secondary_oam(void) {
+    if (ppu.secondary_oam_overflowed) return;
+    ppu.secondary_index = (uint8_t)((ppu.secondary_index + 1) & 0x1F);
+    if (!ppu.secondary_index) ppu.secondary_oam_overflowed = true;
+}
+
+static void ppu_corrupt_oam_row(uint8_t row) {
+    row &= 0x1F;
+    if (row) memcpy(&ppu.oam[row << 3], ppu.oam, 8);
+    ppu.secondary_oam[row] = ppu.secondary_oam[0];
+}
+
+static uint8_t ppu_oam_corruption_row(int dot) {
+    uint8_t row = ppu.secondary_index & 0x1F;
+    if (dot >= 65 && dot <= 256 && (row & 3)) row = (uint8_t)((row + 3) & 0x1C);
+    return row;
+}
+
 // Palette RAM is internal. External reads in its address range still reach
 // the cartridge's nametable mirror and refill the CPU read buffer.
 static uint8_t ppu_bus_read(uint16_t addr, CartPpuFetchSource source) {
     addr &= 0x3FFF;
     ppu_set_bus_address(addr);
+    ppu.vram_address_latch = (uint8_t)addr;
     if (addr < 0x2000) {
         cart_set_ppu_fetch_source(source);
-        return cart_ppu_read(addr);
+        ppu.vram_bus_data = cart_ppu_read(addr);
+        return ppu.vram_bus_data;
     }
-    return cart_nt_read(addr, ppu_vram);
+    ppu.vram_bus_data = cart_nt_read(addr, ppu_vram);
+    return ppu.vram_bus_data;
 }
 
 uint8_t ppu_read(uint16_t addr) {
@@ -181,6 +226,8 @@ uint8_t ppu_reg_read(uint16_t reg) {
         case 4: {
             uint8_t value;
             if (rendering_active()) {
+                if (ppu.dot == 0 || ppu.dot >= 257)
+                    ppu.oam_bus = ppu.secondary_oam[ppu.secondary_index & 0x1F];
                 value = ppu.oam_bus;
             } else {
                 value = ppu.oam[ppu.oam_addr];
@@ -209,6 +256,21 @@ uint8_t ppu_reg_read(uint16_t reg) {
         }
         default:
             return get_open_bus();
+    }
+}
+
+uint8_t ppu_reg_read_finish(uint16_t reg, uint8_t value) {
+    switch (reg & 7) {
+        case 2:
+            value = (uint8_t)((value & 0x9F) | (ppu.status & 0x60));
+            set_open_bus_masked(value, 0x60);
+            return value;
+        case 4:
+            if (rendering_active()) value = ppu.oam_read_latch;
+            set_open_bus(value);
+            return value;
+        default:
+            return value;
     }
 }
 
@@ -286,18 +348,36 @@ static void ppu_complete_register_accesses(int dot) {
         ppu.data_increment_pending = false;
         ppu_increment_data_address();
     }
-    if (ppu.data_read_delay && --ppu.data_read_delay == 0) {
-        ppu.ppudata_buffer = ppu_bus_read(ppu.bus_address, CART_PPU_FETCH_CPU);
-        ppu.data_increment_pending = true;
+    if (ppu.data_read_delay) {
+        if (ppu.data_read_delay == 3 && !ppu.bus_ale_this_dot)
+            ppu_bus_address_phase(ppu.v);
+        if (ppu.data_read_delay == 1) {
+            if (ppu.bus_read_this_dot) {
+                ppu.ppudata_buffer = ppu.vram_bus_data;
+            } else {
+                ppu.ppudata_buffer = ppu_bus_read_phase(ppu.bus_address, CART_PPU_FETCH_CPU);
+            }
+            ppu.data_increment_pending = true;
+            ppu.data_read_delay = 0;
+        } else {
+            ppu.data_read_delay--;
+        }
     }
-    if (ppu.data_write_delay && --ppu.data_write_delay == 0) {
-        uint16_t address = ppu.bus_address;
-        uint8_t value = ppu.data_write_value;
-        // While rendering, the multiplexed address lines drive the external
-        // data bus. Palette RAM remains on the internal six-bit data path.
-        if (address < 0x3F00 && rendering_active()) value = (uint8_t)address;
-        ppu_write(address, value);
-        ppu.data_increment_pending = true;
+    if (ppu.data_write_delay) {
+        if (ppu.data_write_delay == 3 && !ppu.bus_ale_this_dot)
+            ppu_bus_address_phase(ppu.v);
+        if (ppu.data_write_delay == 1) {
+            uint16_t address = (uint16_t)((ppu.bus_address & 0x3F00) | ppu.vram_address_latch);
+            uint8_t value = ppu.data_write_value;
+            // While rendering, the multiplexed address lines drive the external
+            // data bus. Palette RAM remains on the internal six-bit data path.
+            if (address < 0x3F00 && rendering_active()) value = (uint8_t)address;
+            ppu_write(address, value);
+            ppu.data_increment_pending = true;
+            ppu.data_write_delay = 0;
+        } else {
+            ppu.data_write_delay--;
+        }
     }
 }
 
@@ -332,6 +412,7 @@ void ppu_power_on(PPU *state) {
     memset(state->oam, 0xFF, sizeof(state->oam));
     memset(state->secondary_oam, 0xFF, sizeof(state->secondary_oam));
     state->oam_bus = 0xFF;
+    state->oam_read_latch = 0xFF;
     state->scanline = (int)nes_timing()->scanlines - 1;
     memset(ppu_vram, 0, sizeof(ppu_vram));
     cpu_set_nmi_line(false);
@@ -365,6 +446,7 @@ void ppu_soft_reset(PPU *state) {
     state->total_cycles = clocks;
     state->scanline = (int)nes_timing()->scanlines - 1;
     state->oam_bus = 0xFF;
+    state->oam_read_latch = 0xFF;
     memset(ppu_ob_expire, 0, sizeof(ppu_ob_expire));
     cpu_set_nmi_line(false);
 }
@@ -374,11 +456,13 @@ void ppu_soft_reset(PPU *state) {
 static void ppu_evaluate_sprites(void) {
     if (ppu.dot <= 64) {
         ppu.oam_bus = 0xFF;
-        if (!(ppu.dot & 1)) ppu.secondary_oam[ppu.dot / 2 - 1] = 0xFF;
+        ppu.secondary_oam[ppu.secondary_index & 0x1F] = 0xFF;
+        if (!(ppu.dot & 1)) ppu.secondary_index = (uint8_t)((ppu.secondary_index + 1) & 0x1F);
         return;
     }
     if (ppu.dot == 65) {
         ppu.secondary_index = 0;
+        ppu.secondary_oam_full = false;
         ppu.secondary_sprite_zero = false;
         ppu.eval_in_range = false;
         ppu.eval_done = false;
@@ -399,12 +483,17 @@ static void ppu_evaluate_sprites(void) {
         ppu.oam_bus = ppu.secondary_oam[ppu.secondary_index & 31];
     } else {
         if (in_range) ppu.eval_in_range = true;
-        if (ppu.secondary_index < 32) {
+        if (!ppu.secondary_oam_full) {
             ppu.secondary_oam[ppu.secondary_index] = ppu.oam_bus;
             if (ppu.eval_in_range) {
                 if (ppu.dot == 66) ppu.secondary_sprite_zero = true;
                 m++;
-                ppu.secondary_index++;
+                uint8_t old_secondary = ppu.secondary_index;
+                ppu.secondary_index = (uint8_t)((ppu.secondary_index + 1) & 0x1F);
+                if (old_secondary == 0x1F) {
+                    ppu.secondary_oam_full = true;
+                    ppu.secondary_oam_overflowed = true;
+                }
                 if (m == 4) {
                     m = 0;
                     n = (n + 1) & 63;
@@ -422,7 +511,7 @@ static void ppu_evaluate_sprites(void) {
         } else {
             ppu.oam_bus = ppu.secondary_oam[ppu.secondary_index & 31];
             if (ppu.eval_in_range) {
-                ppu.status |= 0x20;
+                ppu.sprite_status_pending |= 0x20;
                 if (++m == 4) {
                     m = 0;
                     n = (n + 1) & 63;
@@ -451,14 +540,23 @@ static void ppu_fetch_sprite(void) {
     ppu.sprite_zero_on_line = ppu.secondary_sprite_zero;
     if (ppu.dot == 257) {
         ppu.sprite_count = 0;
+        ppu.secondary_index = 0;
+    } else if (!((ppu.dot - 1) & 4)) {
+        ppu_increment_secondary_oam();
     }
-    if (phase < 4) ppu.oam_bus = ppu.secondary_oam[index * 4 + phase];
+    ppu.oam_bus = ppu.secondary_oam[ppu.secondary_index & 0x1F];
+    if (phase == 0) ppu.sprite_fetch_y = ppu.oam_bus;
+    else if (phase == 1) ppu.sprite_fetch_tile = ppu.oam_bus;
+    else if (phase == 2) ppu.sprite_fetch_attr = ppu.oam_bus;
+    else if (phase == 3) ppu.sprite_fetch_x = ppu.oam_bus;
     if (phase == 0 || phase == 2) {
-        ppu_bus_read(0x2000 | (ppu.v & 0x0FFF), CART_PPU_FETCH_SPRITE);
+        ppu_bus_address_phase(0x2000 | (ppu.v & 0x0FFF));
+    } else if (phase == 1 || phase == 3) {
+        (void)ppu_bus_read_phase(0x2000 | (ppu.v & 0x0FFF), CART_PPU_FETCH_SPRITE);
     } else if (phase == 4) {
-        uint8_t y = ppu.secondary_oam[index * 4];
-        uint8_t tile = ppu.secondary_oam[index * 4 + 1];
-        uint8_t attr = ppu.secondary_oam[index * 4 + 2];
+        uint8_t y = ppu.sprite_fetch_y;
+        uint8_t tile = ppu.sprite_fetch_tile;
+        uint8_t attr = ppu.sprite_fetch_attr;
         uint16_t row = (uint16_t)((int)(uint8_t)ppu.scanline - y);
         bool tall = (ppu.ctrl & 0x20) != 0;
         if (attr & 0x80) row ^= tall ? 15 : 7;
@@ -479,13 +577,17 @@ static void ppu_fetch_sprite(void) {
         } else {
             ppu.sprite_fetch_addr = ((ppu.ctrl & 8) ? 0x1000 : 0) | (tile << 4) | (row & 7);
         }
-        ppu.sprite_positions[index] = ppu.secondary_oam[index * 4 + 3];
+        ppu.sprite_positions[index] = ppu.sprite_fetch_x;
         ppu.sprite_start_dot[index] = (uint16_t)ppu.sprite_positions[index] + 1;
         ppu.sprite_attributes[index] = attr;
-        uint8_t value = ppu_bus_read(ppu.sprite_fetch_addr, CART_PPU_FETCH_SPRITE);
+        ppu_bus_address_phase(ppu.sprite_fetch_addr);
+    } else if (phase == 5) {
+        uint8_t value = ppu_bus_read_phase(ppu.sprite_fetch_addr, CART_PPU_FETCH_SPRITE);
         ppu.sprite_pattern_lo[index] = ppu.sprite_fetch_valid ? value : 0;
     } else if (phase == 6) {
-        uint8_t value = ppu_bus_read(ppu.sprite_fetch_addr + 8, CART_PPU_FETCH_SPRITE);
+        ppu_bus_address_phase(ppu.sprite_fetch_addr + 8);
+    } else if (phase == 7) {
+        uint8_t value = ppu_bus_read_phase(ppu.sprite_fetch_addr + 8, CART_PPU_FETCH_SPRITE);
         ppu.sprite_pattern_hi[index] = ppu.sprite_fetch_valid ? value : 0;
     }
 }
@@ -494,22 +596,36 @@ static void ppu_fetch_background(void) {
     CartPpuFetchSource source = (ppu.ctrl & 0x20) ? CART_PPU_FETCH_BG : CART_PPU_FETCH_SPRITE;
     switch (ppu.dot & 7) {
         case 1:
-            ppu.nt_byte = ppu_bus_read(0x2000 | (ppu.v & 0x0FFF), CART_PPU_FETCH_BG);
+            ppu_bus_address_phase(0x2000 | (ppu.v & 0x0FFF));
+            break;
+        case 2:
+            ppu.nt_byte = ppu_bus_read_phase(0x2000 | (ppu.v & 0x0FFF), CART_PPU_FETCH_BG);
             ppu.bg_tile_addr = ((ppu.ctrl & 0x10) ? 0x1000 : 0)
                              | (ppu.nt_byte << 4) | ((ppu.v >> 12) & 7);
             break;
         case 3: {
             uint16_t addr = 0x23C0 | (ppu.v & 0x0C00) | ((ppu.v >> 4) & 0x38) | ((ppu.v >> 2) & 7);
-            uint8_t attr = ppu_bus_read(addr, CART_PPU_FETCH_BG);
+            ppu_bus_address_phase(addr);
+            break;
+        }
+        case 4: {
+            uint16_t addr = 0x23C0 | (ppu.v & 0x0C00) | ((ppu.v >> 4) & 0x38) | ((ppu.v >> 2) & 7);
+            uint8_t attr = ppu_bus_read_phase(addr, CART_PPU_FETCH_BG);
             uint8_t shift = ((ppu.v >> 4) & 4) | (ppu.v & 2);
             ppu.at_byte = (attr >> shift) & 3;
             break;
         }
         case 5:
-            ppu.pt_lo = ppu_bus_read(ppu.bg_tile_addr, source);
+            ppu_bus_address_phase(ppu.bg_tile_addr);
+            break;
+        case 6:
+            ppu.pt_lo = ppu_bus_read_phase(ppu.bg_tile_addr, source);
             break;
         case 7:
-            ppu.pt_hi = ppu_bus_read(ppu.bg_tile_addr + 8, source);
+            ppu_bus_address_phase(ppu.bg_tile_addr + 8);
+            break;
+        case 0:
+            ppu.pt_hi = ppu_bus_read_phase(ppu.bg_tile_addr + 8, source);
             break;
         default:
             break;
@@ -575,8 +691,7 @@ static void ppu_render_dot(int x, int y) {
             sprite_palette = attr & 3;
             sprite_behind = (attr & 0x20) != 0;
             if (i == 0 && ppu.sprite_zero_on_line && background && x != 255) {
-                ppu.status |= 0x40;
-                ppu.sprite_zero_hit = true;
+                ppu.sprite_status_pending |= 0x40;
             }
         }
     }
@@ -595,6 +710,20 @@ void ppu_step_dots(int ppu_cycles) {
         bool rendering = ppu.fetches_enabled;
         bool visible = line < 240;
         bool prerender = line == (int)nes_timing()->scanlines - 1;
+        ppu.bus_ale_this_dot = false;
+        ppu.bus_read_this_dot = false;
+        ppu.oam_read_latch = ppu.oam_bus;
+
+        if (ppu.sprite_status_pending) {
+            ppu.status |= ppu.sprite_status_pending;
+            if (ppu.sprite_status_pending & 0x40) ppu.sprite_zero_hit = true;
+            ppu.sprite_status_pending = 0;
+        }
+
+        if ((visible || prerender) && rendering && ppu.oam_corruption_pending) {
+            ppu_corrupt_oam_row(ppu.oam_corruption_row);
+            ppu.oam_corruption_pending = false;
+        }
 
         if (dot == 0) {
             if (visible && rendering && (line > 0 || !ppu.skipped_frame_dot)) {
@@ -602,10 +731,11 @@ void ppu_step_dots(int ppu_cycles) {
                 // scanlines without reading another byte from CHR memory.
                 uint16_t address = (ppu.nt_byte << 4) | ((ppu.v >> 12) & 7)
                                  | ((ppu.ctrl & 0x10) ? 0x1000 : 0);
-                ppu_set_bus_address(address);
+                ppu_bus_address_phase(address);
             } else if (line == 240) {
                 ppu_set_bus_address(ppu.v);
             }
+            if (visible && rendering) ppu.secondary_index = 0;
             if (line == 0) ppu.skipped_frame_dot = false;
         }
         if (line == (int)nes_timing()->vblank_scanline && dot == 1) {
@@ -615,6 +745,7 @@ void ppu_step_dots(int ppu_cycles) {
         if (prerender && dot == 1) {
             ppu_end_vblank();
             ppu.status &= ~(0x40 | 0x20);
+            ppu.sprite_status_pending = 0;
             ppu.sprite_zero_hit = false;
             ppu.suppress_vblank = false;
         }
@@ -628,19 +759,30 @@ void ppu_step_dots(int ppu_cycles) {
             ppu_render_dot(dot - 1, line);
             if (rendering) ppu_evaluate_sprites();
         }
+        if ((visible || prerender) && rendering && (dot == 63 || dot == 255 || dot == 339))
+            ppu.secondary_oam_overflowed = false;
         if ((visible || prerender) && rendering) {
             if (visible && dot == 3) cart_notify_scanline_early();
             if ((dot >= 1 && dot <= 256) || (dot >= 321 && dot <= 336))
                 ppu_fetch_background();
             if (dot == 256) ppu_increment_y();
-            if (dot == 257) ppu.v = (ppu.v & ~0x041F) | (ppu.t & 0x041F);
             if (prerender && dot >= 280 && dot <= 304)
                 ppu.v = (ppu.v & ~0x7BE0) | (ppu.t & 0x7BE0);
             if (dot >= 257 && dot <= 320) ppu_fetch_sprite();
+            if (dot == 257) ppu.v = (ppu.v & ~0x041F) | (ppu.t & 0x041F);
+            if (dot == 321) {
+                ppu_increment_secondary_oam();
+                ppu.oam_bus = ppu.secondary_oam[ppu.secondary_index & 0x1F];
+            }
         }
 
-        if ((visible || prerender) && ppu.rendering_enabled && (dot == 337 || dot == 339))
-            ppu.nt_byte = ppu_bus_read(0x2000 | (ppu.v & 0x0FFF), CART_PPU_FETCH_BG);
+        if ((visible || prerender) && ppu.rendering_enabled) {
+            if (dot == 337 || dot == 339) {
+                ppu_bus_address_phase(0x2000 | (ppu.v & 0x0FFF));
+            } else if (dot == 338 || dot == 340) {
+                ppu.nt_byte = ppu_bus_read_phase(0x2000 | (ppu.v & 0x0FFF), CART_PPU_FETCH_BG);
+            }
+        }
 
         bool skip_dot = nes_timing()->region == NES_REGION_NTSC && prerender && dot == 339
                      && ppu.odd_frame && ppu.rendering_enabled;
@@ -656,9 +798,13 @@ void ppu_step_dots(int ppu_cycles) {
         // reaches the fetch/evaluation circuits after the following clock.
         if (ppu.fetches_enabled != ppu.rendering_enabled) {
             ppu.fetches_enabled = ppu.rendering_enabled;
-            if (!ppu.fetches_enabled && rendering_line()) {
-                ppu_set_bus_address(ppu.v);
-                if (dot >= 65 && dot <= 256) ppu.oam_addr++;
+            if (rendering_line()) {
+                if (!ppu.fetches_enabled) {
+                    ppu.oam_corruption_row = ppu_oam_corruption_row(dot);
+                    ppu.oam_corruption_pending = true;
+                    ppu_set_bus_address(ppu.v);
+                    if (dot >= 65 && dot <= 256) ppu.oam_addr++;
+                }
             }
         }
         ppu.rendering_enabled = (ppu.mask & 0x18) != 0;
