@@ -204,8 +204,9 @@ static void load_battery(const char *path, uint8_t *data, size_t size) {
     memset(data, 0, size);
     FILE *fp = fopen(path, "rb");
     if (!fp) return; // first run/no prior save
-    (void)fread(data, 1, size, fp); // Short saves leave the remaining bytes zero.
-    if (ferror(fp)) fprintf(stderr, "Failed to read battery save '%s'\n", path);
+    size_t bytes_read = fread(data, 1, size, fp); // Short saves leave the remaining bytes zero.
+    if (bytes_read < size && ferror(fp))
+        fprintf(stderr, "Failed to read battery save '%s' (%zu/%zu bytes)\n", path, bytes_read, size);
     fclose(fp);
 }
 
