@@ -1386,6 +1386,30 @@ static int mmc5_persistence_cases(const SaveFixture *paths) {
     cart_cpu_write(0x5104, 2);
     CHECK(cart_cpu_read(0x6000) == 0x35);
     CHECK(cart_cpu_read(0x5C00) == 0x53 && cart_cpu_read(0x5FFF) == 0xA7);
+
+    // Old saves may end in PRG RAM or partway through the appended ExRAM.
+    const size_t short_sizes[] = {3, 0x10002};
+    for (unsigned i = 0; i < sizeof(short_sizes) / sizeof(short_sizes[0]); ++i) {
+        cart_battery_shutdown();
+        uint8_t *contents = (uint8_t *)calloc(1, short_sizes[i]);
+        CHECK(contents != NULL);
+        contents[0] = 0x42;
+        contents[short_sizes[i] - 1] = 0xA3;
+        FILE *fp = fopen(paths->prg_save, "wb");
+        if (!fp) { free(contents); return 1; }
+        size_t written = fwrite(contents, 1, short_sizes[i], fp);
+        int closed = fclose(fp);
+        free(contents);
+        CHECK(written == short_sizes[i] && closed == 0);
+        CHECK(fixture_with_header(&h, 0x20000, 0x2000) == 5);
+        cart_battery_configure(paths->rom, true);
+        cart_cpu_write(0x5113, 0);
+        cart_cpu_write(0x5104, 2);
+        CHECK(cart_cpu_read(0x6000) == 0x42 && cart_cpu_read(0x7FFF) == 0);
+        CHECK(cart_cpu_read(0x6002) == (i ? 0 : 0xA3));
+        CHECK(cart_cpu_read(0x5C01) == (i ? 0xA3 : 0));
+        CHECK(cart_cpu_read(0x5C02) == 0 && cart_cpu_read(0x5FFF) == 0);
+    }
     return 0;
 }
 

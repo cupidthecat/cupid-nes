@@ -251,9 +251,11 @@ static void load_mmc5_battery(const char *path) {
     if (!fp) return;
     size_t prg_read = prg_save_ram.size
         ? fread(prg_save_ram.data, 1, prg_save_ram.size, fp) : 0;
-    if (prg_read == prg_save_ram.size)
-        (void)fread(mmc5_exram, 1, sizeof(mmc5_exram), fp);
-    if (ferror(fp)) fprintf(stderr, "Failed to read battery save '%s'\n", path);
+    size_t exram_read = prg_read == prg_save_ram.size
+        ? fread(mmc5_exram, 1, sizeof(mmc5_exram), fp) : 0;
+    if ((prg_read < prg_save_ram.size || exram_read < sizeof(mmc5_exram)) && ferror(fp))
+        fprintf(stderr, "Failed to read battery save '%s' (%zu/%zu bytes)\n",
+                path, prg_read + exram_read, prg_save_ram.size + sizeof(mmc5_exram));
     fclose(fp);
 }
 
