@@ -55,6 +55,20 @@ extern uint8_t   *prg_rom;
 extern uint8_t   *chr_rom;
 
 int load_rom(const char *filename);
+// Eject the cartridge and release loader-owned buffers; safe to call repeatedly.
+void unload_rom(void);
+// Load an iNES image without a disk file or battery save path; copies its bytes.
+// Failed loads preserve the currently inserted cartridge.
+int load_rom_memory(const uint8_t *data, size_t size);
+int rom_mapper_number(const iNESHeader *header);
+
+typedef struct {
+    size_t prg_ram, prg_nvram;
+    size_t chr_ram, chr_nvram;
+} RomRamSizes;
+
+// Decode declared RAM capacities, including the iNES 8KB PRG-RAM default.
+int rom_ram_sizes(const iNESHeader *header, RomRamSizes *sizes);
 
 // mirroring for PPU
 extern int mirroring_mode;

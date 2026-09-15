@@ -27,9 +27,8 @@
 #define APU_H
 #include <stdint.h>
 #include <stdbool.h>
-#include <SDL2/SDL.h>
 // NTSC APU frame-sequencer constants (CPU cycles)
-#define APU_4STEP_PERIOD 29832u
+#define APU_4STEP_PERIOD 29830u
 #define APU_5STEP_PERIOD 37282u
 
 typedef struct {
@@ -56,6 +55,10 @@ typedef struct {
     // Length counter (all non-DMC channels)
     uint8_t length;      // 0 means silent if not halted
     bool    halt;        // "halt" == loop envelope / stop length decrement
+    bool    next_halt;
+    bool    halt_pending;
+    uint8_t reload_value;
+    uint8_t previous_value;
 } LengthCounter;
 
 typedef struct {
@@ -81,6 +84,7 @@ typedef struct {
     uint16_t timer;
     uint16_t timer_reload;
     uint8_t  step;       // 0..31 waveform step
+    uint8_t  output_level; // DAC holds its last value when the sequencer stops
     bool     enabled;
 } Triangle;
 
@@ -121,6 +125,9 @@ typedef struct {
 
     uint8_t sample_buffer;
     bool sample_buffer_empty;
+    uint8_t start_delay;
+    uint8_t disable_delay;
+    bool dma_pending;
 } DMC;
 
 typedef struct {
@@ -132,9 +139,8 @@ typedef struct {
     uint8_t frame_reset_delay;
     bool frame_reset_pending;
     bool cpu_cycle_odd;
-    uint8_t frame_irq_delay;
-    bool mode0_first_frame;
-    uint16_t dmc_dma_stall_cycles;
+    bool frame_next_five_step;
+    uint8_t frame_clock_block;
 
     // Channels
     Pulse    pulse1, pulse2;
@@ -184,9 +190,11 @@ void apu_step(APU *a, int cpu_cycles);
 // IRQ
 static inline bool apu_irq_pending(const APU *a) { return a->frame_irq || a->dmc.irq_flag; }
 static inline void apu_clear_frame_irq(APU *a)   { ((APU*)a)->frame_irq = false; }
-int apu_take_dmc_dma_stall_cycles(APU *a);
+bool apu_dmc_dma_pending(const APU *a);
+uint16_t apu_dmc_dma_address(const APU *a);
+void apu_dmc_dma_complete(APU *a, uint8_t value);
 
 // SDL glue
-void apu_sdl_audio_callback(void *userdata, Uint8 *stream, int len);
+void apu_sdl_audio_callback(void *userdata, uint8_t *stream, int len);
 
 #endif

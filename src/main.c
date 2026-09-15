@@ -26,6 +26,7 @@
 
 #include <SDL2/SDL.h>
 #include <stdio.h>
+#include <string.h>
 #include <stdbool.h>
 #include "rom/rom.h"
 #include "cpu/cpu.h"
@@ -221,11 +222,9 @@ int main(int argc, char *argv[]) {
         }
     
         // Run CPU and PPU in lockstep until the PPU marks a frame complete
-        ppu_begin_frame_render(framebuffer);
         start_frame();
         while (!ppu.frame_complete) {
-            int cy = cpu_step(&cpu);
-            ppu_step(cy);
+            cpu_step(&cpu);
         }
 
         // present the composed frame
@@ -244,7 +243,8 @@ int main(int argc, char *argv[]) {
     SDL_DestroyTexture(texture);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
-    cart_battery_shutdown();
+    if (audio_dev) SDL_CloseAudioDevice(audio_dev);
+    unload_rom();
     SDL_Quit();
     return 0;
 }

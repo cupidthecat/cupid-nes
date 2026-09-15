@@ -1,0 +1,868 @@
+/* CPU and controller accuracy regressions.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+#include <stdio.h>
+#include <string.h>
+#include "../cpu/cpu.h"
+#include "../apu/apu.h"
+#include "../ppu/ppu.h"
+#include "../rom/mapper.h"
+
+extern uint8_t ram[0x0800];
+
+typedef struct {
+    uint16_t addr;
+    uint8_t value;
+    bool write;
+    uint64_t cycle;
+    uint64_t ppu_cycle;
+    uint32_t apu_cycle;
+} BusEvent;
+
+static uint8_t fixture_memory[0x10000];
+static BusEvent bus_events[1024];
+static size_t bus_count;
+static uint64_t mapper_clocks;
+static uint64_t nmi_assert_cycle, nmi_clear_cycle, irq_assert_cycle, dma_request_cycle;
+
+#define CHECK(condition) do { \
+    if (!(condition)) { \
+        fprintf(stderr, "%s:%d: %s\n", __func__, __LINE__, #condition); \
+        return 1; \
+    } \
+} while (0)
+
+static void record_bus(uint16_t addr, uint8_t value, bool write) {
+    if (bus_count < sizeof(bus_events) / sizeof(bus_events[0])) {
+        bus_events[bus_count] = (BusEvent){addr, value, write, cpu_get_bus_cycle(),
+                                         ppu.total_cycles, apu.cycle_in_seq};
+    }
+    bus_count++;
+}
+
+static uint8_t fixture_read(uint16_t addr) {
+    uint8_t value = fixture_memory[addr];
+    record_bus(addr, value, false);
+    return value;
+}
+
+static void fixture_write(uint16_t addr, uint8_t value) {
+    record_bus(addr, value, true);
+    fixture_memory[addr] = value;
+}
+
+static uint8_t fixture_ppu_read(uint16_t addr) {
+    return fixture_memory[addr & 0x1FFFu];
+}
+
+static void fixture_ppu_write(uint16_t addr, uint8_t value) {
+    fixture_memory[addr & 0x1FFFu] = value;
+}
+
+static void fixture_clock(int cycles) {
+    mapper_clocks += (unsigned)cycles;
+    if (cpu_total_cycles == nmi_assert_cycle) cpu_set_nmi_line(true);
+    if (cpu_total_cycles == nmi_clear_cycle) cpu_set_nmi_line(false);
+    if (cpu_total_cycles == irq_assert_cycle) apu.frame_irq = true;
+    if (cpu_total_cycles == dma_request_cycle) {
+        apu.dmc.start_delay = 0;
+        apu.dmc.sample_buffer_empty = true;
+        apu.dmc.dma_pending = true;
+    }
+}
+
+static Mapper fixture_mapper = {
+    .cpu_read = fixture_read,
+    .cpu_write = fixture_write,
+    .ppu_read = fixture_ppu_read,
+    .ppu_write = fixture_ppu_write,
+    .clock = fixture_clock,
+};
+
+static void reset_fixture(void) {
+    memset(fixture_memory, 0, sizeof(fixture_memory));
+    memset(ram, 0, 0x0800);
+    memset(&cpu, 0, sizeof(cpu));
+    memset(&pad1, 0, sizeof(pad1));
+    memset(&pad2, 0, sizeof(pad2));
+    memset(&ines_header, 0, sizeof(ines_header));
+    cart = &fixture_mapper;
+    cart_irq_ack();
+    mapper_clocks = 0;
+    nmi_assert_cycle = nmi_clear_cycle = irq_assert_cycle = dma_request_cycle = 0;
+    cpu_total_cycles = 0;
+    apu_reset(&apu);
+    ppu_reset(&ppu);
+    fixture_memory[0xFFFB] = 0x90;
+    fixture_memory[0xFFFD] = 0x80;
+    fixture_memory[0xFFFF] = 0xA0;
+    cpu_reset(&cpu);
+    bus_count = 0;
+}
+
+static void program(uint8_t op, uint8_t lo, uint8_t hi) {
+    fixture_memory[0x8000] = op;
+    fixture_memory[0x8001] = lo;
+    fixture_memory[0x8002] = hi;
+}
+
+static int check_reads(const uint16_t *addresses, size_t count) {
+    CHECK(bus_count == count);
+    for (size_t i = 0; i < count; ++i) {
+        CHECK(bus_events[i].addr == addresses[i]);
+        CHECK(!bus_events[i].write);
+    }
+    return 0;
+}
+
+static int controller_latching(void) {
+    Joypad jp = {0};
+    joypad_write_strobe(&jp, 1);
+    CHECK(joypad_read(&jp) == 0);
+    joypad_set(&jp, BTN_A, 1);
+    CHECK(joypad_read(&jp) == 1);
+    CHECK(joypad_read(&jp) == 1);
+    joypad_set(&jp, BTN_A, 0);
+    CHECK(joypad_read(&jp) == 0);
+
+    jp.buttons = 0xA5;
+    joypad_write_strobe(&jp, 0);
+    jp.buttons = 0x5A;
+    for (unsigned bit = 0; bit < 8; ++bit) {
+        joypad_write_strobe(&jp, 0); // No new falling edge: retain the snapshot.
+        CHECK(joypad_read(&jp) == ((0xA5u >> bit) & 1u));
+    }
+    for (unsigned bit = 0; bit < 8; ++bit) CHECK(joypad_read(&jp) == 1);
+    joypad_write_strobe(&jp, 1);
+    joypad_write_strobe(&jp, 0);
+    CHECK(joypad_read(&jp) == 0);
+    CHECK(joypad_read(&jp) == 1);
+
+    reset_fixture();
+    pad1.buttons = 1;
+    write_mem(0x4016, 1);
+    write_mem(0x4016, 0);
+    write_mem(0x4018, 0xE0);
+    CHECK(read_mem(0x4016) == 0xE1);
+    CHECK(read_mem(0x4017) == 0xE0);
+
+    reset_fixture();
+    pad1.buttons = 0x02;
+    write_mem(0x4016, 1);
+    write_mem(0x4016, 0);
+    program(0x1E, 0x16, 0x40); // ASL $4016,X reads the same port on adjacent cycles.
+    CHECK(cpu_step(&cpu) == 7);
+    CHECK(joypad_read(&pad1) == 1); // B remains next: the adjacent reads shifted only A.
+
+    reset_fixture();
+    pad1.buttons = 0x02;
+    write_mem(0x4016, 1);
+    write_mem(0x4016, 0);
+    program(0xAD, 0x16, 0x40);
+    memcpy(&fixture_memory[0x8003], &fixture_memory[0x8000], 3);
+    CHECK(cpu_step(&cpu) == 4 && cpu.a == 0x40);
+    CHECK(cpu_step(&cpu) == 4 && cpu.a == 0x41); // Separate reads still advance the pad.
+    return 0;
+}
+
+static int open_bus_and_cart_decoding(void) {
+    reset_fixture();
+    write_mem(0x4018, 0xA5);
+    apu.frame_irq = true;
+    CHECK(read_mem(0x4015) == 0x60);
+    CHECK(!apu.frame_irq);
+    CHECK(read_mem(0x4018) == 0xA5);
+
+    cart = NULL;
+    fixture_memory[0x6000] = 0x42;
+    CHECK(read_mem(0x4020) == 0xA5);
+    CHECK(read_mem(0x6000) == 0xA5);
+    write_mem(0x6000, 0x55);
+    CHECK(fixture_memory[0x6000] == 0x42);
+    CHECK(bus_count == 0);
+    cart = &fixture_mapper;
+    static const uint16_t addresses[] = {0x4020, 0x40FF, 0x4100, 0x5FFF, 0x6000, 0xFFFF};
+    for (size_t i = 0; i < sizeof(addresses) / sizeof(addresses[0]); ++i) {
+        fixture_memory[addresses[i]] = 0xFF;
+        write_mem(0x4018, 0xA5);
+        CHECK(read_mem(addresses[i]) == 0xFF); // A driven $FF is data, never an unmapped sentinel.
+        CHECK(read_mem(0x4018) == 0xFF);
+    }
+    fixture_memory[0x401F] = 0x73;
+    size_t count = bus_count;
+    CHECK(read_mem(0x401F) == 0xFF && bus_count == count);
+    ines_header.flags7 = 0x08;
+    ines_header.flags10 = 0; // Cartridge callbacks own RAM/register decoding, not CPU header guesses.
+    write_mem(0x6000, 0x99);
+    CHECK(read_mem(0x6000) == 0x99);
+    program(0xAD, 0x20, 0x40);
+    CHECK(cpu_step(&cpu) == 4 && cpu.a == 0xFF);
+    return 0;
+}
+
+static int nop_and_zero_page_cycles(void) {
+    static const uint8_t immediate_nops[] = {0x80, 0x82, 0x89, 0xC2, 0xE2};
+    for (size_t i = 0; i < sizeof(immediate_nops); ++i) {
+        reset_fixture();
+        program(immediate_nops[i], 0xA5, 0);
+        CHECK(cpu_step(&cpu) == 2);
+        CHECK(cpu.pc == 0x8002);
+        CHECK(read_mem(0x4018) == 0xA5);
+        const uint16_t reads[] = {0x8000, 0x8001};
+        CHECK(check_reads(reads, 2) == 0);
+        CHECK(bus_events[0].cycle == 1 && bus_events[1].cycle == 2);
+    }
+    reset_fixture();
+    program(0xD4, 0xFF, 0);
+    cpu.x = 2;
+    ram[1] = 0x73;
+    CHECK(cpu_step(&cpu) == 4);
+    CHECK(read_mem(0x4018) == 0x73);
+    reset_fixture();
+    program(0x97, 0xFF, 0);
+    cpu.a = 0xF3;
+    cpu.x = 0xAF;
+    cpu.y = 2;
+    CHECK(cpu_step(&cpu) == 4);
+    CHECK(ram[1] == 0xA3);
+    return 0;
+}
+
+static int xaa_immediate(void) {
+    static const uint8_t accumulators[] = {0, 0x11, 0x80, 0xFF};
+    static const uint8_t indexes[] = {0, 0x0F, 0xF0, 0xFF};
+    const uint8_t preserved = UNUSED_FLAG | INTERRUPT_FLAG | DECIMAL_FLAG | CARRY_FLAG | OVERFLOW_FLAG;
+    reset_fixture();
+    program(0x8B, 0, 0);
+    for (size_t a = 0; a < sizeof(accumulators); ++a) {
+        for (size_t x = 0; x < sizeof(indexes); ++x) {
+            for (unsigned imm = 0; imm < 256; ++imm) {
+                cpu.a = accumulators[a];
+                cpu.x = indexes[x];
+                cpu.y = 0xA6;
+                cpu.sp = 0xF0;
+                cpu.pc = 0x8000;
+                cpu.status = preserved | ZERO_FLAG | NEGATIVE_FLAG;
+                fixture_memory[0x8001] = (uint8_t)imm;
+                bus_count = 0;
+                CHECK(cpu_step(&cpu) == 2);
+                // The selected silicon model preserves A's bits 0 and 4 through the OR mask.
+                uint8_t expected = (uint8_t)((accumulators[a] | 0xEEu) & indexes[x] & imm);
+                uint8_t flags = preserved | (expected == 0 ? ZERO_FLAG : 0) | (expected & NEGATIVE_FLAG);
+                CHECK(cpu.a == expected && cpu.status == flags);
+                CHECK(cpu.x == indexes[x] && cpu.y == 0xA6 && cpu.sp == 0xF0);
+                CHECK(cpu.pc == 0x8002);
+                CHECK(bus_count == 2 && bus_events[1].addr == 0x8001);
+                CHECK(bus_events[1].value == imm);
+            }
+        }
+    }
+    return 0;
+}
+
+static int unofficial_immediate_semantics(void) {
+    static const struct {
+        uint8_t op, a, x, imm, carry, result_a, result_x, flags;
+    } cases[] = {
+        {0x0B, 0xFF, 0x55, 0x80, 0, 0x80, 0x55, NEGATIVE_FLAG | CARRY_FLAG | OVERFLOW_FLAG},
+        {0x0B, 0x7F, 0x55, 0x80, 1, 0x00, 0x55, ZERO_FLAG | OVERFLOW_FLAG},
+        {0x2B, 0xA5, 0x55, 0xF0, 0, 0xA0, 0x55, NEGATIVE_FLAG | CARRY_FLAG | OVERFLOW_FLAG},
+        {0x2B, 0x7F, 0x55, 0xFF, 1, 0x7F, 0x55, OVERFLOW_FLAG},
+        {0x4B, 0xFF, 0x55, 0x03, 0, 0x01, 0x55, CARRY_FLAG | OVERFLOW_FLAG},
+        {0x4B, 0xFF, 0x55, 0x02, 1, 0x01, 0x55, OVERFLOW_FLAG},
+        {0x4B, 0x80, 0x55, 0xFF, 1, 0x40, 0x55, OVERFLOW_FLAG},
+        {0x4B, 0x01, 0x55, 0xFE, 1, 0x00, 0x55, ZERO_FLAG | OVERFLOW_FLAG},
+        {0x6B, 0xFF, 0x55, 0xFF, 0, 0x7F, 0x55, CARRY_FLAG},
+        {0x6B, 0xFF, 0x55, 0xFF, 1, 0xFF, 0x55, CARRY_FLAG | NEGATIVE_FLAG},
+        {0x6B, 0x80, 0x55, 0xFF, 0, 0x40, 0x55, CARRY_FLAG | OVERFLOW_FLAG},
+        {0x6B, 0x40, 0x55, 0xFF, 0, 0x20, 0x55, OVERFLOW_FLAG},
+        {0x6B, 0x00, 0x55, 0xFF, 0, 0x00, 0x55, ZERO_FLAG},
+        {0x6B, 0x00, 0x55, 0xFF, 1, 0x80, 0x55, NEGATIVE_FLAG},
+        {0xAB, 0x80, 0x11, 0x00, 1, 0x00, 0x00, ZERO_FLAG | CARRY_FLAG | OVERFLOW_FLAG},
+        {0xAB, 0x01, 0x11, 0x80, 0, 0x80, 0x80, NEGATIVE_FLAG | OVERFLOW_FLAG},
+        {0xAB, 0x00, 0x80, 0x11, 1, 0x11, 0x11, CARRY_FLAG | OVERFLOW_FLAG},
+        {0xCB, 0xFF, 0x10, 0x01, 0, 0xFF, 0x0F, CARRY_FLAG | OVERFLOW_FLAG},
+        {0xCB, 0xFF, 0x10, 0x20, 1, 0xFF, 0xF0, NEGATIVE_FLAG | OVERFLOW_FLAG},
+        {0xCB, 0x0F, 0xF0, 0x00, 0, 0x0F, 0x00, ZERO_FLAG | CARRY_FLAG | OVERFLOW_FLAG},
+        {0xCB, 0x0F, 0x0A, 0x0B, 1, 0x0F, 0xFF, NEGATIVE_FLAG | OVERFLOW_FLAG},
+        {0xCB, 0xFF, 0xFF, 0x80, 0, 0xFF, 0x7F, CARRY_FLAG | OVERFLOW_FLAG},
+    };
+    const uint8_t preserved = UNUSED_FLAG | INTERRUPT_FLAG | DECIMAL_FLAG;
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+        reset_fixture();
+        program(cases[i].op, cases[i].imm, 0);
+        cpu.a = cases[i].a;
+        cpu.x = cases[i].x;
+        cpu.y = 0x5A;
+        cpu.status = preserved | OVERFLOW_FLAG | NEGATIVE_FLAG | ZERO_FLAG |
+                     (cases[i].carry ? CARRY_FLAG : 0);
+        CHECK(cpu_step(&cpu) == 2);
+        CHECK(cpu.a == cases[i].result_a && cpu.x == cases[i].result_x);
+        CHECK(cpu.status == (preserved | cases[i].flags));
+        CHECK(cpu.pc == 0x8002 && cpu.y == 0x5A && cpu.sp == 0xFD);
+        CHECK(bus_count == 2 && bus_events[1].addr == 0x8001 && bus_events[1].value == cases[i].imm);
+    }
+    return 0;
+}
+
+static int indexed_read_penalties(void) {
+    static const uint8_t abs_ops[] = {0xBF, 0xBB, 0x1C, 0x3C, 0x5C, 0x7C, 0xDC, 0xFC};
+    for (size_t i = 0; i < sizeof(abs_ops); ++i) {
+        for (unsigned cross = 0; cross < 2; ++cross) {
+            reset_fixture();
+            program(abs_ops[i], cross ? 0xFF : 0, 0x90);
+            cpu.x = cpu.y = 1;
+            cpu.sp = 0xF0;
+            uint16_t addr = cross ? 0x9100 : 0x9001;
+            fixture_memory[addr] = 0xAC;
+            CHECK(cpu_step(&cpu) == (int)(4 + cross));
+            CHECK(cpu.pc == 0x8003);
+            CHECK(bus_count == 4 + cross);
+            CHECK(bus_events[3].addr == (cross ? 0x9000 : addr));
+            CHECK(bus_events[bus_count - 1].addr == addr);
+            if (abs_ops[i] == 0xBF) CHECK(cpu.a == 0xAC && cpu.x == 0xAC);
+            if (abs_ops[i] == 0xBB) CHECK(cpu.a == 0xA0 && cpu.x == 0xA0 && cpu.sp == 0xA0);
+        }
+    }
+    for (unsigned cross = 0; cross < 2; ++cross) {
+        reset_fixture();
+        program(0xB3, 0xFF, 0);
+        ram[0xFF] = cross ? 0xFF : 0;
+        ram[0] = 0x90;
+        cpu.y = 1;
+        fixture_memory[cross ? 0x9100 : 0x9001] = 0xAB;
+        CHECK(cpu_step(&cpu) == (int)(5 + cross));
+        CHECK(cpu.a == 0xAB && cpu.x == 0xAB);
+        CHECK(bus_count == 3 + cross);
+        CHECK(bus_events[2].cycle == 5);
+    }
+    return 0;
+}
+
+static int indexed_rmw_bus_order(void) {
+    static const struct { uint8_t op, result; } cases[] = {
+        {0x1E, 2}, {0x5E, 0}, {0x3E, 2}, {0x7E, 0}, {0xFE, 2}, {0xDE, 0},
+        {0xDF, 0}, {0xDB, 0}, {0x3F, 2}, {0x3B, 2}, {0x1F, 2}, {0x1B, 2},
+        {0x5F, 0}, {0x5B, 0}, {0x7F, 0}, {0x7B, 0}, {0xFF, 2}, {0xFB, 2},
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+        for (unsigned cross = 0; cross < 2; ++cross) {
+            reset_fixture();
+            program(cases[i].op, cross ? 0xFF : 0, 0x90);
+            cpu.x = cpu.y = 1;
+            uint16_t addr = cross ? 0x9100 : 0x9001;
+            fixture_memory[addr] = 1;
+            CHECK(cpu_step(&cpu) == 7);
+            CHECK(bus_count == 7);
+            CHECK(bus_events[3].addr == (cross ? 0x9000 : addr));
+            CHECK(!bus_events[3].write);
+            CHECK(bus_events[4].addr == addr && !bus_events[4].write);
+            CHECK(bus_events[5].addr == addr && bus_events[5].write && bus_events[5].value == 1);
+            CHECK(bus_events[6].addr == addr && bus_events[6].write);
+            CHECK(bus_events[6].value == cases[i].result);
+            for (size_t j = 0; j < 7; ++j) CHECK(bus_events[j].cycle == j + 1);
+            CHECK(cpu_get_bus_cycle() == 7);
+        }
+    }
+
+    static const uint8_t indirect_ops[] = {0xD3, 0x33, 0x13, 0x53, 0x73, 0xF3};
+    for (size_t i = 0; i < sizeof(indirect_ops); ++i) {
+        reset_fixture();
+        program(indirect_ops[i], 0xFF, 0);
+        ram[0xFF] = 0xFF;
+        ram[0] = 0x90;
+        cpu.y = 1;
+        fixture_memory[0x9100] = 1;
+        CHECK(cpu_step(&cpu) == 8);
+        CHECK(bus_count == 6);
+        CHECK(bus_events[2].addr == 0x9000 && bus_events[2].cycle == 5);
+        CHECK(bus_events[3].addr == 0x9100 && !bus_events[3].write);
+        CHECK(bus_events[4].write && bus_events[4].value == 1 && bus_events[4].cycle == 7);
+        CHECK(bus_events[5].write && bus_events[5].cycle == 8);
+    }
+
+    reset_fixture();
+    program(0xE3, 0xFE, 0); // ISC ($FE,X), including its unindexed zero-page read.
+    cpu.x = 1;
+    ram[0xFF] = 0;
+    ram[0] = 0x90;
+    CHECK(cpu_step(&cpu) == 8);
+    CHECK(bus_count == 5);
+    CHECK(bus_events[2].addr == 0x9000 && bus_events[2].cycle == 6);
+    CHECK(bus_events[3].cycle == 7 && bus_events[4].cycle == 8);
+    fixture_memory[0x8002] = 0x8D;
+    fixture_memory[0x8003] = 0;
+    fixture_memory[0x8004] = 0xA0;
+    CHECK(cpu_step(&cpu) == 4);
+    CHECK(bus_events[8].write && bus_events[8].cycle == 12);
+    return 0;
+}
+
+static int branch_bus_order(void) {
+    reset_fixture();
+    program(0xD0, 5, 0);
+    CHECK(cpu_step(&cpu) == 3 && cpu.pc == 0x8007);
+    const uint16_t same_page[] = {0x8000, 0x8001, 0x8002};
+    CHECK(check_reads(same_page, 3) == 0);
+
+    reset_fixture();
+    cpu.pc = 0x80FD;
+    fixture_memory[0x80FD] = 0xD0;
+    fixture_memory[0x80FE] = 2;
+    CHECK(cpu_step(&cpu) == 4 && cpu.pc == 0x8101);
+    const uint16_t forward[] = {0x80FD, 0x80FE, 0x80FF, 0x8001};
+    CHECK(check_reads(forward, 4) == 0);
+
+    reset_fixture();
+    cpu.pc = 0x8100;
+    fixture_memory[0x8100] = 0xD0;
+    fixture_memory[0x8101] = 0xFC;
+    CHECK(cpu_step(&cpu) == 4 && cpu.pc == 0x80FE);
+    const uint16_t backward[] = {0x8100, 0x8101, 0x8102, 0x81FE};
+    CHECK(check_reads(backward, 4) == 0);
+
+    reset_fixture();
+    program(0xD0, 5, 0);
+    cpu.status |= ZERO_FLAG;
+    CHECK(cpu_step(&cpu) == 2 && cpu.pc == 0x8002);
+    const uint16_t not_taken[] = {0x8000, 0x8001};
+    CHECK(check_reads(not_taken, 2) == 0);
+    return 0;
+}
+
+static int stack_and_indirect_jump(void) {
+    reset_fixture();
+    program(0x08, 0x28, 0); // PHP / PLP
+    cpu.status = UNUSED_FLAG | DECIMAL_FLAG | CARRY_FLAG;
+    CHECK(cpu_step(&cpu) == 3);
+    CHECK(ram[0x1FD] == (cpu.status | BREAK_FLAG));
+    CHECK(cpu_step(&cpu) == 4);
+    CHECK(cpu.status == (UNUSED_FLAG | DECIMAL_FLAG | CARRY_FLAG));
+
+    reset_fixture();
+    program(0x40, 0, 0);
+    cpu.sp = 0xFA;
+    ram[0x1FB] = 0xFF;
+    ram[0x1FC] = 0x34;
+    ram[0x1FD] = 0x12;
+    CHECK(cpu_step(&cpu) == 6);
+    CHECK(cpu.pc == 0x1234 && cpu.status == 0xEF && cpu.sp == 0xFD);
+
+    reset_fixture();
+    program(0x60, 0, 0);
+    ram[0x1FE] = 0x12;
+    ram[0x1FF] = 0x90;
+    CHECK(cpu_step(&cpu) == 6 && cpu.pc == 0x9013);
+    const uint16_t rts_reads[] = {0x8000, 0x8001, 0x9012};
+    CHECK(check_reads(rts_reads, 3) == 0);
+    CHECK(bus_events[2].cycle == 6);
+
+    reset_fixture();
+    cpu.pc = 0x01FD;
+    cpu.sp = 0xFF;
+    ram[0x1FD] = 0x20;
+    ram[0x1FE] = 0xCD;
+    ram[0x1FF] = 0xAB;
+    CHECK(cpu_step(&cpu) == 6);
+    CHECK(cpu.pc == 0x01CD); // The stack write replaces the high target byte before it is read.
+
+    reset_fixture();
+    program(0x6C, 0xFF, 0x90);
+    fixture_memory[0x90FF] = 0x34;
+    fixture_memory[0x9000] = 0x12;
+    fixture_memory[0x9100] = 0x56;
+    CHECK(cpu_step(&cpu) == 5 && cpu.pc == 0x1234);
+    const uint16_t jmp_reads[] = {0x8000, 0x8001, 0x8002, 0x90FF, 0x9000};
+    CHECK(check_reads(jmp_reads, 5) == 0);
+    return 0;
+}
+
+static int interrupt_entry(void) {
+    reset_fixture();
+    program(0xEA, 0, 0);
+    cpu.status = UNUSED_FLAG | DECIMAL_FLAG | CARRY_FLAG;
+    apu.frame_irq = true;
+    CHECK(cpu_step(&cpu) == 9);
+    CHECK(cpu_total_cycles == 9 && apu.cycle_in_seq == 9);
+    CHECK(cpu.pc == 0xA000 && cpu.sp == 0xFA);
+    CHECK(ram[0x1FD] == 0x80 && ram[0x1FC] == 1);
+    CHECK(ram[0x1FB] == (UNUSED_FLAG | DECIMAL_FLAG | CARRY_FLAG));
+    const uint16_t irq_reads[] = {0x8000, 0x8001, 0x8001, 0x8001, 0xFFFE, 0xFFFF};
+    CHECK(check_reads(irq_reads, 6) == 0);
+    CHECK(bus_events[2].cycle == 3 && bus_events[5].cycle == 9);
+
+    static const uint8_t next_ops[] = {0xEA, 0x00, 0x18, 0x38, 0xA9};
+    for (size_t i = 0; i < sizeof(next_ops); ++i) {
+        reset_fixture();
+        program(next_ops[i], 0, 0);
+        cpu.a = 0x55;
+        cpu.status |= CARRY_FLAG;
+        ram[0x1FE] = BREAK_FLAG;
+        cpu_request_nmi();
+        CHECK(cpu_step(&cpu) == 7);
+        CHECK(cpu.pc == 0x9000 && cpu.a == 0x55 && cpu.sp == 0xFA);
+        CHECK(cpu.status & CARRY_FLAG);
+        CHECK(ram[0x1FD] == 0x80 && ram[0x1FC] == 0);
+        CHECK(!(ram[0x1FB] & BREAK_FLAG));
+        const uint16_t nmi_reads[] = {0x8000, 0x8000, 0xFFFA, 0xFFFB};
+        CHECK(check_reads(nmi_reads, 4) == 0);
+        CHECK(bus_events[2].cycle == 6 && bus_events[3].cycle == 7);
+    }
+
+    reset_fixture();
+    program(0, 0xEA, 0);
+    CHECK(cpu_step(&cpu) == 7);
+    CHECK(cpu.pc == 0xA000 && ram[0x1FC] == 2);
+    CHECK((ram[0x1FB] & (BREAK_FLAG | UNUSED_FLAG)) == (BREAK_FLAG | UNUSED_FLAG));
+    CHECK(!(cpu.status & BREAK_FLAG));
+
+    reset_fixture();
+    program(0, 0xEA, 0);
+    ppu.scanline = 0;
+    ppu.dot = 0;
+    cpu_set_nmi_line(true);
+    CHECK(cpu_step(&cpu) == 7);
+    CHECK(cpu.pc == 0x9000 && ram[0x1FC] == 2 && (ram[0x1FB] & BREAK_FLAG));
+
+    reset_fixture();
+    program(0x8D, 0, 0x20); // Enabling NMI in vblank asserts the pin on the final STA cycle.
+    fixture_memory[0x8003] = 0xEA;
+    fixture_memory[0x9000] = fixture_memory[0x9001] = 0xEA;
+    cpu.a = 0x80;
+    ppu.scanline = 241;
+    ppu.dot = 20;
+    ppu.status = 0x80;
+    CHECK(cpu_step(&cpu) == 4 && cpu.pc == 0x8003);
+    CHECK(cpu_step(&cpu) == 9 && cpu.pc == 0x9000);
+    CHECK(ram[0x1FC] == 4);
+    CHECK(cpu_step(&cpu) == 2 && cpu.pc == 0x9001); // A held level is not a second edge.
+    CHECK(cpu_step(&cpu) == 2 && cpu.pc == 0x9002);
+    return 0;
+}
+
+static int irq_mask_latency(void) {
+    reset_fixture();
+    program(0x58, 0xEA, 0); // CLI must allow the following NOP to complete.
+    apu.frame_irq = true;
+    CHECK(cpu_step(&cpu) == 2 && cpu.pc == 0x8001);
+    CHECK(cpu_step(&cpu) == 9 && cpu.pc == 0xA000);
+    CHECK(ram[0x1FC] == 2);
+
+    reset_fixture();
+    program(0x78, 0, 0);
+    cpu.status &= ~INTERRUPT_FLAG;
+    apu.frame_irq = true;
+    CHECK(cpu_step(&cpu) == 9 && cpu.pc == 0xA000);
+    CHECK(ram[0x1FB] & INTERRUPT_FLAG);
+
+    reset_fixture();
+    program(0x28, 0, 0);
+    cpu.status &= ~INTERRUPT_FLAG;
+    cpu.sp = 0xFC;
+    ram[0x1FD] = INTERRUPT_FLAG | BREAK_FLAG;
+    apu.frame_irq = true;
+    CHECK(cpu_step(&cpu) == 11 && cpu.pc == 0xA000);
+    CHECK(!(cpu.status & BREAK_FLAG));
+
+    reset_fixture();
+    program(0x28, 0xEA, 0);
+    cpu.sp = 0xFC;
+    ram[0x1FD] = BREAK_FLAG;
+    apu.frame_irq = true;
+    CHECK(cpu_step(&cpu) == 4 && cpu.pc == 0x8001);
+    CHECK(cpu_step(&cpu) == 9 && cpu.pc == 0xA000);
+
+    reset_fixture();
+    program(0x40, 0, 0);
+    cpu.sp = 0xFA;
+    ram[0x1FB] = 0;
+    ram[0x1FC] = 0;
+    ram[0x1FD] = 0x90;
+    apu.frame_irq = true;
+    CHECK(cpu_step(&cpu) == 13 && cpu.pc == 0xA000); // RTI uses the restored I immediately.
+    return 0;
+}
+
+static int masked_store_addresses(void) {
+    static const uint8_t ops[] = {0x9F, 0x93, 0x9E, 0x9C, 0x9B};
+    static const uint8_t values[] = {0xFF, 0x80};
+    for (size_t i = 0; i < sizeof(ops); ++i) {
+        for (size_t j = 0; j < sizeof(values); ++j) {
+            for (unsigned cross = 0; cross < 2; ++cross) {
+                reset_fixture();
+                uint8_t reg = values[j];
+                cpu.a = cpu.x = reg;
+                cpu.y = 1;
+                if (ops[i] == 0x9C) { cpu.x = 1; cpu.y = reg; }
+                program(ops[i], cross ? 0xFF : 0, 0x8F);
+                if (ops[i] == 0x93) {
+                    fixture_memory[0x8001] = 0xFF;
+                    ram[0xFF] = cross ? 0xFF : 0;
+                    ram[0] = 0x8F;
+                }
+                CHECK(cpu_step(&cpu) == (ops[i] == 0x93 ? 6 : 5));
+                CHECK(bus_count == (ops[i] == 0x93 ? 4u : 5u));
+                CHECK(bus_events[bus_count - 2].addr == (cross ? 0x8F00 : 0x8F01));
+                uint8_t expected = reg & 0x90;
+                uint16_t addr = cross ? (uint16_t)(expected << 8) : 0x8F01;
+                CHECK(bus_events[bus_count - 1].addr == addr);
+                CHECK(bus_events[bus_count - 1].write);
+                CHECK(bus_events[bus_count - 1].value == expected);
+                if (ops[i] == 0x9B) CHECK(cpu.sp == reg);
+            }
+        }
+    }
+    return 0;
+}
+
+static int halt_and_reset(void) {
+    static const uint8_t ops[] = {0x02,0x12,0x22,0x32,0x42,0x52,0x62,0x72,0x92,0xB2,0xD2,0xF2};
+    for (size_t i = 0; i < sizeof(ops); ++i) {
+        reset_fixture();
+        program(ops[i], 0xE8, 0);
+        cpu.status &= ~INTERRUPT_FLAG;
+        apu.frame_irq = true;
+        CHECK(cpu_step(&cpu) == 2 && cpu.halted);
+        CHECK(cpu.pc == 0x8000 && cpu.sp == 0xFD);
+        cpu_request_nmi();
+        CHECK(cpu_step(&cpu) == 1);
+        CHECK(cpu.pc == 0x8000 && cpu.sp == 0xFD && cpu.x == 0);
+        cpu.status |= BREAK_FLAG;
+        cpu_reset(&cpu);
+        CHECK(!cpu.halted && !(cpu.status & BREAK_FLAG) && (cpu.status & UNUSED_FLAG));
+        fixture_memory[0x8000] = 0xEA;
+        CHECK(cpu_step(&cpu) == 2 && cpu.pc == 0x8001);
+    }
+    return 0;
+}
+
+static int bus_cycle_interrupt_polling(void) {
+    reset_fixture();
+    program(0xAD, 0, 0x90);
+    fixture_memory[0x9000] = 0xA5;
+    CHECK(cpu_step(&cpu) == 4 && cpu.a == 0xA5);
+    CHECK(mapper_clocks == 4 && apu.cycle_in_seq == 4 && ppu.total_cycles == 12);
+    for (size_t i = 0; i < 4; ++i) {
+        CHECK(bus_events[i].cycle == i + 1);
+        CHECK(bus_events[i].apu_cycle == i + 1);
+        CHECK(bus_events[i].ppu_cycle == (i + 1) * 3 - 1);
+    }
+    (void)read_mem(0x9000);
+    CHECK(cpu_total_cycles == 4 && mapper_clocks == 4); // Inspection outside execution is unclocked.
+
+    for (unsigned edge = 1; edge <= 2; ++edge) {
+        reset_fixture();
+        program(0xEA, 0xEA, 0);
+        cpu.status &= ~INTERRUPT_FLAG;
+        irq_assert_cycle = edge;
+        if (edge == 2) CHECK(cpu_step(&cpu) == 2 && cpu.pc == 0x8001);
+        CHECK(cpu_step(&cpu) == 9 && cpu.pc == 0xA000);
+        CHECK(ram[0x1FC] == edge);
+    }
+
+    reset_fixture();
+    program(0xAD, 0x15, 0x40); // The final read clears an IRQ already sampled on the previous cycle.
+    cpu.status &= ~INTERRUPT_FLAG;
+    irq_assert_cycle = 3;
+    CHECK(cpu_step(&cpu) == 11 && cpu.pc == 0xA000);
+    CHECK(!apu.frame_irq && ram[0x1FC] == 3);
+
+    reset_fixture();
+    program(0xEA, 0xEA, 0);
+    nmi_assert_cycle = nmi_clear_cycle = 1;
+    CHECK(cpu_step(&cpu) == 2 && cpu.pc == 0x8001); // A pulse ending before sampling is not latched.
+    CHECK(cpu_step(&cpu) == 2 && cpu.pc == 0x8002);
+
+    reset_fixture();
+    program(0xEA, 0xEA, 0);
+    nmi_assert_cycle = 2;
+    nmi_clear_cycle = 3;
+    CHECK(cpu_step(&cpu) == 2 && cpu.pc == 0x8001);
+    CHECK(cpu_step(&cpu) == 9 && cpu.pc == 0x9000);
+    CHECK(ram[0x1FC] == 2); // A sampled edge remains pending after the line falls.
+
+    for (unsigned edge = 4; edge <= 5; ++edge) {
+        reset_fixture();
+        program(0, 0, 0);
+        fixture_memory[0xA000] = 0xEA;
+        nmi_assert_cycle = edge;
+        CHECK(cpu_step(&cpu) == 7);
+        CHECK(ram[0x1FB] & BREAK_FLAG);
+        CHECK(cpu.pc == (edge == 4 ? 0x9000 : 0xA000));
+        if (edge == 5) {
+            CHECK(cpu_step(&cpu) == 9 && cpu.pc == 0x9000);
+            CHECK(ram[0x1F9] == 1); // An edge after vector selection waits for the handler's NOP.
+        }
+    }
+
+    for (unsigned edge = 6; edge <= 7; ++edge) {
+        reset_fixture();
+        program(0xEA, 0, 0);
+        fixture_memory[0xA000] = 0xEA;
+        cpu.status &= ~INTERRUPT_FLAG;
+        irq_assert_cycle = 1;
+        nmi_assert_cycle = edge;
+        CHECK(cpu_step(&cpu) == 9);
+        CHECK(cpu.pc == (edge == 6 ? 0x9000 : 0xA000));
+        CHECK(!(ram[0x1FB] & BREAK_FLAG));
+        if (edge == 7) CHECK(cpu_step(&cpu) == 9 && cpu.pc == 0x9000);
+    }
+
+    reset_fixture();
+    program(0xD0, 2, 0);
+    fixture_memory[0x8004] = 0xEA;
+    cpu.status &= ~INTERRUPT_FLAG;
+    irq_assert_cycle = 2;
+    CHECK(cpu_step(&cpu) == 3 && cpu.pc == 0x8004);
+    CHECK(cpu_step(&cpu) == 9 && cpu.pc == 0xA000);
+    CHECK(ram[0x1FC] == 5);
+
+    reset_fixture();
+    cpu.pc = 0x80FD;
+    fixture_memory[0x80FD] = 0xD0;
+    fixture_memory[0x80FE] = 2;
+    cpu.status &= ~INTERRUPT_FLAG;
+    irq_assert_cycle = 2;
+    CHECK(cpu_step(&cpu) == 11 && cpu.pc == 0xA000);
+    CHECK(ram[0x1FD] == 0x81 && ram[0x1FC] == 1);
+    return 0;
+}
+
+static void prepare_dmc(uint16_t address) {
+    apu.dmc.current_addr = address;
+    apu.dmc.bytes_remaining = 1;
+    apu.dmc.enabled = true;
+    apu.dmc.sample_buffer_empty = false;
+    apu.dmc.dma_pending = false;
+    apu.dmc.timer = 1000;
+}
+
+static int dma_arbitration(void) {
+    reset_fixture();
+    program(0xEE, 0, 0x90); // A pending read DMA cannot interrupt either RMW write.
+    fixture_memory[0x8003] = 0xEA;
+    fixture_memory[0x9000] = 1;
+    fixture_memory[0xC000] = 0x73;
+    prepare_dmc(0xC000);
+    dma_request_cycle = 4;
+    CHECK(cpu_step(&cpu) == 6 && apu_dmc_dma_pending(&apu));
+    CHECK(bus_count == 6 && bus_events[4].write && bus_events[5].write);
+    CHECK(bus_events[4].cycle == 5 && bus_events[5].cycle == 6);
+    CHECK(cpu_step(&cpu) == 5 && !apu_dmc_dma_pending(&apu));
+    CHECK(bus_events[8].addr == 0xC000 && bus_events[8].cycle == 9);
+    CHECK(apu.dmc.sample_buffer == 0x73);
+
+    reset_fixture();
+    program(0xEA, 0, 0);
+    prepare_dmc(0xC000);
+    apu.dmc.dma_pending = true;
+    apu.dmc.disable_delay = 1;
+    CHECK(cpu_step(&cpu) == 3); // Disabling during halt cancels the remaining DMA cycles.
+    CHECK(bus_count == 3 && bus_events[0].addr == 0x8000 && bus_events[1].addr == 0x8000);
+    CHECK(!apu_dmc_dma_pending(&apu) && apu.dmc.bytes_remaining == 0);
+
+    for (unsigned internal = 0; internal < 2; ++internal) {
+        reset_fixture();
+        program(0xAD, 0x16, 0x40);
+        pad1.buttons = 2;
+        write_mem(0x4016, 1);
+        write_mem(0x4016, 0);
+        uint16_t address = internal ? 0xC016 : 0xC000;
+        fixture_memory[address] = 0xE1;
+        prepare_dmc(address);
+        dma_request_cycle = 3;
+        CHECK(cpu_step(&cpu) == 8);
+        if (internal) {
+            // Repeated internal decoding holds the controller read line through the DMA get.
+            CHECK(cpu.a == 0xE0 && apu.dmc.sample_buffer == 0xE0);
+            CHECK(joypad_read(&pad1) == 1);
+        } else {
+            CHECK(cpu.a == 0xE1 && apu.dmc.sample_buffer == 0xE1);
+            CHECK(joypad_read(&pad1) == 0); // The halt read discarded A before the CPU read B.
+        }
+    }
+
+    reset_fixture();
+    program(0xEA, 0, 0);
+    memset(ppu.oam, 0, sizeof(ppu.oam));
+    for (unsigned i = 0; i < 256; ++i) ram[0x200 + i] = (uint8_t)(i ^ 0xA5);
+    fixture_memory[0xC000] = 0x73;
+    prepare_dmc(0xC000);
+    dma_request_cycle = 10;
+    write_mem(0x4014, 2);
+    CHECK(cpu_step(&cpu) == 518); // DMC consumes one OAM get slot and its following put slot.
+    CHECK(mapper_clocks == 518 && apu.cycle_in_seq == 518 && ppu.total_cycles == 1554);
+    CHECK(apu.dmc.sample_buffer == 0x73 && !apu_dmc_dma_pending(&apu));
+    for (unsigned i = 0; i < 256; ++i) {
+        uint8_t value = (uint8_t)(i ^ 0xA5);
+        CHECK(ppu.oam[i] == (i % 4 == 2 ? (value & 0xE3u) : value));
+    }
+
+    reset_fixture();
+    program(0x0E, 0x14, 0x40); // Both writes hit $4014; the second page replaces the first.
+    fixture_memory[0x8003] = 0xEA;
+    fixture_memory[0x8080] = 0x55;
+    CHECK(cpu_step(&cpu) == 6);
+    CHECK(cpu_step(&cpu) == 516);
+    CHECK(ppu.oam[0] == 0x0E && ppu.oam[0x80] == 0x55);
+    return 0;
+}
+
+static int dma_cycle_accounting(void) {
+    for (unsigned odd = 0; odd < 2; ++odd) {
+        reset_fixture();
+        cpu_total_cycles = odd;
+        program(0x9D, 0, 0x40); // Five-cycle STA $4000,X reaches $4014.
+        fixture_memory[0x8003] = 0xEA;
+        for (unsigned i = 0; i < 256; ++i) ram[0x200 + i] = (uint8_t)i;
+        memset(ppu.oam, 0, sizeof(ppu.oam));
+        cpu.x = 0x14;
+        cpu.a = 2;
+        CHECK(cpu_step(&cpu) == 5);
+        CHECK(ppu.oam[1] == 0); // Copying waits for the next CPU read.
+        CHECK(cpu_step(&cpu) == (int)(515 + odd));
+        CHECK(cpu.pc == 0x8004);
+        for (unsigned i = 0; i < 256; ++i)
+            CHECK(ppu.oam[i] == (uint8_t)((i % 4 == 2) ? (i & 0xE3u) : i));
+        CHECK(ppu.total_cycles == (520 + odd) * 3);
+    }
+    for (unsigned odd = 0; odd < 2; ++odd) {
+        reset_fixture();
+        cpu_total_cycles = odd;
+        program(0xEA, 0, 0);
+        fixture_memory[0xFFFF] = 0x75;
+        apu.dmc.current_addr = 0xFFFF;
+        apu.dmc.bytes_remaining = 1;
+        apu.dmc.dma_pending = true;
+        apu.dmc.irq_enable = true;
+        apu.dmc.timer = 1000;
+        CHECK(cpu_step(&cpu) == (int)(5 + odd));
+        CHECK(cpu_total_cycles == 5 + 2 * odd && apu.cycle_in_seq == 5 + odd);
+        CHECK(ppu.total_cycles == (5 + odd) * 3);
+        CHECK(apu.dmc.sample_buffer == 0x75 && !apu.dmc.sample_buffer_empty);
+        CHECK(apu.dmc.current_addr == 0x8000 && apu.dmc.bytes_remaining == 0);
+        CHECK(apu.dmc.irq_flag && !apu_dmc_dma_pending(&apu));
+        CHECK(bus_events[2 + odd].addr == 0xFFFF);
+        CHECK(bus_events[2 + odd].cycle == 3 + 2 * odd);
+    }
+    return 0;
+}
+
+int test_cpu_accuracy(void) {
+    static int (*const tests[])(void) = {
+        controller_latching, open_bus_and_cart_decoding, nop_and_zero_page_cycles,
+        xaa_immediate, unofficial_immediate_semantics, indexed_read_penalties,
+        indexed_rmw_bus_order, branch_bus_order, stack_and_indirect_jump,
+        interrupt_entry, irq_mask_latency, masked_store_addresses,
+        halt_and_reset, bus_cycle_interrupt_polling, dma_arbitration, dma_cycle_accounting,
+    };
+    Mapper *saved_cart = cart;
+    iNESHeader saved_header = ines_header;
+    int failures = 0;
+    size_t count = sizeof(tests) / sizeof(tests[0]);
+    for (size_t i = 0; i < count; ++i) failures += tests[i]();
+    cart = saved_cart;
+    ines_header = saved_header;
+    printf("CPU/joypad accuracy: %s (%zu groups, %d failing)\n", failures ? "FAIL" : "PASS", count, failures);
+    return failures;
+}

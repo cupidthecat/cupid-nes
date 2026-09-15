@@ -57,6 +57,8 @@ typedef enum {
 
 // Front door used by CPU/PPU
 uint8_t cart_cpu_read (uint16_t addr);
+// Resolve floating data lines against the CPU latch, without a data-byte sentinel.
+uint8_t cart_cpu_read_bus(uint16_t addr, uint8_t open_bus);
 void    cart_cpu_write(uint16_t addr, uint8_t v);
 uint8_t cart_ppu_read (uint16_t addr);
 void    cart_ppu_write(uint16_t addr, uint8_t v);
@@ -70,22 +72,31 @@ void    cart_nt_write(uint16_t addr, uint8_t v, uint8_t *nt_ram);
 bool cart_irq_pending(void);
 void cart_irq_ack(void);
 
-// Notify mapper about end-of-scanline timing event (used by MMC3 IRQ)
+// Notify physical PPU bus address changes using monotonic NTSC PPU cycles.
+// MMC3 qualifies A12 after three CPU clocks low; palette RAM is internal.
+void cart_notify_ppu_address(uint16_t addr, uint64_t ppu_cycle);
+// Legacy scanline hook; MMC3 uses the PPU address hook above.
 void cart_notify_scanline(void);
 // Optional early-scanline timing event (used by MMC5 timing tweaks)
 void cart_notify_scanline_early(void);
 // Notify mapper when vblank starts (MMC5 in-frame/IRQ state)
 void cart_notify_vblank_start(void);
 
-// Battery-backed PRG-RAM persistence (.sav)
+// Persist only nonvolatile memory: PRG in .sav, CHR in .chr.sav.
 void cart_battery_configure(const char *rom_path, bool has_battery);
 void cart_battery_flush(void);
 void cart_battery_shutdown(void);
+// Initialize the trainer window after PRG-RAM and battery data have been loaded.
+void cart_apply_trainer(const uint8_t trainer[512]);
 
-// Init from iNES 1.0 header + loaded PRG/CHR blobs
+// Init from iNES/NES 2.0 header + loaded PRG/CHR blobs.
+// Returns mapper number, or -1 without replacing the active cart on failure.
 int mapper_init_from_header(const iNESHeader *h,
                             uint8_t *prg, size_t prg_sz,
                             uint8_t *chr, size_t chr_sz);
+// Flush saves, eject the mapper, and release mapper-owned RAM.
+// The caller retains ownership of the PRG/CHR buffers passed to initialization.
+void mapper_shutdown(void);
 
 // Current mirroring for PPU (keeps your existing mirroring_mode in sync)
 Mirroring cart_get_mirroring(void);

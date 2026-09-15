@@ -27,6 +27,7 @@
 #define CPU_H
 
 #include <stdint.h>
+#include <stdbool.h>
 #include "../joypad/joypad.h"
 
 typedef struct { 
@@ -36,9 +37,7 @@ typedef struct {
     uint16_t pc;       // Program Counter
     uint8_t sp;        // Stack Pointer
     uint8_t status;    // Status register (NV-BDIZC)
-    uint8_t irq_delay; // IRQ delay 
-    uint8_t sei_delay; // SEI delay 
-    int extra_cycles;  // extra cycles 
+    bool halted;       // JAM stops instruction execution until reset
 } CPU;
 
 typedef enum {
@@ -63,13 +62,15 @@ extern uint64_t cpu_total_cycles;
 void cpu_reset(CPU* cpu);
 uint8_t read_mem(uint16_t addr);
 void write_mem(uint16_t addr, uint8_t value);
+// Timestamp of the current CPU bus cycle.
+uint64_t cpu_get_bus_cycle(void);
 void execute(CPU* cpu, uint8_t opcode);
+// Clocks CPU, PPU, APU and cartridge together; callers must not clock the PPU again.
 int cpu_step(CPU* cpu);
 void cpu_nmi(CPU *cpu);
+void cpu_set_nmi_line(bool asserted);
+// Inject an already-latched NMI for tests; hardware uses cpu_set_nmi_line.
 void cpu_request_nmi(void);
-void cpu_request_nmi_timed(bool defer_one_instruction);
-void cpu_request_nmi_timed_defer(uint8_t defer_boundaries);
-void cpu_schedule_oam_dma_stall(void);
 void cpu_irq(CPU *cpu);
 
 #endif // CPU_H

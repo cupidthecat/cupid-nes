@@ -1,0 +1,5 @@
+/build/
+/cupid-nes
+/cupid-nes.exe
+*.o
+*.d

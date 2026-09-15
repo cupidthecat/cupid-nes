@@ -31,14 +31,14 @@ void joypad_set(Joypad* jp, int btn, int pressed){
 }
   
 void joypad_write_strobe(Joypad* jp, uint8_t v){
+    uint8_t old_strobe = jp->strobe;
     jp->strobe = v & 1;
-    if (jp->strobe) jp->shift = jp->buttons; // while strobe=1, continually latch
-    else            jp->shift = jp->buttons; // snapshot on 1->0 (OK to write again)
+    if (old_strobe && !jp->strobe) jp->shift = jp->buttons;
 }
   
 uint8_t joypad_read(Joypad* jp){
+    if (jp->strobe) jp->shift = jp->buttons; // strobe high exposes the live A button
     uint8_t ret = (jp->shift & 1u);             // LSB first; CPU bus layer supplies open-bus bits
     if (!jp->strobe) jp->shift = (jp->shift >> 1) | 0x80; // shift in 1s after 8 reads
-    else             jp->shift = jp->buttons;             // strobe=1 -> always A
     return ret;
 }
