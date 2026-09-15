@@ -28,6 +28,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include "mapper.h"
+#include "../system/timing.h"
 
 extern uint64_t cpu_total_cycles;
 extern uint64_t cpu_get_bus_cycle(void);
@@ -61,8 +62,6 @@ static bool mapper_irq_line = false;
 static uint8_t cart_cpu_bus_input = 0xFF;
 static CartPpuFetchSource cart_ppu_fetch_source = CART_PPU_FETCH_CPU;
 static void mmc3_irq_clock(void);
-static void mmc5_scanline_clock(void);
-static void mmc5_vblank_start(void);
 
 #ifdef PPU_DEBUG_LOG
 static uint32_t mmc3_log_count = 0;
@@ -86,12 +85,24 @@ typedef struct {
 static RamBlock prg_work_ram, prg_save_ram;
 static bool prg_ram_dirty = false;
 static bool chr_ram_dirty = false;
+static uint8_t mmc5_exram[0x400];
+static bool mmc5_exram_dirty = false;
 static bool battery_enabled = false;
 static char *battery_save_path = NULL;
 static char *chr_save_path = NULL;
+static RamBlock *mmc5_ram_location(uint16_t a, size_t *offset);
 
 void cart_apply_trainer(const uint8_t trainer[512]) {
     if (!trainer) return;
+    if (cart == &mapper_mmc5) {
+        size_t offset = 0;
+        RamBlock *ram = mmc5_ram_location(0x7000, &offset);
+        if (ram && offset <= ram->size && 512 <= ram->size - offset) {
+            memcpy(ram->data + offset, trainer, 512);
+            if (ram == &prg_save_ram && battery_enabled) prg_ram_dirty = true;
+        }
+        return;
+    }
     RamBlock *ram = prg_work_ram.size >= 0x2000 ? &prg_work_ram : &prg_save_ram;
     if (ram->size >= 0x2000) {
         memcpy(ram->data + 0x1000, trainer, 512);
@@ -183,8 +194,29 @@ static void flush_battery(const char *path, const uint8_t *data, size_t size, bo
     *dirty = false;
 }
 
+static void flush_mmc5_battery(void) {
+    if (!battery_enabled || !battery_save_path || (!prg_ram_dirty && !mmc5_exram_dirty)) return;
+    FILE *fp = fopen(battery_save_path, "wb");
+    if (!fp) {
+        perror("battery save open");
+        return;
+    }
+    size_t prg_written = prg_save_ram.size
+        ? fwrite(prg_save_ram.data, 1, prg_save_ram.size, fp) : 0;
+    size_t exram_written = fwrite(mmc5_exram, 1, sizeof(mmc5_exram), fp);
+    int close_result = fclose(fp);
+    if (prg_written != prg_save_ram.size || exram_written != sizeof(mmc5_exram)
+        || close_result != 0) {
+        fprintf(stderr, "Failed to write battery save '%s'\n", battery_save_path);
+        return;
+    }
+    prg_ram_dirty = false;
+    mmc5_exram_dirty = false;
+}
+
 void cart_battery_flush(void) {
-    flush_battery(battery_save_path, prg_save_ram.data, prg_save_ram.size, &prg_ram_dirty);
+    if (cart == &mapper_mmc5) flush_mmc5_battery();
+    else flush_battery(battery_save_path, prg_save_ram.data, prg_save_ram.size, &prg_ram_dirty);
     flush_battery(chr_save_path, C.chr, C.ram.chr_nvram, &chr_ram_dirty);
 }
 
@@ -197,6 +229,7 @@ void cart_battery_shutdown(void) {
     battery_enabled = false;
     prg_ram_dirty = false;
     chr_ram_dirty = false;
+    mmc5_exram_dirty = false;
 }
 
 static void load_battery(const char *path, uint8_t *data, size_t size) {
@@ -207,6 +240,20 @@ static void load_battery(const char *path, uint8_t *data, size_t size) {
     size_t bytes_read = fread(data, 1, size, fp); // Short saves leave the remaining bytes zero.
     if (bytes_read < size && ferror(fp))
         fprintf(stderr, "Failed to read battery save '%s' (%zu/%zu bytes)\n", path, bytes_read, size);
+    fclose(fp);
+}
+
+static void load_mmc5_battery(const char *path) {
+    if (prg_save_ram.size) memset(prg_save_ram.data, 0, prg_save_ram.size);
+    memset(mmc5_exram, 0, sizeof(mmc5_exram));
+    if (!path) return;
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return;
+    size_t prg_read = prg_save_ram.size
+        ? fread(prg_save_ram.data, 1, prg_save_ram.size, fp) : 0;
+    if (prg_read == prg_save_ram.size)
+        (void)fread(mmc5_exram, 1, sizeof(mmc5_exram), fp);
+    if (ferror(fp)) fprintf(stderr, "Failed to read battery save '%s'\n", path);
     fclose(fp);
 }
 
@@ -221,7 +268,8 @@ void cart_battery_configure(const char *rom_path, bool has_battery) {
         return;
     }
     battery_enabled = battery_save_path || chr_save_path;
-    load_battery(battery_save_path, prg_save_ram.data, prg_save_ram.size);
+    if (cart == &mapper_mmc5) load_mmc5_battery(battery_save_path);
+    else load_battery(battery_save_path, prg_save_ram.data, prg_save_ram.size);
     load_battery(chr_save_path, C.chr, C.ram.chr_nvram);
 }
 
@@ -235,6 +283,8 @@ void mapper_shutdown(void) {
     memset(&C, 0, sizeof(C));
     mapper_irq_line = false;
     cart_ppu_fetch_source = CART_PPU_FETCH_CPU;
+    memset(mmc5_exram, 0, sizeof(mmc5_exram));
+    mmc5_exram_dirty = false;
 }
 
 // Helpers
@@ -270,15 +320,11 @@ void cart_notify_scanline(void) {
 }
 
 void cart_notify_scanline_early(void) {
-    if (cart == &mapper_mmc5) {
-        mmc5_scanline_clock();
-    }
+    // Kept for older PPU callers; MMC5 derives scanlines from physical reads.
 }
 
 void cart_notify_vblank_start(void) {
-    if (cart == &mapper_mmc5) {
-        mmc5_vblank_start();
-    }
+    // MMC5 leaves the in-frame state when three CPU clocks pass without a PPU read.
 }
 
 // ----------------- Mapper 0 (NROM) -------------------
@@ -696,6 +742,26 @@ static void mmc3_reset(void) {
 }
 
 // ----------------- Mapper 5 (MMC5/ExROM) -----------------
+typedef struct {
+    uint8_t duty;
+    uint8_t duty_pos;
+    uint8_t volume;
+    uint8_t envelope_decay;
+    uint8_t envelope_divider;
+    uint8_t length_counter;
+    uint8_t length_reload;
+    uint8_t length_previous;
+    uint8_t output;
+    uint16_t period;
+    uint16_t timer;
+    bool constant_volume;
+    bool envelope_loop;
+    bool length_halt;
+    bool new_length_halt;
+    bool envelope_start;
+    bool enabled;
+} Mmc5Pulse;
+
 static struct {
     uint8_t prg_mode;
     uint8_t chr_mode;
@@ -716,11 +782,161 @@ static struct {
     uint8_t irq_scanline;    // $5203
     uint8_t scanline_counter;
     bool in_frame;           // $5204 bit6
+    bool need_in_frame;
     bool irq_enabled;        // $5204 bit7
     bool irq_pending;
+    uint8_t ppu_idle_counter;
+    uint16_t last_ppu_read_addr;
+    uint8_t nt_read_counter;
+    uint8_t split_tile_number;
+    bool split_in_region;
+    uint16_t split_tile;
+    bool split_enabled;
+    bool split_right;
+    uint8_t split_delimiter;
+    uint8_t split_scroll;
+    uint8_t split_bank;
+    uint16_t exattr_last_nt_fetch;
+    uint8_t exattr_fetch_counter;
+    uint8_t exattr_chr_bank;
+    bool ppu_large_sprites;
+    Mmc5Pulse pulse[2];
+    unsigned audio_frame_counter;
+    bool pcm_read_mode;
+    bool pcm_irq_enabled;
+    bool pcm_irq_pending;
+    uint8_t pcm_output;
     Mirroring mirr;
-    uint8_t exram[0x400];
 } mmc5;
+
+static const uint8_t mmc5_duty[4][8] = {
+    {0, 0, 0, 0, 0, 0, 0, 1},
+    {0, 0, 0, 0, 0, 0, 1, 1},
+    {0, 0, 0, 0, 1, 1, 1, 1},
+    {1, 1, 1, 1, 1, 1, 0, 0}
+};
+
+static const uint8_t mmc5_length_table[32] = {
+    10, 254, 20, 2, 40, 4, 80, 6,
+    160, 8, 60, 10, 14, 12, 26, 14,
+    12, 16, 24, 18, 48, 20, 96, 22,
+    192, 24, 72, 26, 16, 28, 32, 30
+};
+
+static void mmc5_update_irq_line(void) {
+    mapper_irq_line = (mmc5.irq_enabled && mmc5.irq_pending)
+                   || (mmc5.pcm_irq_enabled && mmc5.pcm_irq_pending);
+}
+
+static uint8_t mmc5_pulse_volume(const Mmc5Pulse *pulse) {
+    if (!pulse->enabled || !pulse->length_counter) return 0;
+    if (!mmc5_duty[pulse->duty][pulse->duty_pos]) return 0;
+    return pulse->constant_volume ? pulse->volume : pulse->envelope_decay;
+}
+
+float cart_expansion_audio(void) {
+    if (cart != &mapper_mmc5) return 0.0f;
+    unsigned pulse = (unsigned)mmc5.pulse[0].output + (unsigned)mmc5.pulse[1].output;
+    unsigned raw = pulse * 3u + mmc5.pcm_output;
+    // Expansion audio is mixed linearly; the common mixer uses a gain of 14
+    // against the native nonlinear mixer's 5000-unit reference scale.
+    return -(float)raw * (14.0f / 5000.0f);
+}
+
+static void mmc5_clock_envelope(Mmc5Pulse *pulse) {
+    if (pulse->envelope_start) {
+        pulse->envelope_start = false;
+        pulse->envelope_decay = 15;
+        pulse->envelope_divider = pulse->volume;
+    } else if (pulse->envelope_divider) {
+        pulse->envelope_divider--;
+    } else {
+        pulse->envelope_divider = pulse->volume;
+        if (pulse->envelope_decay) pulse->envelope_decay--;
+        else if (pulse->envelope_loop) pulse->envelope_decay = 15;
+    }
+}
+
+static void mmc5_clock_pulse(Mmc5Pulse *pulse) {
+    if (pulse->timer) {
+        pulse->timer--;
+    } else {
+        pulse->duty_pos = (uint8_t)((pulse->duty_pos - 1u) & 7u);
+        pulse->output = mmc5_pulse_volume(pulse);
+        pulse->timer = (uint16_t)(pulse->period * 2u + 1u);
+    }
+}
+
+static void mmc5_audio_frame_clock(void) {
+    for (unsigned i = 0; i < 2; ++i) {
+        Mmc5Pulse *pulse = &mmc5.pulse[i];
+        if (pulse->length_counter && !pulse->length_halt) pulse->length_counter--;
+        mmc5_clock_envelope(pulse);
+    }
+}
+
+static void mmc5_reload_length(Mmc5Pulse *pulse) {
+    if (pulse->length_reload) {
+        if (pulse->length_counter == pulse->length_previous)
+            pulse->length_counter = pulse->length_reload;
+        pulse->length_reload = 0;
+    }
+    pulse->length_halt = pulse->new_length_halt;
+}
+
+static void mmc5_clock(int cpu_cycles) {
+    for (int cycle = 0; cycle < cpu_cycles; ++cycle) {
+        mmc5_clock_pulse(&mmc5.pulse[0]);
+        mmc5_clock_pulse(&mmc5.pulse[1]);
+        if (mmc5.audio_frame_counter) mmc5.audio_frame_counter--;
+        if (!mmc5.audio_frame_counter) {
+            mmc5.audio_frame_counter = (unsigned)(nes_timing()->cpu_hz / 240.0);
+            if (!mmc5.audio_frame_counter) mmc5.audio_frame_counter = 1;
+            mmc5_audio_frame_clock();
+        }
+        mmc5_reload_length(&mmc5.pulse[0]);
+        mmc5_reload_length(&mmc5.pulse[1]);
+        if (mmc5.ppu_idle_counter && --mmc5.ppu_idle_counter == 0)
+            mmc5.in_frame = false;
+    }
+}
+
+static void mmc5_pulse_write(unsigned channel, uint16_t addr, uint8_t value) {
+    Mmc5Pulse *pulse = &mmc5.pulse[channel];
+    switch (addr & 3u) {
+        case 0:
+            pulse->duty = value >> 6;
+            pulse->envelope_loop = (value & 0x20u) != 0;
+            pulse->new_length_halt = (value & 0x20u) != 0;
+            pulse->constant_volume = (value & 0x10u) != 0;
+            pulse->volume = value & 0x0Fu;
+            break;
+        case 1:
+            break; // These channels have no sweep unit.
+        case 2:
+            pulse->period = (uint16_t)((pulse->period & 0x0700u) | value);
+            break;
+        case 3:
+            pulse->period = (uint16_t)((pulse->period & 0x00FFu) | ((uint16_t)(value & 7u) << 8));
+            pulse->duty_pos = 0;
+            pulse->envelope_start = true;
+            if (pulse->enabled) {
+                pulse->length_reload = mmc5_length_table[value >> 3];
+                pulse->length_previous = pulse->length_counter;
+            }
+            break;
+    }
+}
+
+static void mmc5_pcm_write(uint8_t value) {
+    if (value == 0) {
+        mmc5.pcm_irq_pending = true;
+    } else {
+        mmc5.pcm_output = value;
+        mmc5.pcm_irq_pending = false;
+    }
+    mmc5_update_irq_line();
+}
 
 static inline uint8_t mmc5_nt_source(uint16_t addr) {
     uint16_t off = (uint16_t)((addr - 0x2000u) & 0x0FFFu);
@@ -739,8 +955,8 @@ static void mmc5_update_mirroring(uint8_t nt_control) {
     uint8_t n2 = (uint8_t)((nt_control >> 4) & 0x03);
     uint8_t n3 = (uint8_t)((nt_control >> 6) & 0x03);
 
-    // MMC5 supports per-nametable mapping (including EXRAM/fill), but this emulator
-    // currently exposes classic mirroring modes. Choose the closest classic mode.
+    // Nametable reads/writes honor all four MMC5 sources directly. Return a
+    // representative Mirroring value here for generic cartridge callers.
     if (n0 == 0 && n1 == 0 && n2 == 0 && n3 == 0) {
         mmc5.mirr = MIRROR_SINGLE0;
     } else if (n0 == 1 && n1 == 1 && n2 == 1 && n3 == 1) {
@@ -806,12 +1022,16 @@ static inline size_t mmc5_map_chr_bank_1k(uint16_t a) {
 
     uint8_t slot = (uint8_t)((a >> 10) & 0x07);
     bool use_bg_set = false;
-    if (cart_ppu_fetch_source == CART_PPU_FETCH_BG) {
-        // MMC5 uses $5128-$512B only for background in 8x16 sprite mode.
-        use_bg_set = true;
-    } else if (cart_ppu_fetch_source == CART_PPU_FETCH_CPU) {
-        // PPUDATA CHR reads/writes use the most recently written CHR register set.
-        use_bg_set = mmc5.chr_last_set_b;
+    if (mmc5.ppu_large_sprites) {
+        if (cart_ppu_fetch_source == CART_PPU_FETCH_BG) {
+            use_bg_set = true;
+        } else if (cart_ppu_fetch_source == CART_PPU_FETCH_CPU) {
+            // During rendering the mapper follows the current A/B fetch phase.
+            // Outside rendering PPUDATA uses the most recently written CHR set.
+            use_bg_set = mmc5.in_frame
+                ? !(mmc5.split_tile_number >= 32 && mmc5.split_tile_number < 48)
+                : mmc5.chr_last_set_b;
+        }
     }
 
     uint16_t reg = 0;
@@ -853,26 +1073,136 @@ static inline size_t mmc5_map_chr_bank_1k(uint16_t a) {
     return bank % chr_1k_banks;
 }
 
-static void mmc5_scanline_clock(void) {
-    if (!mmc5.in_frame) {
-        mmc5.in_frame = true;
-        mmc5.scanline_counter = 0;
-    } else {
-        mmc5.scanline_counter++;
-    }
-
-    // MMC5 sets pending on match regardless of enable; /IRQ is gated by enable.
-    if (mmc5.irq_scanline != 0 && mmc5.scanline_counter == mmc5.irq_scanline) {
-        mmc5.irq_pending = true;
-        if (mmc5.irq_enabled) mapper_irq_line = true;
-    }
+void cart_notify_ppu_ctrl_write(uint8_t value) {
+    if (cart != &mapper_mmc5) return;
+    mmc5.ppu_large_sprites = (value & 0x20u) != 0;
+    if (!mmc5.ppu_large_sprites) mmc5.chr_last_set_b = false;
 }
 
-static void mmc5_vblank_start(void) {
+static bool mmc5_is_nt_tile_fetch(uint16_t addr) {
+    return addr >= 0x2000 && addr <= 0x2FFF && (addr & 0x03FFu) < 0x03C0u;
+}
+
+static void mmc5_detect_scanline_start(uint16_t addr) {
+    if (mmc5.nt_read_counter >= 2) {
+        if (!mmc5.in_frame && !mmc5.need_in_frame) {
+            mmc5.need_in_frame = true;
+            mmc5.scanline_counter = 0;
+        } else {
+            mmc5.scanline_counter++;
+            if (mmc5.scanline_counter == mmc5.irq_scanline) {
+                mmc5.irq_pending = true;
+                mmc5_update_irq_line();
+            }
+        }
+    } else if (addr >= 0x2000 && addr <= 0x2FFF && mmc5.last_ppu_read_addr == addr) {
+        mmc5.nt_read_counter++;
+        if (mmc5.nt_read_counter >= 2) mmc5.split_tile_number = 0;
+    }
+
+    if (mmc5.last_ppu_read_addr != addr) mmc5.nt_read_counter = 0;
+}
+
+static void mmc5_begin_ppu_read(uint16_t addr) {
+    if (mmc5_is_nt_tile_fetch(addr)) {
+        mmc5.split_tile_number++;
+        if (!mmc5.in_frame && mmc5.need_in_frame) {
+            mmc5.need_in_frame = false;
+            mmc5.in_frame = true;
+        }
+    }
+    mmc5_detect_scanline_start(addr);
+    mmc5.ppu_idle_counter = 3;
+    mmc5.last_ppu_read_addr = addr;
+}
+
+static uint8_t mmc5_read_chr_raw(size_t offset) {
+    return C.chr_sz ? C.chr[offset % C.chr_sz] : 0;
+}
+
+static unsigned mmc5_split_vertical_scroll(void) {
+    unsigned scanline = mmc5.scanline_counter;
+    if (mmc5.split_tile_number >= 49) scanline++;
+    return (scanline + mmc5.split_scroll) % 240u;
+}
+
+static bool mmc5_split_nt_read(uint16_t addr, uint8_t *value) {
+    if (!mmc5.split_enabled || !mmc5.in_frame || mmc5.exram_mode > 1) return false;
+    unsigned vertical_scroll = mmc5_split_vertical_scroll();
+    unsigned column = (mmc5.split_tile_number + 2u) % 50u;
+    if (mmc5_is_nt_tile_fetch(addr)) {
+        if (column == 0) mmc5.split_in_region = !mmc5.split_right;
+        if (column == mmc5.split_delimiter && mmc5.split_tile_number < 50) {
+            mmc5.split_in_region = !mmc5.split_in_region;
+        } else if (column > 32) {
+            mmc5.split_in_region = false;
+        }
+        if (mmc5.split_in_region) {
+            mmc5.split_tile = (uint16_t)(((vertical_scroll & 0xF8u) << 2) | column);
+            *value = mmc5_exram[mmc5.split_tile & 0x03FFu];
+            return true;
+        }
+    } else if (addr >= 0x2000 && addr <= 0x2FFF && mmc5.split_in_region) {
+        unsigned shift = ((mmc5.split_tile >> 4) & 4u) | (mmc5.split_tile & 2u);
+        unsigned attr = 0x3C0u | ((mmc5.split_tile & 0x0380u) >> 4)
+                      | ((mmc5.split_tile & 0x001Fu) >> 2);
+        uint8_t palette = (uint8_t)((mmc5_exram[attr] >> shift) & 3u);
+        *value = (uint8_t)(palette * 0x55u);
+        return true;
+    }
+    return false;
+}
+
+static bool mmc5_split_chr_read(uint16_t addr, uint8_t *value) {
+    if (!mmc5.split_enabled || !mmc5.in_frame || mmc5.exram_mode > 1
+        || !mmc5.split_in_region) return false;
+    unsigned vertical_scroll = mmc5_split_vertical_scroll();
+    size_t chr_addr = ((size_t)mmc5.split_bank << 12)
+                    + ((((size_t)addr & ~(size_t)7u) | (vertical_scroll & 7u)) & 0x0FFFu);
+    *value = mmc5_read_chr_raw(chr_addr);
+    return true;
+}
+
+static bool mmc5_extended_attr_nt_read(uint16_t addr, uint8_t *value) {
+    if (mmc5.exram_mode != 1 || !mmc5.in_frame
+        || (mmc5.split_tile_number >= 32 && mmc5.split_tile_number < 48)) return false;
+    if (mmc5_is_nt_tile_fetch(addr)) {
+        mmc5.exattr_last_nt_fetch = addr & 0x03FFu;
+        mmc5.exattr_fetch_counter = 3;
+    } else if (mmc5.exattr_fetch_counter) {
+        mmc5.exattr_fetch_counter--;
+        if (mmc5.exattr_fetch_counter == 2) {
+            uint8_t ext = mmc5_exram[mmc5.exattr_last_nt_fetch];
+            mmc5.exattr_chr_bank = (uint8_t)((ext & 0x3Fu) | (mmc5.chr_upper << 6));
+            *value = (uint8_t)(((ext >> 6) & 3u) * 0x55u);
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool mmc5_extended_attr_chr_read(uint16_t addr, uint8_t *value) {
+    if (mmc5.exram_mode != 1 || !mmc5.in_frame
+        || (mmc5.split_tile_number >= 32 && mmc5.split_tile_number < 48)
+        || !mmc5.exattr_fetch_counter) return false;
+    mmc5.exattr_fetch_counter--;
+    if (mmc5.exattr_fetch_counter <= 1) {
+        size_t chr_addr = ((size_t)mmc5.exattr_chr_bank << 12) | (addr & 0x0FFFu);
+        *value = mmc5_read_chr_raw(chr_addr);
+        return true;
+    }
+    return false;
+}
+
+static void mmc5_clear_frame_irq_on_nmi_vector(void) {
     mmc5.in_frame = false;
+    mmc5.need_in_frame = false;
+    mmc5.ppu_idle_counter = 0;
+    mmc5.last_ppu_read_addr = 0;
+    mmc5.nt_read_counter = 0;
     mmc5.scanline_counter = 0;
     mmc5.irq_pending = false;
-    mapper_irq_line = false;
+    mmc5_update_irq_line();
 }
 
 static bool mmc5_ram_mapped(uint16_t a) {
@@ -916,18 +1246,29 @@ static RamBlock *mmc5_ram_location(uint16_t a, size_t *offset) {
 }
 
 static uint8_t mmc5_cpu_read(uint16_t a) {
-    if (a == 0xFFFA || a == 0xFFFB) mmc5_vblank_start();
+    if (a == 0xFFFA || a == 0xFFFB) mmc5_clear_frame_irq_on_nmi_vector();
+    if (a == 0x5010) {
+        uint8_t status = (uint8_t)((mmc5.pcm_irq_enabled && mmc5.pcm_irq_pending) ? 0x80u : 0u);
+        status |= 0x01u;
+        mmc5.pcm_irq_pending = false;
+        mmc5_update_irq_line();
+        return status;
+    }
+    if (a == 0x5015) {
+        return (uint8_t)((mmc5.pulse[0].length_counter ? 0x01u : 0u)
+                       | (mmc5.pulse[1].length_counter ? 0x02u : 0u));
+    }
     if (a >= 0x5C00 && a <= 0x5FFF) {
         uint8_t mode = (uint8_t)(mmc5.exram_mode & 0x03);
         if (mode == 0 || mode == 1) return cart_cpu_bus_input;
-        return mmc5.exram[a - 0x5C00u];
+        return mmc5_exram[a - 0x5C00u];
     }
     if (a == 0x5204) {
         uint8_t status = 0;
         if (mmc5.irq_pending) status |= 0x80;
         if (mmc5.in_frame) status |= 0x40;
         mmc5.irq_pending = false;
-        mapper_irq_line = false;
+        mmc5_update_irq_line();
         return status;
     }
     if (a == 0x5205) {
@@ -939,26 +1280,62 @@ static uint8_t mmc5_cpu_read(uint16_t a) {
         return (uint8_t)(product >> 8);
     }
 
+    uint8_t value;
     if (mmc5_ram_mapped(a)) {
         size_t offset = 0;
         RamBlock *ram = mmc5_ram_location(a, &offset);
-        return ram_read(ram, offset);
-    }
-    if (a >= 0x8000) {
+        value = ram_read(ram, offset);
+    } else if (a >= 0x8000) {
         size_t banks = mmc5_prg_bank_count_8k();
         if (banks == 0) return cart_cpu_bus_input;
 
         size_t slot = (size_t)((a - 0x8000u) >> 13); // 0..3
         size_t bank = mmc5_map_prg_slot_to_bank(slot);
-        return C.prg[bank * PRG_BANK_8K + (a & 0x1FFF)];
+        value = C.prg[bank * PRG_BANK_8K + (a & 0x1FFF)];
+    } else {
+        return cart_cpu_bus_input;
     }
-    return cart_cpu_bus_input;
+    if (mmc5.pcm_read_mode && a >= 0x8000 && a <= 0xBFFF) mmc5_pcm_write(value);
+    return value;
 }
 
 static void mmc5_cpu_write(uint16_t a, uint8_t v) {
+    if (a >= 0x5000 && a <= 0x5003) {
+        mmc5_pulse_write(0, a, v);
+        return;
+    }
+    if (a >= 0x5004 && a <= 0x5007) {
+        mmc5_pulse_write(1, a, v);
+        return;
+    }
+    if (a == 0x5010) {
+        mmc5.pcm_read_mode = (v & 0x01u) != 0;
+        mmc5.pcm_irq_enabled = (v & 0x80u) != 0;
+        mmc5_update_irq_line();
+        return;
+    }
+    if (a == 0x5011) {
+        if (!mmc5.pcm_read_mode) mmc5_pcm_write(v);
+        return;
+    }
+    if (a == 0x5015) {
+        for (unsigned i = 0; i < 2; ++i) {
+            bool enabled = (v & (1u << i)) != 0;
+            mmc5.pulse[i].enabled = enabled;
+            if (!enabled) mmc5.pulse[i].length_counter = 0;
+        }
+        return;
+    }
     if (a >= 0x5C00 && a <= 0x5FFF) {
         uint8_t mode = (uint8_t)(mmc5.exram_mode & 0x03);
-        if (mode != 3) mmc5.exram[a - 0x5C00u] = (mode <= 1 && !mmc5.in_frame) ? 0 : v;
+        if (mode != 3) {
+            size_t offset = a - 0x5C00u;
+            uint8_t value = (mode <= 1 && !mmc5.in_frame) ? 0 : v;
+            if (mmc5_exram[offset] != value) {
+                mmc5_exram[offset] = value;
+                if (battery_enabled) mmc5_exram_dirty = true;
+            }
+        }
         return;
     }
     if (a >= 0x6000) {
@@ -998,15 +1375,23 @@ static void mmc5_cpu_write(uint16_t a, uint8_t v) {
         mmc5.chr_last_set_b = false;
     } else if (a >= 0x5128 && a <= 0x512B) {
         mmc5.chr_regs_b[a - 0x5128] = (uint16_t)(v | ((uint16_t)(mmc5.chr_upper & 0x03) << 8));
-        mmc5.chr_last_set_b = true;
+        mmc5.chr_last_set_b = mmc5.ppu_large_sprites;
     } else if (a == 0x5130) {
         mmc5.chr_upper = v & 0x03;
+    } else if (a == 0x5200) {
+        mmc5.split_enabled = (v & 0x80u) != 0;
+        mmc5.split_right = (v & 0x40u) != 0;
+        mmc5.split_delimiter = v & 0x1Fu;
+    } else if (a == 0x5201) {
+        mmc5.split_scroll = v;
+    } else if (a == 0x5202) {
+        mmc5.split_bank = v;
     } else if (a == 0x5203) {
         mmc5.irq_scanline = v;
     } else if (a == 0x5204) {
         mmc5.irq_enabled = (v & 0x80) != 0;
         // Writing only toggles enable; pending state is retained.
-        mapper_irq_line = (mmc5.irq_enabled && mmc5.irq_pending);
+        mmc5_update_irq_line();
     } else if (a == 0x5205) {
         mmc5.mul_a = v;
     } else if (a == 0x5206) {
@@ -1016,6 +1401,10 @@ static void mmc5_cpu_write(uint16_t a, uint8_t v) {
 
 static uint8_t mmc5_ppu_read(uint16_t a) {
     a &= 0x1FFF;
+    mmc5_begin_ppu_read(a);
+    uint8_t value;
+    if (mmc5_split_chr_read(a, &value)) return value;
+    if (mmc5_extended_attr_chr_read(a, &value)) return value;
     size_t chr_1k_banks = C.chr_sz / CHR_BANK_1K;
     if (chr_1k_banks == 0) return nrom_ppu_read(a);
 
@@ -1036,28 +1425,20 @@ static void mmc5_ppu_write(uint16_t a, uint8_t v) {
 static Mirroring mmc5_mirr(void) { return mmc5.mirr; }
 static void mmc5_reset(void) {
     memset(&mmc5, 0, sizeof(mmc5));
-    mmc5.mirr = C.mirr_base;
+    memset(mmc5_exram, 0, sizeof(mmc5_exram));
+    mmc5_exram_dirty = false;
+    mmc5.mirr = MIRROR_SINGLE0;
     mmc5.prg_mode = 3;
-    mmc5.chr_mode = 3;
-    mmc5.irq_enabled = false;
-    mmc5.irq_pending = false;
-    mmc5.in_frame = false;
-    mmc5.scanline_counter = 0;
-    mmc5.exram_mode = 0;
-    mmc5.prg_ram_protect1 = 0;
-    mmc5.prg_ram_protect2 = 0;
-    mmc5.fill_tile = 0;
-    mmc5.fill_attr = 0;
-    mmc5.chr_last_set_b = false;
-
     mmc5.prg_regs[3] = 0xFF; // Reset vectors are in the last ROM bank.
-
-    for (int i = 0; i < 8; ++i) mmc5.chr_regs_a[i] = (uint16_t)i;
-    for (int i = 0; i < 4; ++i) mmc5.chr_regs_b[i] = (uint16_t)i;
+    mmc5_update_irq_line();
 }
 
 uint8_t cart_nt_read(uint16_t addr, uint8_t *nt_ram) {
     if (cart == &mapper_mmc5) {
+        mmc5_begin_ppu_read(addr);
+        uint8_t value;
+        if (mmc5_split_nt_read(addr, &value)) return value;
+        if (mmc5_extended_attr_nt_read(addr, &value)) return value;
         uint16_t off = (uint16_t)((addr - 0x2000u) & 0x0FFFu);
         uint16_t in  = (uint16_t)(off & 0x03FFu);
         uint8_t src = mmc5_nt_source(addr);
@@ -1067,7 +1448,7 @@ uint8_t cart_nt_read(uint16_t addr, uint8_t *nt_ram) {
             case 1: return nt_ram[0x400u + in];
             case 2:
                 if ((mmc5.exram_mode & 0x03) >= 2) return 0x00;
-                return mmc5.exram[in];
+                return mmc5_exram[in];
             case 3:
                 if (in < 0x03C0u) return mmc5.fill_tile;
                 return mmc5_fill_attr_byte();
@@ -1094,7 +1475,10 @@ void cart_nt_write(uint16_t addr, uint8_t v, uint8_t *nt_ram) {
                 return;
             case 2:
                 if ((mmc5.exram_mode & 0x03) >= 2) return;
-                mmc5.exram[in] = v;
+                if (mmc5_exram[in] != v) {
+                    mmc5_exram[in] = v;
+                    if (battery_enabled) mmc5_exram_dirty = true;
+                }
                 return;
             case 3:
                 // Fill mode is controlled by $5106/$5107.
@@ -1438,7 +1822,7 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         case 1: case 9: case 10: case 11: chr_limit = 0x20000; break;
         case 3: chr_limit = 0x200000; break;
         case 4: chr_limit = 0x40000; break;
-        case 5: chr_limit = 0x800000; break;
+        case 5: chr_limit = 0x100000; break;
         case 13: chr_limit = 0x4000; break;
         default: chr_limit = 0x2000; break;
     }
@@ -1481,6 +1865,10 @@ int mapper_init_from_header(const iNESHeader *h,
     RomRamSizes ram;
     rom_ram_sizes(h, &ram);
     bool chr_is_ram = h->chr_rom_chunks == 0 && (!nes2 || (h->flags9 & 0xF0) == 0);
+    if (mapper_no == 5 && (prg_sz > 0x100000 || (!chr_is_ram && chr_sz > 0x100000))) {
+        fprintf(stderr, "Unsupported ROM size for mapper 5\n");
+        return -1;
+    }
     if (!ram_geometry_supported(mapper_no, nes2, &ram, chr_is_ram, chr_sz)
         || (mapper_no == 4 && submapper == 1 && ram.prg_ram + ram.prg_nvram != 0x400)) {
         fprintf(stderr, "Unsupported RAM layout for mapper %d (PRG %zu+%zu, CHR %zu+%zu)\n",
@@ -1554,6 +1942,7 @@ int mapper_init_from_header(const iNESHeader *h,
         case 5:
             build_mapper(&mapper_mmc5, mmc5_cpu_read, mmc5_cpu_write,
                         mmc5_ppu_read, mmc5_ppu_write, mmc5_reset, mmc5_mirr);
+            mapper_mmc5.clock = mmc5_clock;
             cart = &mapper_mmc5;
             break;
         case 7:

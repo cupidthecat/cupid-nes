@@ -30,6 +30,7 @@
 #include <limits.h>
 #include "rom.h"
 #include "mapper.h"
+#include "../system/timing.h"
 
 #define PRG_ROM_BANK_SIZE 0x4000  // 16KB
 #define CHR_ROM_BANK_SIZE 0x2000  // 8KB
@@ -55,6 +56,38 @@ int rom_mapper_number(const iNESHeader *h) {
         return mapper_no | (h->flags7 & 0xF0) | ((h->prg_ram_size & 0x0F) << 8);
     if ((h->flags7 & 0x0C) == 0) mapper_no |= h->flags7 & 0xF0;
     return mapper_no;
+}
+
+static int rom_console_supported(const iNESHeader *h) {
+    if (is_nes20(h)) {
+        unsigned console = h->flags7 & 0x03u;
+        if (console == 0) return 1;
+        // Extended console type 0 still identifies a regular NES/Famicom-family machine.
+        return console == 3 && (h->zero[2] & 0x0Fu) == 0;
+    }
+    // Archaic headers have unreliable byte 7 contents.  Only clean iNES headers
+    // use its low bits as the VS/PlayChoice console selector.
+    if ((h->flags7 & 0x0Cu) == 0)
+        return (h->flags7 & 0x03u) == 0;
+    return 1;
+}
+
+static NesRegion rom_region(const iNESHeader *h) {
+    if (is_nes20(h)) {
+        switch (h->zero[1] & 0x03u) {
+            case 1: return NES_REGION_PAL;
+            case 3: return NES_REGION_DENDY;
+            case 0:
+            case 2:
+            default:
+                return NES_REGION_NTSC;
+        }
+    }
+    if ((h->flags7 & 0x0Cu) == 0)
+        return (h->flags9 & 0x01u) ? NES_REGION_PAL : NES_REGION_NTSC;
+    // Archaic iNES headers use byte 7 inconsistently, so later bytes cannot
+    // be trusted as timing metadata.
+    return NES_REGION_NTSC;
 }
 
 static int nes20_rom_size(uint8_t low, uint8_t high, size_t unit, size_t *size) {
@@ -83,7 +116,10 @@ int rom_ram_sizes(const iNESHeader *header, RomRamSizes *sizes) {
         sizes->chr_ram = nes20_ram_size(header->zero[0] & 0x0F);
         sizes->chr_nvram = nes20_ram_size(header->zero[0] >> 4);
     } else {
-        size_t prg_ram_bytes = (size_t)(header->prg_ram_size ? header->prg_ram_size : 1) * 0x2000;
+        // Unknown legacy MMC5 boards expose all eight 8KB RAM banks.  Other
+        // iNES boards use the format's conventional 8KB default when byte 8 is zero.
+        size_t default_units = rom_mapper_number(header) == 5 ? 8u : 1u;
+        size_t prg_ram_bytes = (size_t)(header->prg_ram_size ? header->prg_ram_size : default_units) * 0x2000;
         if (header->flags6 & 2) sizes->prg_nvram = prg_ram_bytes;
         else sizes->prg_ram = prg_ram_bytes;
         if (!header->chr_rom_chunks)
@@ -101,6 +137,10 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
     memcpy(&header, data, sizeof(header));
     if (memcmp(header.signature, "NES\x1A", 4) != 0) {
         fprintf(stderr, "Invalid iNES signature\n");
+        return -1;
+    }
+    if (!rom_console_supported(&header)) {
+        fprintf(stderr, "Unsupported NES console type\n");
         return -1;
     }
 
@@ -179,6 +219,7 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
     cart_battery_configure(filename, filename && (header.flags6 & 0x02));
     if (trainer) cart_apply_trainer(trainer);
     mirroring_mode = (int)cart_get_mirroring();
+    nes_set_region(rom_region(&header));
 
     printf("Mapper: %d  (CHR %s)\n", mapper_no, rom_chr_size ? "ROM" : "RAM");
     return 0;
@@ -196,6 +237,7 @@ void unload_rom(void) {
     prg_size = chr_size = 0;
     memset(&ines_header, 0, sizeof(ines_header));
     mirroring_mode = 0;
+    nes_set_region(NES_REGION_NTSC);
 }
 
 int load_rom(const char *filename) {

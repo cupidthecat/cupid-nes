@@ -15,6 +15,8 @@ GROUPS = (
     ("apu_test/rom_singles", 8),
     ("ppu_vbl_nmi/rom_singles", 10),
     ("sprdma_and_dmc_dma", 2),
+    ("cpu_reset", 2),
+    ("apu_reset", 6),
 )
 INDIVIDUAL_ROMS = (
     "ppu_open_bus/ppu_open_bus.nes",
@@ -29,6 +31,10 @@ MMC3_ROMS = (
     "3-A12_clocking.nes",
     "4-scanline_timing.nes",
     "5-MMC3.nes",
+)
+LEGACY_GROUPS = (
+    ("sprite_hit_tests_2005.10.05", 11),
+    ("sprite_overflow_tests", 5),
 )
 
 
@@ -45,7 +51,16 @@ def run_checks(binary: Path, root: Path) -> int:
     trace_rom = root / "other/nestest.nes"
     trace_log = root / "other/nestest.log"
     mmc3_roms = [root / "mmc3_test_2/rom_singles" / name for name in MMC3_ROMS]
-    for path in [trace_rom, trace_log, *roms, *mmc3_roms]:
+    pal_roms = sorted((root / "pal_apu_tests").glob("*.nes"))
+    if len(pal_roms) != 10:
+        raise ValueError(f"pal_apu_tests: expected 10 ROMs, found {len(pal_roms)}")
+    sprite_roms = []
+    for directory, expected in LEGACY_GROUPS:
+        group = sorted((root / directory).glob("*.nes"))
+        if len(group) != expected:
+            raise ValueError(f"{directory}: expected {expected} ROMs, found {len(group)}")
+        sprite_roms.extend(group)
+    for path in [trace_rom, trace_log, *roms, *mmc3_roms, *pal_roms, *sprite_roms]:
         if not path.is_file():
             raise FileNotFoundError(path)
 
@@ -61,7 +76,17 @@ def run_checks(binary: Path, root: Path) -> int:
     mapper_tests = subprocess.run(
         [str(binary), "--mmc3-rom", "1200", *(str(path) for path in mmc3_roms)], timeout=180
     )
-    return 1 if diagnostics.returncode or mapper_tests.returncode else 0
+    # These older PAL images have NTSC headers and report through $F8, after
+    # entering a terminal JMP loop. The explicit mode checks both conditions.
+    pal_tests = subprocess.run(
+        [str(binary), "--legacy-pal-rom", "1200", *(str(path) for path in pal_roms)], timeout=180
+    )
+    # The sprite suites use the same final-result convention, with header timing.
+    sprite_tests = subprocess.run(
+        [str(binary), "--legacy-rom", "1200", *(str(path) for path in sprite_roms)], timeout=180
+    )
+    return 1 if any(result.returncode for result in
+                    (diagnostics, mapper_tests, pal_tests, sprite_tests)) else 0
 
 
 def main() -> int:

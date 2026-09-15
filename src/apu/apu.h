@@ -27,6 +27,7 @@
 #define APU_H
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdatomic.h>
 // NTSC APU frame-sequencer constants (CPU cycles)
 #define APU_4STEP_PERIOD 29830u
 #define APU_5STEP_PERIOD 37282u
@@ -44,7 +45,7 @@ typedef struct {
 typedef struct {
     // Sweep (pulse only)
     bool    enabled;
-    uint8_t period;    // divider period (0..7)
+    uint8_t period;    // divider period (1..8 after a register write)
     bool    negate;
     uint8_t shift;     // 0..7
     uint8_t divider;   // internal sweep divider
@@ -170,13 +171,15 @@ typedef struct {
     // Lockless ring buffer (very simple)
     #define APU_RING_CAP 8192
     float    ring[APU_RING_CAP];
-    volatile uint32_t ring_w;
-    volatile uint32_t ring_r;
+    _Atomic uint32_t ring_w;
+    _Atomic uint32_t ring_r;
 } APU;
 
 extern APU apu;
 
 // lifecycle
+void apu_power_on(APU *a);
+void apu_soft_reset(APU *a);
 void apu_reset(APU *a);
 void apu_audio_init(int sample_rate);
 

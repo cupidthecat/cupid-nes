@@ -1,6 +1,6 @@
 # Cupid NES Emulator
 
-Cupid is an NTSC NES emulator written in C, with SDL2 for video, input, and audio.
+Cupid is an NES emulator written in C, with NTSC, PAL, and Dendy timing and SDL2 for video, input, and audio.
 
 <p align="center">
   <img src="img/smb33.png" alt="Super Mario Bros. 3 gameplay">
@@ -40,13 +40,17 @@ The CPU clocks the PPU, APU, and cartridge during each bus access. `cpu_step` re
 
 The CPU core includes official and undocumented opcodes, page-crossing and read-modify-write bus accesses, interrupt polling, BRK vector hijacking, and JAM behavior. OAM and DMC transfers share the CPU bus, including halt, alignment, and overlap behavior. Controller reads preserve floating data lines and use the strobe and serial shift registers.
 
-The PPU renders 256 by 240 pixels across 262 NTSC scanlines. Background and sprite pattern reads occur in their scheduled fetch slots. Sprite evaluation, overflow, clipping, priority, and sprite-zero hits use that pipeline. Register handling includes palette mirrors, buffered reads, open bus, rendering-time address increments, and vblank/NMI edge handling. Rendered odd frames skip one pre-render clock.
+The ROM header selects the timing region. NTSC frames have 262 scanlines; PAL and Dendy frames have 312. PAL uses a 3.2:1 PPU/CPU clock ratio, while NTSC and Dendy use 3:1. Dendy starts vblank later in its frame. Dual-region NES 2.0 images default to NTSC.
+
+The PPU renders 256 by 240 pixels. Background and sprite pattern reads occur in their scheduled fetch slots. Sprite evaluation, overflow, clipping, priority, and sprite-zero hits use that pipeline. Sprite pattern shifters hold their remaining bits when rendering stops. Register handling includes palette mirrors, delayed address writes and buffered memory transfers, consecutive-read suppression, open bus, rendering-time address increments, and vblank/NMI edges. Only rendered NTSC odd frames skip a pre-render clock. PAL includes its vblank OAM refresh and PAL/Dendy color-emphasis wiring.
 
 The APU implements two pulse channels, triangle, noise, and DMC. It includes envelopes, length and linear counters, sweep units, the four- and five-step frame sequences, frame and DMC interrupts, and nonlinear channel mixing. DMC reads are fulfilled through the CPU DMA engine. The triangle DAC retains its value when its sequencer stops.
 
+PAL uses its own noise/DMC periods, frame-sequencer timing, and DMA start rules. Dendy uses the NTSC APU periods at its CPU clock rate. Power-on and soft reset have separate APIs. CPU reset performs its seven bus reads and stack-pointer decrements; soft reset preserves CPU registers and RAM, PPU memory, and cartridge state.
+
 ### Cartridges
 
-The loader reads iNES and NES 2.0 headers, checks payload lengths and size overflows, and handles trainers, CHR RAM, declared RAM capacities, and persistent memory. A failed load leaves the previous cartridge intact. Unsupported mapper numbers, submappers, and RAM layouts return an error.
+The loader reads iNES and NES 2.0 headers, checks payload lengths and size overflows, and handles trainers, CHR RAM, declared RAM capacities, and persistent memory. A failed load leaves the previous cartridge and timing region intact. Unsupported console types, mapper numbers, submappers, and RAM layouts return an error.
 
 | Mapper | Board family | Implemented behavior |
 | --- | --- | --- |
@@ -55,7 +59,7 @@ The loader reads iNES and NES 2.0 headers, checks payload lengths and size overf
 | 2 | UxROM | Switchable 16 KiB PRG bank and fixed upper bank |
 | 3 | CNROM | CHR bank selection |
 | 4 | MMC3 / MMC6 | PRG/CHR banking, filtered PPU A12 IRQ clocks, and RAM protection; NES 2.0 submapper 1 selects MMC6 |
-| 5 | MMC5, partial | PRG/CHR banking, banked RAM, ExRAM/fill nametables, multiplication, and scanline IRQ state |
+| 5 | MMC5, partial | PRG/CHR banking, banked RAM, ExRAM/fill nametables, extended attributes, vertical split, multiplication, PPU-read-driven scanline IRQs, and pulse/PCM audio |
 | 7 | AxROM | 32 KiB PRG banking and single-screen mirroring |
 | 9 | MMC2 | PRG banking and pattern-fetch CHR latches |
 | 10 | MMC4 | PRG banking and pattern-fetch CHR latches |
@@ -76,7 +80,7 @@ A battery-backed cartridge uses files beside its ROM:
 
 Only declared nonvolatile memory is persisted. Save sizes follow the supported cartridge layout; the previous 8 KiB PRG save format remains usable for 8 KiB cartridges. Saves load when a cartridge opens and flush when it is replaced or the emulator exits normally.
 
-For iNES headers, a zero PRG-RAM size means the conventional 8 KiB default. NES 2.0 declares volatile and nonvolatile RAM separately. The memory-loading API used by diagnostic tests does not create save files.
+For most iNES boards, a zero PRG-RAM size means the conventional 8 KiB default. An unspecified legacy MMC5 board defaults to 64 KiB. Its battery save appends the 1 KiB ExRAM contents after PRG NVRAM; a shorter existing save leaves the remaining memory zero-filled. NES 2.0 declares volatile and nonvolatile RAM separately. The memory-loading API used by diagnostic tests does not create save files.
 
 ## Controls
 
@@ -109,25 +113,27 @@ git -C build/diagnostic-roms checkout 95d8f621ae55cee0d09b91519a8989ae0e64753b
 python3 scripts/run-diagnostics.py build/accuracy-tests build/diagnostic-roms
 ```
 
-On Windows, use `python` and `build/windows/accuracy-tests.exe`. The same script checks 8,991 canonical CPU states and runs 52 diagnostic ROMs, followed by five MMC3 diagnostics with explicit result-RAM initialization. It checks that every expected ROM is present and returns failure for a failed or unfinished run. The trace covers 225 opcode values; the hardware regression suite supplies additional opcode cases.
+On Windows, use `python` and `build/windows/accuracy-tests.exe`. The same script checks 8,991 canonical CPU states and runs 91 diagnostic ROMs: 60 ordinary diagnostics, five MMC3 tests with explicit result-RAM initialization, ten older PAL APU tests with explicit PAL timing, and sixteen sprite-hit/overflow tests. It checks that every expected ROM is present and returns failure for a failed or unfinished run. The trace covers 225 opcode values; the hardware regression suite supplies additional opcode cases.
 
 Individual runs are available through the test executable:
 
 ```sh
 build/accuracy-tests --trace path/to/nestest.nes path/to/nestest.log
 build/accuracy-tests --rom 7200 path/to/test.nes
+build/accuracy-tests --legacy-pal-rom 1200 path/to/pal_apu_test.nes
+build/accuracy-tests --legacy-rom 1200 path/to/sprite_hit_test.nes
 build/accuracy-tests --render 240 path/to/test.nes build/test.ppm
 ```
 
-The ROM runner recognizes the `DE B0 61` signature and status byte at `$6000`. A timeout, a reset request, or an absent result protocol is not a pass. Older tests that report only on screen need visual inspection. See [accuracy notes](docs/accuracy.md) for coverage and remaining limits.
+The ROM runner recognizes the `DE B0 61` signature and status byte at `$6000`. It honors reset requests after at least 100 milliseconds of emulated time, then waits for a new request instead of repeatedly resetting on the preserved byte. Timeouts and missing result protocols remain failures. The older PAL suite uses a separate result convention; other tests that report only on screen need visual inspection. See [accuracy notes](docs/accuracy.md) for coverage and remaining limits.
 
 GitHub Actions builds the emulator and tests with GCC and with Clang sanitizers, then runs the same pinned trace and ROM checks. The old `src/tests/cpu_test.c` harness is excluded because its writable-ROM assumptions do not match the cartridge bus.
 
 ## Scope
 
-The target is the NTSC 2A03/2C02 system with standard controllers. PAL/Dendy timing, VS hardware, the Famicom Disk System, expansion controllers, and expansion audio are not implemented. MMC5 support is incomplete, including extended-attribute/vertical-split rendering and expansion sound. Other mapper families and unimplemented board variants remain unsupported.
+The implemented systems use NTSC, PAL, or Dendy timing with standard controllers and the cartridge families listed above. VS hardware, the Famicom Disk System, expansion controllers, other expansion-audio chips, and additional mapper families remain unsupported. MMC5 PCM status models the MMC5A revision. Its auxiliary I/O and `$5209/$520A` timer registers remain unimplemented; earlier revision differences and undocumented behavior are not fully covered.
 
-Passing the listed tests does not establish complete hardware equivalence. Additional PPU register-pipeline behavior, power-on/reset details, analog effects, and uncommon DMA/mapper edge cases still need coverage. Unstable undocumented opcodes use a fixed silicon model.
+Passing the listed tests does not establish complete hardware equivalence. OAM decay/corruption, silicon-dependent startup behavior, analog effects, and uncommon DMA/mapper alignments still need coverage. Unstable undocumented opcodes use a fixed silicon model.
 
 ## License and hardware documentation
 

@@ -7,6 +7,7 @@
 #include "../apu/apu.h"
 #include "../ppu/ppu.h"
 #include "../rom/mapper.h"
+#include "../system/timing.h"
 
 extern uint8_t ram[0x0800];
 
@@ -24,6 +25,8 @@ static BusEvent bus_events[1024];
 static size_t bus_count;
 static uint64_t mapper_clocks;
 static uint64_t nmi_assert_cycle, nmi_clear_cycle, irq_assert_cycle, dma_request_cycle;
+
+static void prepare_dmc(uint16_t address);
 
 #define CHECK(condition) do { \
     if (!(condition)) { \
@@ -79,7 +82,7 @@ static Mapper fixture_mapper = {
     .clock = fixture_clock,
 };
 
-static void reset_fixture(void) {
+static void reset_fixture_region(NesRegion region) {
     memset(fixture_memory, 0, sizeof(fixture_memory));
     memset(ram, 0, 0x0800);
     memset(&cpu, 0, sizeof(cpu));
@@ -90,14 +93,29 @@ static void reset_fixture(void) {
     cart_irq_ack();
     mapper_clocks = 0;
     nmi_assert_cycle = nmi_clear_cycle = irq_assert_cycle = dma_request_cycle = 0;
+    nes_set_region(region);
     cpu_total_cycles = 0;
-    apu_reset(&apu);
-    ppu_reset(&ppu);
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
     fixture_memory[0xFFFB] = 0x90;
     fixture_memory[0xFFFD] = 0x80;
     fixture_memory[0xFFFF] = 0xA0;
-    cpu_reset(&cpu);
+    cpu_power_on(&cpu);
+
+    // Instruction-level regressions use a zero-based timeline after separately
+    // validating the physical power-on sequence.
+    cpu_total_cycles = 0;
+    mapper_clocks = 0;
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    apu.frame_reset_pending = false;
+    apu.frame_reset_delay = 0;
+    apu.cycle_in_seq = 0;
     bus_count = 0;
+}
+
+static void reset_fixture(void) {
+    reset_fixture_region(NES_REGION_NTSC);
 }
 
 static void program(uint8_t op, uint8_t lo, uint8_t hi) {
@@ -615,6 +633,61 @@ static int masked_store_addresses(void) {
     return 0;
 }
 
+static int reset_bus_sequence(void) {
+    reset_fixture();
+    cpu.a = 0x11;
+    cpu.x = 0x22;
+    cpu.y = 0x33;
+    cpu.pc = 0x8123;
+    cpu.sp = 0x44;
+    cpu.status = CARRY_FLAG | ZERO_FLAG | DECIMAL_FLAG | BREAK_FLAG;
+    cpu.halted = true;
+    fixture_memory[0xFFFC] = 0x34;
+    fixture_memory[0xFFFD] = 0x92;
+    write_mem(0x4014, 2);
+    apu.dmc.dma_pending = true;
+    apu.dmc.bytes_remaining = 1;
+    bus_count = 0;
+    mapper_clocks = 0;
+    cpu_total_cycles = 0;
+
+    ppu_soft_reset(&ppu);
+    apu_soft_reset(&apu);
+    cpu_soft_reset(&cpu);
+
+    CHECK(cpu_total_cycles == 7 && mapper_clocks == 7);
+    CHECK(cpu.a == 0x11 && cpu.x == 0x22 && cpu.y == 0x33);
+    CHECK(cpu.sp == 0x41 && cpu.pc == 0x9234 && !cpu.halted);
+    CHECK(cpu.status == (CARRY_FLAG | ZERO_FLAG | DECIMAL_FLAG | INTERRUPT_FLAG | UNUSED_FLAG));
+    CHECK(bus_count == 4);
+    CHECK(bus_events[0].addr == 0x8123 && bus_events[1].addr == 0x8123);
+    CHECK(bus_events[2].addr == 0xFFFC && bus_events[3].addr == 0xFFFD);
+    CHECK(!apu_dmc_dma_pending(&apu));
+    fixture_memory[0x9234] = 0xEA;
+    CHECK(cpu_step(&cpu) == 2 && cpu.pc == 0x9235);
+
+    cpu.a = 0xAA;
+    cpu.x = 0xBB;
+    cpu.y = 0xCC;
+    cpu.pc = 0x8123;
+    cpu.sp = 0x55;
+    cpu.status = 0xFF;
+    cpu_total_cycles = 99;
+    mapper_clocks = 0;
+    bus_count = 0;
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    fixture_memory[0xFFFC] = 0x00;
+    fixture_memory[0xFFFD] = 0x80;
+    cpu_power_on(&cpu);
+    CHECK(cpu_total_cycles == 7 && mapper_clocks == 7);
+    CHECK(cpu.a == 0 && cpu.x == 0 && cpu.y == 0);
+    CHECK(cpu.sp == 0xFD && cpu.pc == 0x8000);
+    CHECK(cpu.status == (INTERRUPT_FLAG | UNUSED_FLAG));
+    CHECK(bus_count == 2 && bus_events[0].addr == 0xFFFC && bus_events[1].addr == 0xFFFD);
+    return 0;
+}
+
 static int halt_and_reset(void) {
     static const uint8_t ops[] = {0x02,0x12,0x22,0x32,0x42,0x52,0x62,0x72,0x92,0xB2,0xD2,0xF2};
     for (size_t i = 0; i < sizeof(ops); ++i) {
@@ -628,11 +701,42 @@ static int halt_and_reset(void) {
         CHECK(cpu_step(&cpu) == 1);
         CHECK(cpu.pc == 0x8000 && cpu.sp == 0xFD && cpu.x == 0);
         cpu.status |= BREAK_FLAG;
-        cpu_reset(&cpu);
+        cpu_soft_reset(&cpu);
         CHECK(!cpu.halted && !(cpu.status & BREAK_FLAG) && (cpu.status & UNUSED_FLAG));
         fixture_memory[0x8000] = 0xEA;
         CHECK(cpu_step(&cpu) == 2 && cpu.pc == 0x8001);
     }
+    return 0;
+}
+
+static int regional_bus_timing_and_pal_dma(void) {
+    static const NesRegion regions[] = {NES_REGION_NTSC, NES_REGION_PAL, NES_REGION_DENDY};
+    static const uint64_t first_read_dot[] = {2, 1, 2};
+    for (size_t i = 0; i < sizeof(regions) / sizeof(regions[0]); ++i) {
+        reset_fixture_region(regions[i]);
+        program(0xEA, 0, 0);
+        CHECK(cpu_step(&cpu) == 2);
+        CHECK(bus_count == 2);
+        CHECK(bus_events[0].ppu_cycle == first_read_dot[i]);
+        CHECK(ppu.total_cycles == 6);
+        CHECK(mapper_clocks == 2 && apu.cycle_in_seq == 2);
+    }
+
+    reset_fixture_region(NES_REGION_PAL);
+    program(0xAD, 0x00, 0x90);
+    fixture_memory[0x8003] = 0xEA;
+    fixture_memory[0x9000] = 0x5A;
+    fixture_memory[0xC000] = 0x73;
+    prepare_dmc(0xC000);
+    dma_request_cycle = 2;
+    CHECK(cpu_step(&cpu) == 4 && cpu.a == 0x5A);
+    CHECK(apu_dmc_dma_pending(&apu));
+    CHECK(cpu_step(&cpu) == 5 && cpu.pc == 0x8004);
+    CHECK(!apu_dmc_dma_pending(&apu) && apu.dmc.sample_buffer == 0x73);
+    CHECK(bus_events[4].addr == 0x8003 && bus_events[5].addr == 0x8003);
+    CHECK(bus_events[6].addr == 0xC000 && bus_events[7].addr == 0x8003);
+
+    nes_set_region(NES_REGION_NTSC);
     return 0;
 }
 
@@ -854,7 +958,8 @@ int test_cpu_accuracy(void) {
         xaa_immediate, unofficial_immediate_semantics, indexed_read_penalties,
         indexed_rmw_bus_order, branch_bus_order, stack_and_indirect_jump,
         interrupt_entry, irq_mask_latency, masked_store_addresses,
-        halt_and_reset, bus_cycle_interrupt_polling, dma_arbitration, dma_cycle_accounting,
+        reset_bus_sequence, halt_and_reset, regional_bus_timing_and_pal_dma,
+        bus_cycle_interrupt_polling, dma_arbitration, dma_cycle_accounting,
     };
     Mapper *saved_cart = cart;
     iNESHeader saved_header = ines_header;

@@ -63,6 +63,10 @@ void    cart_cpu_write(uint16_t addr, uint8_t v);
 uint8_t cart_ppu_read (uint16_t addr);
 void    cart_ppu_write(uint16_t addr, uint8_t v);
 void    cart_set_ppu_fetch_source(CartPpuFetchSource src);
+// Notify an exact CPU write to $2000. MMC5 does not observe PPU register mirrors.
+void    cart_notify_ppu_ctrl_write(uint8_t value);
+// Current cartridge expansion-audio contribution, zero when the board has none.
+float   cart_expansion_audio(void);
 
 // Mapper-aware nametable access ($2000-$2FFF decoded by PPU)
 uint8_t cart_nt_read (uint16_t addr, uint8_t *nt_ram);
