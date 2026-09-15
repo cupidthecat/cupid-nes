@@ -44,23 +44,75 @@ static inline void    bus_set(uint8_t v) { cpu_open_bus = v; }
 CPU cpu;
 extern Joypad pad1, pad2;
 static bool cpu_nmi_pending = false;
-static uint8_t cpu_nmi_defer_instr = 0;
-static bool cpu_nmi_force_before_brk = false;
-static bool cpu_dma_stall_pending = false;
-static uint8_t cpu_dma_request_parity = 0;
+static bool cpu_nmi_line = false;
+static bool cpu_nmi_previous_line = false;
+static bool cpu_nmi_ready = false;
+static bool cpu_nmi_injected = false;
+static bool cpu_irq_polled = false;
+static bool cpu_irq_ready = false;
+static bool cpu_oam_dma_pending = false;
+static uint8_t cpu_oam_dma_page;
+static CPU *running_cpu = NULL;
+static bool in_bus_cycle = false;
+static uint8_t ppu_master_phase = 3;
+static bool joypad_read_valid = false;
+static uint16_t joypad_read_addr;
+static uint64_t joypad_read_cycle;
+static uint8_t joypad_read_value;
 
-static inline bool cart_has_prg_ram(void) {
-    bool is_nes2 = ((ines_header.flags7 & 0x0Cu) == 0x08u);
+uint64_t cpu_get_bus_cycle(void) {
+    return cpu_total_cycles;
+}
 
-    // NES 2.0 encodes RAM/NRAM more explicitly; keep conservative behavior here.
-    if (is_nes2) {
-        return (ines_header.prg_ram_size != 0) || ((ines_header.flags6 & 0x02u) != 0);
-    }
+static void clock_ppu_master(unsigned clocks) {
+    unsigned phase = ppu_master_phase + clocks;
+    ppu_step_dots((int)(phase / 4));
+    ppu_master_phase = (uint8_t)(phase % 4);
+}
 
-    // iNES 1.0: PRG-RAM size byte of 0 means 1 x 8KB PRG-RAM by convention.
-    if (ines_header.prg_ram_size == 0) return true;
+static void begin_cpu_cycle(bool read) {
+    in_bus_cycle = true;
+    // NTSC read and write strobes fall at distinct master-clock phases.
+    clock_ppu_master(read ? 5 : 7);
+    cpu_total_cycles++;
+    if (cart && cart->clock) cart->clock(1);
+    apu_step(&apu, 1);
+}
 
-    return true;
+static void end_cpu_cycle(bool read) {
+    clock_ppu_master(read ? 7 : 5);
+    cpu_nmi_ready = cpu_nmi_pending;
+    if (cpu_nmi_line && !cpu_nmi_previous_line) cpu_nmi_pending = true;
+    cpu_nmi_previous_line = cpu_nmi_line;
+    cpu_irq_ready = cpu_irq_polled;
+    cpu_irq_polled = (apu_irq_pending(&apu) || cart_irq_pending()) &&
+                     !(running_cpu->status & INTERRUPT_FLAG);
+    in_bus_cycle = false;
+}
+
+static uint8_t read_joypad_port(Joypad *pad, uint16_t addr) {
+    uint64_t cycle = cpu_get_bus_cycle();
+    // Adjacent reads of the same port hold the read line low: no second shift clock.
+    bool repeat = running_cpu && joypad_read_valid && joypad_read_addr == addr &&
+                  cycle == joypad_read_cycle + 1;
+    uint8_t value = repeat ? joypad_read_value : joypad_read(pad);
+    joypad_read_addr = addr;
+    joypad_read_cycle = cycle;
+    joypad_read_value = value;
+    joypad_read_valid = running_cpu != NULL;
+    return value;
+}
+
+static uint16_t read_mem_word(uint16_t addr) {
+    uint8_t lo = read_mem(addr);
+    uint8_t hi = read_mem((uint16_t)(addr + 1));
+    return (uint16_t)(lo | ((uint16_t)hi << 8));
+}
+
+static uint16_t read_zpg_word(uint8_t addr) {
+    uint8_t lo = read_mem(addr);
+    uint8_t hi = read_mem((uint8_t)(addr + 1));
+    return (uint16_t)(lo | ((uint16_t)hi << 8));
 }
 
 #ifdef VBL_TIMING_LOG
@@ -89,43 +141,24 @@ static const uint32_t nmi_brk_log_limit = 12000;
 // Global CPU cycle counter
 uint64_t cpu_total_cycles = 0;
 
-// Cycles per opcode (officials; many unofficials match their closest base)
-static const uint8_t cyc[256] = {
-    /*00*/ 7,6,2,8,3,3,5,5,3,2,2,2,4,4,6,6,
-    /*10*/ 2,5,2,8,4,4,6,6,2,4,2,7,4,4,7,7,
-    /*20*/ 6,6,2,8,3,3,5,5,4,2,2,2,4,4,6,6,
-    /*30*/ 2,5,2,8,4,4,6,6,2,4,2,7,4,4,7,7,
-    /*40*/ 6,6,2,8,3,3,5,5,3,2,2,2,3,4,6,6,
-    /*50*/ 2,5,2,8,4,4,6,6,2,4,2,7,4,4,7,7,
-    /*60*/ 6,6,2,8,3,3,5,5,4,2,2,2,5,4,6,6,
-    /*70*/ 2,5,2,8,4,4,6,6,2,4,2,7,4,4,7,7,
-    /*80*/ 2,6,2,6,3,3,3,3,2,2,2,2,4,4,4,4,
-    /*90*/ 2,6,2,6,4,4,4,3,2,5,2,5,5,5,5,5,
-    /*A0*/ 2,6,2,6,3,3,3,3,2,2,2,2,4,4,4,4,
-    /*B0*/ 2,5,2,5,4,4,4,4,2,4,2,4,4,4,4,4,
-    /*C0*/ 2,6,2,8,3,3,5,5,2,2,2,2,4,4,6,6,
-    /*D0*/ 2,5,2,8,3,4,6,6,2,4,2,7,4,4,7,7,
-    /*E0*/ 2,6,2,8,3,3,5,5,2,2,2,2,4,4,6,6,
-    /*F0*/ 2,5,2,8,4,4,6,6,2,4,2,7,4,4,7,7,
-};
-
 void cpu_reset(CPU* cpu) {
+    running_cpu = NULL;
+    in_bus_cycle = false;
+    ppu_master_phase = 3;
+    joypad_read_valid = false;
     cpu->sp -= 3;
-    cpu->status |= INTERRUPT_FLAG;
+    cpu->status = (cpu->status | INTERRUPT_FLAG | UNUSED_FLAG) & ~BREAK_FLAG;
     // Read reset vector from PRG-ROM area
-    uint8_t lo = cart_cpu_read(0xFFFC);
-    uint8_t hi = cart_cpu_read(0xFFFD);
-    cpu->pc = ((uint16_t)hi << 8) | lo;
-    cpu->irq_delay = 0;
-    cpu->sei_delay = 0;
+    cpu->pc = read_mem_word(0xFFFC);
+    cpu->halted = false;
     cpu_nmi_pending = false;
-    cpu_nmi_defer_instr = 0;
-    cpu_nmi_force_before_brk = false;
-    cpu_dma_stall_pending = false;
-    cpu_dma_request_parity = 0;
+    cpu_nmi_previous_line = cpu_nmi_line;
+    cpu_nmi_ready = cpu_nmi_injected = false;
+    cpu_irq_polled = cpu_irq_ready = false;
+    cpu_oam_dma_pending = false;
 }
 
-uint8_t read_mem(uint16_t addr) {
+static uint8_t read_bus(uint16_t addr) {
     if (addr <= 0x1FFF) { uint8_t v = ram[addr & 0x07FF]; bus_set(v); return v; }
 
     if (addr >= 0x2000 && addr <= 0x3FFF) {
@@ -137,12 +170,12 @@ uint8_t read_mem(uint16_t addr) {
     // APU + I/O $4000-$4017
     if (addr >= 0x4000 && addr <= 0x4017) {
         if (addr == 0x4016) {
-            uint8_t v = (uint8_t)((bus_get() & 0xE0u) | (joypad_read(&pad1) & 0x1Fu));
+            uint8_t v = (uint8_t)((bus_get() & 0xE0u) | (read_joypad_port(&pad1, addr) & 0x1Fu));
             bus_set(v);
             return v;
         }
         if (addr == 0x4017) {
-            uint8_t v = (uint8_t)((bus_get() & 0xE0u) | (joypad_read(&pad2) & 0x1Fu));
+            uint8_t v = (uint8_t)((bus_get() & 0xE0u) | (read_joypad_port(&pad2, addr) & 0x1Fu));
             bus_set(v);
             return v;
         }
@@ -155,25 +188,9 @@ uint8_t read_mem(uint16_t addr) {
         return bus_get(); // write-only regs -> open bus
     }
 
-    // *** Unallocated I/O space $4018-$40FF must read as open bus ***
-    if (addr >= 0x4018 && addr <= 0x40FF) return bus_get();
-
-    // Expansion/cart space (mapper regs, PRG-RAM, etc.)
-    if (addr >= 0x4100 && addr <= 0x5FFF) {
-        uint8_t v = cart_cpu_read(addr);
-        // For carts with no decode here, many mappers return 0xFF sentinel.
-        // Treat that as floating bus so absolute reads keep the operand-high latch.
-        if (v == 0xFFu) return bus_get();
-        bus_set(v);
-        return v;
-    }
-
-    // Cart space $6000-$FFFF
-    if (addr >= 0x6000) {
-        if (addr <= 0x7FFF && !cart_has_prg_ram()) {
-            return bus_get(); // open bus when PRG-RAM is not present
-        }
-        uint8_t v = cart_cpu_read(addr);
+    // The cartridge decides which expansion registers, ROM and RAM drive the bus.
+    if (addr >= 0x4020) {
+        uint8_t v = cart_cpu_read_bus(addr, bus_get());
         bus_set(v);
         return v;
     }
@@ -181,7 +198,7 @@ uint8_t read_mem(uint16_t addr) {
     return bus_get();
 }
 
-void write_mem(uint16_t addr, uint8_t value) {
+static void write_bus(uint16_t addr, uint8_t value) {
     bus_set(value); // writes still put value on the CPU bus latch
 
     if (addr <= 0x1FFF) { ram[addr & 0x07FF] = value; return; }
@@ -189,23 +206,38 @@ void write_mem(uint16_t addr, uint8_t value) {
     if (addr >= 0x2000 && addr <= 0x3FFF) { ppu_reg_write(0x2000 | (addr & 7), value); return; }
 
     if (addr >= 0x4000 && addr <= 0x4017) {
-        if (addr == 0x4014) { ppu_oam_dma(value); return; }
+        if (addr == 0x4014) {
+            cpu_oam_dma_page = value;
+            cpu_oam_dma_pending = true;
+            return;
+        }
         if (addr == 0x4016) { joypad_write_strobe(&pad1, value); joypad_write_strobe(&pad2, value); return; }
         apu_write(addr, value);
         return;
     }
 
-    // *** Ignore writes to $4018-$40FF (unallocated I/O, open bus) ***
-    if (addr >= 0x4018 && addr <= 0x40FF) return;
+    if (addr >= 0x4020) cart_cpu_write(addr, value);
+}
 
-    // Expansion/cart
-    if (addr >= 0x4100 && addr <= 0x5FFF) { cart_cpu_write(addr, value); return; }
+static void process_pending_dma(uint16_t read_addr);
 
-    if (addr >= 0x6000) {
-        if (addr <= 0x7FFF && !cart_has_prg_ram()) return;
-        cart_cpu_write(addr, value);
+uint8_t read_mem(uint16_t addr) {
+    if (!running_cpu || in_bus_cycle) return read_bus(addr);
+    process_pending_dma(addr);
+    begin_cpu_cycle(true);
+    uint8_t value = read_bus(addr);
+    end_cpu_cycle(true);
+    return value;
+}
+
+void write_mem(uint16_t addr, uint8_t value) {
+    if (!running_cpu || in_bus_cycle) {
+        write_bus(addr, value);
         return;
     }
+    begin_cpu_cycle(false);
+    write_bus(addr, value);
+    end_cpu_cycle(false);
 }
 
 static inline void dummy_read_next(CPU* cpu) {
@@ -219,51 +251,33 @@ static inline uint8_t rmw_fetch(uint16_t addr) {
 }
 
 void cpu_nmi(CPU* cpu) {
-    NMI_BRK_LOG("cpu_nmi enter");
-    uint16_t pc = cpu->pc;
-    write_mem(0x0100 + cpu->sp--, (pc >> 8) & 0xFF);
-    write_mem(0x0100 + cpu->sp--, pc & 0xFF);
-    write_mem(0x0100 + cpu->sp--, (cpu->status & ~BREAK_FLAG) | UNUSED_FLAG);
-    cpu->status |= INTERRUPT_FLAG;
-    cpu->pc = read_mem(0xFFFA) | (read_mem(0xFFFB) << 8);
-    NMI_BRK_LOG("cpu_nmi vector=%04X", cpu->pc);
+    cpu_nmi_pending = true;
+    cpu_irq(cpu);
+}
+
+void cpu_set_nmi_line(bool asserted) {
+    cpu_nmi_line = asserted;
 }
 
 void cpu_request_nmi(void) {
-    cpu_request_nmi_timed(false);
-}
-
-void cpu_request_nmi_timed(bool defer_one_instruction) {
-    cpu_request_nmi_timed_defer(defer_one_instruction ? 1u : 0u);
-}
-
-void cpu_request_nmi_timed_defer(uint8_t defer_boundaries) {
-    if (!cpu_nmi_pending) {
-        cpu_nmi_pending = true;
-        cpu_nmi_defer_instr = defer_boundaries;
-        cpu_nmi_force_before_brk = false;
-        NMI_LOG("edge latched");
-        NMI_BRK_LOG("nmi pending latched defer=%u pc=%04X sp=%02X p=%02X",
-                    cpu_nmi_defer_instr, cpu.pc, cpu.sp, cpu.status);
-    }
-}
-
-void cpu_schedule_oam_dma_stall(void) {
-    cpu_dma_stall_pending = true;
-    cpu_dma_request_parity = (uint8_t)((cpu_total_cycles + 1u) & 1u);
-    NMI_BRK_LOG("OAM DMA stall pending");
+    cpu_nmi_pending = cpu_nmi_injected = true;
 }
 
 void cpu_irq(CPU* cpu) {
     NMI_BRK_LOG("cpu_irq enter pc=%04X sp=%02X p=%02X", cpu->pc, cpu->sp, cpu->status);
+    dummy_read_next(cpu);
+    dummy_read_next(cpu);
     uint16_t pc = cpu->pc;
     write_mem(0x0100 + cpu->sp--, (pc >> 8) & 0xFF);
     write_mem(0x0100 + cpu->sp--, pc & 0xFF);
+    // An NMI detected before this point replaces the IRQ vector.
+    uint16_t vector = cpu_nmi_pending ? 0xFFFA : 0xFFFE;
+    if (cpu_nmi_pending) cpu_nmi_pending = cpu_nmi_injected = false;
     // Push P with B=0, U=1 for IRQ
     uint8_t p = (cpu->status & ~BREAK_FLAG) | UNUSED_FLAG;
     write_mem(0x0100 + cpu->sp--, p);
     cpu->status |= INTERRUPT_FLAG;
-    cpu->pc = read_mem(0xFFFE) | (read_mem(0xFFFF) << 8);
+    cpu->pc = read_mem_word(vector);
     NMI_BRK_LOG("cpu_irq vector=%04X pushedP=%02X newSP=%02X", cpu->pc, p, cpu->sp);
 }
 
@@ -275,10 +289,9 @@ static void set_zn_flags(CPU* cpu, uint8_t value) {
 
 static uint16_t get_indirect_y_read(CPU* cpu) {
     uint8_t zpg = read_mem(cpu->pc++);
-    uint16_t base = read_mem(zpg) | (read_mem((zpg + 1) & 0xFF) << 8);
+    uint16_t base = read_zpg_word(zpg);
     uint16_t addr = base + cpu->y;
     if ((base & 0xFF00) != (addr & 0xFF00)) {
-        cpu->extra_cycles += 1;  // add +1 on page cross
         uint16_t dummy = (base & 0xFF00) | (addr & 0x00FF); // no carry into high byte
         (void)read_mem(dummy);
     }
@@ -290,7 +303,9 @@ static uint16_t get_zpg_address(CPU* cpu) {
 }
 
 static uint16_t get_zpgx_address(CPU* cpu) {
-    return (read_mem(cpu->pc++) + cpu->x) & 0xFF;
+    uint8_t base = read_mem(cpu->pc++);
+    (void)read_mem(base);
+    return (uint8_t)(base + cpu->x);
 }
 
 static uint16_t get_abs_address(CPU* cpu) {
@@ -301,25 +316,30 @@ static uint16_t get_abs_address(CPU* cpu) {
 }
 
 static uint16_t get_absx_address(CPU* cpu) {
-    uint16_t base = read_mem(cpu->pc) | (read_mem(cpu->pc + 1) << 8);
-    cpu->pc += 2;
-    return base + cpu->x;
+    uint16_t base = get_abs_address(cpu);
+    uint16_t addr = (uint16_t)(base + cpu->x);
+    (void)read_mem((base & 0xFF00u) | (addr & 0x00FFu));
+    return addr;
 }
 
 static uint16_t get_absy_address(CPU* cpu) {
-    uint16_t base = read_mem(cpu->pc) | (read_mem(cpu->pc + 1) << 8);
-    cpu->pc += 2;
-    return base + cpu->y;
+    uint16_t base = get_abs_address(cpu);
+    uint16_t addr = (uint16_t)(base + cpu->y);
+    (void)read_mem((base & 0xFF00u) | (addr & 0x00FFu));
+    return addr;
 }
 
 static void branch_if(CPU* cpu, bool condition) {
     int8_t offset = read_mem(cpu->pc++);
     if(condition) {
         uint16_t old = cpu->pc;
+        // Taken branches poll on their second cycle and again if a page correction follows.
+        cpu_irq_polled = cpu_irq_ready;
+        (void)read_mem(old);
         cpu->pc += offset;
-        cpu->extra_cycles += 1; // taken branch
         if ((old & 0xFF00) != (cpu->pc & 0xFF00)) {
-            cpu->extra_cycles += 1; // page crossed
+            cpu_irq_polled |= cpu_irq_ready;
+            (void)read_mem((old & 0xFF00u) | (cpu->pc & 0x00FFu));
         }
     }
 }
@@ -389,15 +409,17 @@ static void ror(CPU* cpu, uint8_t* value) {
 // Indexed Indirect: (indirect,X)
 static uint16_t get_indirect_x(CPU* cpu) {
     uint8_t zpg = read_mem(cpu->pc++);
-    uint16_t ptr = (zpg + cpu->x) & 0xFF;
-    return read_mem(ptr) | (read_mem((ptr + 1) & 0xFF) << 8);
+    (void)read_mem(zpg);
+    return read_zpg_word((uint8_t)(zpg + cpu->x));
 }
 
 // Indirect Indexed: (indirect),Y 
 static uint16_t get_indirect_y(CPU* cpu) {
     uint8_t zpg = read_mem(cpu->pc++);
-    uint16_t base = read_mem(zpg) | (read_mem((zpg + 1) & 0xFF) << 8);
-    return base + cpu->y;
+    uint16_t base = read_zpg_word(zpg);
+    uint16_t addr = (uint16_t)(base + cpu->y);
+    (void)read_mem((base & 0xFF00u) | (addr & 0x00FFu));
+    return addr;
 }
 
 // Absolute Indirect (for JMP)
@@ -405,11 +427,15 @@ static uint16_t get_abs_indirect(CPU* cpu) {
     uint16_t ptr = read_mem(cpu->pc++);
     ptr |= read_mem(cpu->pc++) << 8;
     // Handle 6502 page boundary bug
-    return read_mem(ptr) | (read_mem((ptr & 0xFF00) | ((ptr + 1) & 0xFF)) << 8);
+    uint8_t lo = read_mem(ptr);
+    uint8_t hi = read_mem((ptr & 0xFF00) | ((ptr + 1) & 0xFF));
+    return (uint16_t)(lo | ((uint16_t)hi << 8));
 }
 
 static uint16_t get_zpgy_address(CPU* cpu) {
-    return (read_mem(cpu->pc++) + cpu->y) & 0xFF;
+    uint8_t base = read_mem(cpu->pc++);
+    (void)read_mem(base);
+    return (uint8_t)(base + cpu->y);
 }
 
 static inline void inc_then_sbc(CPU* cpu, uint16_t addr) {
@@ -426,7 +452,6 @@ static uint16_t get_absy_read(CPU* cpu) {
     uint16_t base = (hi << 8) | lo;
     uint16_t addr = base + cpu->y;
     if ((base & 0xFF00) != (addr & 0xFF00)) {
-        cpu->extra_cycles += 1;
         uint16_t dummy = (base & 0xFF00) | (addr & 0x00FF); // no carry into high byte
         (void)read_mem(dummy);
     }
@@ -440,54 +465,26 @@ static uint16_t get_absx_read(CPU* cpu) {
     uint16_t base = (hi << 8) | lo;
     uint16_t addr = base + cpu->x;
     if ((base & 0xFF00) != (addr & 0xFF00)) {
-        cpu->extra_cycles += 1;
         uint16_t dummy = (base & 0xFF00) | (addr & 0x00FF); // no carry into high byte
         (void)read_mem(dummy);
     }
     return addr;
 }
 
-// For writes, the 6502 does a dummy read from the address using the *original* high byte.
-static inline uint16_t get_absx_write(CPU* cpu) {
-    uint16_t lo = read_mem(cpu->pc);
-    uint16_t hi = read_mem(cpu->pc + 1);
-    cpu->pc += 2;
-    uint16_t base  = (hi << 8) | lo;
-    uint16_t addr  = base + cpu->x;
-    uint16_t dummy = (base & 0xFF00) | (addr & 0x00FF); // no carry into high byte
-    (void)read_mem(dummy);
-    return addr;
-}
-
-static inline uint16_t get_absy_write(CPU* cpu) {
-    uint16_t lo = read_mem(cpu->pc);
-    uint16_t hi = read_mem(cpu->pc + 1);
-    cpu->pc += 2;
-    uint16_t base  = (hi << 8) | lo;
-    uint16_t addr  = base + cpu->y;
-    uint16_t dummy = (base & 0xFF00) | (addr & 0x00FF); // no carry into high byte
-    (void)read_mem(dummy);
-    return addr;
-}
-
-static inline uint16_t get_indy_write(CPU* cpu) {
-    uint8_t  zpg  = read_mem(cpu->pc++);
-    uint16_t base = read_mem(zpg) | (read_mem((zpg + 1) & 0xFF) << 8);
-    uint16_t addr = base + cpu->y;
-    uint16_t dummy = (base & 0xFF00) | (addr & 0x00FF); // no carry into high byte
-    (void)read_mem(dummy);
-    return addr;
+static void masked_indexed_store(uint16_t base, uint8_t index, uint8_t reg) {
+    uint16_t addr = (uint16_t)(base + index);
+    (void)read_mem((base & 0xFF00u) | (addr & 0x00FFu));
+    uint8_t value = reg & (uint8_t)((base >> 8) + 1);
+    if ((base & 0xFF00u) != (addr & 0xFF00u)) {
+        addr = (uint16_t)((addr & 0x00FFu) | ((uint16_t)((addr >> 8) & reg) << 8));
+    }
+    write_mem(addr, value);
 }
 
 void execute(CPU* cpu, uint8_t opcode) {
     switch(opcode) {
         // ========== CONTROL FLOW ==========
         case 0x00: { // BRK
-            // If an NMI is latched to be taken on the following boundary, BRK's sequence
-            // can be interrupted: stack push looks like BRK (B=1), but vector comes from NMI.
-            bool nmi_interrupts_brk = (cpu_nmi_pending && !cpu_nmi_force_before_brk && cpu_nmi_defer_instr <= 1);
-            NMI_BRK_LOG("BRK start nmi_pending=%d", nmi_interrupts_brk ? 1 : 0);
-
             // 1) Dummy read of the signature byte *and* advance PC (BRK behaves like 2-byte)
             (void)read_mem(cpu->pc++);
         
@@ -495,6 +492,8 @@ void execute(CPU* cpu, uint8_t opcode) {
             uint16_t ret = cpu->pc;
             write_mem(0x0100 + cpu->sp--, (ret >> 8) & 0xFF);
             write_mem(0x0100 + cpu->sp--, ret & 0xFF);
+            // An NMI detected during the stack pushes can replace BRK's vector.
+            bool nmi_interrupts_brk = cpu_nmi_pending;
         
             // 3) Push status with B=1, U=1
             uint8_t p = (cpu->status | BREAK_FLAG | UNUSED_FLAG);
@@ -506,15 +505,16 @@ void execute(CPU* cpu, uint8_t opcode) {
             // 5) Load vector (NMI has priority if it interrupts BRK)
             if (nmi_interrupts_brk) {
                 cpu_nmi_pending = false;
-                cpu_nmi_defer_instr = 0;
-                cpu_nmi_force_before_brk = false;
+                cpu_nmi_injected = false;
                 NMI_LOG("BRK sequence interrupted by NMI");
-                cpu->pc = read_mem(0xFFFA) | (read_mem(0xFFFB) << 8);
+                cpu->pc = read_mem_word(0xFFFA);
                 NMI_BRK_LOG("BRK->NMI vector=%04X pushedP=%02X", cpu->pc, p);
             } else {
-                cpu->pc = read_mem(0xFFFE) | (read_mem(0xFFFF) << 8);
+                cpu->pc = read_mem_word(0xFFFE);
                 NMI_BRK_LOG("BRK->IRQ vector=%04X pushedP=%02X", cpu->pc, p);
             }
+            // An edge detected during the vector fetch waits for the handler's first instruction.
+            cpu_nmi_ready = false;
         } break;        
         case 0xEA: // NOP
             dummy_read_next(cpu);  // Add dummy read for 1-byte NOP
@@ -558,11 +558,13 @@ void execute(CPU* cpu, uint8_t opcode) {
         case RTS_OPCODE: // 0x60
         {
             dummy_read_next(cpu);  // Required dummy fetch
+            (void)read_mem(0x0100 + cpu->sp);
             cpu->sp++;
             uint8_t low  = read_mem(0x0100 + cpu->sp);
             cpu->sp++;
             uint8_t high = read_mem(0x0100 + cpu->sp);
             uint16_t return_addr = (high << 8) | low;
+            (void)read_mem(return_addr);
             
             // Return address on stack is the last byte of JSR, so add 1 to skip past it
             cpu->pc = return_addr + 1;
@@ -571,12 +573,11 @@ void execute(CPU* cpu, uint8_t opcode) {
         case 0x40: // RTI - Return from Interrupt
         {
             dummy_read_next(cpu);              // RTI dummy read
+            (void)read_mem(0x0100 + cpu->sp);
             // Pull P (SP increments before each pull)
             cpu->sp++;
             uint8_t newP = read_mem(0x0100 + cpu->sp);
-            cpu->status = newP | UNUSED_FLAG;
-            // Cancel any pending CLI/PLP latency. After RTI no IRQ should be taken "ignoring I".
-            cpu->irq_delay = 0;
+            cpu->status = (newP & ~BREAK_FLAG) | UNUSED_FLAG;
 
             // Pull PC — DO NOT add 1 (unlike RTS)
             cpu->sp++;
@@ -596,6 +597,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             break;
         case 0x68: // PLA - Pull Accumulator
             dummy_read_next(cpu);  // Add dummy read for 1-byte PLA
+            (void)read_mem(0x0100 + cpu->sp);
             cpu->sp++;
             cpu->a = read_mem(0x0100 + cpu->sp);
             set_zn_flags(cpu, cpu->a);
@@ -607,15 +609,11 @@ void execute(CPU* cpu, uint8_t opcode) {
             break;
         case 0x28: // PLP - Pull Processor Status
             dummy_read_next(cpu);  // Add dummy read for 1-byte PLP
+            (void)read_mem(0x0100 + cpu->sp);
             cpu->sp++;
             {
-                uint8_t oldP = cpu->status;
                 uint8_t newP = read_mem(0x0100 + cpu->sp);
-                cpu->status = newP | UNUSED_FLAG;            // force U=1
-                bool oldI = (oldP & INTERRUPT_FLAG) != 0;
-                bool newI = (newP & INTERRUPT_FLAG) != 0;
-                // Only SEI gets the 0→1 window; PLP should not open it.
-                if (oldI && !newI) cpu->irq_delay = 1;      // one-instruction deferral
+                cpu->status = (newP & ~BREAK_FLAG) | UNUSED_FLAG;
             }
             break;
 
@@ -664,19 +662,11 @@ void execute(CPU* cpu, uint8_t opcode) {
             break;
         case 0x58: // CLI - Clear Interrupt Flag
             dummy_read_next(cpu);  // Add dummy read for 1-byte CLI
-            {
-                bool was_set = (cpu->status & INTERRUPT_FLAG) != 0;
-                cpu->status &= ~INTERRUPT_FLAG;
-                // one-instruction deferral after clearing I.
-                if (was_set) cpu->irq_delay = 1;
-            }
+            cpu->status &= ~INTERRUPT_FLAG;
             break;
         case 0x78: // SEI - Set Interrupt Flag
             dummy_read_next(cpu);  // Add dummy read for 1-byte SEI
-            { bool was_clear = (cpu->status & INTERRUPT_FLAG) == 0;
-              cpu->status |= INTERRUPT_FLAG;
-              cpu->sei_delay = was_clear ? 1 : 0;   // only create the 1-op window on 0→1
-            }
+            cpu->status |= INTERRUPT_FLAG;
             break;
         case 0xB8: // CLV - Clear Overflow Flag
             dummy_read_next(cpu);  // Add dummy read for 1-byte CLV
@@ -729,18 +719,18 @@ void execute(CPU* cpu, uint8_t opcode) {
             write_mem(get_abs_address(cpu), cpu->a);
             break;
         case 0x9D: { // STA abs,X
-            uint16_t a = get_absx_write(cpu);
+            uint16_t a = get_absx_address(cpu);
             write_mem(a, cpu->a);
         } break;
         case 0x99: { // STA abs,Y
-            uint16_t a = get_absy_write(cpu);
+            uint16_t a = get_absy_address(cpu);
             write_mem(a, cpu->a);
         } break;   
         case 0x81: // STA (indirect,X)
             write_mem(get_indirect_x(cpu), cpu->a);
             break;
         case 0x91: { // STA (ind),Y
-            uint16_t a = get_indy_write(cpu);
+            uint16_t a = get_indirect_y(cpu);
             write_mem(a, cpu->a);
         } break;
 
@@ -771,7 +761,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             write_mem(get_zpg_address(cpu), cpu->x);
             break;
         case 0x96: // STX Zero Page,Y
-            write_mem((read_mem(cpu->pc++) + cpu->y) & 0xFF, cpu->x);
+            write_mem(get_zpgy_address(cpu), cpu->x);
             break;
         case 0x8E: // STX Absolute
             write_mem(get_abs_address(cpu), cpu->x);
@@ -804,7 +794,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             write_mem(get_zpg_address(cpu), cpu->y);
             break;
         case 0x94: // STY Zero Page,X
-            write_mem((read_mem(cpu->pc++) + cpu->x) & 0xFF, cpu->y);
+            write_mem(get_zpgx_address(cpu), cpu->y);
             break;
         case 0x8C: // STY Absolute
             write_mem(get_abs_address(cpu), cpu->y);
@@ -912,6 +902,14 @@ void execute(CPU* cpu, uint8_t opcode) {
             cpu->a &= read_mem(cpu->pc++);
             lsr(cpu, &cpu->a);
             break;
+
+        case 0x8B: { // XAA/ANE Immediate
+            // Silicon-dependent analog behavior is modeled with a fixed $EE mask.
+            uint8_t imm = read_mem(cpu->pc++);
+            cpu->a = (uint8_t)((cpu->a | 0xEEu) & cpu->x & imm);
+            set_zn_flags(cpu, cpu->a);
+            break;
+        }
 
         // ========== UNDOCUMENTED - ARR (AND then ROR A, special flags) ==========
         case 0x6B: // ARR Immediate
@@ -1454,7 +1452,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             break;
         case 0xF6: // INC Zero Page,X
             {
-                uint16_t addr = (read_mem(cpu->pc++) + cpu->x) & 0xFF;
+                uint16_t addr = get_zpgx_address(cpu);
                 uint8_t val = (uint8_t)(rmw_fetch(addr) + 1);
                 write_mem(addr, val);
                 set_zn_flags(cpu, val);
@@ -1488,7 +1486,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             break;
         case 0xD6: // DEC Zero Page,X
             {
-                uint16_t addr = (read_mem(cpu->pc++) + cpu->x) & 0xFF;
+                uint16_t addr = get_zpgx_address(cpu);
                 uint8_t val = (uint8_t)(rmw_fetch(addr) - 1);
                 write_mem(addr, val);
                 set_zn_flags(cpu, val);
@@ -1536,29 +1534,24 @@ void execute(CPU* cpu, uint8_t opcode) {
             break;
         // NOP Absolute,X
         case 0x1C: case 0x3C: case 0x5C: case 0x7C: case 0xDC: case 0xFC:
-            {
-                uint16_t base = get_abs_address(cpu);
-                uint16_t addr = (uint16_t)(base + cpu->x);
-                uint16_t dummy = (uint16_t)((base & 0xFF00u) | (addr & 0x00FFu));
-                (void)read_mem(dummy);
-                if ((base & 0xFF00u) != (addr & 0xFF00u)) {
-                    (void)read_mem(addr);
-                }
-            }
+            (void)read_mem(get_absx_read(cpu));
             break;
         // Implied NOPs (1 byte) - Add dummy reads
         case 0x1A: case 0x3A: case 0x5A: case 0x7A: case 0xDA: case 0xFA:
             dummy_read_next(cpu);  // Add dummy read for undocumented implied NOPs
             break;
-        // Halt-like opcodes - Add dummy reads
+        // JAM: neither interrupts nor later instructions can restart the CPU.
         case 0x02: case 0x12: case 0x22: case 0x32:
         case 0x42: case 0x52: case 0x62: case 0x72:
         case 0x92: case 0xB2: case 0xD2: case 0xF2:
-            dummy_read_next(cpu);  // Add dummy read for halt-like opcodes
+            dummy_read_next(cpu);
+            cpu->pc--;
+            cpu->halted = true;
+            cpu_nmi_ready = cpu_irq_ready = false;
             break;
         // Immediate NOPs (consume operand)
         case 0x80: case 0x82: case 0x89: case 0xC2: case 0xE2:
-            cpu->pc++;
+            (void)read_mem(cpu->pc++);
             break;
 
         // ========== UNDOCUMENTED - DCP (DEC then CMP) ==========
@@ -1952,7 +1945,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             break;
         case 0xBF: // LAX Absolute,Y
             {
-                uint8_t val = read_mem(get_absy_address(cpu));
+                uint8_t val = read_mem(get_absy_read(cpu));
                 cpu->a = cpu->x = val;
                 set_zn_flags(cpu, val);
             }
@@ -1966,7 +1959,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             break;
         case 0xB3: // LAX (indirect),Y
             {
-                uint8_t val = read_mem(get_indirect_y(cpu));
+                uint8_t val = read_mem(get_indirect_y_read(cpu));
                 cpu->a = cpu->x = val;
                 set_zn_flags(cpu, val);
             }
@@ -2019,7 +2012,7 @@ void execute(CPU* cpu, uint8_t opcode) {
         // ========== UNDOCUMENTED - LAS (Load A, X, SP) ==========
         case 0xBB: // LAS Absolute,Y
             {
-                uint8_t mem = read_mem(get_absy_address(cpu));
+                uint8_t mem = read_mem(get_absy_read(cpu));
                 uint8_t result = mem & cpu->sp;
                 cpu->a = cpu->x = cpu->sp = result;
                 set_zn_flags(cpu, result);
@@ -2028,49 +2021,23 @@ void execute(CPU* cpu, uint8_t opcode) {
 
         // ========== UNDOCUMENTED - SHX/SHY/SHA/TAS ==========
         case 0x9F: // AHX/SHA Absolute,Y
-            {
-                uint16_t base = read_mem(cpu->pc) | (read_mem(cpu->pc + 1) << 8);
-                cpu->pc += 2;
-                uint16_t addr = base + cpu->y;
-                uint8_t high_plus1 = (uint8_t)(((addr >> 8) + 1) & 0xFF);
-                uint8_t val = (cpu->a & cpu->x & high_plus1);
-                write_mem(addr, val);
-            }
+            masked_indexed_store(get_abs_address(cpu), cpu->y, cpu->a & cpu->x);
             break;
         case 0x93: // AHX/SHA (indirect),Y
             {
-                uint16_t addr = get_indirect_y(cpu);
-                uint8_t high_plus1 = (uint8_t)(((addr >> 8) + 1) & 0xFF);
-                write_mem(addr, (cpu->a & cpu->x & high_plus1));
+                uint8_t zpg = read_mem(cpu->pc++);
+                masked_indexed_store(read_zpg_word(zpg), cpu->y, cpu->a & cpu->x);
             }
             break;
         case 0x9E: // SHX Absolute,Y
-            {
-                uint16_t base = read_mem(cpu->pc) | (read_mem(cpu->pc + 1) << 8);
-                cpu->pc += 2;
-                uint16_t addr = base + cpu->y;
-                uint8_t high_plus1 = (uint8_t)(((addr >> 8) + 1) & 0xFF);
-                write_mem(addr, (cpu->x & high_plus1));
-            }
+            masked_indexed_store(get_abs_address(cpu), cpu->y, cpu->x);
             break;
         case 0x9C: // SHY Absolute,X
-            {
-                uint16_t base = read_mem(cpu->pc) | (read_mem(cpu->pc + 1) << 8);
-                cpu->pc += 2;
-                uint16_t addr = base + cpu->x;
-                uint8_t high_plus1 = (uint8_t)(((addr >> 8) + 1) & 0xFF);
-                write_mem(addr, (cpu->y & high_plus1));
-            }
+            masked_indexed_store(get_abs_address(cpu), cpu->x, cpu->y);
             break;
         case 0x9B: // TAS/SHS Absolute,Y
-            {
-                uint16_t base = read_mem(cpu->pc) | (read_mem(cpu->pc + 1) << 8);
-                cpu->pc += 2;
-                uint16_t addr = base + cpu->y;
-                cpu->sp = (cpu->a & cpu->x);
-                uint8_t high_plus1 = (uint8_t)(((addr >> 8) + 1) & 0xFF);
-                write_mem(addr, (cpu->sp & high_plus1));
-            }
+            masked_indexed_store(get_abs_address(cpu), cpu->y, cpu->a & cpu->x);
+            cpu->sp = cpu->a & cpu->x;
             break;
 
         default:
@@ -2079,172 +2046,95 @@ void execute(CPU* cpu, uint8_t opcode) {
     }
 }
 
+static uint8_t read_dma_bus(uint16_t address, uint16_t halted_address) {
+    if ((halted_address & 0xFFE0u) != 0x4000) {
+        // Internal CPU registers are decoded during DMA only when the halted CPU selected them.
+        if (address >= 0x4015 && address <= 0x401A) return bus_get();
+        return read_bus(address);
+    }
+
+    uint16_t internal = 0x4000 | (address & 0x1Fu);
+    if (internal == 0x4015) {
+        uint8_t value = read_bus(internal);
+        if (address != internal) (void)read_bus(address);
+        return value;
+    }
+    if ((internal == 0x4016 || internal == 0x4017) && address != internal) {
+        uint8_t controller = read_bus(internal);
+        uint8_t external = read_bus(address);
+        bus_set((external & 0xE0u) | (controller & 0x1Fu));
+        return (uint8_t)((external & 0xE0u) | (external & controller & 0x1Fu));
+    }
+    return read_bus(address);
+}
+
+static void process_pending_dma(uint16_t read_addr) {
+    bool oam = cpu_oam_dma_pending;
+    bool dmc = apu_dmc_dma_pending(&apu);
+    if (!oam && !dmc) return;
+    uint16_t oam_base = (uint16_t)cpu_oam_dma_page << 8;
+    cpu_oam_dma_pending = false;
+    unsigned oam_offset = 0;
+    bool oam_has_byte = false;
+    uint8_t oam_byte = 0;
+    unsigned dmc_prepare = dmc ? 1 : 0;
+
+    // Halt can succeed only on a CPU read; all earlier writes have already completed.
+    begin_cpu_cycle(true);
+    (void)read_bus(read_addr);
+    end_cpu_cycle(true);
+
+    while (oam || dmc || apu_dmc_dma_pending(&apu)) {
+        if (dmc && !apu_dmc_dma_pending(&apu)) {
+            dmc = false;
+            dmc_prepare = 0;
+        } else if (!dmc && apu_dmc_dma_pending(&apu)) {
+            // An OAM transfer already in progress supplies the DMC halt and dummy cycles.
+            dmc = true;
+            dmc_prepare = 2;
+        }
+        if (!oam && !dmc) break;
+        bool get = (cpu_total_cycles & 1u) == 0;
+        bool dmc_get = get && dmc && dmc_prepare == 0;
+        bool oam_get = get && oam && !dmc_get;
+        bool oam_put = !get && oam && oam_has_byte;
+        if (dmc_prepare) dmc_prepare--;
+
+        begin_cpu_cycle(true);
+        if (dmc_get) {
+            uint8_t value = read_dma_bus(apu_dmc_dma_address(&apu), read_addr);
+            end_cpu_cycle(true);
+            apu_dmc_dma_complete(&apu, value);
+            dmc = false;
+        } else if (oam_get) {
+            oam_byte = read_dma_bus((uint16_t)(oam_base + oam_offset), read_addr);
+            oam_has_byte = true;
+            end_cpu_cycle(true);
+        } else if (oam_put) {
+            write_bus(0x2004, oam_byte);
+            oam_has_byte = false;
+            if (++oam_offset == 256) oam = false;
+            end_cpu_cycle(true);
+        } else {
+            (void)read_bus(read_addr);
+            end_cpu_cycle(true);
+        }
+    }
+}
+
 int cpu_step(CPU* cpu) {
-    int dmc_stall_guard = 0;
-    int dmc_extra_cycles = 0;
-
-    #define APPLY_DMC_DMA_STALLS() do { \
-        dmc_extra_cycles = 0; \
-        dmc_stall_guard = 0; \
-        while (dmc_stall_guard++ < 16) { \
-            int dmc_stall = apu_take_dmc_dma_stall_cycles(&apu); \
-            if (dmc_stall <= 0) break; \
-            apu_step(&apu, dmc_stall); \
-            dmc_extra_cycles += dmc_stall; \
-        } \
-    } while (0)
-
-    if (cpu_dma_stall_pending) {
-        int stall_cycles = 514 - (int)(cpu_dma_request_parity & 1u);
-        cpu_dma_stall_pending = false;
-        NMI_BRK_LOG("apply OAM DMA stall=%d", stall_cycles);
-        apu_step(&apu, stall_cycles);
-        APPLY_DMC_DMA_STALLS();
-        stall_cycles += dmc_extra_cycles;
-        cpu_total_cycles += (uint64_t)stall_cycles;
-        return stall_cycles;
+    uint64_t start = cpu_total_cycles;
+    running_cpu = cpu;
+    if (cpu->halted) {
+        (void)read_mem(cpu->pc);
+    } else if (cpu_nmi_injected) {
+        cpu_nmi_injected = false;
+        cpu_irq(cpu);
+    } else {
+        uint8_t opcode = read_mem(cpu->pc++);
+        execute(cpu, opcode);
+        if (!cpu->halted && (cpu_irq_ready || cpu_nmi_ready)) cpu_irq(cpu);
     }
-
-    if (cpu_nmi_pending) {
-#ifdef NMI_BRK_DEBUG
-        uint8_t next_opcode_dbg = read_mem(cpu->pc);
-        NMI_BRK_LOG("step entry pc=%04X next=%02X sp=%02X p=%02X nmi_pending=%d defer=%u force_brk=%d",
-                    cpu->pc, next_opcode_dbg, cpu->sp, cpu->status,
-                    cpu_nmi_pending ? 1 : 0, cpu_nmi_defer_instr,
-                    cpu_nmi_force_before_brk ? 1 : 0);
-#endif
-    }
-    if (cpu_nmi_pending) {
-        if (cpu_nmi_defer_instr > 0) {
-            cpu_nmi_defer_instr--;
-            NMI_BRK_LOG("pending NMI deferred this boundary -> defer=%u", cpu_nmi_defer_instr);
-            if (cpu_nmi_defer_instr == 0 && cpu_nmi_force_before_brk) {
-                uint8_t next_opcode = read_mem(cpu->pc);
-                NMI_BRK_LOG("step boundary nmi_pending=1 next=%02X (force-before-BRK)", next_opcode);
-                if (next_opcode == 0x00) {
-                    cpu_nmi_pending = false;
-                    cpu_nmi_force_before_brk = false;
-                    NMI_LOG("service start");
-                    NMI_BRK_LOG("service pending NMI before opcode %02X", next_opcode);
-                    cpu_nmi(cpu);
-
-                    // NMI sequence consumes 7 CPU cycles.
-                    int cycles = 7;
-                    apu_step(&apu, cycles);
-                    APPLY_DMC_DMA_STALLS();
-                    cycles += dmc_extra_cycles;
-                    cpu_total_cycles += (uint64_t)cycles;
-                    NMI_LOG("service end");
-                    NMI_BRK_LOG("service pending NMI done");
-                    return cycles;
-                }
-                cpu_nmi_force_before_brk = false;
-            }
-        } else {
-        // NMI is normally taken before fetching the next opcode. For BRK overlap behavior,
-        // allow BRK to execute and let BRK choose the NMI vector/push semantics.
-        uint8_t next_opcode = read_mem(cpu->pc);
-        NMI_BRK_LOG("step boundary nmi_pending=1 next=%02X", next_opcode);
-        if (next_opcode == 0xEA) {
-            uint8_t after_next = read_mem((uint16_t)(cpu->pc + 1));
-            if (after_next == 0x00) {
-                cpu_nmi_defer_instr = 1;
-                NMI_BRK_LOG("defer NMI for EA->BRK overlap");
-            }
-        }
-        // CLC immediately before BRK: defer once to let CLC execute, then service NMI
-        // on the next boundary even if the following opcode is BRK.
-        if (cpu_nmi_defer_instr == 0 && next_opcode == 0x18) {
-            uint8_t after_next = read_mem((uint16_t)(cpu->pc + 1));
-            if (after_next == 0x00) {
-                cpu_nmi_defer_instr = 1;
-                cpu_nmi_force_before_brk = true;
-                NMI_BRK_LOG("defer NMI for CLC->BRK window");
-            }
-        }
-        // IRQ-handler SEC window: defer one boundary so SEC can execute first.
-        if (cpu_nmi_defer_instr == 0 && next_opcode == 0x38) {
-            // Apply this only for BRK-origin IRQ entry (stacked P has B=1).
-            uint8_t stacked_p = read_mem((uint16_t)(0x0100 + (uint8_t)(cpu->sp + 1)));
-            NMI_BRK_LOG("SEC window check stacked_p=%02X sp=%02X", stacked_p, cpu->sp);
-            if ((stacked_p & BREAK_FLAG) != 0) {
-                cpu_nmi_defer_instr = 1;
-                NMI_BRK_LOG("defer NMI for BRK-IRQ SEC window before opcode %02X", next_opcode);
-            }
-        }
-        bool force_before_brk = cpu_nmi_force_before_brk && next_opcode == 0x00;
-        if (cpu_nmi_defer_instr == 0 && (next_opcode != 0x00 || force_before_brk)) {
-            cpu_nmi_pending = false;
-            cpu_nmi_force_before_brk = false;
-            NMI_LOG("service start");
-            NMI_BRK_LOG("service pending NMI before opcode %02X", next_opcode);
-            cpu_nmi(cpu);
-
-            // NMI sequence consumes 7 CPU cycles.
-            int cycles = 7;
-            apu_step(&apu, cycles);
-            APPLY_DMC_DMA_STALLS();
-            cycles += dmc_extra_cycles;
-            cpu_total_cycles += (uint64_t)cycles;
-            NMI_LOG("service end");
-            NMI_BRK_LOG("service pending NMI done");
-            return cycles;
-        }
-        }
-    }
-
-    uint8_t opcode = read_mem(cpu->pc++);
-    {
-        uint16_t op_pc = (uint16_t)(cpu->pc - 1);
-        bool hot_pc = (op_pc >= 0xE300 && op_pc <= 0xE370) || (op_pc >= 0xE310 && op_pc <= 0xE31F);
-        bool hot_op = (opcode == 0xA9 || opcode == 0x18 || opcode == 0x38 || opcode == 0x40 ||
-                       opcode == 0x48 || opcode == 0x68 || opcode == 0x85);
-        if (hot_pc && hot_op) {
-            NMI_BRK_LOG("exec pc=%04X op=%02X a=%02X x=%02X y=%02X p=%02X sp=%02X irq_line=%d nmi_pending=%d defer=%u",
-                        op_pc, opcode, cpu->a, cpu->x, cpu->y, cpu->status, cpu->sp,
-                        (apu_irq_pending(&apu) || cart_irq_pending()) ? 1 : 0,
-                        cpu_nmi_pending ? 1 : 0,
-                        cpu_nmi_defer_instr);
-        }
-    }
-    cpu->extra_cycles = 0;
-    execute(cpu, opcode);
-
-    // How many cycles did that opcode consume?
-    int cycles = cyc[opcode] + cpu->extra_cycles;
-
-    // Advance APU timing by *actual* CPU cycles
-    apu_step(&apu, cycles);
-    APPLY_DMC_DMA_STALLS();
-    cycles += dmc_extra_cycles;
-
-    // accumulate master CPU cycles
-    cpu_total_cycles += (uint64_t)cycles;
-
-    // ----- IRQ decision (6502 latency) -----
-    bool just_set_I = (cpu->sei_delay != 0);  // boundary right after SEI
-    bool irq_line   = apu_irq_pending(&apu) || cart_irq_pending();
-
-    bool defer_irq = false;
-    if (cpu->irq_delay > 0) {
-        cpu->irq_delay--;
-        defer_irq = true;
-    }
-
-    bool i_effective = ((cpu->status & INTERRUPT_FLAG) != 0) && !just_set_I;
-
-    if (irq_line && !defer_irq && !i_effective) {
-        NMI_BRK_LOG("irq decision irq_line=1 gate=0 i_effective=%d defer_irq=%d just_set_I=%d nmi_pending=%d defer=%u",
-                    i_effective ? 1 : 0, defer_irq ? 1 : 0, just_set_I ? 1 : 0,
-                    cpu_nmi_pending ? 1 : 0, cpu_nmi_defer_instr);
-        if (!cpu_nmi_pending) {
-            cpu_irq(cpu);
-        } else {
-            NMI_BRK_LOG("IRQ suppressed due to pending NMI (defer=%u force_brk=%d)",
-                        cpu_nmi_defer_instr, cpu_nmi_force_before_brk ? 1 : 0);
-        }
-    }
-    cpu->sei_delay = 0; // consume the SEI one-shot
-    #undef APPLY_DMC_DMA_STALLS
-    return cycles;
+    running_cpu = NULL;
+    return (int)(cpu_total_cycles - start);
 }

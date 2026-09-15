@@ -30,6 +30,7 @@
 #include "mapper.h"
 
 extern uint64_t cpu_total_cycles;
+extern uint64_t cpu_get_bus_cycle(void);
 
 #define PRG_BANK_8K  0x2000
 #define PRG_BANK_16K 0x4000
@@ -44,6 +45,10 @@ typedef struct {
     uint8_t *prg; size_t prg_sz;
     uint8_t *chr; size_t chr_sz;
     bool chr_is_ram;
+    uint8_t submapper;
+    bool bus_conflicts;
+    bool nes2;
+    RomRamSizes ram;
     Mirroring mirr_base;
 } CartCommon;
 
@@ -53,6 +58,7 @@ static Mapper mapper_mmc5, mapper_aorom, mapper_mmc2, mapper_mmc4, mapper_colord
 static Mapper mapper_cprom, mapper_100in1;
 Mapper *cart = NULL;
 static bool mapper_irq_line = false;
+static uint8_t cart_cpu_bus_input = 0xFF;
 static CartPpuFetchSource cart_ppu_fetch_source = CART_PPU_FETCH_CPU;
 static void mmc3_irq_clock(void);
 static void mmc5_scanline_clock(void);
@@ -72,10 +78,26 @@ static const uint32_t mmc3_log_limit = 3000;
 #define MMC3_LOG(...) do {} while (0)
 #endif
 
-static uint8_t prg_ram[0x2000];
+typedef struct {
+    uint8_t *data;
+    size_t size;
+} RamBlock;
+
+static RamBlock prg_work_ram, prg_save_ram;
 static bool prg_ram_dirty = false;
+static bool chr_ram_dirty = false;
 static bool battery_enabled = false;
 static char *battery_save_path = NULL;
+static char *chr_save_path = NULL;
+
+void cart_apply_trainer(const uint8_t trainer[512]) {
+    if (!trainer) return;
+    RamBlock *ram = prg_work_ram.size >= 0x2000 ? &prg_work_ram : &prg_save_ram;
+    if (ram->size >= 0x2000) {
+        memcpy(ram->data + 0x1000, trainer, 512);
+        if (ram == &prg_save_ram && battery_enabled) prg_ram_dirty = true;
+    }
+}
 
 static inline uint16_t base_nt_index(uint16_t addr) {
     uint16_t off = (uint16_t)((addr - 0x2000u) & 0x0FFFu);
@@ -92,18 +114,37 @@ static inline uint16_t base_nt_index(uint16_t addr) {
     }
 }
 
+static uint8_t ram_read(const RamBlock *ram, size_t offset) {
+    return ram && ram->size ? ram->data[offset % ram->size] : cart_cpu_bus_input;
+}
+
+static void ram_write(RamBlock *ram, size_t offset, uint8_t value) {
+    if (!ram || !ram->size) return;
+    size_t index = offset % ram->size;
+    if (ram->data[index] == value) return;
+    ram->data[index] = value;
+    if (ram == &prg_save_ram && battery_enabled) prg_ram_dirty = true;
+}
+
+static RamBlock *default_prg_ram(void) {
+    return prg_save_ram.size ? &prg_save_ram : &prg_work_ram;
+}
+
 static inline uint8_t prg_ram_read(uint16_t addr) {
-    return prg_ram[addr - 0x6000u];
+    return ram_read(default_prg_ram(), addr - 0x6000u);
 }
 
 static inline void prg_ram_write(uint16_t addr, uint8_t value) {
-    size_t index = (size_t)(addr - 0x6000u);
-    if (prg_ram[index] == value) return;
-    prg_ram[index] = value;
-    if (battery_enabled) prg_ram_dirty = true;
+    ram_write(default_prg_ram(), addr - 0x6000u, value);
 }
 
-static char *build_save_path(const char *rom_path) {
+static void chr_ram_write(size_t index, uint8_t value) {
+    if (!C.chr_is_ram || index >= C.chr_sz || C.chr[index] == value) return;
+    C.chr[index] = value;
+    if (index < C.ram.chr_nvram && battery_enabled) chr_ram_dirty = true;
+}
+
+static char *build_save_path(const char *rom_path, const char *suffix) {
     const char *last_slash = strrchr(rom_path, '/');
     const char *last_backslash = strrchr(rom_path, '\\');
     const char *sep = last_slash;
@@ -113,67 +154,86 @@ static char *build_save_path(const char *rom_path) {
     if (last_dot && sep && last_dot < sep) last_dot = NULL;
 
     size_t stem_len = last_dot ? (size_t)(last_dot - rom_path) : strlen(rom_path);
-    char *save_path = (char*)malloc(stem_len + 5);
+    size_t suffix_len = strlen(suffix) + 1;
+    if (stem_len > SIZE_MAX - suffix_len) return NULL;
+    char *save_path = (char*)malloc(stem_len + suffix_len);
     if (!save_path) return NULL;
 
     memcpy(save_path, rom_path, stem_len);
-    memcpy(save_path + stem_len, ".sav", 5);
+    memcpy(save_path + stem_len, suffix, suffix_len);
     return save_path;
 }
 
-void cart_battery_flush(void) {
-    if (!battery_enabled || !battery_save_path || !prg_ram_dirty) return;
-
-    FILE *fp = fopen(battery_save_path, "wb");
+static void flush_battery(const char *path, const uint8_t *data, size_t size, bool *dirty) {
+    if (!battery_enabled || !path || !size || !*dirty) return;
+    FILE *fp = fopen(path, "wb");
     if (!fp) {
         perror("battery save open");
         return;
     }
 
-    size_t written = fwrite(prg_ram, 1, sizeof(prg_ram), fp);
-    fclose(fp);
+    size_t written = fwrite(data, 1, size, fp);
+    int close_result = fclose(fp);
 
-    if (written != sizeof(prg_ram)) {
+    if (written != size || close_result != 0) {
         fprintf(stderr, "Failed to write battery save '%s' (%zu/%zu bytes)\n",
-                battery_save_path, written, sizeof(prg_ram));
+                path, written, size);
         return;
     }
+    *dirty = false;
+}
 
-    prg_ram_dirty = false;
+void cart_battery_flush(void) {
+    flush_battery(battery_save_path, prg_save_ram.data, prg_save_ram.size, &prg_ram_dirty);
+    flush_battery(chr_save_path, C.chr, C.ram.chr_nvram, &chr_ram_dirty);
 }
 
 void cart_battery_shutdown(void) {
     cart_battery_flush();
     free(battery_save_path);
+    free(chr_save_path);
     battery_save_path = NULL;
+    chr_save_path = NULL;
     battery_enabled = false;
     prg_ram_dirty = false;
+    chr_ram_dirty = false;
+}
+
+static void load_battery(const char *path, uint8_t *data, size_t size) {
+    if (!path || !size) return;
+    memset(data, 0, size);
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return; // first run/no prior save
+    (void)fread(data, 1, size, fp); // Short saves leave the remaining bytes zero.
+    if (ferror(fp)) fprintf(stderr, "Failed to read battery save '%s'\n", path);
+    fclose(fp);
 }
 
 void cart_battery_configure(const char *rom_path, bool has_battery) {
     cart_battery_shutdown();
-    memset(prg_ram, 0, sizeof(prg_ram));
-
-    battery_enabled = has_battery;
-    if (!battery_enabled || !rom_path) return;
-
-    battery_save_path = build_save_path(rom_path);
-    if (!battery_save_path) {
+    if (!has_battery || !rom_path) return;
+    if (prg_save_ram.size) battery_save_path = build_save_path(rom_path, ".sav");
+    if (C.ram.chr_nvram) chr_save_path = build_save_path(rom_path, ".chr.sav");
+    if ((prg_save_ram.size && !battery_save_path) || (C.ram.chr_nvram && !chr_save_path)) {
         fprintf(stderr, "Failed to allocate battery save path\n");
-        battery_enabled = false;
+        cart_battery_shutdown();
         return;
     }
+    battery_enabled = battery_save_path || chr_save_path;
+    load_battery(battery_save_path, prg_save_ram.data, prg_save_ram.size);
+    load_battery(chr_save_path, C.chr, C.ram.chr_nvram);
+}
 
-    FILE *fp = fopen(battery_save_path, "rb");
-    if (!fp) return; // first run/no prior save
-
-    size_t read = fread(prg_ram, 1, sizeof(prg_ram), fp);
-    fclose(fp);
-
-    if (read < sizeof(prg_ram)) {
-        memset(prg_ram + read, 0, sizeof(prg_ram) - read);
-    }
-    prg_ram_dirty = false;
+void mapper_shutdown(void) {
+    cart_battery_shutdown();
+    free(prg_work_ram.data);
+    free(prg_save_ram.data);
+    prg_work_ram = (RamBlock){0};
+    prg_save_ram = (RamBlock){0};
+    cart = NULL;
+    memset(&C, 0, sizeof(C));
+    mapper_irq_line = false;
+    cart_ppu_fetch_source = CART_PPU_FETCH_CPU;
 }
 
 // Helpers
@@ -181,7 +241,22 @@ static inline Mirroring base_mirr(void) { return C.mirr_base; }
 Mirroring cart_get_mirroring(void) { return cart && cart->get_mirroring ? cart->get_mirroring() : base_mirr(); }
 void cart_set_mirroring(Mirroring m) { C.mirr_base = m; }
 uint8_t cart_cpu_read(uint16_t a) { return cart ? cart->cpu_read(a) : 0xFF; }
-void cart_cpu_write(uint16_t a, uint8_t v) { if (cart) cart->cpu_write(a, v); }
+uint8_t cart_cpu_read_bus(uint16_t a, uint8_t open_bus) {
+    if (!cart) return open_bus;
+    // Read paths decide which registers and RAM chips drive the data lines.
+    // Scope the input so nested callbacks restore their caller's bus latch.
+    uint8_t previous_bus = cart_cpu_bus_input;
+    cart_cpu_bus_input = open_bus;
+    uint8_t value = cart->cpu_read(a);
+    cart_cpu_bus_input = previous_bus;
+    if (cart == &mapper_mmc5 && a == 0x5204) value |= open_bus & 0x3F;
+    return value;
+}
+void cart_cpu_write(uint16_t a, uint8_t v) {
+    if (!cart) return;
+    if (a >= 0x8000 && C.bus_conflicts) v &= cart->cpu_read(a);
+    cart->cpu_write(a, v);
+}
 uint8_t cart_ppu_read(uint16_t a) { return cart ? cart->ppu_read(a) : 0x00; }
 void cart_ppu_write(uint16_t a, uint8_t v) { if (cart) cart->ppu_write(a, v); }
 void cart_set_ppu_fetch_source(CartPpuFetchSource src) { cart_ppu_fetch_source = src; }
@@ -190,9 +265,7 @@ void cart_irq_ack(void) {
     mapper_irq_line = false;
 }
 void cart_notify_scanline(void) {
-    if (cart == &mapper_mmc3) {
-        mmc3_irq_clock();
-    }
+    // MMC3 clocks from qualified PPU A12 edges, not scanline completion.
 }
 
 void cart_notify_scanline_early(void) {
@@ -211,16 +284,17 @@ void cart_notify_vblank_start(void) {
 static uint8_t nrom_cpu_read(uint16_t a) {
     if (a >= 0x6000 && a <= 0x7FFF) return prg_ram_read(a);
     if (a >= 0x8000) {
-        if (C.prg_sz == PRG_BANK_16K) return C.prg[(a - 0x8000) & 0x3FFF];
-        return C.prg[(a - 0x8000) & 0x7FFF];
+        return C.prg[(a - 0x8000) % C.prg_sz];
     }
-    return 0xFF;
+    return cart_cpu_bus_input;
 }
 static void nrom_cpu_write(uint16_t a, uint8_t v) {
     if (a >= 0x6000 && a <= 0x7FFF) prg_ram_write(a, v);
 }
-static uint8_t nrom_ppu_read(uint16_t a) { return C.chr[a & 0x1FFF]; }
-static void nrom_ppu_write(uint16_t a, uint8_t v) { if (C.chr_is_ram) C.chr[a & 0x1FFF] = v; }
+static uint8_t nrom_ppu_read(uint16_t a) { return C.chr[(a & 0x1FFF) % C.chr_sz]; }
+static void nrom_ppu_write(uint16_t a, uint8_t v) {
+    chr_ram_write((a & 0x1FFF) % C.chr_sz, v);
+}
 static Mirroring nrom_mirr(void) { return C.mirr_base; }
 
 // ----------------- Mapper 1 (MMC1/SxROM) -----------------
@@ -230,6 +304,9 @@ static struct {
     uint8_t control;
     uint8_t chr_bank0, chr_bank1;
     uint8_t prg_bank;
+    bool last_chr_bank1;
+    bool has_write_cycle;
+    uint64_t last_write_cycle;
     Mirroring mirr;
 } mmc1;
 
@@ -243,35 +320,70 @@ static void mmc1_write_control(uint8_t v) {
     }
 }
 
-static uint8_t mmc1_cpu_read(uint16_t a) {
-    if (a >= 0x6000 && a <= 0x7FFF) return prg_ram_read(a);
-    if (a >= 0x8000) {
-        size_t prg_banks = C.prg_sz / PRG_BANK_16K;
-        uint8_t prg_mode = (mmc1.control >> 2) & 3;
-        size_t bank = 0;
-        
-        if (prg_mode == 0 || prg_mode == 1) {
-            // 32KB mode
-            bank = (mmc1.prg_bank >> 1) % (prg_banks / 2);
-            return C.prg[bank * PRG_BANK_32K + (a - 0x8000)];
-        } else if (prg_mode == 2) {
-            // Fix first bank, switch $C000
-            if (a < 0xC000) bank = 0;
-            else bank = mmc1.prg_bank % prg_banks;
-            return C.prg[bank * PRG_BANK_16K + ((a - 0x8000) & 0x3FFF)];
-        } else {
-            // Fix last bank, switch $8000
-            if (a < 0xC000) bank = mmc1.prg_bank % prg_banks;
-            else bank = (prg_banks > 0) ? prg_banks - 1 : 0;
-            return C.prg[bank * PRG_BANK_16K + ((a - 0x8000) & 0x3FFF)];
-        }
+static uint8_t mmc1_extra_register(void) {
+    return (mmc1.last_chr_bank1 && (mmc1.control & 0x10)) ? mmc1.chr_bank1 : mmc1.chr_bank0;
+}
+
+static RamBlock *mmc1_ram_location(uint16_t a, size_t *offset) {
+    uint8_t extra = mmc1_extra_register();
+    size_t total = C.ram.prg_ram + C.ram.prg_nvram;
+    size_t bank = 0;
+    RamBlock *ram = default_prg_ram();
+    if (C.ram.prg_ram == 0x2000 && C.ram.prg_nvram == 0x2000) {
+        // SOROM uses CHR bit 3 to select its battery or work RAM chip.
+        ram = (extra & 8) ? &prg_work_ram : &prg_save_ram;
+    } else if (total > 0x4000) {
+        bank = (extra >> 2) & 3; // SXROM: four 8KB banks.
+    } else if (total > 0x2000) {
+        bank = (extra >> 2) & 1;
     }
-    return 0xFF;
+    *offset = bank * PRG_BANK_8K + (a & 0x1FFF);
+    return ram;
+}
+
+static uint8_t mmc1_cpu_read(uint16_t a) {
+    if (a >= 0x6000 && a <= 0x7FFF) {
+        if (mmc1.prg_bank & 0x10) return cart_cpu_bus_input;
+        size_t offset;
+        RamBlock *ram = mmc1_ram_location(a, &offset);
+        return ram_read(ram, offset);
+    }
+    if (a >= 0x8000) {
+        uint8_t prg_mode = (mmc1.control >> 2) & 3;
+        size_t slot = (a - 0x8000) >> 14;
+        size_t bank;
+        uint8_t extra = mmc1_extra_register();
+        size_t outer = C.prg_sz == 0x80000 ? (extra & 0x10) : 0;
+        if (C.submapper == 5) {
+            bank = slot; // Fixed-PRG MMC1 boards.
+        } else if (prg_mode < 2) {
+            bank = ((mmc1.prg_bank & 0x0E) + slot) | outer;
+        } else if (prg_mode == 2) {
+            bank = (slot ? (mmc1.prg_bank & 0x0F) : 0) | outer;
+        } else {
+            bank = (slot ? 0x0F : (mmc1.prg_bank & 0x0F)) | outer;
+        }
+        return C.prg[(bank * PRG_BANK_16K + (a & 0x3FFF)) % C.prg_sz];
+    }
+    return cart_cpu_bus_input;
 }
 
 static void mmc1_cpu_write(uint16_t a, uint8_t v) {
-    if (a >= 0x6000 && a <= 0x7FFF) { prg_ram_write(a, v); return; }
+    if (a >= 0x6000 && a <= 0x7FFF) {
+        if (!(mmc1.prg_bank & 0x10)) {
+            size_t offset;
+            RamBlock *ram = mmc1_ram_location(a, &offset);
+            ram_write(ram, offset, v);
+        }
+        return;
+    }
     if (a >= 0x8000) {
+        uint64_t write_cycle = cpu_get_bus_cycle();
+        bool consecutive = mmc1.has_write_cycle
+                        && write_cycle - mmc1.last_write_cycle < 2;
+        mmc1.last_write_cycle = write_cycle;
+        mmc1.has_write_cycle = true;
+        if (consecutive && !(v & 0x80)) return;
         if (v & 0x80) {
             mmc1.shift_reg = 0;
             mmc1.shift_count = 0;
@@ -282,9 +394,13 @@ static void mmc1_cpu_write(uint16_t a, uint8_t v) {
             if (mmc1.shift_count == 5) {
                 uint8_t reg = (a >> 13) & 3;
                 if (reg == 0) mmc1_write_control(mmc1.shift_reg);
-                else if (reg == 1) mmc1.chr_bank0 = mmc1.shift_reg;
-                else if (reg == 2) mmc1.chr_bank1 = mmc1.shift_reg;
-                else mmc1.prg_bank = mmc1.shift_reg & 0x0F;
+                else if (reg == 1) {
+                    mmc1.chr_bank0 = mmc1.shift_reg;
+                    mmc1.last_chr_bank1 = false;
+                } else if (reg == 2) {
+                    mmc1.chr_bank1 = mmc1.shift_reg;
+                    mmc1.last_chr_bank1 = true;
+                } else mmc1.prg_bank = mmc1.shift_reg;
                 mmc1.shift_reg = 0;
                 mmc1.shift_count = 0;
             }
@@ -292,37 +408,23 @@ static void mmc1_cpu_write(uint16_t a, uint8_t v) {
     }
 }
 
-static uint8_t mmc1_ppu_read(uint16_t a) {
+static size_t mmc1_chr_offset(uint16_t a) {
     a &= 0x1FFF;
-    size_t chr_banks = C.chr_sz / CHR_BANK_4K;
-    if (chr_banks == 0) return C.chr[a];
-    
-    uint8_t chr_mode = (mmc1.control >> 4) & 1;
-    if (chr_mode == 0) {
-        // 8KB mode
-        size_t bank = (mmc1.chr_bank0 >> 1) % (chr_banks / 2);
-        return C.chr[bank * CHR_BANK_8K + a];
+    size_t bank;
+    if (mmc1.control & 0x10) {
+        bank = a < 0x1000 ? mmc1.chr_bank0 : mmc1.chr_bank1;
     } else {
-        // 4KB mode
-        size_t bank = (a < 0x1000) ? (mmc1.chr_bank0 % chr_banks) : (mmc1.chr_bank1 % chr_banks);
-        return C.chr[bank * CHR_BANK_4K + (a & 0x0FFF)];
+        bank = (mmc1.chr_bank0 & 0x1E) + (a >> 12);
     }
+    return (bank * CHR_BANK_4K + (a & 0x0FFF)) % C.chr_sz;
+}
+
+static uint8_t mmc1_ppu_read(uint16_t a) {
+    return C.chr[mmc1_chr_offset(a)];
 }
 
 static void mmc1_ppu_write(uint16_t a, uint8_t v) {
-    if (!C.chr_is_ram) return;
-    a &= 0x1FFF;
-    size_t chr_banks = C.chr_sz / CHR_BANK_4K;
-    if (chr_banks == 0) { C.chr[a] = v; return; }
-    
-    uint8_t chr_mode = (mmc1.control >> 4) & 1;
-    if (chr_mode == 0) {
-        size_t bank = (mmc1.chr_bank0 >> 1) % (chr_banks / 2);
-        C.chr[bank * CHR_BANK_8K + a] = v;
-    } else {
-        size_t bank = (a < 0x1000) ? (mmc1.chr_bank0 % chr_banks) : (mmc1.chr_bank1 % chr_banks);
-        C.chr[bank * CHR_BANK_4K + (a & 0x0FFF)] = v;
-    }
+    chr_ram_write(mmc1_chr_offset(a), v);
 }
 
 static Mirroring mmc1_mirr(void) { return mmc1.mirr; }
@@ -333,6 +435,9 @@ static void mmc1_reset(void) {
     mmc1.chr_bank0 = 0;
     mmc1.chr_bank1 = 0;
     mmc1.prg_bank = 0;
+    mmc1.last_chr_bank1 = false;
+    mmc1.has_write_cycle = false;
+    mmc1.last_write_cycle = 0;
 }
 
 // ----------------- Mapper 2 (UxROM) -----------------
@@ -349,11 +454,11 @@ static uint8_t uxrom_cpu_read(uint16_t a) {
         size_t last = (banks ? banks : 1) - 1;
         return C.prg[last * PRG_BANK_16K + (a - 0xC000)];
     }
-    return 0xFF;
+    return cart_cpu_bus_input;
 }
 static void uxrom_cpu_write(uint16_t a, uint8_t v) {
     if (a >= 0x6000 && a <= 0x7FFF) { prg_ram_write(a, v); return; }
-    if (a >= 0x8000) ux.bank = v & 0x1F;
+    if (a >= 0x8000) ux.bank = v;
 }
 static uint8_t uxrom_ppu_read(uint16_t a) { return nrom_ppu_read(a); }
 static void uxrom_ppu_write(uint16_t a, uint8_t v) { nrom_ppu_write(a, v); }
@@ -364,8 +469,8 @@ static void uxrom_reset(void) { ux.bank = 0; }
 static struct { uint8_t chr_bank; } cn;
 static uint8_t cnrom_cpu_read(uint16_t a) {
     if (a >= 0x6000 && a <= 0x7FFF) return prg_ram_read(a);
-    if (a >= 0x8000) return C.prg[(a - 0x8000) & 0x7FFF];
-    return 0xFF;
+    if (a >= 0x8000) return C.prg[(a - 0x8000) % C.prg_sz];
+    return cart_cpu_bus_input;
 }
 static void cnrom_cpu_write(uint16_t a, uint8_t v) {
     if (a >= 0x6000 && a <= 0x7FFF) { prg_ram_write(a, v); return; }
@@ -382,7 +487,7 @@ static uint8_t cnrom_ppu_read(uint16_t a) {
 static void cnrom_ppu_write(uint16_t a, uint8_t v) {
     if (C.chr_is_ram) {
         size_t off = (size_t)cn.chr_bank * CHR_BANK_8K + (a & 0x1FFF);
-        C.chr[off % C.chr_sz] = v;
+        chr_ram_write(off % C.chr_sz, v);
     }
 }
 static Mirroring cnrom_mirr(void) { return C.mirr_base; }
@@ -396,7 +501,28 @@ static struct {
     Mirroring mirr;
     uint8_t irq_latch, irq_counter;
     bool irq_enabled, irq_reload;
+    uint8_t ram_protect;
+    bool ram_enabled; // MMC6 global enable at $8000 bit 5.
+    bool a12_low;
+    uint64_t a12_low_cycle;
 } mmc3;
+
+void cart_notify_ppu_address(uint16_t addr, uint64_t ppu_cycle) {
+    if (cart != &mapper_mmc3) return;
+    uint64_t cpu_cycle = ppu_cycle / 3;
+    if (!(addr & 0x1000)) {
+        if (!mmc3.a12_low) {
+            mmc3.a12_low = true;
+            mmc3.a12_low_cycle = cpu_cycle;
+        }
+    } else {
+        if (mmc3.a12_low && cpu_cycle >= mmc3.a12_low_cycle
+            && cpu_cycle - mmc3.a12_low_cycle >= 3) {
+            mmc3_irq_clock();
+        }
+        mmc3.a12_low = false;
+    }
+}
 
 static void mmc3_irq_clock(void) {
     if (mmc3.irq_counter == 0 || mmc3.irq_reload) {
@@ -413,10 +539,19 @@ static void mmc3_irq_clock(void) {
 }
 
 static uint8_t mmc3_cpu_read(uint16_t a) {
-    if (a >= 0x6000 && a <= 0x7FFF) return prg_ram_read(a);
+    if (a >= 0x6000 && a <= 0x7FFF) {
+        if (C.submapper == 1) {
+            if (a < 0x7000 || !mmc3.ram_enabled || !(mmc3.ram_protect & 0xA0))
+                return cart_cpu_bus_input;
+            uint8_t read_enable = (a & 0x0200) ? 0x80 : 0x20;
+            if (!(mmc3.ram_protect & read_enable)) return 0;
+            return ram_read(default_prg_ram(), a & 0x03FF);
+        }
+        return (mmc3.ram_protect & 0x80) ? prg_ram_read(a) : cart_cpu_bus_input;
+    }
     if (a >= 0x8000) {
         size_t prg_8k_banks = C.prg_sz / PRG_BANK_8K;
-        if (prg_8k_banks == 0) return 0xFF;
+        if (prg_8k_banks == 0) return cart_cpu_bus_input;
 
         size_t last_bank = prg_8k_banks - 1;
         size_t second_last_bank = (prg_8k_banks > 1) ? (prg_8k_banks - 2) : 0;
@@ -435,28 +570,45 @@ static uint8_t mmc3_cpu_read(uint16_t a) {
         bank %= prg_8k_banks;
         return C.prg[bank * PRG_BANK_8K + (a & 0x1FFF)];
     }
-    return 0xFF;
+    return cart_cpu_bus_input;
 }
 
 static void mmc3_cpu_write(uint16_t a, uint8_t v) {
-    if (a >= 0x6000 && a <= 0x7FFF) { prg_ram_write(a, v); return; }
+    if (a >= 0x6000 && a <= 0x7FFF) {
+        if (C.submapper == 1) {
+            uint8_t required = (a & 0x0200) ? 0xC0 : 0x30;
+            if (a >= 0x7000 && mmc3.ram_enabled && (mmc3.ram_protect & required) == required)
+                ram_write(default_prg_ram(), a & 0x03FF, v);
+        } else if ((mmc3.ram_protect & 0xC0) == 0x80) {
+            prg_ram_write(a, v);
+        }
+        return;
+    }
     if (a >= 0x8000) {
         if ((a & 0xE001) == 0x8000) {
             mmc3.bank_select = v & 7;
             mmc3.prg_mode = (v >> 6) & 1;
             mmc3.chr_mode = (v >> 7) & 1;
+            if (C.submapper == 1) {
+                mmc3.ram_enabled = (v & 0x20) != 0;
+                if (!mmc3.ram_enabled) mmc3.ram_protect = 0;
+            }
             MMC3_LOG("write %04X=%02X select=%u prg_mode=%u chr_mode=%u", a, v,
                      mmc3.bank_select, mmc3.prg_mode, mmc3.chr_mode);
         } else if ((a & 0xE001) == 0x8001) {
             mmc3.banks[mmc3.bank_select] = v;
             MMC3_LOG("write %04X=%02X bank[%u]=%02X", a, v, mmc3.bank_select, v);
         } else if ((a & 0xE001) == 0xA000) {
-            mmc3.mirr = (v & 1) ? MIRROR_HORIZONTAL : MIRROR_VERTICAL;
+            if (C.mirr_base != MIRROR_FOUR)
+                mmc3.mirr = (v & 1) ? MIRROR_HORIZONTAL : MIRROR_VERTICAL;
             MMC3_LOG("write %04X=%02X mirr=%d", a, v, (int)mmc3.mirr);
+        } else if ((a & 0xE001) == 0xA001) {
+            if (C.submapper != 1 || mmc3.ram_enabled) mmc3.ram_protect = v;
         } else if ((a & 0xE001) == 0xC000) {
             mmc3.irq_latch = v;
             MMC3_LOG("write %04X=%02X irq_latch=%02X", a, v, mmc3.irq_latch);
         } else if ((a & 0xE001) == 0xC001) {
+            mmc3.irq_counter = 0;
             mmc3.irq_reload = true;
             MMC3_LOG("write %04X=%02X irq_reload=1", a, v);
         } else if ((a & 0xE001) == 0xE000) {
@@ -473,7 +625,7 @@ static void mmc3_cpu_write(uint16_t a, uint8_t v) {
 static uint8_t mmc3_ppu_read(uint16_t a) {
     a &= 0x1FFF;
     size_t chr_1k_banks = C.chr_sz / CHR_BANK_1K;
-    if (chr_1k_banks == 0) return C.chr[a];
+    if (chr_1k_banks == 0) return nrom_ppu_read(a);
 
     uint8_t slot = (uint8_t)(a >> 10);
     size_t bank = 0;
@@ -505,7 +657,7 @@ static void mmc3_ppu_write(uint16_t a, uint8_t v) {
     if (!C.chr_is_ram) return;
     a &= 0x1FFF;
     size_t chr_1k_banks = C.chr_sz / CHR_BANK_1K;
-    if (chr_1k_banks == 0) { C.chr[a] = v; return; }
+    if (chr_1k_banks == 0) { nrom_ppu_write(a, v); return; }
 
     uint8_t slot = (uint8_t)(a >> 10);
     size_t bank = 0;
@@ -530,12 +682,14 @@ static void mmc3_ppu_write(uint16_t a, uint8_t v) {
     }
 
     bank %= chr_1k_banks;
-    C.chr[bank * CHR_BANK_1K + (a & 0x03FF)] = v;
+    chr_ram_write(bank * CHR_BANK_1K + (a & 0x03FF), v);
 }
 
 static Mirroring mmc3_mirr(void) { return mmc3.mirr; }
 static void mmc3_reset(void) {
     memset(&mmc3, 0, sizeof(mmc3));
+    const uint8_t initial_banks[8] = {0, 2, 4, 5, 6, 7, 0, 1};
+    memcpy(mmc3.banks, initial_banks, sizeof(initial_banks));
     mmc3.mirr = C.mirr_base;
     mapper_irq_line = false;
 }
@@ -720,10 +874,51 @@ static void mmc5_vblank_start(void) {
     mapper_irq_line = false;
 }
 
+static bool mmc5_ram_mapped(uint16_t a) {
+    if (a < 0x6000) return false;
+    if (a < 0x8000) return true;
+    unsigned slot = (a - 0x8000) >> 13;
+    switch (mmc5.prg_mode) {
+        case 0: return false; // $5117 always selects ROM.
+        case 1: return slot < 2 && !(mmc5.prg_regs[1] & 0x80);
+        case 2:
+            return slot < 2 ? !(mmc5.prg_regs[1] & 0x80)
+                           : slot == 2 && !(mmc5.prg_regs[2] & 0x80);
+        default: return slot < 3 && !(mmc5.prg_regs[slot] & 0x80);
+    }
+}
+
+static RamBlock *mmc5_ram_location(uint16_t a, size_t *offset) {
+    unsigned bank;
+    if (a < 0x8000) {
+        bank = mmc5.prg_ram_bank;
+    } else if ((mmc5.prg_mode == 1 || mmc5.prg_mode == 2) && a < 0xC000) {
+        bank = (mmc5.prg_regs[1] & 0xFE) + ((a - 0x8000) >> 13);
+    } else {
+        bank = mmc5.prg_regs[(a - 0x8000) >> 13];
+    }
+    RamBlock *ram = default_prg_ram();
+    if (C.nes2 && (ram->size == 0x10000 || ram->size == 0x20000)) {
+        bank &= 0x0F; // NES 2.0 can describe a single 64KB/128KB chip.
+    } else {
+        bank &= 7;
+        if (C.nes2) {
+            if (C.ram.prg_ram == 0x2000 && C.ram.prg_nvram == 0x2000) {
+                ram = (bank & 4) ? &prg_work_ram : &prg_save_ram;
+            } else if (bank >= 4) {
+                return NULL; // The second RAM socket is empty.
+            }
+        }
+    }
+    *offset = bank * PRG_BANK_8K + (a & 0x1FFF);
+    return ram;
+}
+
 static uint8_t mmc5_cpu_read(uint16_t a) {
+    if (a == 0xFFFA || a == 0xFFFB) mmc5_vblank_start();
     if (a >= 0x5C00 && a <= 0x5FFF) {
         uint8_t mode = (uint8_t)(mmc5.exram_mode & 0x03);
-        if (mode == 0 || mode == 1) return 0xFF;
+        if (mode == 0 || mode == 1) return cart_cpu_bus_input;
         return mmc5.exram[a - 0x5C00u];
     }
     if (a == 0x5204) {
@@ -743,28 +938,36 @@ static uint8_t mmc5_cpu_read(uint16_t a) {
         return (uint8_t)(product >> 8);
     }
 
-    if (a >= 0x6000 && a <= 0x7FFF) return prg_ram_read(a);
+    if (mmc5_ram_mapped(a)) {
+        size_t offset = 0;
+        RamBlock *ram = mmc5_ram_location(a, &offset);
+        return ram_read(ram, offset);
+    }
     if (a >= 0x8000) {
         size_t banks = mmc5_prg_bank_count_8k();
-        if (banks == 0) return 0xFF;
+        if (banks == 0) return cart_cpu_bus_input;
 
         size_t slot = (size_t)((a - 0x8000u) >> 13); // 0..3
         size_t bank = mmc5_map_prg_slot_to_bank(slot);
         return C.prg[bank * PRG_BANK_8K + (a & 0x1FFF)];
     }
-    return 0xFF;
+    return cart_cpu_bus_input;
 }
 
 static void mmc5_cpu_write(uint16_t a, uint8_t v) {
     if (a >= 0x5C00 && a <= 0x5FFF) {
         uint8_t mode = (uint8_t)(mmc5.exram_mode & 0x03);
-        if (mode != 3) mmc5.exram[a - 0x5C00u] = v;
+        if (mode != 3) mmc5.exram[a - 0x5C00u] = (mode <= 1 && !mmc5.in_frame) ? 0 : v;
         return;
     }
-    if (a >= 0x6000 && a <= 0x7FFF) {
+    if (a >= 0x6000) {
         bool prg_ram_write_enable = ((mmc5.prg_ram_protect1 & 0x03) == 0x02)
                                  && ((mmc5.prg_ram_protect2 & 0x03) == 0x01);
-        if (prg_ram_write_enable) prg_ram_write(a, v);
+        if (prg_ram_write_enable && mmc5_ram_mapped(a)) {
+            size_t offset = 0;
+            RamBlock *ram = mmc5_ram_location(a, &offset);
+            ram_write(ram, offset, v);
+        }
         return;
     }
 
@@ -786,7 +989,7 @@ static void mmc5_cpu_write(uint16_t a, uint8_t v) {
         mmc5.nt_control = v;
         mmc5_update_mirroring(v);
     } else if (a == 0x5113) {
-        mmc5.prg_ram_bank = v & 0x07;
+        mmc5.prg_ram_bank = v;
     } else if (a >= 0x5114 && a <= 0x5117) {
         mmc5.prg_regs[a - 0x5114] = v;
     } else if (a >= 0x5120 && a <= 0x5127) {
@@ -813,7 +1016,7 @@ static void mmc5_cpu_write(uint16_t a, uint8_t v) {
 static uint8_t mmc5_ppu_read(uint16_t a) {
     a &= 0x1FFF;
     size_t chr_1k_banks = C.chr_sz / CHR_BANK_1K;
-    if (chr_1k_banks == 0) return C.chr[a];
+    if (chr_1k_banks == 0) return nrom_ppu_read(a);
 
     size_t bank = mmc5_map_chr_bank_1k(a);
     return C.chr[bank * CHR_BANK_1K + (a & 0x03FF)];
@@ -823,10 +1026,10 @@ static void mmc5_ppu_write(uint16_t a, uint8_t v) {
     if (!C.chr_is_ram) return;
     a &= 0x1FFF;
     size_t chr_1k_banks = C.chr_sz / CHR_BANK_1K;
-    if (chr_1k_banks == 0) { C.chr[a] = v; return; }
+    if (chr_1k_banks == 0) { nrom_ppu_write(a, v); return; }
 
     size_t bank = mmc5_map_chr_bank_1k(a);
-    C.chr[bank * CHR_BANK_1K + (a & 0x03FF)] = v;
+    chr_ram_write(bank * CHR_BANK_1K + (a & 0x03FF), v);
 }
 
 static Mirroring mmc5_mirr(void) { return mmc5.mirr; }
@@ -846,18 +1049,7 @@ static void mmc5_reset(void) {
     mmc5.fill_attr = 0;
     mmc5.chr_last_set_b = false;
 
-    size_t banks = mmc5_prg_bank_count_8k();
-    if (banks == 0) {
-        mmc5.prg_regs[0] = 0;
-        mmc5.prg_regs[1] = 0;
-        mmc5.prg_regs[2] = 0;
-        mmc5.prg_regs[3] = 0;
-    } else {
-        mmc5.prg_regs[0] = (uint8_t)((banks > 3) ? (banks - 4) : 0);
-        mmc5.prg_regs[1] = (uint8_t)((banks > 2) ? (banks - 3) : 0);
-        mmc5.prg_regs[2] = (uint8_t)((banks > 1) ? (banks - 2) : 0);
-        mmc5.prg_regs[3] = (uint8_t)(banks - 1);
-    }
+    mmc5.prg_regs[3] = 0xFF; // Reset vectors are in the last ROM bank.
 
     for (int i = 0; i < 8; ++i) mmc5.chr_regs_a[i] = (uint16_t)i;
     for (int i = 0; i < 4; ++i) mmc5.chr_regs_b[i] = (uint16_t)i;
@@ -922,21 +1114,21 @@ static uint8_t aorom_cpu_read(uint16_t a) {
     if (a >= 0x8000) {
         size_t banks = C.prg_sz / PRG_BANK_32K;
         size_t b = (banks ? ao.prg_bank % banks : 0);
-        return C.prg[b * PRG_BANK_32K + (a - 0x8000)];
+        return C.prg[(b * PRG_BANK_32K + (a - 0x8000)) % C.prg_sz];
     }
-    return 0xFF;
+    return cart_cpu_bus_input;
 }
 static void aorom_cpu_write(uint16_t a, uint8_t v) {
     if (a >= 0x6000 && a <= 0x7FFF) { prg_ram_write(a, v); return; }
     if (a >= 0x8000) {
-        ao.prg_bank = v & 0x07;
+        ao.prg_bank = v & 0x0F;
         ao.mirr = (v & 0x10) ? MIRROR_SINGLE1 : MIRROR_SINGLE0;
     }
 }
 static uint8_t aorom_ppu_read(uint16_t a) { return nrom_ppu_read(a); }
 static void aorom_ppu_write(uint16_t a, uint8_t v) { nrom_ppu_write(a, v); }
 static Mirroring aorom_mirr(void) { return ao.mirr; }
-static void aorom_reset(void) { ao.prg_bank = 0; ao.mirr = C.mirr_base; }
+static void aorom_reset(void) { ao.prg_bank = 0; ao.mirr = MIRROR_SINGLE0; }
 
 // ----------------- Mapper 9 (MMC2/PxROM) -----------------
 static struct {
@@ -955,10 +1147,11 @@ static uint8_t mmc2_cpu_read(uint16_t a) {
     }
     if (a >= 0xA000) {
         size_t banks = C.prg_sz / PRG_BANK_8K;
-        size_t bank = (banks >= 3) ? (banks - 3) : 0;
+        size_t slot = (size_t)((a - 0xA000) / PRG_BANK_8K);
+        size_t bank = (banks + slot - (3 % banks)) % banks;
         return C.prg[bank * PRG_BANK_8K + ((a - 0xA000) & 0x1FFF)];
     }
-    return 0xFF;
+    return cart_cpu_bus_input;
 }
 
 static void mmc2_cpu_write(uint16_t a, uint8_t v) {
@@ -974,9 +1167,9 @@ static void mmc2_cpu_write(uint16_t a, uint8_t v) {
 static uint8_t mmc2_ppu_read(uint16_t a) {
     a &= 0x1FFF;
     size_t chr_4k_banks = C.chr_sz / CHR_BANK_4K;
-    if (chr_4k_banks == 0) return C.chr[a];
+    if (chr_4k_banks == 0) return nrom_ppu_read(a);
     
-    uint8_t bank_idx = (a < 0x1000) ? (mmc2.latch[0] * 2) : (2 + mmc2.latch[1] * 2);
+    uint8_t bank_idx = (a < 0x1000) ? mmc2.latch[0] : (2 + mmc2.latch[1]);
     size_t bank = mmc2.chr_banks[bank_idx] % chr_4k_banks;
     uint8_t val = C.chr[bank * CHR_BANK_4K + (a & 0x0FFF)];
     
@@ -993,15 +1186,16 @@ static void mmc2_ppu_write(uint16_t a, uint8_t v) {
     if (!C.chr_is_ram) return;
     a &= 0x1FFF;
     size_t chr_4k_banks = C.chr_sz / CHR_BANK_4K;
-    if (chr_4k_banks == 0) { C.chr[a] = v; return; }
-    uint8_t bank_idx = (a < 0x1000) ? (mmc2.latch[0] * 2) : (2 + mmc2.latch[1] * 2);
+    if (chr_4k_banks == 0) { nrom_ppu_write(a, v); return; }
+    uint8_t bank_idx = (a < 0x1000) ? mmc2.latch[0] : (2 + mmc2.latch[1]);
     size_t bank = mmc2.chr_banks[bank_idx] % chr_4k_banks;
-    C.chr[bank * CHR_BANK_4K + (a & 0x0FFF)] = v;
+    chr_ram_write(bank * CHR_BANK_4K + (a & 0x0FFF), v);
 }
 
 static Mirroring mmc2_mirr(void) { return mmc2.mirr; }
 static void mmc2_reset(void) {
     memset(&mmc2, 0, sizeof(mmc2));
+    mmc2.latch[0] = mmc2.latch[1] = 1;
     mmc2.mirr = C.mirr_base;
 }
 
@@ -1025,7 +1219,7 @@ static uint8_t mmc4_cpu_read(uint16_t a) {
         size_t bank = (banks > 0) ? banks - 1 : 0;
         return C.prg[bank * PRG_BANK_16K + (a - 0xC000)];
     }
-    return 0xFF;
+    return cart_cpu_bus_input;
 }
 
 static void mmc4_cpu_write(uint16_t a, uint8_t v) {
@@ -1041,15 +1235,15 @@ static void mmc4_cpu_write(uint16_t a, uint8_t v) {
 static uint8_t mmc4_ppu_read(uint16_t a) {
     a &= 0x1FFF;
     size_t chr_4k_banks = C.chr_sz / CHR_BANK_4K;
-    if (chr_4k_banks == 0) return C.chr[a];
+    if (chr_4k_banks == 0) return nrom_ppu_read(a);
     
-    uint8_t bank_idx = (a < 0x1000) ? (mmc4.latch[0] * 2) : (2 + mmc4.latch[1] * 2);
+    uint8_t bank_idx = (a < 0x1000) ? mmc4.latch[0] : (2 + mmc4.latch[1]);
     size_t bank = mmc4.chr_banks[bank_idx] % chr_4k_banks;
     uint8_t val = C.chr[bank * CHR_BANK_4K + (a & 0x0FFF)];
     
-    // Latch update (same as MMC2)
-    if (a == 0x0FD8) mmc4.latch[0] = 0;
-    else if (a == 0x0FE8) mmc4.latch[0] = 1;
+    // MMC4 decodes all eight addresses in both pattern-table latch ranges.
+    if (a >= 0x0FD8 && a <= 0x0FDF) mmc4.latch[0] = 0;
+    else if (a >= 0x0FE8 && a <= 0x0FEF) mmc4.latch[0] = 1;
     else if (a >= 0x1FD8 && a <= 0x1FDF) mmc4.latch[1] = 0;
     else if (a >= 0x1FE8 && a <= 0x1FEF) mmc4.latch[1] = 1;
     
@@ -1060,15 +1254,16 @@ static void mmc4_ppu_write(uint16_t a, uint8_t v) {
     if (!C.chr_is_ram) return;
     a &= 0x1FFF;
     size_t chr_4k_banks = C.chr_sz / CHR_BANK_4K;
-    if (chr_4k_banks == 0) { C.chr[a] = v; return; }
-    uint8_t bank_idx = (a < 0x1000) ? (mmc4.latch[0] * 2) : (2 + mmc4.latch[1] * 2);
+    if (chr_4k_banks == 0) { nrom_ppu_write(a, v); return; }
+    uint8_t bank_idx = (a < 0x1000) ? mmc4.latch[0] : (2 + mmc4.latch[1]);
     size_t bank = mmc4.chr_banks[bank_idx] % chr_4k_banks;
-    C.chr[bank * CHR_BANK_4K + (a & 0x0FFF)] = v;
+    chr_ram_write(bank * CHR_BANK_4K + (a & 0x0FFF), v);
 }
 
 static Mirroring mmc4_mirr(void) { return mmc4.mirr; }
 static void mmc4_reset(void) {
     memset(&mmc4, 0, sizeof(mmc4));
+    mmc4.latch[0] = mmc4.latch[1] = 1;
     mmc4.mirr = C.mirr_base;
 }
 
@@ -1083,9 +1278,9 @@ static uint8_t colordreams_cpu_read(uint16_t a) {
     if (a >= 0x8000) {
         size_t banks = C.prg_sz / PRG_BANK_32K;
         size_t bank = (banks > 0) ? (colordreams.prg_bank % banks) : 0;
-        return C.prg[bank * PRG_BANK_32K + (a - 0x8000)];
+        return C.prg[(bank * PRG_BANK_32K + (a - 0x8000)) % C.prg_sz];
     }
-    return 0xFF;
+    return cart_cpu_bus_input;
 }
 
 static void colordreams_cpu_write(uint16_t a, uint8_t v) {
@@ -1099,7 +1294,7 @@ static void colordreams_cpu_write(uint16_t a, uint8_t v) {
 static uint8_t colordreams_ppu_read(uint16_t a) {
     a &= 0x1FFF;
     size_t banks = C.chr_sz / CHR_BANK_8K;
-    if (banks == 0) return C.chr[a];
+    if (banks == 0) return nrom_ppu_read(a);
     size_t bank = colordreams.chr_bank % banks;
     return C.chr[bank * CHR_BANK_8K + a];
 }
@@ -1108,9 +1303,9 @@ static void colordreams_ppu_write(uint16_t a, uint8_t v) {
     if (!C.chr_is_ram) return;
     a &= 0x1FFF;
     size_t banks = C.chr_sz / CHR_BANK_8K;
-    if (banks == 0) { C.chr[a] = v; return; }
+    if (banks == 0) { nrom_ppu_write(a, v); return; }
     size_t bank = colordreams.chr_bank % banks;
-    C.chr[bank * CHR_BANK_8K + a] = v;
+    chr_ram_write(bank * CHR_BANK_8K + a, v);
 }
 
 static Mirroring colordreams_mirr(void) { return C.mirr_base; }
@@ -1126,8 +1321,8 @@ static struct {
 
 static uint8_t cprom_cpu_read(uint16_t a) {
     if (a >= 0x6000 && a <= 0x7FFF) return prg_ram_read(a);
-    if (a >= 0x8000) return C.prg[(a - 0x8000) & 0x7FFF];
-    return 0xFF;
+    if (a >= 0x8000) return C.prg[(a - 0x8000) % C.prg_sz];
+    return cart_cpu_bus_input;
 }
 
 static void cprom_cpu_write(uint16_t a, uint8_t v) {
@@ -1139,7 +1334,7 @@ static uint8_t cprom_ppu_read(uint16_t a) {
     a &= 0x1FFF;
     if (a < 0x1000) {
         // Fixed first 4KB
-        return C.chr[a];
+        return C.chr[a % C.chr_sz];
     } else {
         // Switchable second 4KB
         size_t off = (size_t)cprom.chr_bank * CHR_BANK_4K + (a - 0x1000);
@@ -1151,19 +1346,19 @@ static void cprom_ppu_write(uint16_t a, uint8_t v) {
     if (!C.chr_is_ram) return;
     a &= 0x1FFF;
     if (a < 0x1000) {
-        C.chr[a] = v;
+        chr_ram_write(a % C.chr_sz, v);
     } else {
         size_t off = (size_t)cprom.chr_bank * CHR_BANK_4K + (a - 0x1000);
-        C.chr[off % C.chr_sz] = v;
+        chr_ram_write(off % C.chr_sz, v);
     }
 }
 
-static Mirroring cprom_mirr(void) { return C.mirr_base; }
+static Mirroring cprom_mirr(void) { return MIRROR_VERTICAL; }
 static void cprom_reset(void) { cprom.chr_bank = 0; }
 
 // ----------------- Mapper 15 (100-in-1 Contra Function 16) -----------------
 static struct {
-    uint8_t prg_bank;
+    uint16_t prg_banks[4];
     uint8_t mode;
     Mirroring mirr;
 } m15;
@@ -1171,52 +1366,84 @@ static struct {
 static uint8_t m15_cpu_read(uint16_t a) {
     if (a >= 0x6000 && a <= 0x7FFF) return prg_ram_read(a);
     if (a >= 0x8000) {
-        size_t banks_16k = C.prg_sz / PRG_BANK_16K;
-        size_t banks_32k = C.prg_sz / PRG_BANK_32K;
-        
-        switch (m15.mode) {
-            case 0: // 32KB mode
-            case 1: {
-                size_t bank = (banks_32k > 0) ? (m15.prg_bank % banks_32k) : 0;
-                return C.prg[bank * PRG_BANK_32K + (a - 0x8000)];
-            }
-            case 2: // 16KB mode, fixed second bank
-                if (a < 0xC000) {
-                    size_t bank = (banks_16k > 0) ? (m15.prg_bank % banks_16k) : 0;
-                    return C.prg[bank * PRG_BANK_16K + (a - 0x8000)];
-                } else {
-                    size_t bank = (banks_16k > 0) ? ((m15.prg_bank + 1) % banks_16k) : 0;
-                    return C.prg[bank * PRG_BANK_16K + (a - 0xC000)];
-                }
-            case 3: // 16KB mode, mirrored
-            default: {
-                size_t bank = (banks_16k > 0) ? (m15.prg_bank % banks_16k) : 0;
-                return C.prg[bank * PRG_BANK_16K + ((a - 0x8000) & 0x3FFF)];
-            }
-        }
+        size_t bank = m15.prg_banks[(a - 0x8000) >> 13];
+        return C.prg[(bank * PRG_BANK_8K + (a & 0x1FFF)) % C.prg_sz];
     }
-    return 0xFF;
+    return cart_cpu_bus_input;
 }
 
 static void m15_cpu_write(uint16_t a, uint8_t v) {
     if (a >= 0x6000 && a <= 0x7FFF) { prg_ram_write(a, v); return; }
     if (a >= 0x8000) {
-        m15.prg_bank = v & 0x3F;
-        m15.mode = (v >> 6) & 0x03;
-        m15.mirr = (v & 0x80) ? MIRROR_HORIZONTAL : MIRROR_VERTICAL;
+        uint8_t bank = (uint8_t)((v & 0x7F) << 1);
+        uint8_t sub = v >> 7;
+        m15.mode = a & 3;
+        m15.mirr = (v & 0x40) ? MIRROR_HORIZONTAL : MIRROR_VERTICAL;
+        if (m15.mode == 0) {
+            for (unsigned slot = 0; slot < 4; ++slot)
+                m15.prg_banks[slot] = (uint16_t)((bank + slot) ^ sub);
+        } else if (m15.mode == 2) {
+            for (unsigned slot = 0; slot < 4; ++slot)
+                m15.prg_banks[slot] = bank | sub;
+        } else {
+            bank |= sub;
+            m15.prg_banks[0] = bank;
+            m15.prg_banks[1] = (uint16_t)(bank + 1);
+            if (m15.mode == 1) bank |= 0x0E;
+            m15.prg_banks[2] = bank;
+            m15.prg_banks[3] = (uint16_t)(bank + 1);
+        }
     }
 }
 
 static uint8_t m15_ppu_read(uint16_t a) { return nrom_ppu_read(a); }
-static void m15_ppu_write(uint16_t a, uint8_t v) { nrom_ppu_write(a, v); }
+static void m15_ppu_write(uint16_t a, uint8_t v) {
+    if (m15.mode == 1 || m15.mode == 2) nrom_ppu_write(a, v);
+}
 static Mirroring m15_mirr(void) { return m15.mirr; }
 static void m15_reset(void) {
-    m15.prg_bank = 0;
-    m15.mode = 0;
-    m15.mirr = C.mirr_base;
+    m15_cpu_write(0x8000, 0);
 }
 
 // ----------------- Init/Factory ----------------------
+static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *ram,
+                                   bool chr_is_ram, size_t chr_sz) {
+    size_t prg_total = ram->prg_ram + ram->prg_nvram;
+    size_t chr_total = ram->chr_ram + ram->chr_nvram;
+    if (prg_total && (prg_total & (prg_total - 1))) return false;
+
+    // Only these boards have implemented selection between separate PRG RAM chips.
+    bool split_prg = ram->prg_ram && ram->prg_nvram;
+    if (split_prg && !((mapper_no == 1 || mapper_no == 5)
+        && ram->prg_ram == 0x2000 && ram->prg_nvram == 0x2000)) return false;
+    if (mapper_no == 1) {
+        if (prg_total > 0x8000) return false;
+    } else if (mapper_no == 5) {
+        if (nes2) {
+            if (!split_prg && prg_total > 0x2000 && prg_total != 0x8000
+                && prg_total != 0x10000 && prg_total != 0x20000) return false;
+        } else if (prg_total > 0x10000) {
+            return false; // Legacy bank registers address at most eight 8KB pages.
+        }
+    } else if (prg_total > 0x2000) {
+        return false;
+    }
+
+    // No supported board currently selects separate CHR ROM/RAM or two RAM chips.
+    if ((!chr_is_ram && chr_total) || (ram->chr_ram && ram->chr_nvram)) return false;
+    if (nes2 && chr_is_ram && chr_total != chr_sz) return false;
+    size_t chr_limit;
+    switch (mapper_no) {
+        case 1: case 9: case 10: case 11: chr_limit = 0x20000; break;
+        case 3: chr_limit = 0x200000; break;
+        case 4: chr_limit = 0x40000; break;
+        case 5: chr_limit = 0x800000; break;
+        case 13: chr_limit = 0x4000; break;
+        default: chr_limit = 0x2000; break;
+    }
+    return chr_total <= chr_limit;
+}
+
 static void build_mapper(Mapper *m,
     uint8_t(*cr)(uint16_t), void(*cw)(uint16_t,uint8_t),
     uint8_t(*pr)(uint16_t), void(*pw)(uint16_t,uint8_t),
@@ -1232,13 +1459,59 @@ int mapper_init_from_header(const iNESHeader *h,
                             uint8_t *prg, size_t prg_sz,
                             uint8_t *chr, size_t chr_sz)
 {
-    memset(&C, 0, sizeof(C));
-    mapper_irq_line = false;
-    memset(prg_ram, 0, sizeof(prg_ram));
-    prg_ram_dirty = false;
+    if (!h || !prg || prg_sz < PRG_BANK_16K || !chr || !chr_sz) return -1;
+    int mapper_no = rom_mapper_number(h);
+    bool nes2 = (h->flags7 & 0x0C) == 0x08;
+    uint8_t submapper = nes2 ? h->prg_ram_size >> 4 : 0;
+    switch (mapper_no) {
+        case 0: case 1: case 2: case 3: case 4: case 5:
+        case 7: case 9: case 10: case 11: case 13: case 15:
+            break;
+        default:
+            fprintf(stderr, "Unsupported mapper: %d\n", mapper_no);
+            return -1;
+    }
+    if (submapper && !((mapper_no == 1 && submapper == 5)
+        || (mapper_no == 4 && submapper == 1)
+        || ((mapper_no == 2 || mapper_no == 3 || mapper_no == 7) && submapper <= 2))) {
+        fprintf(stderr, "Unsupported mapper/submapper: %d/%u\n", mapper_no, submapper);
+        return -1;
+    }
+    RomRamSizes ram;
+    rom_ram_sizes(h, &ram);
+    bool chr_is_ram = h->chr_rom_chunks == 0 && (!nes2 || (h->flags9 & 0xF0) == 0);
+    if (!ram_geometry_supported(mapper_no, nes2, &ram, chr_is_ram, chr_sz)
+        || (mapper_no == 4 && submapper == 1 && ram.prg_ram + ram.prg_nvram != 0x400)) {
+        fprintf(stderr, "Unsupported RAM layout for mapper %d (PRG %zu+%zu, CHR %zu+%zu)\n",
+                mapper_no, ram.prg_ram, ram.prg_nvram, ram.chr_ram, ram.chr_nvram);
+        return -1;
+    }
+    if ((ram.prg_nvram || ram.chr_nvram) && !(h->flags6 & 2)) {
+        fprintf(stderr, "Nonvolatile RAM declared without the battery flag\n");
+        return -1;
+    }
+    RamBlock new_work = {NULL, ram.prg_ram};
+    RamBlock new_save = {NULL, ram.prg_nvram};
+    if (new_work.size) new_work.data = (uint8_t *)calloc(1, new_work.size);
+    if (new_save.size) new_save.data = (uint8_t *)calloc(1, new_save.size);
+    if ((new_work.size && !new_work.data) || (new_save.size && !new_save.data)) {
+        free(new_work.data);
+        free(new_save.data);
+        fprintf(stderr, "Cartridge RAM allocation failed\n");
+        return -1;
+    }
+
+    // Finish all fallible setup before releasing the previous cartridge's RAM.
+    mapper_shutdown();
+    prg_work_ram = new_work;
+    prg_save_ram = new_save;
     C.prg = prg; C.prg_sz = prg_sz;
-    C.chr = chr; C.chr_sz = chr_sz ? chr_sz : CHR_BANK_8K;
-    C.chr_is_ram = (h->chr_rom_chunks == 0);
+    C.chr = chr; C.chr_sz = chr_sz;
+    C.chr_is_ram = chr_is_ram;
+    C.ram = ram;
+    C.nes2 = nes2;
+    C.submapper = submapper;
+    C.bus_conflicts = submapper == 2 && (mapper_no == 2 || mapper_no == 3 || mapper_no == 7);
     
     // iNES flags6:
     // bit 0 = 1 -> VERTICAL mirroring, 0 -> HORIZONTAL mirroring
@@ -1250,8 +1523,6 @@ int mapper_init_from_header(const iNESHeader *h,
         mir = (h->flags6 & 0x01) ? MIRROR_VERTICAL : MIRROR_HORIZONTAL;
     }
     cart_set_mirroring(mir);
-
-    int mapper_no = ((h->flags7 & 0xF0) | ((h->flags6 & 0xF0) >> 4));
 
     switch(mapper_no) {
         case 0:
@@ -1313,12 +1584,6 @@ int mapper_init_from_header(const iNESHeader *h,
             build_mapper(&mapper_100in1, m15_cpu_read, m15_cpu_write,
                         m15_ppu_read, m15_ppu_write, m15_reset, m15_mirr);
             cart = &mapper_100in1;
-            break;
-        default:
-            // Fallback to NROM
-            build_mapper(&mapper_nrom, nrom_cpu_read, nrom_cpu_write,
-                        nrom_ppu_read, nrom_ppu_write, NULL, nrom_mirr);
-            cart = &mapper_nrom;
             break;
     }
     

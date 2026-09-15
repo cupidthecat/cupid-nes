@@ -1,49 +1,40 @@
-# Compiler and flags
-CC      = gcc
-CFLAGS  = -Wall -Wextra -O2 -DPPU_DEBUG_LOG=1
+CC = gcc
+CFLAGS ?= -std=c11 -Wall -Wextra -O2
+CPPFLAGS += -DSDL_MAIN_HANDLED
+LDLIBS ?= -lSDL2 -lm
 
-LDFLAGS = -lSDL2 -lm
+TARGET = cupid-nes
+TEST_TARGET = build/accuracy-tests
+CORE_SRC = src/cpu/cpu.c src/ppu/ppu.c src/rom/rom.c src/rom/mapper.c \
+           src/joypad/joypad.c src/apu/apu.c src/ui/palette_tool.c
+TEST_SRC = src/tests/accuracy_test.c src/tests/cpu_accuracy.c \
+           src/tests/cpu_trace.c src/tests/apu_accuracy.c \
+           src/tests/ppu_accuracy.c src/tests/mapper_accuracy.c \
+           src/tests/rom_runner.c
+CORE_OBJ = $(CORE_SRC:.c=.o)
+TEST_OBJ = $(TEST_SRC:.c=.o)
+OBJ = $(CORE_OBJ) $(TEST_OBJ) src/main.o
 
-# Directories and files
-CPUDIR    = src/cpu
-PPUDIR    = src/ppu
-ROMDIR    = src/rom
-JOYPADDIR = src/joypad 
-APUDIR    = src/apu
-UIDIR     = src/ui
-MAINDIR   = src
-TARGET    = cupid-nes
-
-# Source files
-SRC     = $(wildcard $(CPUDIR)/*.c) \
-          $(wildcard $(PPUDIR)/*.c) \
-          $(wildcard $(ROMDIR)/*.c) \
-          $(wildcard $(JOYPADDIR)/*.c) \
-          $(wildcard $(UIDIR)/*.c) \
-          $(MAINDIR)/main.c
-OBJ = src/cpu/cpu.o \
-      src/ppu/ppu.o \
-      src/rom/rom.o \
-      src/rom/mapper.o \
-      src/joypad/joypad.o \
-      src/apu/apu.o \
-      src/ui/palette_tool.o \
-      src/main.o
-
-
-# Default target builds the executable
 all: $(TARGET)
 
-# Link object files into the final executable
-$(TARGET): $(OBJ)
-	$(CC) $(CFLAGS) $(OBJ) -o $(TARGET) $(LDFLAGS)
+$(TARGET): $(CORE_OBJ) src/main.o
+	$(CC) $(CFLAGS) $(LDFLAGS) $^ -o $@ $(LDLIBS)
 
-# Compile .c files into .o files
+$(TEST_TARGET): $(CORE_OBJ) $(TEST_OBJ) | build
+	$(CC) $(CFLAGS) $(LDFLAGS) $^ -o $@ $(LDLIBS)
+
+build:
+	mkdir -p $@
+
 %.o: %.c
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c $< -o $@
 
-# Clean up build files
+test: $(TEST_TARGET)
+	./$(TEST_TARGET)
+
 clean:
-	rm -f $(OBJ) $(TARGET)
+	rm -f $(OBJ) $(OBJ:.o=.d) $(TARGET) $(TEST_TARGET)
 
-.PHONY: all clean
+-include $(OBJ:.o=.d)
+
+.PHONY: all test clean

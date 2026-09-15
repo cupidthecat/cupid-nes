@@ -28,7 +28,6 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include <SDL2/SDL.h>
 
 // PPU Memory Sizes
 #define NT_RAM_SIZE 0x1000    // 4KB nametable RAM (supports four-screen; normal carts use 2KB)
@@ -69,39 +68,39 @@ typedef struct {
     uint8_t secondary_oam[32]; // Secondary OAM for sprite evaluation
     uint8_t sprite_count;      // Number of sprites found on current scanline
     uint8_t sprite_positions[8]; // Sprite X positions
-    uint8_t sprite_patterns[8];  // Sprite pattern data
+    uint8_t sprite_pattern_lo[8];
+    uint8_t sprite_pattern_hi[8];
     uint8_t sprite_attributes[8]; // Sprite attributes
     bool sprite_zero_hit;  // Sprite Zero Hit flag
     bool sprite_zero_on_line; // True if sprite 0 is in secondary OAM for current scanline
     bool nmi_out; 
 
-    bool   have_split;
-    int split_x;     // pixel 0..255 where first opaque overlap occurs
-    int split_y;     // scanline 0..239
-    int split_cpu_cycles; // when to assert hit this frame (CPU cycles since start of visible)
-
-    uint16_t t_pre,  t_post;
-    uint8_t  x_pre,  x_post;
-    uint8_t  ctrl_pre, ctrl_post;
-    bool     post_scroll_valid;
-    bool     pre_scroll_valid;
-    
-    // Track post-hit writes separately
-    bool     wrote_2000_post;     // saw $2000 after sprite 0 hit (this frame, before vblank)
-    bool     wrote_2005_x_post;   // saw first $2005 after sprite 0 hit
-    bool     wrote_2005_y_post;   // saw second $2005 after sprite 0 hit (vertical; for completeness)
+    uint8_t oam_bus;
+    uint8_t secondary_index;
+    uint8_t overflow_count;
+    bool eval_in_range;
+    bool eval_done;
+    bool secondary_sprite_zero;
+    uint16_t sprite_fetch_addr;
+    bool sprite_fetch_valid;
+    bool suppress_vblank;
+    bool rendering_enabled;
+    bool fetches_enabled;
+    bool skipped_frame_dot;
     
     // Cycle-stepped timing
     int      scanline;       // -1..261 (we use 261 for pre-render)
     int      dot;            // 0..340
-    bool     odd_frame;      // parity for skipped dot behavior (optional)
+    bool     odd_frame;
     bool     frame_complete; // set true at end of pre-render to signal frame done
+    uint64_t total_cycles;   // Monotonic PPU clock for cartridge bus events
     
     // Background tile fetch pipeline (for per-dot rendering)
     uint8_t  nt_byte;        // Nametable byte latch
     uint8_t  at_byte;        // Attribute byte latch
     uint8_t  pt_lo;          // Pattern table low byte latch
     uint8_t  pt_hi;          // Pattern table high byte latch
+    uint16_t bg_tile_addr;
     
     // Background shifters (16-bit for 2 tiles)
     uint16_t bg_shift_lo;    // Pattern low shifter
@@ -144,10 +143,9 @@ void ppu_oam_dma(uint8_t page);
 void ppu_begin_vblank(void);
 void ppu_end_vblank(void);
 extern uint8_t bg_opaque[256 * 240];
-void ppu_predict_sprite0_split_for_frame(void);
-void ppu_latch_pre_for_visible(void);
 
 // Cycle-stepped API
 void ppu_step(int cpu_cycles);
+void ppu_step_dots(int ppu_cycles);
 
 #endif // PPU_H

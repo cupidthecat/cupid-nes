@@ -1,0 +1,45 @@
+name: NES hardware accuracy
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  hardware:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC
+            compiler: gcc
+            flags: -std=c11 -Wall -Wextra -Werror -O2
+          - name: Clang with sanitizers
+            compiler: clang
+            flags: -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer
+    name: ${{ matrix.name }}
+    env:
+      ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+    steps:
+      - name: Check out emulator
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check out diagnostic ROMs
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: christopherpow/nes-test-roms
+          ref: 95d8f621ae55cee0d09b91519a8989ae0e64753b
+          path: build/diagnostic-roms
+          persist-credentials: false
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential clang libsdl2-dev
+      - name: Build emulator and run hardware regressions
+        run: make -j2 CC='${{ matrix.compiler }}' CFLAGS='${{ matrix.flags }}' all test
+      - name: Check CPU trace and diagnostic ROMs
+        run: python3 scripts/run-diagnostics.py build/accuracy-tests build/diagnostic-roms
