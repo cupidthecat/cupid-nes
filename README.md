@@ -6,7 +6,7 @@ Cupid is an NES emulator written in C, with NTSC, PAL, and Dendy timing and SDL2
   <img src="img/smb33.png" alt="Super Mario Bros. 3 gameplay">
 </p>
 <p align="center">
-  <img src="img/loz.png" alt="The Legend of Zelda gameplay">
+  <img src="img/coin.png" alt="The Legend of Zelda gameplay">
 </p>
 
 ## Build and run
