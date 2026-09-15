@@ -342,7 +342,10 @@ static inline void apu_write_4017(APU *a, uint8_t v) {
     a->regs[0x17] = v;
     a->frame_next_five_step = (v & 0x80) != 0;
     a->irq_inhibit = (v & 0x40) != 0;
-    if (a->irq_inhibit) a->frame_irq = false;
+    if (a->irq_inhibit) {
+        a->frame_irq = false;
+        a->frame_irq_clear_delay = 0;
+    }
 
     // The mode and optional quarter/half clock take effect with the delayed reset.
     a->frame_reset_delay = (cpu_total_cycles & 1ULL) ? 4 : 3;
@@ -357,7 +360,8 @@ static inline uint8_t apu_read_4015(APU *a) {
     if (a->dmc.bytes_remaining > 0) s |= 0x10;
     if (a->frame_irq)        s |= 0x40;
     if (a->dmc.irq_flag)     s |= 0x80;
-    a->frame_irq = false;
+    if (a->frame_irq && !a->frame_irq_clear_delay)
+        a->frame_irq_clear_delay = (cpu_total_cycles & 1u) ? 2 : 1;
     return s;
 }
 
@@ -368,8 +372,11 @@ static void dmc_restart_sample(DMC* d) {
 
 static void dmc_request_buffer(APU* a) {
     DMC* d = &a->dmc;
-    if (d->sample_buffer_empty && d->bytes_remaining && !d->start_delay)
+    if (d->sample_buffer_empty && d->bytes_remaining && !d->start_delay && !d->dma_pending) {
         d->dma_pending = true;
+        d->dma_halt_started = false;
+        d->dma_abort_requested = false;
+    }
 }
 
 bool apu_dmc_dma_pending(const APU *a) {
@@ -383,6 +390,8 @@ uint16_t apu_dmc_dma_address(const APU *a) {
 void apu_dmc_dma_complete(APU *a, uint8_t value) {
     DMC *d = &a->dmc;
     d->dma_pending = false;
+    d->dma_halt_started = false;
+    d->dma_abort_requested = false;
     if (!d->bytes_remaining) return;
     d->sample_buffer = value;
     d->sample_buffer_empty = false;
@@ -397,6 +406,16 @@ void apu_dmc_dma_complete(APU *a, uint8_t value) {
         } else if (d->irq_enable) {
             d->irq_flag = true;
         }
+    }
+
+    // A one-byte non-looping sample fetched immediately before the output
+    // shifter reloads can schedule a reload DMA that is stopped one CPU cycle
+    // after it begins. This is the early-CPU one-cycle DMA behavior.
+    if (d->sample_len == 1 && !d->loop && d->bits_remaining == 1 && d->timer < 2) {
+        d->shift_reg = d->sample_buffer;
+        d->sample_buffer_empty = false;
+        dmc_restart_sample(d);
+        d->disable_delay = 3;
     }
 }
 
@@ -619,9 +638,18 @@ static inline float mix_sample(float p1, float p2, float tri, float noi, float d
 void apu_step(APU *a, int cpu_cycles){
     const uint32_t (*frame_steps)[6] = frame_step_table();
     for (int i=0; i<cpu_cycles; ++i) {
+        if (a->frame_irq_clear_delay && --a->frame_irq_clear_delay == 0)
+            a->frame_irq = false;
         if (a->dmc.disable_delay && --a->dmc.disable_delay == 0) {
             a->dmc.bytes_remaining = 0;
-            a->dmc.dma_pending = false;
+            if (a->dmc.dma_pending) {
+                if (a->dmc.dma_halt_started) {
+                    a->dmc.dma_abort_requested = true;
+                } else {
+                    a->dmc.dma_pending = false;
+                    a->dmc.dma_abort_requested = false;
+                }
+            }
         }
         if (a->dmc.start_delay && --a->dmc.start_delay == 0)
             dmc_request_buffer(a);
@@ -637,8 +665,12 @@ void apu_step(APU *a, int cpu_cycles){
             if (half_clock) apu_clock_half_frame(a);
             a->frame_clock_block = 2;
         }
-        if (!a->five_step && !a->irq_inhibit && a->cycle_in_seq >= frame_steps[0][3])
+        if (!a->five_step && a->cycle_in_seq >= frame_steps[0][3]) {
             a->frame_irq = true;
+            a->frame_irq_clear_delay = 0;
+            if (a->irq_inhibit && a->cycle_in_seq >= frame_steps[0][5])
+                a->frame_irq = false;
+        }
         if (a->cycle_in_seq >= frame_steps[frame_mode][5])
             a->cycle_in_seq = 0;
 

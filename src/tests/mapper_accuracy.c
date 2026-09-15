@@ -558,7 +558,6 @@ static int test_mmc5_extended_rendering(void) {
     CHECK(cart_ppu_read(0x0123) == 12);
     CHECK(cart_ppu_read(0x012B) == 12);
     CHECK(cart_ppu_read(0x0123) == 0);
-
     cart_cpu_write(0x5104, 2);
     cart_cpu_write(0x5C00, 0x5A);
     cart_cpu_write(0x5C01, 0x6B);
@@ -580,6 +579,19 @@ static int test_mmc5_extended_rendering(void) {
     cart->clock(3);
     CHECK((cart_cpu_read(0x5204) & 0x40) == 0);
     CHECK(cart_ppu_read(0x0123) == 0);
+
+    CHECK(fixture(5, 0x20000, 0x20000, false) == 5);
+    uint8_t repeated_nt[0x1000] = {0};
+    repeated_nt[5] = 0x2A;
+    cart_cpu_write(0x5104, 2);
+    cart_cpu_write(0x5C05, 0x83);
+    mmc5_enter_frame(repeated_nt);
+    cart_cpu_write(0x5104, 1);
+    fixture_chr[0x3000 + 0x3C0] = 0x6D;
+    CHECK(cart_nt_read(0x2005, repeated_nt) == 0x2A);
+    CHECK(cart_nt_read(0x23C0, repeated_nt) == 0xAA);
+    CHECK(cart_nt_read(0x23C0, repeated_nt) == 0x6D);
+    CHECK(cart_nt_read(0x23C0, repeated_nt) == 0x6D);
     return 0;
 }
 
@@ -670,6 +682,34 @@ static int test_mmc5_rendered_ppu_paths(void) {
     ppu_step_dots(341 * 3);
     CHECK(framebuffer[1 * 256 + 63] == get_color(0x11));
     CHECK(framebuffer[1 * 256 + 64] == get_color(0x21));
+
+    CHECK(fixture(5, 0x20000, 0x20000, false) == 5);
+    memset(fixture_chr, 0, sizeof(fixture_chr));
+    uint8_t physical_nt[0x1000] = {0};
+    cart_cpu_write(0x5104, 2);
+    for (unsigned tile = 0; tile < 0x3C0; ++tile)
+        cart_cpu_write((uint16_t)(0x5C00 + tile), 0xC3); // Palette 3, 4KB bank 3.
+    mmc5_enter_frame(physical_nt);
+    // Place the mapper immediately before the final sprite slot's two dummy
+    // nametable reads without tripping its three-identical-read scanline detector.
+    for (unsigned read = 0; read < 45; ++read)
+        (void)cart_nt_read((uint16_t)(0x2000 + (read & 1u)), physical_nt);
+    cart_cpu_write(0x5104, 1);
+    for (unsigned row = 0; row < 8; ++row) fixture_chr[0x3008 + row] = 0x5A;
+    ppu_power_on(&ppu);
+    memset(ppu.secondary_oam, 0, sizeof(ppu.secondary_oam));
+    ppu.scanline = 0;
+    ppu.dot = 313;
+    ppu.mask = 0x18;
+    ppu.rendering_enabled = true;
+    ppu.fetches_enabled = true;
+    // The first dummy read remains in the sprite CHR-A window; the second moves
+    // the mapper out of it and arms extended attributes. The following physical
+    // CHR reads therefore consume the palette slot and then the selected bank.
+    ppu_step_dots(8);
+    CHECK(ppu.dot == 321);
+    CHECK(ppu.sprite_pattern_lo[7] == 0xFF);
+    CHECK(ppu.sprite_pattern_hi[7] == 0x5A);
     return 0;
 }
 

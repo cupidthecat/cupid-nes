@@ -1165,29 +1165,23 @@ static bool mmc5_split_chr_read(uint16_t addr, uint8_t *value) {
     return true;
 }
 
-static bool mmc5_extended_attr_nt_read(uint16_t addr, uint8_t *value) {
+static bool mmc5_extended_attr_read(uint16_t addr, bool nametable_bus, uint8_t *value) {
     if (mmc5.exram_mode != 1 || !mmc5.in_frame
         || (mmc5.split_tile_number >= 32 && mmc5.split_tile_number < 48)) return false;
-    if (mmc5_is_nt_tile_fetch(addr)) {
+    if (nametable_bus && mmc5_is_nt_tile_fetch(addr)) {
         mmc5.exattr_last_nt_fetch = addr & 0x03FFu;
         mmc5.exattr_fetch_counter = 3;
-    } else if (mmc5.exattr_fetch_counter) {
-        mmc5.exattr_fetch_counter--;
-        if (mmc5.exattr_fetch_counter == 2) {
-            uint8_t ext = mmc5_exram[mmc5.exattr_last_nt_fetch];
-            mmc5.exattr_chr_bank = (uint8_t)((ext & 0x3Fu) | (mmc5.chr_upper << 6));
-            *value = (uint8_t)(((ext >> 6) & 3u) * 0x55u);
-            return true;
-        }
+        return false;
     }
-    return false;
-}
+    if (!mmc5.exattr_fetch_counter) return false;
 
-static bool mmc5_extended_attr_chr_read(uint16_t addr, uint8_t *value) {
-    if (mmc5.exram_mode != 1 || !mmc5.in_frame
-        || (mmc5.split_tile_number >= 32 && mmc5.split_tile_number < 48)
-        || !mmc5.exattr_fetch_counter) return false;
     mmc5.exattr_fetch_counter--;
+    if (mmc5.exattr_fetch_counter == 2) {
+        uint8_t ext = mmc5_exram[mmc5.exattr_last_nt_fetch];
+        mmc5.exattr_chr_bank = (uint8_t)((ext & 0x3Fu) | (mmc5.chr_upper << 6));
+        *value = (uint8_t)(((ext >> 6) & 3u) * 0x55u);
+        return true;
+    }
     if (mmc5.exattr_fetch_counter <= 1) {
         size_t chr_addr = ((size_t)mmc5.exattr_chr_bank << 12) | (addr & 0x0FFFu);
         *value = mmc5_read_chr_raw(chr_addr);
@@ -1406,7 +1400,7 @@ static uint8_t mmc5_ppu_read(uint16_t a) {
     mmc5_begin_ppu_read(a);
     uint8_t value;
     if (mmc5_split_chr_read(a, &value)) return value;
-    if (mmc5_extended_attr_chr_read(a, &value)) return value;
+    if (mmc5_extended_attr_read(a, false, &value)) return value;
     size_t chr_1k_banks = C.chr_sz / CHR_BANK_1K;
     if (chr_1k_banks == 0) return nrom_ppu_read(a);
 
@@ -1440,7 +1434,7 @@ uint8_t cart_nt_read(uint16_t addr, uint8_t *nt_ram) {
         mmc5_begin_ppu_read(addr);
         uint8_t value;
         if (mmc5_split_nt_read(addr, &value)) return value;
-        if (mmc5_extended_attr_nt_read(addr, &value)) return value;
+        if (mmc5_extended_attr_read(addr, true, &value)) return value;
         uint16_t off = (uint16_t)((addr - 0x2000u) & 0x0FFFu);
         uint16_t in  = (uint16_t)(off & 0x03FFu);
         uint8_t src = mmc5_nt_source(addr);

@@ -310,6 +310,34 @@ static void test_sprite_shifters(void) {
     CHECK("background high-plane shifter has a pull-up input", (ppu.bg_shift_hi & 1) && !(ppu.bg_shift_lo & 1));
 }
 
+static void test_late_register_reads(void) {
+    reset_video(0);
+    ppu.scanline = (int)nes_timing()->scanlines - 1;
+    ppu.dot = 1;
+    ppu.status = 0xE0;
+    uint8_t status = ppu_reg_read(PPUSTATUS);
+    CHECK("status read latches vblank before the read finishes", (status & 0xE0) == 0xE0);
+    ppu_step_dots(1);
+    status = ppu_reg_read_finish(PPUSTATUS, status);
+    CHECK("status read samples sprite flags at the end of the read", (status & 0xE0) == 0x80);
+
+    reset_video(0);
+    ppu.scanline = 0;
+    ppu.dot = 65;
+    set_render_mask(0x10);
+    ppu.oam_addr = 0;
+    ppu.oam_bus = 0x7F;
+    ppu.oam_read_latch = 0x7F;
+    ppu.oam[0] = 0x12;
+    uint8_t oam = ppu_reg_read(OAMDATA);
+    ppu_step_dots(1);
+    CHECK("sprite evaluation advances the internal OAM bus", ppu.oam_bus == 0x12);
+    oam = ppu_reg_read_finish(OAMDATA, oam);
+    CHECK("OAMDATA read finishes from the CPU-facing OAM output latch", oam == 0x7F);
+    ppu_step_dots(1);
+    CHECK("OAM output latch follows the internal bus one PPU clock later", ppu.oam_read_latch == 0x12);
+}
+
 int test_ppu_accuracy(void) {
     checks = failures = 0;
     reset_video(0);
@@ -418,6 +446,9 @@ int test_ppu_accuracy(void) {
     ppu_step_dots(129);
     CHECK("sprite overflow waits for ninth-sprite evaluation", !(ppu.status & 0x20));
     ppu_step_dots(2);
+    CHECK("ninth-sprite evaluation stages overflow on its condition clock", ppu.sprite_status_pending & 0x20);
+    CHECK("sprite overflow is not externally visible on the condition clock", !(ppu.status & 0x20));
+    ppu_step_dots(1);
     CHECK("ninth-sprite evaluation sets overflow", ppu.status & 0x20);
     memset(ppu.oam, 0xFF, sizeof(ppu.oam));
     ppu_step_dots(341 * 2);
@@ -435,6 +466,8 @@ int test_ppu_accuracy(void) {
     for (int i = 0; i < 8; ++i) memset(&ppu.oam[i * 4], 0, 4);
     ppu.oam[9 * 4 + 1] = 0;
     ppu_step_dots(133);
+    CHECK("overflow diagonal match stages the flag on its condition clock", ppu.sprite_status_pending & 0x20);
+    ppu_step_dots(1);
     CHECK("overflow diagonal scan can mistake a tile number for Y", ppu.status & 0x20);
     reset_video(0);
     ppu.scanline = 0;
@@ -475,6 +508,9 @@ int test_ppu_accuracy(void) {
 
     prepare_overlap(8);
     ppu_step_dots(1);
+    CHECK("sprite-zero overlap stages hit before the status output clock", ppu.sprite_status_pending & 0x40);
+    CHECK("sprite-zero hit is not externally visible on the overlap clock", !(ppu.status & 0x40));
+    ppu_step_dots(1);
     CHECK("sprite-zero hit ignores sprite background priority", ppu.status & 0x40);
     CHECK("behind-background sprite still displays background", framebuffer[256 + 8] == get_color(0x01));
     start_frame();
@@ -492,6 +528,8 @@ int test_ppu_accuracy(void) {
     CHECK("sprite left-edge mask prevents sprite-zero hit", !(ppu.status & 0x40));
     prepare_overlap(0);
     ppu_step_dots(1);
+    CHECK("enabled left edges stage sprite-zero hit at pixel zero", ppu.sprite_status_pending & 0x40);
+    ppu_step_dots(1);
     CHECK("enabled left edges permit sprite-zero hit at pixel zero", ppu.status & 0x40);
     prepare_overlap(8);
     ppu.sprite_count = 2;
@@ -501,6 +539,13 @@ int test_ppu_accuracy(void) {
     ppu.sprite_pattern_hi[1] = 0x80;
     ppu_step_dots(1);
     CHECK("first opaque sprite wins before background priority is applied", framebuffer[256 + 8] == get_color(0x01));
+
+    reset_video(0);
+    ppu.scanline = (int)nes_timing()->scanlines - 1;
+    ppu.dot = 1;
+    ppu.sprite_status_pending = 0x60;
+    ppu_step_dots(1);
+    CHECK("pre-render status clear cancels pending sprite flags", !(ppu.status & 0x60) && !ppu.sprite_status_pending);
 
     for (int fine_x = 0; fine_x <= 3; fine_x += 3) {
         reset_video(0);
@@ -586,9 +631,9 @@ int test_ppu_accuracy(void) {
     CHECK("starting host frame does not read cartridge graphics", pattern_reads == 0);
     ppu_step_dots(341);
     CHECK("render scanline performs 68 background and 16 sprite pattern reads", pattern_reads == 84);
-    CHECK("first background pattern reads occur on clocks five and seven", pattern_clocks[0] == 5 && pattern_clocks[1] == 7);
-    CHECK("sprite pattern reads occur in sprite fetch slots", pattern_clocks[64] == 261 && pattern_clocks[79] == 319);
-    CHECK("next-line prefetch reads occur after sprite fetches", pattern_clocks[80] == 325 && pattern_clocks[83] == 335);
+    CHECK("first background pattern data reads occur on clocks six and eight", pattern_clocks[0] == 6 && pattern_clocks[1] == 8);
+    CHECK("sprite pattern data reads occur in sprite fetch slots", pattern_clocks[64] == 262 && pattern_clocks[79] == 320);
+    CHECK("next-line prefetch data reads occur after sprite fetches", pattern_clocks[80] == 326 && pattern_clocks[83] == 336);
     CHECK("unused sprite slots still perform pattern fetches", (pattern_addresses[64] & 0x0FF0) == 0x0FF0);
     cart = saved_cart;
 
@@ -631,6 +676,7 @@ int test_ppu_accuracy(void) {
     test_regional_video();
     test_video_reset();
     test_sprite_shifters();
+    test_late_register_reads();
     printf("PPU: %d checks, %d failures\n", checks, failures);
     return failures;
 }

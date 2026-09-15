@@ -175,7 +175,7 @@ int test_apu_accuracy(void) {
     CHECK("frame IRQ does not assert early", !apu.frame_irq);
     apu_step(&apu, 1);
     CHECK("frame IRQ first asserts at clock 29828", apu_read(0x4015) & 0x40);
-    CHECK("status read clears frame IRQ", !apu.frame_irq);
+    CHECK("status read schedules frame IRQ clear on the next APU boundary", apu.frame_irq && apu.frame_irq_clear_delay == 1);
     apu_step(&apu, 1);
     CHECK("frame IRQ reasserts at clock 29829", apu_read(0x4015) & 0x40);
     CHECK("terminal half-frame is not lost to IRQ handling", apu.pulse1.lc.length == 8);
@@ -185,6 +185,23 @@ int test_apu_accuracy(void) {
     CHECK("four-step sequence lasts 29830 clocks", apu.cycle_in_seq == 0);
     apu_step(&apu, 1);
     CHECK("IRQ stops reasserting after terminal clocks", !apu.frame_irq);
+
+    reset_audio();
+    apu.frame_irq = true;
+    cpu_total_cycles = 0;
+    CHECK("even-aligned status read observes frame IRQ", apu_read(0x4015) & 0x40);
+    CHECK("even-aligned status read clears at the next APU clock", apu.frame_irq_clear_delay == 1);
+    apu_step(&apu, 1);
+    CHECK("even-aligned status clear has matured", !apu.frame_irq);
+    reset_audio();
+    apu.frame_irq = true;
+    cpu_total_cycles = 1;
+    CHECK("odd-aligned status read observes frame IRQ", apu_read(0x4015) & 0x40);
+    CHECK("odd-aligned status read retains IRQ through one intervening clock", apu.frame_irq_clear_delay == 2);
+    apu_step(&apu, 1);
+    CHECK("odd-aligned status read has not cleared one clock early", apu.frame_irq);
+    apu_step(&apu, 1);
+    CHECK("odd-aligned status clear matures on the following APU clock", !apu.frame_irq);
 
     reset_audio();
     start_pulse();
@@ -420,6 +437,22 @@ int test_apu_accuracy(void) {
     CHECK("DMC delayed disable cancels its pending bus request", !apu_dmc_dma_pending(&apu) && !apu.dmc.bytes_remaining);
     apu_dmc_dma_complete(&apu, 0x55);
     CHECK("aborted DMC completion cannot refill its buffer", apu.dmc.sample_buffer_empty);
+
+    reset_audio();
+    apu.dmc.sample_len = 1;
+    apu.dmc.current_addr = 0xC000;
+    apu.dmc.bytes_remaining = 1;
+    apu.dmc.sample_buffer_empty = true;
+    apu.dmc.bits_remaining = 1;
+    apu.dmc.timer = 1;
+    apu.dmc.dma_pending = true;
+    apu_dmc_dma_complete(&apu, 0xA5);
+    CHECK("one-byte fetch beside shifter reload restarts the reader", apu.dmc.bytes_remaining == 1 && apu.dmc.disable_delay == 3);
+    CHECK("implicit-abort path keeps the fetched byte available to the shifter", !apu.dmc.sample_buffer_empty && apu.dmc.shift_reg == 0xA5);
+    apu_step(&apu, 2);
+    CHECK("implicit-abort path requests its short reload DMA", apu_dmc_dma_pending(&apu) && apu.dmc.disable_delay == 1);
+    apu_step(&apu, 1);
+    CHECK("unhalted implicit reload request expires on its delayed stop", !apu_dmc_dma_pending(&apu) && apu.dmc.bytes_remaining == 0);
     printf("APU: %d checks, %d failures\n", checks, failures);
     return failures;
 }

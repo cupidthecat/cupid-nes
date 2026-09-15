@@ -2,11 +2,13 @@
 
 Cupid is an NES emulator written in C, with NTSC, PAL, and Dendy timing and SDL2 for video, input, and audio.
 
+The current core passes **144/144 AccuracyCoin tests**, with zero skipped or unfinished results, plus the 91-ROM diagnostic collection and the 8,991-state canonical CPU trace. Reproduction commands and test limits are below.
+
 <p align="center">
   <img src="img/smb33.png" alt="Super Mario Bros. 3 gameplay">
 </p>
 <p align="center">
-  <img src="img/coin.png" alt="The Legend of Zelda gameplay">
+  <img src="img/coin.png" alt="AccuracyCoin test results">
 </p>
 
 ## Build and run
@@ -125,9 +127,19 @@ build/accuracy-tests --legacy-rom 1200 path/to/sprite_hit_test.nes
 build/accuracy-tests --render 240 path/to/test.nes build/test.ppm
 ```
 
-The ROM runner recognizes the `DE B0 61` signature and status byte at `$6000`. It honors reset requests after at least 100 milliseconds of emulated time, then waits for a new request instead of repeatedly resetting on the preserved byte. Timeouts and missing result protocols remain failures. The older PAL suite uses a separate result convention; other tests that report only on screen need visual inspection. See [accuracy notes](docs/accuracy.md) for coverage and remaining limits.
+Run the full AccuracyCoin cartridge with its pinned source and ROM:
 
-GitHub Actions builds the emulator and tests with GCC and with Clang sanitizers, then runs the same pinned trace and ROM checks. The old `src/tests/cpu_test.c` harness is excluded because its writable-ROM assumptions do not match the cartridge bus.
+```sh
+git clone https://github.com/100thCoin/AccuracyCoin.git build/accuracycoin
+git -C build/accuracycoin checkout 9bc42d1e3acbeeaea215b1011d58f4ce72a8a49e
+build/accuracy-tests --accuracycoin 12000 build/accuracycoin/AccuracyCoin.nes build/accuracycoin.ppm
+```
+
+On Windows, replace `build/accuracy-tests` with `build/windows/accuracy-tests.exe`. The runner presses Start through the controller, lets the cartridge execute its complete suite, and reads the 144 test descriptors and result bytes. It reports each result, checks the cartridge's final tally, and saves the rendered screen when an output path is supplied. Every test must pass; skipped tests, unfinished runs, and timeouts return failure.
+
+The ordinary ROM runner recognizes the `DE B0 61` signature and status byte at `$6000`. It honors reset requests after at least 100 milliseconds of emulated time, then waits for a new request instead of repeatedly resetting on the preserved byte. Timeouts and missing result protocols remain failures. The older PAL and sprite suites use a separate result convention. Other screen-only tests need visual inspection. See [accuracy notes](docs/accuracy.md) for coverage and remaining limits.
+
+GitHub Actions builds the emulator and tests with GCC and with Clang sanitizers, then runs the pinned trace, 91 diagnostic ROMs, and AccuracyCoin. CI verifies the AccuracyCoin ROM's SHA-256 before running it. The old `src/tests/cpu_test.c` harness is excluded because its writable-ROM assumptions do not match the cartridge bus.
 
 ## Scope
 

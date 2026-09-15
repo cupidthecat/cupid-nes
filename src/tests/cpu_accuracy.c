@@ -180,6 +180,22 @@ static int controller_latching(void) {
     memcpy(&fixture_memory[0x8003], &fixture_memory[0x8000], 3);
     CHECK(cpu_step(&cpu) == 4 && cpu.a == 0x40);
     CHECK(cpu_step(&cpu) == 4 && cpu.a == 0x41); // Separate reads still advance the pad.
+
+    // $4016 OUT changes on PUT boundaries. The first DEC alignment applies its
+    // temporary high write; shifting the instruction by one CPU cycle suppresses it.
+    for (unsigned phase = 0; phase < 2; ++phase) {
+        reset_fixture();
+        cpu_total_cycles = phase;
+        pad1.buttons = 0;
+        pad1.shift = 0xFF;
+        pad1.strobe = 0;
+        program(0xCE, 0x16, 0x40); // DEC $4016 writes $41 then $40.
+        fixture_memory[0x8003] = 0xEA;
+        CHECK(cpu_step(&cpu) == 6);
+        CHECK(cpu_step(&cpu) == 2); // Let the final queued OUT value reach the pins.
+        CHECK(pad1.strobe == 0);
+        CHECK(pad1.shift == (phase ? 0xFF : 0x00));
+    }
     return 0;
 }
 
@@ -188,8 +204,12 @@ static int open_bus_and_cart_decoding(void) {
     write_mem(0x4018, 0xA5);
     apu.frame_irq = true;
     CHECK(read_mem(0x4015) == 0x60);
+    CHECK(apu.frame_irq && apu.frame_irq_clear_delay == 1);
+    apu_step(&apu, 1);
     CHECK(!apu.frame_irq);
     CHECK(read_mem(0x4018) == 0xA5);
+    // Floating reads copy the external bus back onto the internal CPU data bus.
+    CHECK(read_mem(0x4015) == 0x20);
 
     cart = NULL;
     fixture_memory[0x6000] = 0x42;
@@ -630,6 +650,30 @@ static int masked_store_addresses(void) {
             }
         }
     }
+
+    // A DMC halt during the final indexed dummy read removes the high-byte mask
+    // from the value driven by all five unstable store opcodes.
+    for (size_t i = 0; i < sizeof(ops); ++i) {
+        reset_fixture();
+        cpu.a = cpu.x = cpu.y = 0xFF;
+        program(ops[i], 0x00, 0x8F);
+        unsigned request_cycle = 3;
+        if (ops[i] == 0x93) {
+            fixture_memory[0x8001] = 0xFF;
+            ram[0xFF] = 0x00;
+            ram[0] = 0x8F;
+            request_cycle = 4;
+        }
+        fixture_memory[0xC000] = 0x55;
+        prepare_dmc(0xC000);
+        dma_request_cycle = request_cycle;
+        int cycles = cpu_step(&cpu);
+        CHECK(cycles > (ops[i] == 0x93 ? 6 : 5));
+        CHECK(bus_events[bus_count - 1].write);
+        CHECK(bus_events[bus_count - 1].addr == 0x8FFF);
+        CHECK(bus_events[bus_count - 1].value == 0xFF);
+        if (ops[i] == 0x9B) CHECK(cpu.sp == 0xFF);
+    }
     return 0;
 }
 
@@ -685,6 +729,10 @@ static int reset_bus_sequence(void) {
     CHECK(cpu.sp == 0xFD && cpu.pc == 0x8000);
     CHECK(cpu.status == (INTERRUPT_FLAG | UNUSED_FLAG));
     CHECK(bus_count == 2 && bus_events[0].addr == 0xFFFC && bus_events[1].addr == 0xFFFD);
+    CHECK(ppu.total_cycles == 22); // One startup PPU clock plus seven CPU cycles.
+    cpu_soft_reset(&cpu);
+    CHECK(cpu_total_cycles == 14 && mapper_clocks == 14);
+    CHECK(ppu.total_cycles == 43); // Soft reset does not insert another startup clock.
     return 0;
 }
 
@@ -885,6 +933,43 @@ static int dma_arbitration(void) {
             CHECK(joypad_read(&pad1) == 0); // The halt read discarded A before the CPU read B.
         }
     }
+
+    reset_fixture();
+    program(0xAD, 0x16, 0x40);
+    pad1.buttons = 1;
+    write_mem(0x4016, 1);
+    write_mem(0x4016, 0);
+    fixture_memory[0xC016] = 0xE0;
+    prepare_dmc(0xC016);
+    dma_request_cycle = 3;
+    CHECK(cpu_step(&cpu) == 8);
+    // Controller data can dominate the open-bus latch without defeating a
+    // simultaneously driven zero on the byte delivered to the DMC.
+    CHECK(apu.dmc.sample_buffer == 0xE0);
+
+    reset_fixture();
+    program(0xAD, 0x15, 0x40);
+    fixture_memory[0xC015] = 0x20;
+    prepare_dmc(0xC015);
+    dma_request_cycle = 3;
+    CHECK(cpu_step(&cpu) == 8);
+    CHECK(!(cpu.a & 0x20));
+    CHECK(!(apu.dmc.sample_buffer & 0x20)); // Internal $4015 wins the conflicted DMA byte.
+    CHECK(read_mem(0x4018) & 0x20); // $4015 changed only the internal latch.
+    CHECK(read_mem(0x4015) & 0x20); // Floating read copied the external bit back internally.
+
+    reset_fixture();
+    program(0xEA, 0, 0);
+    fixture_memory[0xC000] = 0x73;
+    prepare_dmc(0xC000);
+    apu.dmc.dma_pending = true;
+    apu.dmc.disable_delay = 2;
+    CHECK(cpu_step(&cpu) == 5);
+    CHECK(!apu_dmc_dma_pending(&apu) && apu.dmc.bytes_remaining == 0);
+    bool saw_late_get = false;
+    for (size_t i = 0; i < bus_count; ++i)
+        if (!bus_events[i].write && bus_events[i].addr == 0xC000) saw_late_get = true;
+    CHECK(saw_late_get); // Once the dummy cycle has begun, the aligned get is too late to suppress.
 
     reset_fixture();
     program(0xEA, 0, 0);
