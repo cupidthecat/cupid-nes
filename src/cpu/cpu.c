@@ -32,6 +32,7 @@
 #include "../apu/apu.h"
 #include "../rom/mapper.h"
 #include "../joypad/joypad.h"
+#include "../system/timing.h"
 
 uint8_t ram[0x0800];        // 2KB internal RAM
 #define APU_IO_SIZE 0x20              // cover $4000-$401F
@@ -60,27 +61,35 @@ static uint16_t joypad_read_addr;
 static uint64_t joypad_read_cycle;
 static uint8_t joypad_read_value;
 
+static uint8_t read_bus(uint16_t addr);
+static void process_pending_dma(uint16_t read_addr, bool opcode_fetch);
+
 uint64_t cpu_get_bus_cycle(void) {
     return cpu_total_cycles;
 }
 
 static void clock_ppu_master(unsigned clocks) {
+    const NesTiming *timing = nes_timing();
     unsigned phase = ppu_master_phase + clocks;
-    ppu_step_dots((int)(phase / 4));
-    ppu_master_phase = (uint8_t)(phase % 4);
+    ppu_step_dots((int)(phase / timing->ppu_divider));
+    ppu_master_phase = (uint8_t)(phase % timing->ppu_divider);
 }
 
 static void begin_cpu_cycle(bool read) {
+    const NesTiming *timing = nes_timing();
+    unsigned start_clocks = timing->cpu_divider / 2;
     in_bus_cycle = true;
-    // NTSC read and write strobes fall at distinct master-clock phases.
-    clock_ppu_master(read ? 5 : 7);
+    clock_ppu_master(read ? start_clocks - 1 : start_clocks + 1);
     cpu_total_cycles++;
     if (cart && cart->clock) cart->clock(1);
     apu_step(&apu, 1);
 }
 
 static void end_cpu_cycle(bool read) {
-    clock_ppu_master(read ? 7 : 5);
+    const NesTiming *timing = nes_timing();
+    unsigned start_clocks = timing->cpu_divider / 2;
+    unsigned end_clocks = timing->cpu_divider - start_clocks;
+    clock_ppu_master(read ? end_clocks + 1 : end_clocks - 1);
     cpu_nmi_ready = cpu_nmi_pending;
     if (cpu_nmi_line && !cpu_nmi_previous_line) cpu_nmi_pending = true;
     cpu_nmi_previous_line = cpu_nmi_line;
@@ -141,21 +150,65 @@ static const uint32_t nmi_brk_log_limit = 12000;
 // Global CPU cycle counter
 uint64_t cpu_total_cycles = 0;
 
-void cpu_reset(CPU* cpu) {
+static uint8_t reset_bus_read(uint16_t addr) {
+    begin_cpu_cycle(true);
+    uint8_t value = read_bus(addr);
+    end_cpu_cycle(true);
+    return value;
+}
+
+static void cpu_reset_sequence(CPU* cpu) {
+    running_cpu = cpu;
+    in_bus_cycle = false;
+    joypad_read_valid = false;
+
+    (void)reset_bus_read(cpu->pc);
+    (void)reset_bus_read(cpu->pc);
+    (void)reset_bus_read((uint16_t)(0x0100u | cpu->sp));
+    cpu->sp--;
+    (void)reset_bus_read((uint16_t)(0x0100u | cpu->sp));
+    cpu->sp--;
+    (void)reset_bus_read((uint16_t)(0x0100u | cpu->sp));
+    cpu->sp--;
+    uint8_t lo = reset_bus_read(0xFFFC);
+    uint8_t hi = reset_bus_read(0xFFFD);
+    cpu->pc = (uint16_t)(lo | ((uint16_t)hi << 8));
+
     running_cpu = NULL;
     in_bus_cycle = false;
-    ppu_master_phase = 3;
-    joypad_read_valid = false;
-    cpu->sp -= 3;
-    cpu->status = (cpu->status | INTERRUPT_FLAG | UNUSED_FLAG) & ~BREAK_FLAG;
-    // Read reset vector from PRG-ROM area
-    cpu->pc = read_mem_word(0xFFFC);
     cpu->halted = false;
     cpu_nmi_pending = false;
     cpu_nmi_previous_line = cpu_nmi_line;
     cpu_nmi_ready = cpu_nmi_injected = false;
     cpu_irq_polled = cpu_irq_ready = false;
     cpu_oam_dma_pending = false;
+    joypad_read_valid = false;
+}
+
+void cpu_power_on(CPU* cpu) {
+    running_cpu = NULL;
+    in_bus_cycle = false;
+    cpu_total_cycles = 0;
+    ppu_master_phase = (uint8_t)(nes_timing()->ppu_divider - 1);
+    cpu_open_bus = 0;
+    joypad_read_valid = false;
+    cpu->a = 0;
+    cpu->x = 0;
+    cpu->y = 0;
+    cpu->pc = 0;
+    cpu->sp = 0;
+    cpu->status = INTERRUPT_FLAG | UNUSED_FLAG;
+    cpu->halted = false;
+    cpu_reset_sequence(cpu);
+}
+
+void cpu_soft_reset(CPU* cpu) {
+    cpu->status = (cpu->status | INTERRUPT_FLAG | UNUSED_FLAG) & ~BREAK_FLAG;
+    cpu_reset_sequence(cpu);
+}
+
+void cpu_reset(CPU* cpu) {
+    cpu_power_on(cpu);
 }
 
 static uint8_t read_bus(uint16_t addr) {
@@ -203,7 +256,12 @@ static void write_bus(uint16_t addr, uint8_t value) {
 
     if (addr <= 0x1FFF) { ram[addr & 0x07FF] = value; return; }
 
-    if (addr >= 0x2000 && addr <= 0x3FFF) { ppu_reg_write(0x2000 | (addr & 7), value); return; }
+    if (addr >= 0x2000 && addr <= 0x3FFF) {
+        // Cartridge address decoding sees the CPU address before PPU mirroring.
+        if (addr == 0x2000) cart_notify_ppu_ctrl_write(value);
+        ppu_reg_write(0x2000 | (addr & 7), value);
+        return;
+    }
 
     if (addr >= 0x4000 && addr <= 0x4017) {
         if (addr == 0x4014) {
@@ -219,15 +277,17 @@ static void write_bus(uint16_t addr, uint8_t value) {
     if (addr >= 0x4020) cart_cpu_write(addr, value);
 }
 
-static void process_pending_dma(uint16_t read_addr);
-
-uint8_t read_mem(uint16_t addr) {
+static uint8_t read_mem_cycle(uint16_t addr, bool opcode_fetch) {
     if (!running_cpu || in_bus_cycle) return read_bus(addr);
-    process_pending_dma(addr);
+    process_pending_dma(addr, opcode_fetch);
     begin_cpu_cycle(true);
     uint8_t value = read_bus(addr);
     end_cpu_cycle(true);
     return value;
+}
+
+uint8_t read_mem(uint16_t addr) {
+    return read_mem_cycle(addr, false);
 }
 
 void write_mem(uint16_t addr, uint8_t value) {
@@ -265,7 +325,7 @@ void cpu_request_nmi(void) {
 
 void cpu_irq(CPU* cpu) {
     NMI_BRK_LOG("cpu_irq enter pc=%04X sp=%02X p=%02X", cpu->pc, cpu->sp, cpu->status);
-    dummy_read_next(cpu);
+    (void)read_mem_cycle(cpu->pc, true);
     dummy_read_next(cpu);
     uint16_t pc = cpu->pc;
     write_mem(0x0100 + cpu->sp--, (pc >> 8) & 0xFF);
@@ -2068,10 +2128,11 @@ static uint8_t read_dma_bus(uint16_t address, uint16_t halted_address) {
     return read_bus(address);
 }
 
-static void process_pending_dma(uint16_t read_addr) {
+static void process_pending_dma(uint16_t read_addr, bool opcode_fetch) {
     bool oam = cpu_oam_dma_pending;
     bool dmc = apu_dmc_dma_pending(&apu);
     if (!oam && !dmc) return;
+    if (nes_timing()->region == NES_REGION_PAL && !opcode_fetch) return;
     uint16_t oam_base = (uint16_t)cpu_oam_dma_page << 8;
     cpu_oam_dma_pending = false;
     unsigned oam_offset = 0;
@@ -2126,12 +2187,12 @@ int cpu_step(CPU* cpu) {
     uint64_t start = cpu_total_cycles;
     running_cpu = cpu;
     if (cpu->halted) {
-        (void)read_mem(cpu->pc);
+        (void)read_mem_cycle(cpu->pc, true);
     } else if (cpu_nmi_injected) {
         cpu_nmi_injected = false;
         cpu_irq(cpu);
     } else {
-        uint8_t opcode = read_mem(cpu->pc++);
+        uint8_t opcode = read_mem_cycle(cpu->pc++, true);
         execute(cpu, opcode);
         if (!cpu->halted && (cpu_irq_ready || cpu_nmi_ready)) cpu_irq(cpu);
     }

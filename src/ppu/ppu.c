@@ -29,14 +29,14 @@
 #include "../../include/globals.h"
 #include "../rom/mapper.h"
 #include "../cpu/cpu.h"
+#include "../system/timing.h"
 #include "../ui/palette_tool.h"
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 
-// NTSC PPU I/O latch decay, measured in CPU clocks.
-#define OPEN_BUS_DECAY_CPU_CYCLES 1789773ULL
+// Each data line retains its charge independently across register reads.
 static uint64_t ppu_ob_expire[8];
 
 uint8_t ppu_vram[NT_RAM_SIZE];
@@ -45,11 +45,16 @@ uint8_t bg_opaque[256 * 240];
 PPU ppu;
 
 static bool rendering_line(void) {
-    return ppu.scanline < 240 || ppu.scanline == 261;
+    return ppu.scanline < 240 || ppu.scanline == (int)nes_timing()->scanlines - 1;
 }
 
 static bool rendering_active(void) {
     return rendering_line() && ppu.rendering_enabled;
+}
+
+static void ppu_set_bus_address(uint16_t address) {
+    ppu.bus_address = address & 0x3FFF;
+    cart_notify_ppu_address(ppu.bus_address, ppu.total_cycles);
 }
 
 static uint8_t get_open_bus(void) {
@@ -64,7 +69,7 @@ static void set_open_bus_masked(uint8_t value, uint8_t mask) {
     for (int bit = 0; bit < 8; ++bit) {
         if (mask & (1u << bit))
             ppu_ob_expire[bit] = (value & (1u << bit))
-                ? cpu_total_cycles + OPEN_BUS_DECAY_CPU_CYCLES : 0;
+                ? cpu_total_cycles + (uint64_t)(nes_timing()->cpu_hz * 4.0 / nes_timing()->fps) : 0;
     }
     get_open_bus();
 }
@@ -112,7 +117,7 @@ static void ppu_increment_data_address(void) {
         ppu_increment_y();
     } else {
         ppu.v = (ppu.v + ((ppu.ctrl & 0x04) ? 32 : 1)) & 0x7FFF;
-        cart_notify_ppu_address(ppu.v & 0x3FFF, ppu.total_cycles);
+        ppu_set_bus_address(ppu.v);
     }
 }
 
@@ -120,7 +125,7 @@ static void ppu_increment_data_address(void) {
 // the cartridge's nametable mirror and refill the CPU read buffer.
 static uint8_t ppu_bus_read(uint16_t addr, CartPpuFetchSource source) {
     addr &= 0x3FFF;
-    cart_notify_ppu_address(addr, ppu.total_cycles);
+    ppu_set_bus_address(addr);
     if (addr < 0x2000) {
         cart_set_ppu_fetch_source(source);
         return cart_ppu_read(addr);
@@ -149,7 +154,7 @@ void ppu_write(uint16_t addr, uint8_t value) {
         }
         ppu_palette[addr] = value;
     } else {
-        cart_notify_ppu_address(addr, ppu.total_cycles);
+        ppu_set_bus_address(addr);
         if (addr < 0x2000) {
             cart_set_ppu_fetch_source(CART_PPU_FETCH_CPU);
             cart_ppu_write(addr, value);
@@ -166,7 +171,8 @@ uint8_t ppu_reg_read(uint16_t reg) {
             set_open_bus_masked(value, 0xE0);
             // dot identifies the next clock to execute. Reading immediately
             // before the vblank-set clock suppresses that edge for this frame.
-            if (ppu.scanline == 241 && ppu.dot == 1) ppu.suppress_vblank = true;
+            if (ppu.scanline == (int)nes_timing()->vblank_scanline && ppu.dot == 1)
+                ppu.suppress_vblank = true;
             ppu.status &= ~0x80;
             ppu.w = 0;
             ppu_eval_nmi();
@@ -184,7 +190,10 @@ uint8_t ppu_reg_read(uint16_t reg) {
             return value;
         }
         case 7: {
-            uint16_t addr = ppu.v & 0x3FFF;
+            // The register cannot start another external read until its
+            // two-CPU-cycle recovery interval has expired.
+            if (ppu.data_read_cooldown) return get_open_bus();
+            uint16_t addr = ppu.bus_address;
             uint8_t value;
             if (addr >= 0x3F00) {
                 uint8_t mask = (ppu.mask & 1) ? 0x30 : 0x3F;
@@ -194,8 +203,8 @@ uint8_t ppu_reg_read(uint16_t reg) {
                 value = ppu.ppudata_buffer;
                 set_open_bus(value);
             }
-            ppu.ppudata_buffer = ppu_bus_read(addr, CART_PPU_FETCH_CPU);
-            ppu_increment_data_address();
+            ppu.data_read_delay = 5;
+            ppu.data_read_cooldown = 6;
             return value;
         }
         default:
@@ -222,7 +231,13 @@ void ppu_reg_write(uint16_t reg, uint8_t value) {
                 ppu.oam_addr = (ppu.oam_addr + 4) & 0xFC;
             } else {
                 if ((ppu.oam_addr & 3) == 2) value &= 0xE3;
-                ppu.oam[ppu.oam_addr++] = value;
+                ppu.oam[ppu.oam_addr] = value;
+                // PAL refresh also clocks this address latch late in vblank.
+                int previous_dot = (ppu.dot + 340) % 341;
+                bool refresh = nes_timing()->region == NES_REGION_PAL
+                            && ppu.scanline >= 265 && !rendering_line();
+                if (!refresh || ((previous_dot & 1) && previous_dot != 339))
+                    ppu.oam_addr++;
             }
             break;
         case 5:
@@ -239,17 +254,50 @@ void ppu_reg_write(uint16_t reg, uint8_t value) {
                 ppu.t = (ppu.t & 0x00FF) | ((uint16_t)(value & 0x3F) << 8);
             } else {
                 ppu.t = (ppu.t & 0x7F00) | value;
-                ppu.v = ppu.t;
-                if (!rendering_active()) cart_notify_ppu_address(ppu.v & 0x3FFF, ppu.total_cycles);
+                ppu.address_write_value = ppu.t;
+                ppu.address_write_delay = 3;
             }
             ppu.w ^= 1;
             break;
         case 7:
-            ppu_write(ppu.v, value);
-            ppu_increment_data_address();
+            ppu.data_write_value = value;
+            ppu.data_write_delay = 5;
             break;
         default:
             break;
+    }
+}
+
+static void ppu_complete_register_accesses(int dot) {
+    if (ppu.address_write_delay && --ppu.address_write_delay == 0) {
+        uint16_t address = ppu.address_write_value;
+        if (rendering_active()) {
+            if (dot == 257) {
+                address &= ppu.v;
+            } else if (dot > 0 && !(dot & 7) && (dot <= 256 || dot > 320)) {
+                address = (address & ~0x041F) | (address & ppu.v & 0x041F);
+            }
+        }
+        ppu.v = ppu.t = address;
+        if (!rendering_active()) ppu_set_bus_address(ppu.v);
+    }
+    if (ppu.data_read_cooldown) ppu.data_read_cooldown--;
+    if (ppu.data_increment_pending) {
+        ppu.data_increment_pending = false;
+        ppu_increment_data_address();
+    }
+    if (ppu.data_read_delay && --ppu.data_read_delay == 0) {
+        ppu.ppudata_buffer = ppu_bus_read(ppu.bus_address, CART_PPU_FETCH_CPU);
+        ppu.data_increment_pending = true;
+    }
+    if (ppu.data_write_delay && --ppu.data_write_delay == 0) {
+        uint16_t address = ppu.bus_address;
+        uint8_t value = ppu.data_write_value;
+        // While rendering, the multiplexed address lines drive the external
+        // data bus. Palette RAM remains on the internal six-bit data path.
+        if (address < 0x3F00 && rendering_active()) value = (uint8_t)address;
+        ppu_write(address, value);
+        ppu.data_increment_pending = true;
     }
 }
 
@@ -278,13 +326,14 @@ void start_frame(void) {
     ppu.frame_complete = false;
 }
 
-void ppu_reset(PPU *state) {
+void ppu_power_on(PPU *state) {
     memset(state, 0, sizeof(*state));
     memset(ppu_ob_expire, 0, sizeof(ppu_ob_expire));
     memset(state->oam, 0xFF, sizeof(state->oam));
     memset(state->secondary_oam, 0xFF, sizeof(state->secondary_oam));
     state->oam_bus = 0xFF;
-    state->scanline = 261;
+    state->scanline = (int)nes_timing()->scanlines - 1;
+    memset(ppu_vram, 0, sizeof(ppu_vram));
     cpu_set_nmi_line(false);
     static const uint8_t power_up_palette[PPU_PALETTE_SIZE] = {
         0x09,0x01,0x00,0x01,0x00,0x02,0x02,0x0D,
@@ -294,6 +343,30 @@ void ppu_reset(PPU *state) {
     };
     memcpy(ppu_palette, power_up_palette, sizeof(ppu_palette));
     ppu_palette_reset_default();
+}
+
+void ppu_reset(PPU *state) {
+    ppu_power_on(state);
+}
+
+void ppu_soft_reset(PPU *state) {
+    uint8_t oam[PPU_OAM_SIZE];
+    uint8_t secondary_oam[32];
+    memcpy(oam, state->oam, sizeof(oam));
+    memcpy(secondary_oam, state->secondary_oam, sizeof(secondary_oam));
+    uint16_t v = state->v;
+    uint8_t status = state->status;
+    uint64_t clocks = state->total_cycles;
+    memset(state, 0, sizeof(*state));
+    memcpy(state->oam, oam, sizeof(oam));
+    memcpy(state->secondary_oam, secondary_oam, sizeof(secondary_oam));
+    state->v = v;
+    state->status = status;
+    state->total_cycles = clocks;
+    state->scanline = (int)nes_timing()->scanlines - 1;
+    state->oam_bus = 0xFF;
+    memset(ppu_ob_expire, 0, sizeof(ppu_ob_expire));
+    cpu_set_nmi_line(false);
 }
 
 // Secondary OAM is cleared on clocks 1-64. Each following pair of clocks
@@ -375,9 +448,9 @@ static void ppu_fetch_sprite(void) {
     int index = (ppu.dot - 257) / 8;
     int phase = (ppu.dot - 257) & 7;
     ppu.oam_addr = 0;
+    ppu.sprite_zero_on_line = ppu.secondary_sprite_zero;
     if (ppu.dot == 257) {
-        ppu.sprite_count = (ppu.secondary_index + 3) / 4;
-        ppu.sprite_zero_on_line = ppu.secondary_sprite_zero;
+        ppu.sprite_count = 0;
     }
     if (phase < 4) ppu.oam_bus = ppu.secondary_oam[index * 4 + phase];
     if (phase == 0 || phase == 2) {
@@ -389,7 +462,17 @@ static void ppu_fetch_sprite(void) {
         uint16_t row = (uint16_t)((int)(uint8_t)ppu.scanline - y);
         bool tall = (ppu.ctrl & 0x20) != 0;
         if (attr & 0x80) row ^= tall ? 15 : 7;
-        ppu.sprite_fetch_valid = index < ppu.sprite_count && row < (tall ? 16 : 8);
+        ppu.sprite_fetch_valid = row < (tall ? 16 : 8);
+        uint8_t bit = (uint8_t)(1u << index);
+        if (ppu.sprite_fetch_valid) {
+            ppu.sprite_count++;
+            ppu.sprite_valid_mask |= bit;
+            ppu.sprite_expired_mask &= (uint8_t)~bit;
+        } else {
+            ppu.sprite_valid_mask &= (uint8_t)~bit;
+            ppu.sprite_active_mask &= (uint8_t)~bit;
+            ppu.sprite_counting_mask &= (uint8_t)~bit;
+        }
         if (tall) {
             ppu.sprite_fetch_addr = ((tile & 1) << 12) | ((tile & 0xFE) << 4)
                                   | ((row & 8) << 1) | (row & 7);
@@ -397,6 +480,7 @@ static void ppu_fetch_sprite(void) {
             ppu.sprite_fetch_addr = ((ppu.ctrl & 8) ? 0x1000 : 0) | (tile << 4) | (row & 7);
         }
         ppu.sprite_positions[index] = ppu.secondary_oam[index * 4 + 3];
+        ppu.sprite_start_dot[index] = (uint16_t)ppu.sprite_positions[index] + 1;
         ppu.sprite_attributes[index] = attr;
         uint8_t value = ppu_bus_read(ppu.sprite_fetch_addr, CART_PPU_FETCH_SPRITE);
         ppu.sprite_pattern_lo[index] = ppu.sprite_fetch_valid ? value : 0;
@@ -430,16 +514,29 @@ static void ppu_fetch_background(void) {
         default:
             break;
     }
-    ppu.bg_shift_lo <<= 1;
-    ppu.bg_shift_hi <<= 1;
-    ppu.at_shift_lo <<= 1;
-    ppu.at_shift_hi <<= 1;
+    if (ppu.scanline < 240 || ppu.dot >= 321) {
+        ppu.bg_shift_lo <<= 1;
+        ppu.bg_shift_hi = (uint16_t)((ppu.bg_shift_hi << 1) | 1);
+        ppu.at_shift_lo <<= 1;
+        ppu.at_shift_hi <<= 1;
+    }
     if ((ppu.dot & 7) == 0) {
         ppu.bg_shift_lo = (ppu.bg_shift_lo & 0xFF00) | ppu.pt_lo;
         ppu.bg_shift_hi = (ppu.bg_shift_hi & 0xFF00) | ppu.pt_hi;
         ppu.at_shift_lo = (ppu.at_shift_lo & 0xFF00) | ((ppu.at_byte & 1) ? 0xFF : 0);
         ppu.at_shift_hi = (ppu.at_shift_hi & 0xFF00) | ((ppu.at_byte & 2) ? 0xFF : 0);
         ppu_increment_x();
+    }
+}
+
+static void ppu_clock_sprite_counters(int dot) {
+    for (unsigned i = 0; i < 8; ++i) {
+        uint8_t bit = (uint8_t)(1u << i);
+        if ((ppu.sprite_counting_mask & bit) && dot == ppu.sprite_start_dot[i]) {
+            ppu.sprite_counting_mask &= (uint8_t)~bit;
+            ppu.sprite_expired_mask |= bit;
+            ppu.sprite_active_mask |= bit;
+        }
     }
 }
 
@@ -454,15 +551,26 @@ static void ppu_render_dot(int x, int y) {
         background = ((ppu.bg_shift_lo & bit) ? 1 : 0) | ((ppu.bg_shift_hi & bit) ? 2 : 0);
         background_palette = ((ppu.at_shift_lo & bit) ? 1 : 0) | ((ppu.at_shift_hi & bit) ? 2 : 0);
     }
-    if ((ppu.mask & 0x10) && (x >= 8 || (ppu.mask & 4))) {
-        for (int i = 0; i < ppu.sprite_count; ++i) {
-            int column = x - ppu.sprite_positions[i];
-            if (column < 0 || column >= 8) continue;
+    if (ppu.fetches_enabled) {
+        uint8_t active = ppu.sprite_skip_clocks ? ppu.sprite_valid_mask : ppu.sprite_active_mask;
+        bool show_sprites = (ppu.mask & 0x10) && (x >= 8 || (ppu.mask & 4));
+        for (unsigned i = 0; i < 8; ++i) {
+            uint8_t slot = (uint8_t)(1u << i);
+            if (!(active & slot)) continue;
             uint8_t attr = ppu.sprite_attributes[i];
-            int bit = (attr & 0x40) ? column : 7 - column;
+            int bit = (attr & 0x40) ? 0 : 7;
             uint8_t pixel = ((ppu.sprite_pattern_lo[i] >> bit) & 1)
                           | (((ppu.sprite_pattern_hi[i] >> bit) & 1) << 1);
-            if (!pixel) continue;
+            if (attr & 0x40) {
+                ppu.sprite_pattern_lo[i] >>= 1;
+                ppu.sprite_pattern_hi[i] >>= 1;
+            } else {
+                ppu.sprite_pattern_lo[i] <<= 1;
+                ppu.sprite_pattern_hi[i] <<= 1;
+            }
+            if (!(ppu.sprite_pattern_lo[i] | ppu.sprite_pattern_hi[i]))
+                ppu.sprite_active_mask &= (uint8_t)~slot;
+            if (!pixel || sprite || !show_sprites) continue;
             sprite = pixel;
             sprite_palette = attr & 3;
             sprite_behind = (attr & 0x20) != 0;
@@ -470,7 +578,6 @@ static void ppu_render_dot(int x, int y) {
                 ppu.status |= 0x40;
                 ppu.sprite_zero_hit = true;
             }
-            break;
         }
     }
     uint8_t color = ppu_palette[0];
@@ -487,7 +594,7 @@ void ppu_step_dots(int ppu_cycles) {
         int dot = ppu.dot;
         bool rendering = ppu.fetches_enabled;
         bool visible = line < 240;
-        bool prerender = line == 261;
+        bool prerender = line == (int)nes_timing()->scanlines - 1;
 
         if (dot == 0) {
             if (visible && rendering && (line > 0 || !ppu.skipped_frame_dot)) {
@@ -495,13 +602,13 @@ void ppu_step_dots(int ppu_cycles) {
                 // scanlines without reading another byte from CHR memory.
                 uint16_t address = (ppu.nt_byte << 4) | ((ppu.v >> 12) & 7)
                                  | ((ppu.ctrl & 0x10) ? 0x1000 : 0);
-                cart_notify_ppu_address(address, ppu.total_cycles);
+                ppu_set_bus_address(address);
             } else if (line == 240) {
-                cart_notify_ppu_address(ppu.v & 0x3FFF, ppu.total_cycles);
+                ppu_set_bus_address(ppu.v);
             }
             if (line == 0) ppu.skipped_frame_dot = false;
         }
-        if (line == 241 && dot == 1) {
+        if (line == (int)nes_timing()->vblank_scanline && dot == 1) {
             cart_notify_vblank_start();
             ppu_begin_vblank();
         }
@@ -511,7 +618,13 @@ void ppu_step_dots(int ppu_cycles) {
             ppu.sprite_zero_hit = false;
             ppu.suppress_vblank = false;
         }
+        if (nes_timing()->region == NES_REGION_PAL && line >= 265 && !prerender
+            && dot && !(dot & 1))
+            ppu.oam_addr++;
         if (visible && dot >= 1 && dot <= 256) {
+            // X counters continue counting while rendering is disabled; the
+            // pattern shifters hold their data until rendering resumes.
+            ppu_clock_sprite_counters(dot);
             ppu_render_dot(dot - 1, line);
             if (rendering) ppu_evaluate_sprites();
         }
@@ -529,25 +642,38 @@ void ppu_step_dots(int ppu_cycles) {
         if ((visible || prerender) && ppu.rendering_enabled && (dot == 337 || dot == 339))
             ppu.nt_byte = ppu_bus_read(0x2000 | (ppu.v & 0x0FFF), CART_PPU_FETCH_BG);
 
-        ppu.total_cycles++;
-        ppu.dot++;
-        if (prerender && dot == 339 && ppu.odd_frame && ppu.rendering_enabled) {
-            ppu.dot++;
-            ppu.skipped_frame_dot = true;
+        bool skip_dot = nes_timing()->region == NES_REGION_NTSC && prerender && dot == 339
+                     && ppu.odd_frame && ppu.rendering_enabled;
+        if ((visible || prerender) && dot == 339) {
+            if (ppu.rendering_enabled)
+                ppu.sprite_counting_mask |= ppu.sprite_valid_mask & (uint8_t)~ppu.sprite_expired_mask;
+            ppu.sprite_active_mask = ppu.sprite_valid_mask & (uint8_t)~ppu.sprite_counting_mask;
+            if (skip_dot) {
+                for (unsigned sprite = 0; sprite < 8; ++sprite) ppu.sprite_start_dot[sprite]++;
+            }
         }
         // PPUMASK reaches the rendering latch after one PPU clock, then
         // reaches the fetch/evaluation circuits after the following clock.
         if (ppu.fetches_enabled != ppu.rendering_enabled) {
             ppu.fetches_enabled = ppu.rendering_enabled;
             if (!ppu.fetches_enabled && rendering_line()) {
-                cart_notify_ppu_address(ppu.v & 0x3FFF, ppu.total_cycles - 1);
+                ppu_set_bus_address(ppu.v);
                 if (dot >= 65 && dot <= 256) ppu.oam_addr++;
             }
         }
         ppu.rendering_enabled = (ppu.mask & 0x18) != 0;
+        ppu_complete_register_accesses(dot);
+        if (ppu.sprite_skip_clocks) ppu.sprite_skip_clocks--;
+        ppu.total_cycles++;
+        ppu.dot++;
+        if (skip_dot) {
+            ppu.dot++;
+            ppu.skipped_frame_dot = true;
+            ppu.sprite_skip_clocks = 2;
+        }
         if (ppu.dot == 341) {
             ppu.dot = 0;
-            if (++ppu.scanline == 262) {
+            if (++ppu.scanline == (int)nes_timing()->scanlines) {
                 ppu.scanline = 0;
                 ppu.odd_frame = !ppu.odd_frame;
                 ppu.frame_complete = true;
@@ -557,7 +683,13 @@ void ppu_step_dots(int ppu_cycles) {
 }
 
 void ppu_step(int cpu_cycles) {
-    ppu_step_dots(cpu_cycles * 3);
+    if (cpu_cycles <= 0) return;
+    const NesTiming *timing = nes_timing();
+    for (int i = 0; i < cpu_cycles; ++i) {
+        unsigned clocks = ppu.cpu_clock_phase + timing->cpu_divider;
+        ppu_step_dots((int)(clocks / timing->ppu_divider));
+        ppu.cpu_clock_phase = clocks % timing->ppu_divider;
+    }
 }
 
 uint32_t get_color(uint8_t idx) {
@@ -566,11 +698,16 @@ uint32_t get_color(uint8_t idx) {
     // PPUMASK bit 0: grayscale
     if (ppu.mask & 0x01) idx &= 0x30;
 
-    // If we have emphasis tables, pick the one matching PPUMASK emphasis bits.
+    uint8_t emphasis = ppu.mask;
+    if (nes_timing()->region != NES_REGION_NTSC)
+        emphasis = (uint8_t)((emphasis & ~0x60u) | ((emphasis & 0x20u) << 1)
+                            | ((emphasis & 0x40u) >> 1));
+
+    // If we have emphasis tables, pick the one matching the physical output bits.
     if (ppu__have_emphasis_tables) {
-        int e = ((ppu.mask & 0x20) ? 1 : 0)
-              | ((ppu.mask & 0x40) ? 2 : 0)
-              | ((ppu.mask & 0x80) ? 4 : 0);
+        int e = ((emphasis & 0x20) ? 1 : 0)
+              | ((emphasis & 0x40) ? 2 : 0)
+              | ((emphasis & 0x80) ? 4 : 0);
         return ppu__emphasis_palettes[e][idx];
     }
 
@@ -581,9 +718,9 @@ uint32_t get_color(uint8_t idx) {
     float b = (float)((c      ) & 0xFF);
 
     const float ATTEN = 0.60f;
-    if (ppu.mask & 0x20) { g *= ATTEN; b *= ATTEN; }  // emphasize RED
-    if (ppu.mask & 0x40) { r *= ATTEN; b *= ATTEN; }  // emphasize GREEN
-    if (ppu.mask & 0x80) { r *= ATTEN; g *= ATTEN; }  // emphasize BLUE
+    if (emphasis & 0x20) { g *= ATTEN; b *= ATTEN; }  // emphasize RED
+    if (emphasis & 0x40) { r *= ATTEN; b *= ATTEN; }  // emphasize GREEN
+    if (emphasis & 0x80) { r *= ATTEN; g *= ATTEN; }  // emphasize BLUE
 
     int R = (int)(r < 0 ? 0 : (r > 255 ? 255 : r));
     int G = (int)(g < 0 ? 0 : (g > 255 ? 255 : g));

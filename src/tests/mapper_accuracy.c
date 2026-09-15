@@ -14,6 +14,10 @@
 #include <unistd.h>
 #endif
 #include "../rom/mapper.h"
+#include "../cpu/cpu.h"
+#include "../ppu/ppu.h"
+#include "../system/timing.h"
+#include "../../include/globals.h"
 
 extern uint64_t cpu_total_cycles;
 
@@ -398,6 +402,21 @@ static int test_mapper15_modes(void) {
     return 0;
 }
 
+static void mmc5_enter_frame(uint8_t *nt) {
+    (void)cart_nt_read(0x2000, nt);
+    (void)cart_nt_read(0x2000, nt);
+    (void)cart_nt_read(0x2000, nt);
+    (void)cart_nt_read(0x23C0, nt);
+    (void)cart_nt_read(0x2001, nt);
+}
+
+static void mmc5_next_scanline(uint8_t *nt) {
+    (void)cart_nt_read(0x2000, nt);
+    (void)cart_nt_read(0x2000, nt);
+    (void)cart_nt_read(0x2000, nt);
+    (void)cart_nt_read(0x23C0, nt);
+}
+
 static int test_mmc5_memory_windows(void) {
     CHECK(fixture(5, 0x20000, 0x8000, false) == 5);
     CHECK(cart_cpu_read(0xE000) == 15);
@@ -424,7 +443,7 @@ static int test_mmc5_memory_windows(void) {
     CHECK(cart_cpu_read(0x8000) == 4 && cart_cpu_read(0xA000) == 5);
     CHECK(cart_cpu_read(0xC000) == 8 && cart_cpu_read(0xE000) == 9);
     cart_cpu_write(0x5115, 0);
-    CHECK(cart_cpu_read(0x8000) == 0x5A && cart_cpu_read(0xA000) == 0x5A);
+    CHECK(cart_cpu_read(0x8000) == 0x5A && cart_cpu_read(0xA000) == 0);
     cart_cpu_write(0x5100, 2);
     cart_cpu_write(0x5115, 0x84);
     cart_cpu_write(0x5116, 0);
@@ -435,6 +454,7 @@ static int test_mmc5_memory_windows(void) {
 
 static int test_mmc5_exram_and_irq(void) {
     CHECK(fixture(5, 0x20000, 0x8000, false) == 5);
+    uint8_t nt[0x1000] = {0};
     cart_cpu_write(0x5104, 2);
     cart_cpu_write(0x5C00, 0xA5);
     CHECK(cart_cpu_read(0x5C00) == 0xA5);
@@ -445,22 +465,28 @@ static int test_mmc5_exram_and_irq(void) {
     cart_cpu_write(0x5C00, 0x55);
     cart_cpu_write(0x5104, 2);
     CHECK(cart_cpu_read(0x5C00) == 0);
-    cart_notify_scanline_early();
+    mmc5_enter_frame(nt);
     cart_cpu_write(0x5104, 0);
     cart_cpu_write(0x5C00, 0x55);
     cart_cpu_write(0x5104, 2);
     CHECK(cart_cpu_read(0x5C00) == 0x55);
     cart_cpu_write(0x5203, 1);
     cart_cpu_write(0x5204, 0x80);
-    cart_notify_scanline_early();
+    mmc5_next_scanline(nt);
     CHECK(cart_irq_pending());
     CHECK(cart_cpu_read(0x5204) == 0xC0 && !cart_irq_pending());
     cart_cpu_write(0x5203, 2);
-    cart_notify_scanline_early();
+    mmc5_next_scanline(nt);
     CHECK(cart_irq_pending());
     (void)cart_cpu_read(0xFFFA);
     CHECK(!cart_irq_pending() && cart_cpu_read(0x5204) == 0);
-    uint8_t nt[0x1000] = {0};
+    mmc5_enter_frame(nt);
+    CHECK(cart_cpu_read(0x5204) == 0x40);
+    CHECK(cart != NULL && cart->clock != NULL);
+    cart->clock(2);
+    CHECK(cart_cpu_read(0x5204) == 0x40);
+    cart->clock(1);
+    CHECK(cart_cpu_read(0x5204) == 0);
     cart_cpu_write(0x5105, 0xFF);
     cart_cpu_write(0x5106, 0x37);
     cart_cpu_write(0x5107, 2);
@@ -468,6 +494,285 @@ static int test_mmc5_exram_and_irq(void) {
     cart_cpu_write(0x5205, 0xFF);
     cart_cpu_write(0x5206, 0xFF);
     CHECK(cart_cpu_read(0x5205) == 1 && cart_cpu_read(0x5206) == 0xFE);
+    return 0;
+}
+
+static int test_mmc5_chr_fetch_modes(void) {
+    CHECK(fixture(5, 0x20000, 0x20000, false) == 5);
+    cart_set_ppu_fetch_source(CART_PPU_FETCH_CPU);
+    CHECK(cart_ppu_read(0x0000) == 0 && cart_ppu_read(0x1FFF) == 7);
+
+    cart_cpu_write(0x5101, 3);
+    cart_cpu_write(0x5120, 4);
+    cart_cpu_write(0x5127, 11);
+    cart_cpu_write(0x5128, 20);
+    cart_cpu_write(0x5129, 21);
+    cart_cpu_write(0x512A, 22);
+    cart_cpu_write(0x512B, 23);
+    CHECK(cart_ppu_read(0x0000) == 4); // 8x8 mode forces set A even after a B write.
+    write_mem(0x2000, 0x20);
+    CHECK(cart_ppu_read(0x0000) == 4); // The 8x8 B write must not reappear later.
+    cart_cpu_write(0x5128, 20);
+    cart_cpu_write(0x5129, 21);
+    cart_cpu_write(0x512A, 22);
+    cart_cpu_write(0x512B, 23);
+    CHECK(cart_ppu_read(0x0000) == 20 && cart_ppu_read(0x1000) == 20);
+    write_mem(0x2008, 0); // PPU sees the mirror; MMC5 still sees large sprites.
+    CHECK(ppu.ctrl == 0 && cart_ppu_read(0x0000) == 20);
+    cart_set_ppu_fetch_source(CART_PPU_FETCH_BG);
+    CHECK(cart_ppu_read(0x0C00) == 23);
+    cart_set_ppu_fetch_source(CART_PPU_FETCH_SPRITE);
+    CHECK(cart_ppu_read(0x0000) == 4 && cart_ppu_read(0x1C00) == 11);
+    cart_set_ppu_fetch_source(CART_PPU_FETCH_CPU);
+    write_mem(0x2000, 0);
+    CHECK(cart_ppu_read(0x0000) == 4);
+    write_mem(0x3FF8, 0x20);
+    CHECK(ppu.ctrl == 0x20 && cart_ppu_read(0x0000) == 4);
+    write_mem(0x2000, 0);
+
+    cart_cpu_write(0x5101, 0);
+    cart_cpu_write(0x5127, 2);
+    cart_set_ppu_fetch_source(CART_PPU_FETCH_SPRITE);
+    CHECK(cart_ppu_read(0x0000) == 16 && cart_ppu_read(0x1C00) == 23);
+    cart_cpu_write(0x5101, 1);
+    cart_cpu_write(0x5123, 3);
+    cart_cpu_write(0x5127, 5);
+    CHECK(cart_ppu_read(0x0000) == 12 && cart_ppu_read(0x1000) == 20);
+    cart_cpu_write(0x5101, 2);
+    cart_cpu_write(0x5121, 2);
+    cart_cpu_write(0x5123, 4);
+    CHECK(cart_ppu_read(0x0000) == 4 && cart_ppu_read(0x0800) == 8);
+    return 0;
+}
+
+static int test_mmc5_extended_rendering(void) {
+    CHECK(fixture(5, 0x20000, 0x20000, false) == 5);
+    uint8_t nt[0x1000] = {0};
+    nt[5] = 0x2A;
+    cart_cpu_write(0x5104, 2);
+    cart_cpu_write(0x5C05, 0x83); // Palette 2, 4KB CHR bank 3.
+    mmc5_enter_frame(nt);
+    cart_cpu_write(0x5104, 1);
+    CHECK(cart_nt_read(0x2005, nt) == 0x2A);
+    CHECK(cart_nt_read(0x23C0, nt) == 0xAA);
+    CHECK(cart_ppu_read(0x0123) == 12);
+    CHECK(cart_ppu_read(0x012B) == 12);
+    CHECK(cart_ppu_read(0x0123) == 0);
+
+    cart_cpu_write(0x5104, 2);
+    cart_cpu_write(0x5C00, 0x5A);
+    cart_cpu_write(0x5C01, 0x6B);
+    cart_cpu_write(0x5FC0, 0x02);
+    fixture_chr[0x4000 + 0x120] = 0x90;
+    fixture_chr[0x4000 + 0x121] = 0x91;
+    cart_cpu_write(0x5200, 0x84); // Left-side split through column 3.
+    cart_cpu_write(0x5201, 0);
+    cart_cpu_write(0x5202, 4);
+    cart_cpu_write(0x5104, 0);
+    uint8_t split_tile = 0;
+    for (unsigned i = 0; i < 46; ++i)
+        split_tile = cart_nt_read((uint16_t)(0x2100 + (i & 0x1Fu)), nt);
+    CHECK(split_tile == 0x5A);
+    CHECK(cart_nt_read(0x23C0, nt) == 0xAA);
+    CHECK(cart_ppu_read(0x0123) == 0x90);
+    CHECK(cart_nt_read(0x211E, nt) == 0x6B);
+    CHECK(cart_ppu_read(0x0123) == 0x91);
+    cart->clock(3);
+    CHECK((cart_cpu_read(0x5204) & 0x40) == 0);
+    CHECK(cart_ppu_read(0x0123) == 0);
+    return 0;
+}
+
+static void mmc5_prepare_render(void) {
+    ppu_power_on(&ppu);
+    ppu.scanline = (int)nes_timing()->scanlines - 1;
+    ppu.dot = 0;
+    ppu.v = 0;
+    ppu.t = 0;
+    ppu.x = 0;
+    ppu.ctrl = 0;
+    ppu.mask = 0x0A; // Background, including the left eight pixels.
+    ppu.rendering_enabled = true;
+    ppu.fetches_enabled = true;
+    ppu_palette[0] = 0x0F;
+    ppu_begin_frame_render(framebuffer);
+}
+
+static int test_mmc5_rendered_ppu_paths(void) {
+    CHECK(fixture(5, 0x20000, 0x20000, false) == 5);
+    memset(fixture_chr, 0, sizeof(fixture_chr));
+    mmc5_prepare_render();
+    for (unsigned tile = 0; tile < 64; ++tile) ppu_vram[tile] = 1;
+    for (unsigned row = 0; row < 8; ++row) {
+        fixture_chr[0x3000 + 0x10 + row] = 0xFF;
+        fixture_chr[0x3000 + 0x18 + row] = 0;
+    }
+    cart_cpu_write(0x5104, 2);
+    for (unsigned tile = 0; tile < 0x3C0; ++tile)
+        cart_cpu_write((uint16_t)(0x5C00 + tile), 0xC3); // Palette 3, 4KB bank 3.
+    cart_cpu_write(0x5104, 1);
+    cart_cpu_write(0x5203, 1);
+    cart_cpu_write(0x5204, 0x80);
+    ppu_palette[13] = 0x21;
+    ppu_palette[14] = 0x16;
+    ppu_palette[15] = 0x30;
+    ppu_step_dots(341 * 3);
+    CHECK(framebuffer[1 * 256] == get_color(0x21));
+    CHECK(framebuffer[1 * 256 + 7] == get_color(0x21));
+    CHECK(bg_opaque[1 * 256] && bg_opaque[1 * 256 + 7]);
+    CHECK(cart_irq_pending());
+    CHECK((cart_cpu_read(0x5204) & 0xC0) == 0xC0);
+
+    CHECK(fixture(5, 0x20000, 0x20000, false) == 5);
+    memset(fixture_chr, 0, sizeof(fixture_chr));
+    mmc5_prepare_render();
+    for (unsigned tile = 0; tile < 0x3C0; ++tile) ppu_vram[tile] = 1;
+    for (unsigned row = 0; row < 8; ++row) {
+        fixture_chr[0x0010 + row] = 0xFF;          // Normal tile 1.
+        fixture_chr[0x0018 + row] = 0;
+        fixture_chr[0x4000 + 0x20 + row] = 0xFF; // Split tile 2 in bank 4.
+        fixture_chr[0x4000 + 0x28 + row] = 0;
+    }
+    cart_cpu_write(0x5104, 2);
+    for (unsigned tile = 0; tile < 0x3C0; ++tile)
+        cart_cpu_write((uint16_t)(0x5C00 + tile), 2);
+    for (unsigned attr = 0x3C0; attr < 0x400; ++attr)
+        cart_cpu_write((uint16_t)(0x5C00 + attr), 0x55); // Split palette 1.
+    cart_cpu_write(0x5104, 0);
+    cart_cpu_write(0x5200, 0x88); // Left-side split through tile column 7.
+    cart_cpu_write(0x5201, 0);
+    cart_cpu_write(0x5202, 4);
+    ppu_palette[1] = 0x11; // Normal palette 0, pixel 1.
+    ppu_palette[5] = 0x21; // Split palette 1, pixel 1.
+    ppu_step_dots(341 * 3);
+    CHECK(framebuffer[1 * 256 + 63] == get_color(0x21));
+    CHECK(framebuffer[1 * 256 + 64] == get_color(0x11));
+    CHECK(bg_opaque[1 * 256 + 63] && bg_opaque[1 * 256 + 64]);
+
+    CHECK(fixture(5, 0x20000, 0x20000, false) == 5);
+    memset(fixture_chr, 0, sizeof(fixture_chr));
+    mmc5_prepare_render();
+    for (unsigned tile = 0; tile < 0x3C0; ++tile) ppu_vram[tile] = 1;
+    for (unsigned row = 0; row < 8; ++row) {
+        fixture_chr[0x0010 + row] = 0xFF;
+        fixture_chr[0x4000 + 0x20 + row] = 0xFF;
+    }
+    cart_cpu_write(0x5104, 2);
+    for (unsigned tile = 0; tile < 0x3C0; ++tile)
+        cart_cpu_write((uint16_t)(0x5C00 + tile), 2);
+    for (unsigned attr = 0x3C0; attr < 0x400; ++attr)
+        cart_cpu_write((uint16_t)(0x5C00 + attr), 0x55);
+    cart_cpu_write(0x5104, 0);
+    cart_cpu_write(0x5200, 0xC8); // Same boundary, split on the right side.
+    cart_cpu_write(0x5202, 4);
+    ppu_palette[1] = 0x11;
+    ppu_palette[5] = 0x21;
+    ppu_step_dots(341 * 3);
+    CHECK(framebuffer[1 * 256 + 63] == get_color(0x11));
+    CHECK(framebuffer[1 * 256 + 64] == get_color(0x21));
+    return 0;
+}
+
+static int test_mmc5_audio_and_pcm(void) {
+    CHECK(fixture(5, 0x20000, 0x8000, false) == 5);
+    CHECK(cart != NULL && cart->clock != NULL && cart_expansion_audio() == 0.0f);
+
+    // The fixed envelope/length divider clocks immediately, then every floor(CPU/240) cycles.
+    // A high-register write stages its length reload until the end of the next CPU clock.
+    int frame_period = (int)(nes_timing()->cpu_hz / 240.0);
+    cart_cpu_write(0x5015, 0x01);
+    cart_cpu_write(0x5000, 0x10);
+    cart_cpu_write(0x5002, 0);
+    cart_cpu_write(0x5003, 0x18); // Length-table entry 3 starts at 2.
+    CHECK((cart_cpu_read(0x5015) & 1) == 0);
+    cart->clock(1);
+    CHECK((cart_cpu_read(0x5015) & 1) != 0);
+    cart->clock(frame_period);
+    CHECK((cart_cpu_read(0x5015) & 1) != 0);
+    cart->clock(frame_period);
+    CHECK((cart_cpu_read(0x5015) & 1) == 0);
+
+    // Reload and length-halt writes collide with the old counter on the next
+    // CPU clock: the frame tick sees the old halt state, then reload arbitration
+    // and the new halt state commit at the end of that clock.
+    CHECK(fixture(5, 0x20000, 0x8000, false) == 5);
+    cart_cpu_write(0x5015, 0x01);
+    cart_cpu_write(0x5000, 0x10);
+    cart_cpu_write(0x5003, 0x38); // Length 6.
+    cart->clock(1);
+    cart->clock(frame_period); // 6 -> 5.
+    cart->clock(frame_period - 1);
+    cart_cpu_write(0x5000, 0x30); // Stage halt.
+    cart_cpu_write(0x5003, 0x18); // Stage length 2 with previous counter 5.
+    cart->clock(1);               // Old counter becomes 4; reload loses collision.
+    cart_cpu_write(0x5000, 0x10);
+    cart->clock(1);               // Commit unhalt before the next frame tick.
+    cart->clock(frame_period - 1); // 4 -> 3.
+    cart->clock(frame_period);     // 3 -> 2.
+    cart->clock(frame_period);     // 2 -> 1.
+    CHECK((cart_cpu_read(0x5015) & 1) != 0);
+    cart->clock(frame_period);     // 1 -> 0.
+    CHECK((cart_cpu_read(0x5015) & 1) == 0);
+
+    CHECK(fixture(5, 0x20000, 0x8000, false) == 5);
+    cart_cpu_write(0x5015, 0x01);
+    cart_cpu_write(0x5000, 0xDF); // Duty 3, constant volume 15.
+    cart_cpu_write(0x5002, 0);
+    cart_cpu_write(0x5003, 0x08); // Load length with a period below 8.
+    cart->clock(1);
+    CHECK(cart_expansion_audio() == 0.0f);
+    cart->clock(4);
+    float one_pulse = cart_expansion_audio();
+    CHECK(one_pulse < 0.0f); // MMC5 pulses are not muted for periods below 8.
+    CHECK(one_pulse < -0.125f && one_pulse > -0.127f);
+    cart_cpu_write(0x5001, 0xFF); // No sweep unit.
+    CHECK(cart_expansion_audio() == one_pulse);
+
+    CHECK(fixture(5, 0x20000, 0x8000, false) == 5);
+    cart_cpu_write(0x5015, 0x03);
+    cart_cpu_write(0x5000, 0xDF);
+    cart_cpu_write(0x5002, 0);
+    cart_cpu_write(0x5003, 0x08);
+    cart_cpu_write(0x5004, 0xDF);
+    cart_cpu_write(0x5006, 0);
+    cart_cpu_write(0x5007, 0x08);
+    cart->clock(5);
+    CHECK(cart_expansion_audio() < one_pulse);
+    CHECK(cart_expansion_audio() < -0.251f && cart_expansion_audio() > -0.253f);
+    cart_cpu_write(0x5015, 0);
+    cart->clock(2);
+    CHECK(cart_expansion_audio() == 0.0f);
+
+    cart_cpu_write(0x5010, 0x00);
+    cart_cpu_write(0x5011, 0);
+    CHECK(!cart_irq_pending()); // Trip state is retained while IRQ output is disabled.
+    cart_cpu_write(0x5010, 0x80);
+    CHECK(cart_irq_pending());
+    cart_cpu_write(0x5011, 0x40);
+    CHECK(!cart_irq_pending()); // A nonzero DAC assignment clears the trip state.
+    cart_cpu_write(0x5010, 0x00);
+    cart_cpu_write(0x5011, 0);
+    CHECK(!cart_irq_pending());
+    CHECK(cart_cpu_read(0x5010) == 0x01); // Status masks disabled IRQs but still acknowledges the trip.
+    cart_cpu_write(0x5010, 0x80);
+    CHECK(!cart_irq_pending());
+    cart_cpu_write(0x5011, 0);
+    CHECK(cart_irq_pending());
+    CHECK(cart_cpu_read(0x5010) == 0x81 && !cart_irq_pending());
+    cart_cpu_write(0x5011, 0x80);
+    float pcm = cart_expansion_audio();
+    CHECK(pcm < -0.357f && pcm > -0.360f);
+    cart_cpu_write(0x5010, 0x81);
+    cart_cpu_write(0x5011, 0x20); // Direct DAC writes are ignored in read mode.
+    CHECK(cart_expansion_audio() == pcm);
+    cart_cpu_write(0x5114, 0x81);
+    CHECK(cart_cpu_read(0x8000) == 1 && !cart_irq_pending());
+    float pcm_one = cart_expansion_audio();
+    CHECK(pcm_one < 0.0f && pcm_one > pcm);
+    cart_cpu_write(0x5114, 0x80);
+    CHECK(cart_cpu_read(0x8000) == 0 && cart_irq_pending());
+    CHECK(cart_expansion_audio() == pcm_one);
+    CHECK(cart_cpu_read(0x5010) == 0x81 && !cart_irq_pending());
     return 0;
 }
 
@@ -489,6 +794,13 @@ static int test_header_and_mapper_rejection(void) {
     CHECK(rom_mapper_number(&h) == 0xF4);
     CHECK(mapper_init_from_header(NULL, fixture_prg, 0x4000, fixture_chr, 0x2000) == -1);
     CHECK(mapper_init_from_header(&h, fixture_prg, 0, fixture_chr, 0x2000) == -1);
+    h = header_for(5, 0x20000, false);
+    CHECK(mapper_init_from_header(&h, fixture_prg, 0x120000, fixture_chr, 0x2000) == -1);
+    uint8_t *large_chr = (uint8_t *)calloc(1, 0x101000);
+    CHECK(large_chr != NULL);
+    int large_chr_result = mapper_init_from_header(&h, fixture_prg, 0x20000, large_chr, 0x101000);
+    free(large_chr);
+    CHECK(large_chr_result == -1);
     CHECK(cart == previous);
     return 0;
 }
@@ -566,6 +878,20 @@ static int test_loader_trainers_and_sizes(void) {
     CHECK(loaded == 0 && chr_size == 0x1000);
     cart_ppu_write(0x1000, 0x91);
     CHECK(cart_ppu_read(0) == 0x91);
+
+    // Trainer bytes are loaded at the CPU-visible $7000-$71FF window even on
+    // the two-socket MMC5 RAM layout.
+    h = header_for(5, 0x20000, false);
+    h.flags7 = 8;
+    h.flags6 |= 0x06;
+    h.flags10 = 0x77;
+    image = image_for(&h, 0x20000, 0x2000, &size);
+    CHECK(image != NULL);
+    loaded = load_rom_memory(image, size);
+    free(image);
+    CHECK(loaded == 0 && cart_cpu_read(0x7001) == 1 && cart_cpu_read(0x71FF) == 0xFF);
+    cart_cpu_write(0x5113, 4);
+    CHECK(cart_cpu_read(0x7000) == 0 && cart_cpu_read(0x7001) == 0 && cart_cpu_read(0x71FF) == 0);
     return 0;
 }
 
@@ -615,6 +941,72 @@ static int test_loader_rejection_preserves_cart(void) {
     return 0;
 }
 
+static int test_loader_region_and_console_type(void) {
+    iNESHeader h = header_for(0, 0x4000, false);
+    h.flags9 = 1;
+    size_t size;
+    uint8_t *image = image_for(&h, 0x4000, 0x2000, &size);
+    CHECK(image != NULL);
+    int loaded = load_rom_memory(image, size);
+    free(image);
+    CHECK(loaded == 0 && nes_timing()->region == NES_REGION_PAL);
+
+    h = header_for(0, 0x4000, false);
+    h.flags7 = 0x04; // Archaic iNES: later header bytes are unreliable padding.
+    h.flags9 = 1;
+    image = image_for(&h, 0x4000, 0x2000, &size);
+    CHECK(image != NULL);
+    loaded = load_rom_memory(image, size);
+    free(image);
+    CHECK(loaded == 0 && nes_timing()->region == NES_REGION_NTSC);
+
+    h = header_for(0, 0x4000, false);
+    h.flags7 = 0x08;
+    h.zero[1] = 3;
+    image = image_for(&h, 0x4000, 0x2000, &size);
+    CHECK(image != NULL);
+    loaded = load_rom_memory(image, size);
+    free(image);
+    CHECK(loaded == 0 && nes_timing()->region == NES_REGION_DENDY);
+    Mapper *previous_cart = cart;
+    uint8_t *previous_prg = prg_rom;
+
+    h.flags7 = 0x09; // VS System is not implemented by the console core.
+    image = image_for(&h, 0x4000, 0x2000, &size);
+    CHECK(image != NULL);
+    loaded = load_rom_memory(image, size);
+    free(image);
+    CHECK(loaded == -1 && cart == previous_cart && prg_rom == previous_prg);
+    CHECK(nes_timing()->region == NES_REGION_DENDY);
+
+    h.flags7 = 0x0B;
+    h.zero[2] = 4; // An extended-console expansion not provided by this core.
+    image = image_for(&h, 0x4000, 0x2000, &size);
+    CHECK(image != NULL);
+    loaded = load_rom_memory(image, size);
+    free(image);
+    CHECK(loaded == -1 && cart == previous_cart && nes_timing()->region == NES_REGION_DENDY);
+
+    h.zero[1] = 2; // Dual-compatible cartridges default to NTSC timing.
+    h.zero[2] = 0; // Extended console type 0 is the ordinary NES family.
+    image = image_for(&h, 0x4000, 0x2000, &size);
+    CHECK(image != NULL);
+    loaded = load_rom_memory(image, size);
+    free(image);
+    CHECK(loaded == 0 && nes_timing()->region == NES_REGION_NTSC);
+
+    h = header_for(0, 0x4000, false);
+    h.flags7 = 2; // PlayChoice-10 in a clean legacy header.
+    image = image_for(&h, 0x4000, 0x2000, &size);
+    CHECK(image != NULL);
+    loaded = load_rom_memory(image, size);
+    free(image);
+    CHECK(loaded == -1 && nes_timing()->region == NES_REGION_NTSC);
+    unload_rom();
+    CHECK(nes_timing()->region == NES_REGION_NTSC);
+    return 0;
+}
+
 static int test_ram_header_sizes(void) {
     RomRamSizes ram;
     iNESHeader h = header_for(0, 0x4000, true);
@@ -627,6 +1019,10 @@ static int test_ram_header_sizes(void) {
     CHECK(ram.prg_ram == 0 && ram.prg_nvram == 0x8000);
     h = header_for(13, 0x8000, true);
     CHECK(rom_ram_sizes(&h, &ram) == 0 && ram.chr_ram == 0x4000);
+    h = header_for(5, 0x20000, true);
+    CHECK(rom_ram_sizes(&h, &ram) == 0 && ram.prg_ram == 0x10000 && ram.prg_nvram == 0);
+    h.flags6 |= 2;
+    CHECK(rom_ram_sizes(&h, &ram) == 0 && ram.prg_ram == 0 && ram.prg_nvram == 0x10000);
 
     h.flags7 = 8;
     h.prg_ram_size = 0x50; // Byte 8 is mapper metadata in NES 2.0.
@@ -966,6 +1362,64 @@ static int test_prg_nvram_persistence(void) {
     return result | save_fixture_end(&paths);
 }
 
+static int mmc5_persistence_cases(const SaveFixture *paths) {
+    iNESHeader h = header_for(5, 0x20000, true);
+    h.flags6 |= 2;
+    CHECK(fixture_with_header(&h, 0x20000, 0x2000) == 5);
+    cart_battery_configure(paths->rom, true);
+    cart_cpu_write(0x5102, 2);
+    cart_cpu_write(0x5103, 1);
+    cart_cpu_write(0x5113, 0);
+    cart_cpu_write(0x6000, 0x35);
+    cart_cpu_write(0x5104, 2);
+    cart_cpu_write(0x5C00, 0x53);
+    cart_cpu_write(0x5FFF, 0xA7);
+    cart_battery_flush();
+    CHECK(saved_file_size(paths->prg_save) == 0x10400);
+    CHECK(saved_byte(paths->prg_save, 0) == 0x35);
+    CHECK(saved_byte(paths->prg_save, 0x10000) == 0x53);
+    CHECK(saved_byte(paths->prg_save, 0x103FF) == 0xA7);
+
+    CHECK(fixture_with_header(&h, 0x20000, 0x2000) == 5);
+    cart_battery_configure(paths->rom, true);
+    cart_cpu_write(0x5113, 0);
+    cart_cpu_write(0x5104, 2);
+    CHECK(cart_cpu_read(0x6000) == 0x35);
+    CHECK(cart_cpu_read(0x5C00) == 0x53 && cart_cpu_read(0x5FFF) == 0xA7);
+
+    // Old saves may end in PRG RAM or partway through the appended ExRAM.
+    const size_t short_sizes[] = {3, 0x10002};
+    for (unsigned i = 0; i < sizeof(short_sizes) / sizeof(short_sizes[0]); ++i) {
+        cart_battery_shutdown();
+        uint8_t *contents = (uint8_t *)calloc(1, short_sizes[i]);
+        CHECK(contents != NULL);
+        contents[0] = 0x42;
+        contents[short_sizes[i] - 1] = 0xA3;
+        FILE *fp = fopen(paths->prg_save, "wb");
+        if (!fp) { free(contents); return 1; }
+        size_t written = fwrite(contents, 1, short_sizes[i], fp);
+        int closed = fclose(fp);
+        free(contents);
+        CHECK(written == short_sizes[i] && closed == 0);
+        CHECK(fixture_with_header(&h, 0x20000, 0x2000) == 5);
+        cart_battery_configure(paths->rom, true);
+        cart_cpu_write(0x5113, 0);
+        cart_cpu_write(0x5104, 2);
+        CHECK(cart_cpu_read(0x6000) == 0x42 && cart_cpu_read(0x7FFF) == 0);
+        CHECK(cart_cpu_read(0x6002) == (i ? 0 : 0xA3));
+        CHECK(cart_cpu_read(0x5C01) == (i ? 0xA3 : 0));
+        CHECK(cart_cpu_read(0x5C02) == 0 && cart_cpu_read(0x5FFF) == 0);
+    }
+    return 0;
+}
+
+static int test_mmc5_persistence(void) {
+    SaveFixture paths;
+    CHECK(save_fixture_begin(&paths) == 0);
+    int result = mmc5_persistence_cases(&paths);
+    return result | save_fixture_end(&paths);
+}
+
 static int chr_persistence_cases(const SaveFixture *paths) {
     iNESHeader h = header_for(1, 0x20000, true);
     h.flags7 = 8;
@@ -1214,8 +1668,9 @@ static int test_cartridge_bus_reads(void) {
     CHECK(cart_cpu_read_bus(0x5204, 0xFF) == 0x3F);
     cart_cpu_write(0x5203, 1);
     cart_cpu_write(0x5204, 0x80);
-    cart_notify_scanline_early();
-    cart_notify_scanline_early();
+    uint8_t mmc5_nt[0x1000] = {0};
+    mmc5_enter_frame(mmc5_nt);
+    mmc5_next_scanline(mmc5_nt);
     CHECK(cart_irq_pending());
     CHECK(cart_cpu_read_bus(0x5204, 0x96) == 0xD6);
     CHECK(!cart_irq_pending());
@@ -1291,10 +1746,13 @@ int test_mapper_accuracy(void) {
         test_mmc4_latches_and_chr_ram, test_mmc3_banks_and_protection,
         test_mmc3_irq_edges, test_mmc3_render_trace, test_simple_mapper_registers,
         test_bus_conflict_submappers, test_mapper15_modes, test_mmc5_memory_windows,
-        test_mmc5_exram_and_irq, test_header_and_mapper_rejection,
+        test_mmc5_exram_and_irq, test_mmc5_chr_fetch_modes, test_mmc5_extended_rendering,
+        test_mmc5_rendered_ppu_paths, test_mmc5_audio_and_pcm, test_header_and_mapper_rejection,
         test_loader_trainers_and_sizes, test_loader_rejection_preserves_cart,
+        test_loader_region_and_console_type,
         test_ram_header_sizes, test_prg_ram_capacity, test_mmc1_banked_ram,
         test_mmc5_banked_ram, test_loader_ram_layouts, test_prg_nvram_persistence,
+        test_mmc5_persistence,
         test_chr_nvram_persistence, test_chr_nvram_writers,
         test_mmc6_ram_mirroring, test_mmc6_protection, test_mmc6_banks_and_irq,
         test_cartridge_bus_reads, test_mmc6_persistence, test_cartridge_unload

@@ -26,15 +26,16 @@ int test_cpu_trace(const char *rom_path, const char *trace_path) {
         return 1;
     }
 
-    // The automated nestest entry starts at $C000, seven cycles after power-on.
+    // The automated entry starts at $C000 immediately after the seven-cycle
+    // CPU power-on reset sequence.
     memset(&cpu, 0, sizeof(cpu));
     memset(ram, 0, 0x0800);
     memset(&pad1, 0, sizeof(pad1));
     memset(&pad2, 0, sizeof(pad2));
-    cpu_total_cycles = 7;
-    apu_reset(&apu);
-    ppu_reset(&ppu);
-    cpu_reset(&cpu);
+    cpu_total_cycles = 0;
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    cpu_power_on(&cpu);
     cpu.pc = 0xC000;
 
     char line[512], previous[512] = "";

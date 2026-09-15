@@ -2,6 +2,7 @@
 #include "../apu/apu.h"
 #include "../cpu/cpu.h"
 #include "../rom/mapper.h"
+#include "../system/timing.h"
 #include <stdio.h>
 
 static int checks;
@@ -18,9 +19,20 @@ static uint16_t last_sample_address;
     } \
 } while (0)
 
-static void reset_audio(void) {
+static void reset_audio_region(NesRegion region) {
+    nes_set_region(region);
     cpu_total_cycles = 0;
-    apu_reset(&apu);
+    apu_power_on(&apu);
+    // Most channel tests start from the first sequencer cycle. Hardware startup
+    // behavior is covered separately below.
+    apu.frame_reset_pending = false;
+    apu.frame_reset_delay = 0;
+    apu.cycle_in_seq = 0;
+    apu.frame_clock_block = 0;
+}
+
+static void reset_audio(void) {
+    reset_audio_region(NES_REGION_NTSC);
 }
 
 static void start_pulse(void) {
@@ -49,6 +61,73 @@ static void step_sample_reader(int cycles) {
 
 int test_apu_accuracy(void) {
     checks = failures = 0;
+
+    nes_set_region(NES_REGION_NTSC);
+    cpu_total_cycles = 0;
+    apu_power_on(&apu);
+    CHECK("power-on schedules the implicit frame-counter reset", apu.frame_reset_pending && apu.frame_reset_delay == 3);
+    CHECK("power-on selects four-step mode", !apu.five_step);
+    CHECK("power-on initializes DMC sample registers", apu.dmc.sample_addr == 0xC000 && apu.dmc.sample_len == 1);
+    apu_step(&apu, 2);
+    CHECK("implicit frame reset remains pending for two clocks", apu.frame_reset_pending);
+    apu_step(&apu, 1);
+    CHECK("implicit frame reset applies on its third clock", !apu.frame_reset_pending && apu.cycle_in_seq == 0);
+
+    apu_write(0x4017, 0x80);
+    apu_step(&apu, 3);
+    apu_write(0x4012, 0x55);
+    apu_write(0x4013, 0x23);
+    apu.tri.lc.length = 17;
+    apu.tri.lc.halt = true;
+    apu.tri.enabled = true;
+    apu.pulse1.lc.length = 19;
+    uint16_t saved_dmc_addr = apu.dmc.sample_addr;
+    uint16_t saved_dmc_len = apu.dmc.sample_len;
+    apu_soft_reset(&apu);
+    CHECK("soft reset preserves frame-counter mode", apu.five_step && apu.frame_next_five_step);
+    CHECK("soft reset preserves DMC sample address and length", apu.dmc.sample_addr == saved_dmc_addr && apu.dmc.sample_len == saved_dmc_len);
+    CHECK("soft reset preserves triangle length state while disabling it", apu.tri.lc.length == 17 && apu.tri.lc.halt && !apu.tri.enabled);
+    CHECK("soft reset clears pulse length state", apu.pulse1.lc.length == 0);
+    CHECK("soft reset schedules the implicit frame-counter write", apu.frame_reset_pending && apu.frame_reset_delay == 3);
+    apu_power_on(&apu);
+    CHECK("power-on clears preserved frame mode and triangle length", !apu.five_step && apu.tri.lc.length == 0);
+    CHECK("power-on restores DMC sample defaults", apu.dmc.sample_addr == 0xC000 && apu.dmc.sample_len == 1);
+
+    static const int pal_noise_periods[16] = {
+        4,8,14,30,60,88,118,148,188,236,354,472,708,944,1890,3778
+    };
+    static const int pal_dmc_periods[16] = {
+        398,354,316,298,276,236,210,198,176,148,132,118,98,78,66,50
+    };
+    reset_audio_region(NES_REGION_PAL);
+    for (int rate = 0; rate < 16; ++rate) {
+        apu_write(0x400E, (uint8_t)rate);
+        CHECK("PAL noise period table matches hardware", apu.noise.period == pal_noise_periods[rate]);
+        apu_write(0x4010, (uint8_t)rate);
+        CHECK("PAL DMC period table matches hardware", apu.dmc.timer_reload + 1 == pal_dmc_periods[rate]);
+    }
+    reset_audio_region(NES_REGION_PAL);
+    start_pulse();
+    apu_step(&apu, 8312);
+    CHECK("PAL frame counter waits until clock 8313", apu.pulse1.env.start_flag);
+    apu_step(&apu, 1);
+    CHECK("PAL first quarter-frame occurs at clock 8313", apu.pulse1.env.decay == 15 && apu.pulse1.lc.length == 10);
+    apu_step(&apu, 16627 - 8313);
+    CHECK("PAL half-frame occurs at clock 16627", apu.pulse1.lc.length == 9);
+    apu_step(&apu, 33251 - 16627);
+    CHECK("PAL frame IRQ does not assert before clock 33252", !apu.frame_irq);
+    apu_step(&apu, 1);
+    CHECK("PAL frame IRQ first asserts at clock 33252", apu_read(0x4015) & 0x40);
+
+    reset_audio_region(NES_REGION_DENDY);
+    apu_write(0x400E, 2);
+    apu_write(0x4010, 0x0F);
+    CHECK("Dendy noise uses NTSC period table", apu.noise.period == 16);
+    CHECK("Dendy DMC uses NTSC period table", apu.dmc.timer_reload + 1 == 54);
+    CHECK("Dendy audio resampling uses the Dendy CPU clock", apu.cycles_per_sample == nes_timing()->cpu_hz / apu.sample_rate);
+    start_pulse();
+    apu_step(&apu, 7457);
+    CHECK("Dendy frame counter uses NTSC sequencer timing", apu.pulse1.env.decay == 15);
 
     reset_audio();
     CHECK("noise starts with a nonzero shift register", apu.noise.lfsr == 1);
@@ -187,14 +266,20 @@ int test_apu_accuracy(void) {
     apu_write(0x4001, 0xD1);
     apu.cycle_in_seq = 14912;
     apu_step(&apu, 1);
-    CHECK("sweep reload still updates period when divider expires", apu.pulse1.timer_reload == 150);
-    CHECK("sweep reload loads the new divider", apu.pulse1.sweep.divider == 5);
+    CHECK("sweep reload does not update a freshly reset divider", apu.pulse1.timer_reload == 100);
+    CHECK("sweep reload loads P plus one", apu.pulse1.sweep.divider == 6);
+    for (int tick = 0; tick < 6; ++tick) {
+        apu.cycle_in_seq = 14912;
+        apu.frame_clock_block = 0;
+        apu_step(&apu, 1);
+    }
+    CHECK("sweep updates when the reloaded divider expires", apu.pulse1.timer_reload == 150);
     apu.pulse1.sweep.divider = 4;
     apu_write(0x4001, 0xD1);
     apu.cycle_in_seq = 14912;
     apu.frame_clock_block = 0;
     apu_step(&apu, 1);
-    CHECK("reload replaces a running sweep divider", apu.pulse1.sweep.divider == 5);
+    CHECK("reload replaces a running sweep divider", apu.pulse1.sweep.divider == 6);
     CHECK("running divider does not update the swept period", apu.pulse1.timer_reload == 150);
 
     reset_audio();
@@ -206,6 +291,10 @@ int test_apu_accuracy(void) {
     apu_write(0x4001, 0x89);
     apu_write(0x4005, 0x89);
     apu.cycle_in_seq = 14912;
+    apu_step(&apu, 1);
+    CHECK("fresh sweep reload defers negative update", apu.pulse1.timer_reload == 100 && apu.pulse2.timer_reload == 100);
+    apu.cycle_in_seq = 14912;
+    apu.frame_clock_block = 0;
     apu_step(&apu, 1);
     CHECK("pulse one negative sweep subtracts an extra one", apu.pulse1.timer_reload == 49);
     CHECK("pulse two negative sweep uses ordinary subtraction", apu.pulse2.timer_reload == 50);

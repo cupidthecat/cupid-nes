@@ -25,6 +25,8 @@
  */
 
 #include "apu.h"
+#include "../rom/mapper.h"
+#include "../system/timing.h"
 #include <string.h>
 #include <math.h>
 #include <stdio.h>
@@ -52,16 +54,49 @@ static const uint8_t LENGTH_TABLE[32] = {
     12, 16, 24, 18, 48, 20, 96, 22, 192, 24, 72, 26, 16, 28, 32, 30
 };
 
-// Noise periods (NTSC) — index 0..15 -> timer reload values
-static const uint16_t NOISE_PERIOD[16] = {
+static const uint16_t NOISE_PERIOD_NTSC[16] = {
     4,8,16,32,64,96,128,160,202,254,380,508,762,1016,2034,4068
 };
 
-// DMC rates (NTSC CPU cycles per output bit)
-static const uint16_t DMC_PERIOD[16] = {
+static const uint16_t NOISE_PERIOD_PAL[16] = {
+    4,8,14,30,60,88,118,148,188,236,354,472,708,944,1890,3778
+};
+
+static const uint16_t DMC_PERIOD_NTSC[16] = {
     428, 380, 340, 320, 286, 254, 226, 214,
     190, 160, 142, 128, 106,  84,  72,  54
 };
+
+static const uint16_t DMC_PERIOD_PAL[16] = {
+    398, 354, 316, 298, 276, 236, 210, 198,
+    176, 148, 132, 118,  98,  78,  66,  50
+};
+
+static const uint32_t FRAME_STEPS_NTSC[2][6] = {
+    {7457, 14913, 22371, 29828, 29829, 29830},
+    {7457, 14913, 22371, 29829, 37281, 37282},
+};
+
+static const uint32_t FRAME_STEPS_PAL[2][6] = {
+    {8313, 16627, 24939, 33252, 33253, 33254},
+    {8313, 16627, 24939, 33253, 41565, 41566},
+};
+
+static inline bool apu_uses_pal_tables(void) {
+    return nes_timing()->region == NES_REGION_PAL;
+}
+
+static inline const uint16_t *noise_period_table(void) {
+    return apu_uses_pal_tables() ? NOISE_PERIOD_PAL : NOISE_PERIOD_NTSC;
+}
+
+static inline const uint16_t *dmc_period_table(void) {
+    return apu_uses_pal_tables() ? DMC_PERIOD_PAL : DMC_PERIOD_NTSC;
+}
+
+static inline const uint32_t (*frame_step_table(void))[6] {
+    return apu_uses_pal_tables() ? FRAME_STEPS_PAL : FRAME_STEPS_NTSC;
+}
 
 static void sweep_clock(Pulse* p, bool is_ch2);
 static void tri_linear_clock(Triangle* t);
@@ -72,14 +107,20 @@ static void dmc_clock_output(APU* a);
 // ---------------- Ring buffer ----------------
 static inline uint32_t rb_next(uint32_t v){ return (v+1) & (APU_RING_CAP-1); }
 static inline bool rb_push(APU* a, float s){
-    uint32_t w = a->ring_w, n = rb_next(w);
-    if (n == a->ring_r) return false; // full, drop
-    a->ring[w] = s; a->ring_w = n; return true;
+    uint32_t w = atomic_load_explicit(&a->ring_w, memory_order_relaxed);
+    uint32_t n = rb_next(w);
+    if (n == atomic_load_explicit(&a->ring_r, memory_order_acquire)) return false;
+    a->ring[w] = s;
+    atomic_store_explicit(&a->ring_w, n, memory_order_release);
+    return true;
 }
 static inline int rb_pull(APU* a, float* out, int n){
-    int got=0; while (got<n && a->ring_r != a->ring_w) {
-        out[got++] = a->ring[a->ring_r];
-        a->ring_r = rb_next(a->ring_r);
+    int got = 0;
+    uint32_t r = atomic_load_explicit(&a->ring_r, memory_order_relaxed);
+    while (got < n && r != atomic_load_explicit(&a->ring_w, memory_order_acquire)) {
+        out[got++] = a->ring[r];
+        r = rb_next(r);
+        atomic_store_explicit(&a->ring_r, r, memory_order_release);
     }
     return got;
 }
@@ -206,16 +247,17 @@ static inline uint16_t sweep_target(uint16_t t, const Sweep* s, bool ch2){
     }
 }
 static void sweep_clock(Pulse* p, bool is_ch2){
-    if (p->sweep.divider == 0 && p->sweep.enabled &&
-        p->sweep.shift && p->timer_reload >= 8) {
-        uint16_t tgt = sweep_target(p->timer_reload, &p->sweep, is_ch2);
-        if (tgt < 0x800) p->timer_reload = tgt;
+    p->sweep.divider--;
+    if (p->sweep.divider == 0) {
+        if (p->sweep.enabled && p->sweep.shift && p->timer_reload >= 8) {
+            uint16_t tgt = sweep_target(p->timer_reload, &p->sweep, is_ch2);
+            if (tgt < 0x800) p->timer_reload = tgt;
+        }
+        p->sweep.divider = p->sweep.period;
     }
-    if (p->sweep.divider == 0 || p->sweep.reload) {
+    if (p->sweep.reload) {
         p->sweep.divider = p->sweep.period;
         p->sweep.reload = false;
-    } else {
-        p->sweep.divider--;
     }
 }
 
@@ -230,30 +272,68 @@ static void tri_linear_clock(Triangle* t){
 }
 
 // ---------------- Reset & init ----------------
-void apu_reset(APU *a) {
+static void apu_reset_state(APU *a, bool soft_reset) {
+    double sample_rate = a->sample_rate > 1.0 ? a->sample_rate : 44100.0;
+    bool five_step = soft_reset ? a->five_step : false;
+    uint8_t dmc_addr_reg = soft_reset ? a->dmc.sample_addr_reg : 0;
+    uint8_t dmc_len_reg = soft_reset ? a->dmc.sample_len_reg : 0;
+    uint16_t dmc_addr = soft_reset ? a->dmc.sample_addr : 0xC000;
+    uint16_t dmc_len = soft_reset ? a->dmc.sample_len : 1;
+    LengthCounter triangle_length = a->tri.lc;
+
     memset(a, 0, sizeof(*a));
+    atomic_init(&a->ring_w, 0);
+    atomic_init(&a->ring_r, 0);
+    a->five_step = five_step;
+    a->frame_next_five_step = five_step;
+    a->frame_reset_pending = true;
+    a->frame_reset_delay = 3;
+    a->cpu_cycle_odd = false;
+    if (soft_reset) {
+        a->tri.lc = triangle_length;
+        a->tri.enabled = false;
+    }
     a->noise.lfsr = 1; // cannot be 0
-    a->noise.period = NOISE_PERIOD[0];
+    a->noise.period = noise_period_table()[0];
     a->noise.timer = a->noise.period - 1;
     a->dmc.enabled = false;
     a->dmc.sample_buffer_empty = true;
     a->dmc.silence = true;
     a->dmc.bits_remaining = 8;
-    a->dmc.sample_addr = 0xC000;
-    a->dmc.sample_len = 1;
-    a->dmc.timer_reload = DMC_PERIOD[0] - 1;
+    a->dmc.sample_addr_reg = dmc_addr_reg;
+    a->dmc.sample_len_reg = dmc_len_reg;
+    a->dmc.sample_addr = dmc_addr;
+    a->dmc.sample_len = dmc_len;
+    a->dmc.timer_reload = dmc_period_table()[0] - 1;
     // The DMC divider clocks on the CPU's get phase. Its even periods must
     // keep output clocks on odd completed CPU cycles across initialization.
     a->dmc.timer = a->dmc.timer_reload - ((cpu_total_cycles & 1) ? 0 : 1);
-    a->cycles_per_sample = 1789773.0 / 44100.0;
-    a->sample_rate = 44100.0;
+    a->sample_rate = sample_rate;
+    a->cycles_per_sample = nes_timing()->cpu_hz / sample_rate;
+    if (five_step) a->regs[0x17] = 0x80;
+    a->regs[0x12] = dmc_addr_reg;
+    a->regs[0x13] = dmc_len_reg;
     apu_init_filter_coeffs(a);
 }
+
+void apu_power_on(APU *a) {
+    apu_reset_state(a, false);
+}
+
+void apu_soft_reset(APU *a) {
+    apu_reset_state(a, true);
+}
+
+void apu_reset(APU *a) {
+    apu_power_on(a);
+}
+
 void apu_audio_init(int sample_rate) {
     apu.sample_rate = (double)sample_rate;
-    apu.cycles_per_sample = 1789773.0 / apu.sample_rate;
+    apu.cycles_per_sample = nes_timing()->cpu_hz / apu.sample_rate;
     apu.sample_accum = 0.0;
-    apu.ring_w = apu.ring_r = 0;
+    atomic_store_explicit(&apu.ring_w, 0, memory_order_relaxed);
+    atomic_store_explicit(&apu.ring_r, 0, memory_order_relaxed);
     apu_init_filter_coeffs(&apu);
 }
 
@@ -353,7 +433,7 @@ static void pulse_write(Pulse* p, uint16_t reg, uint8_t v){
             break;
         case 1: // sweep
             p->sweep.enabled = (v & 0x80) != 0;
-            p->sweep.period  = (v >> 4) & 7;
+            p->sweep.period  = ((v >> 4) & 7) + 1;
             p->sweep.negate  = (v & 0x08) != 0;
             p->sweep.shift   = v & 7;
             p->sweep.reload  = true;
@@ -397,7 +477,7 @@ static void noise_write(Noise* n, uint16_t reg, uint8_t v){
         case 2:
             n->mode = (v & 0x80) != 0;
             n->period_idx = v & 0x0F;
-            n->period = NOISE_PERIOD[n->period_idx];
+            n->period = noise_period_table()[n->period_idx];
             break;
         case 3:
             length_load(&n->lc, v, n->enabled);
@@ -418,7 +498,7 @@ void apu_write(uint16_t addr, uint8_t v){
         apu.dmc.irq_enable = (v & 0x80) != 0;
         apu.dmc.loop = (v & 0x40) != 0;
         apu.dmc.rate_index = v & 0x0F;
-        apu.dmc.timer_reload = DMC_PERIOD[apu.dmc.rate_index] - 1;
+        apu.dmc.timer_reload = dmc_period_table()[apu.dmc.rate_index] - 1;
         if (!apu.dmc.irq_enable) apu.dmc.irq_flag = false;
     }
     else if (addr == 0x4011) {
@@ -500,7 +580,7 @@ static inline void clock_noise(Noise* n){
 }
 // DAC-ish sample (0..1 per channel)
 static inline float pulse_out(const Pulse* p){
-    if (!p->enabled || p->lc.length == 0) return 0.0f;
+    if (p->lc.length == 0) return 0.0f;
     if (p->timer_reload < 8 || p->timer_reload > 0x7FF) return 0.0f;
     // The adder can mute the channel even when sweep updates are disabled.
     if (!p->sweep.negate && sweep_target(p->timer_reload, &p->sweep, false) > 0x7FF)
@@ -513,7 +593,7 @@ static inline float triangle_out(const Triangle* t){
     return (float)t->output_level;
 }
 static inline float noise_out(const Noise* n){
-    if (!n->enabled || n->lc.length == 0) return 0.0f;
+    if (n->lc.length == 0) return 0.0f;
     // if lfsr bit0 is 1 -> output 0, else envelope
     if (n->lfsr & 1) return 0.0f;
     return (float)env_output(&n->env); // 0..15
@@ -537,6 +617,7 @@ static inline float mix_sample(float p1, float p2, float tri, float noi, float d
 }
 
 void apu_step(APU *a, int cpu_cycles){
+    const uint32_t (*frame_steps)[6] = frame_step_table();
     for (int i=0; i<cpu_cycles; ++i) {
         if (a->dmc.disable_delay && --a->dmc.disable_delay == 0) {
             a->dmc.bytes_remaining = 0;
@@ -546,17 +627,19 @@ void apu_step(APU *a, int cpu_cycles){
             dmc_request_buffer(a);
         // Half-frame events also clock the quarter-frame units.
         a->cycle_in_seq++;
-        uint32_t terminal_clock = a->five_step ? 37281u : 29829u;
-        bool half_clock = a->cycle_in_seq == 14913u || a->cycle_in_seq == terminal_clock;
-        bool quarter_clock = half_clock || a->cycle_in_seq == 7457u || a->cycle_in_seq == 22371u;
+        unsigned frame_mode = a->five_step ? 1u : 0u;
+        bool half_clock = a->cycle_in_seq == frame_steps[frame_mode][1] ||
+                          a->cycle_in_seq == frame_steps[frame_mode][4];
+        bool quarter_clock = half_clock || a->cycle_in_seq == frame_steps[frame_mode][0] ||
+                             a->cycle_in_seq == frame_steps[frame_mode][2];
         if (quarter_clock && !a->frame_clock_block) {
             apu_clock_quarter_frame(a);
             if (half_clock) apu_clock_half_frame(a);
             a->frame_clock_block = 2;
         }
-        if (!a->five_step && !a->irq_inhibit && a->cycle_in_seq >= 29828u)
+        if (!a->five_step && !a->irq_inhibit && a->cycle_in_seq >= frame_steps[0][3])
             a->frame_irq = true;
-        if (a->cycle_in_seq >= (a->five_step ? APU_5STEP_PERIOD : APU_4STEP_PERIOD))
+        if (a->cycle_in_seq >= frame_steps[frame_mode][5])
             a->cycle_in_seq = 0;
 
         if (a->frame_reset_pending) {
@@ -604,6 +687,7 @@ void apu_step(APU *a, int cpu_cycles){
             float nz = noise_out(&a->noise);
             float dm = dmc_out(&a->dmc);
             float s  = mix_sample(p1, p2, tr, nz, dm);
+            s += cart_expansion_audio();
             s = apu_post_filter(a, s);
 
             if (s > 1.0f) s = 1.0f;

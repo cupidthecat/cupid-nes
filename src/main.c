@@ -38,9 +38,7 @@
 #include "rom/mapper.h"
 #include <math.h>
 #include "ui/palette_tool.h"
-
-// Constants for NTSC NES timing (CPU_FREQ/ACTUAL_FPS come from globals.h)
-const double FRAME_TIME_MS = 1000.0 / ACTUAL_FPS;  // ~16.639 ms per frame
+#include "system/timing.h"
 
 // apu con
 #define AUDIO_SAMPLE_RATE 44100
@@ -66,8 +64,9 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Failed to load ROM\n");
         return 1;
     }
-    ppu_reset(&ppu);
-    apu_reset(&apu);
+    cpu_total_cycles = 0;
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
     // Print header information for debugging
     printf("=== ROM Header Info ===\n");
     printf("Signature: %c%c%c 0x%02X\n", 
@@ -92,7 +91,7 @@ int main(int argc, char *argv[]) {
 
     // Initialize CPU
     printf("Resetting CPU...\n");
-    cpu_reset(&cpu);
+    cpu_power_on(&cpu);
     printf("CPU state after reset:\n");
     printf("  PC: 0x%04X\n", cpu.pc);
     printf("  SP: 0x%02X\n", cpu.sp);
@@ -123,7 +122,7 @@ int main(int argc, char *argv[]) {
         printf("=== Audio Info ===\n");
         printf("Requested: %d Hz, Got: %d Hz\n", want.freq, have.freq);
         printf("Requested: %d samples buffer, Got: %d samples\n", want.samples, have.samples);
-        printf("Cycles per sample: %.6f\n", 1789773.0 / have.freq);
+        printf("Cycles per sample: %.6f\n", nes_timing()->cpu_hz / have.freq);
         printf("==================\n");
         apu_audio_init(have.freq);
         SDL_PauseAudioDevice(audio_dev, 0);
@@ -151,10 +150,13 @@ int main(int argc, char *argv[]) {
     SDL_Event e;
 
     palette_tool_init();
+    const double performance_frequency = (double)SDL_GetPerformanceFrequency();
+    double frame_deadline = (double)SDL_GetPerformanceCounter();
     
     // In main.c (inside the main loop)
     while (running) {
         Uint32 frameStart = SDL_GetTicks();
+        uint64_t frame_start_cycles = cpu_total_cycles;
     
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT)
@@ -173,7 +175,13 @@ int main(int argc, char *argv[]) {
                         if (down) { ppu_palette_reset_default(); palette_tool_flash(true); }
                         break;
                     case SDLK_r:
-                        if (down) { cpu_reset(&cpu); ppu_reset(&ppu); apu_reset(&apu); }
+                        if (down) {
+                            if (audio_dev) SDL_LockAudioDevice(audio_dev);
+                            ppu_soft_reset(&ppu);
+                            apu_soft_reset(&apu);
+                            cpu_soft_reset(&cpu);
+                            if (audio_dev) SDL_UnlockAudioDevice(audio_dev);
+                        }
                         break;
                     case SDLK_z:        joypad_set(&pad1, BTN_A,      down); break; // Z = A
                     case SDLK_x:        joypad_set(&pad1, BTN_B,      down); break; // X = B
@@ -237,7 +245,16 @@ int main(int argc, char *argv[]) {
     
         Uint32 frameTime = SDL_GetTicks() - frameStart;
         palette_tool_tick(frameTime);
-        if (frameTime < FRAME_TIME_MS) SDL_Delay((Uint32)(FRAME_TIME_MS - frameTime));
+        frame_deadline += (double)(cpu_total_cycles - frame_start_cycles)
+                        * performance_frequency / nes_timing()->cpu_hz;
+        double current_ticks = (double)SDL_GetPerformanceCounter();
+        if (frame_deadline > current_ticks) {
+            // Carry fractional milliseconds into the next deadline instead of
+            // running every frame early after truncating SDL's delay argument.
+            SDL_Delay((Uint32)((frame_deadline - current_ticks) * 1000.0 / performance_frequency));
+        } else if (current_ticks - frame_deadline > performance_frequency * 0.25) {
+            frame_deadline = current_ticks;
+        }
     }
 
     SDL_DestroyTexture(texture);

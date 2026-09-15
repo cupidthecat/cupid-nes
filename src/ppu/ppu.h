@@ -63,6 +63,14 @@ typedef struct {
     // PPUDATA read buffer and open bus
     uint8_t ppudata_buffer;
     uint8_t open_bus;
+    uint16_t bus_address;
+    uint16_t address_write_value;
+    uint8_t address_write_delay;
+    uint8_t data_read_delay;
+    uint8_t data_write_delay;
+    uint8_t data_write_value;
+    uint8_t data_read_cooldown;
+    bool data_increment_pending;
 
     uint8_t oam[PPU_OAM_SIZE]; // Object Attribute Memory
     uint8_t secondary_oam[32]; // Secondary OAM for sprite evaluation
@@ -71,6 +79,12 @@ typedef struct {
     uint8_t sprite_pattern_lo[8];
     uint8_t sprite_pattern_hi[8];
     uint8_t sprite_attributes[8]; // Sprite attributes
+    uint16_t sprite_start_dot[8];
+    uint8_t sprite_valid_mask;
+    uint8_t sprite_active_mask;
+    uint8_t sprite_counting_mask;
+    uint8_t sprite_expired_mask;
+    uint8_t sprite_skip_clocks;
     bool sprite_zero_hit;  // Sprite Zero Hit flag
     bool sprite_zero_on_line; // True if sprite 0 is in secondary OAM for current scanline
     bool nmi_out; 
@@ -89,11 +103,12 @@ typedef struct {
     bool skipped_frame_dot;
     
     // Cycle-stepped timing
-    int      scanline;       // -1..261 (we use 261 for pre-render)
+    int      scanline;       // Final scanline is pre-render: 261 NTSC, 311 PAL/Dendy
     int      dot;            // 0..340
     bool     odd_frame;
     bool     frame_complete; // set true at end of pre-render to signal frame done
     uint64_t total_cycles;   // Monotonic PPU clock for cartridge bus events
+    unsigned cpu_clock_phase; // Remainder for standalone CPU-clock stepping
     
     // Background tile fetch pipeline (for per-dot rendering)
     uint8_t  nt_byte;        // Nametable byte latch
@@ -133,6 +148,8 @@ static const uint32_t nes_palette[64] = {
 uint8_t ppu_read(uint16_t addr);
 void ppu_write(uint16_t addr, uint8_t value);
 void ppu_reset(PPU* ppu);
+void ppu_power_on(PPU* ppu);
+void ppu_soft_reset(PPU* ppu);
 uint32_t get_color(uint8_t pixel);
 void start_frame();
 // Cycle-stepped rendering API

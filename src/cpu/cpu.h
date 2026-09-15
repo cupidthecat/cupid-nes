@@ -59,6 +59,8 @@ extern Joypad pad1, pad2;
 extern CPU cpu;
 extern uint64_t cpu_total_cycles;
 
+void cpu_power_on(CPU* cpu);
+void cpu_soft_reset(CPU* cpu);
 void cpu_reset(CPU* cpu);
 uint8_t read_mem(uint16_t addr);
 void write_mem(uint16_t addr, uint8_t value);
