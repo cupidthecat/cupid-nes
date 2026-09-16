@@ -1,5 +1,26 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later
- * SDL entry point and top-level emulation loop.
+/*
+ * main.c - Main entry point for Cupid NES Emulator
+ *
+ * Author: @frankischilling
+ *
+ * This file initializes the loaded cartridge, CPU, PPU, APU, SDL video and audio, input,
+ * palette tools, frame pacing, and the main emulation loop. It also handles controller
+ * input, reset events, palette file loading, and final emulator shutdown.
+ *
+ * This file is part of Cupid NES Emulator.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 #include <SDL2/SDL.h>

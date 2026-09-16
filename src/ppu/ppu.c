@@ -1,5 +1,26 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later
- * NES PPU registers, fetch pipeline, rendering, sprites, and frame timing.
+/*
+ * ppu.c - Picture Processing Unit (PPU) emulation
+ *
+ * Author: @frankischilling
+ *
+ * This file implements PPU register behavior, VRAM access, background and sprite fetches,
+ * sprite evaluation, scrolling, palette lookup, pixel rendering, vblank timing, NMI edges,
+ * and the PPU bus behavior used by cartridge mappers.
+ *
+ * This file is part of Cupid NES Emulator.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 #include "ppu.h"

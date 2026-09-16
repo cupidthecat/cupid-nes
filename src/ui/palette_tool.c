@@ -1,5 +1,26 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later
- * SDL palette overlay, color picker, and palette-file parsing.
+/*
+ * palette_tool.c - Runtime palette editor and color picker
+ *
+ * Author: @frankischilling
+ *
+ * This file implements the SDL palette overlay and color picker. It supports live palette
+ * editing, built-in color suggestions, .pal files, pasted hexadecimal palette data, and
+ * optional color emphasis tables used by the PPU renderer.
+ *
+ * This file is part of Cupid NES Emulator.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 #include "palette_tool.h"

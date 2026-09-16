@@ -1,5 +1,25 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later
- * Region-specific CPU, PPU, frame, and vblank timing tables.
+/*
+ * timing.c - NES region timing tables
+ *
+ * Author: @frankischilling
+ *
+ * This file stores NTSC, PAL, and Dendy timing values and selects the active hardware
+ * region used by the CPU, PPU, APU, and frontend frame pacing code.
+ *
+ * This file is part of Cupid NES Emulator.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "timing.h"
 

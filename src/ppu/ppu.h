@@ -1,5 +1,25 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later
- * Public PPU state, register addresses, memory sizes, and rendering interface.
+/*
+ * ppu.h - Picture Processing Unit (PPU) interface
+ *
+ * Author: @frankischilling
+ *
+ * This header defines PPU memory sizes, register addresses, rendering state, sprite and
+ * background pipeline state, timing fields, palette data, and the public PPU interfaces.
+ *
+ * This file is part of Cupid NES Emulator.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 #ifndef PPU_H
