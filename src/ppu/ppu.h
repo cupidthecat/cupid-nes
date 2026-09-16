@@ -1,14 +1,13 @@
 /*
- * ppu.h - Picture Processing Unit (PPU) header
- * 
+ * ppu.h - Picture Processing Unit (PPU) interface
+ *
  * Author: @frankischilling
- * 
- * This header defines the PPU structure, registers, memory layout, and function prototypes
- * for the NES PPU emulator. Includes definitions for nametables, OAM (Object Attribute Memory),
- * palette memory, and the NES color palette.
- * 
+ *
+ * This header defines PPU memory sizes, register addresses, rendering state, sprite and
+ * background pipeline state, timing fields, palette data, and the public PPU interfaces.
+ *
  * This file is part of Cupid NES Emulator.
- * 
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or

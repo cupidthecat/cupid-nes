@@ -1,4 +1,26 @@
-/* NTSC audio register, divider, sequencer, and sample-reader regressions. */
+/*
+ * apu_accuracy.c - APU hardware regression tests
+ *
+ * Author: @frankischilling
+ *
+ * This file tests APU register behavior, frame sequencing, channel counters, sweep and
+ * envelope timing, DMC DMA behavior, region timing, reset behavior, and sample generation.
+ *
+ * This file is part of Cupid NES Emulator.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 #include "../apu/apu.h"
 #include "../cpu/cpu.h"
 #include "../rom/mapper.h"

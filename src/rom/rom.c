@@ -1,14 +1,14 @@
 /*
- * rom.c - NES ROM loading and iNES format parsing
- * 
+ * rom.c - NES ROM loading and cartridge setup
+ *
  * Author: @frankischilling
- * 
- * This file handles loading NES ROM files in iNES format. It parses the iNES header, loads
- * PRG-ROM and CHR-ROM data, handles trainers, determines mirroring modes, and initializes
- * the appropriate mapper. Supports both CHR-ROM and CHR-RAM cartridges.
- * 
+ *
+ * This file parses iNES and NES 2.0 headers, validates ROM sizes and cartridge layouts,
+ * loads PRG and CHR data, handles trainers and RAM declarations, selects timing, starts
+ * the requested mapper, and manages supported persistent cartridge memory.
+ *
  * This file is part of Cupid NES Emulator.
- * 
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or

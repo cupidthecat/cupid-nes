@@ -1,13 +1,13 @@
 /*
- * rom.h - NES ROM and iNES format header
- * 
+ * rom.h - NES ROM and cartridge data interface
+ *
  * Author: @frankischilling
- * 
- * This header defines the iNES header structure, mirroring modes, and ROM data structures
- * for the NES emulator. Provides interfaces for ROM loading and accessing PRG/CHR data.
- * 
+ *
+ * This header defines iNES header fields, mirroring modes, loaded PRG and CHR data,
+ * cartridge sizes, loader functions, and the helpers used to inspect cartridge metadata.
+ *
  * This file is part of Cupid NES Emulator.
- * 
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or

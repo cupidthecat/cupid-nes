@@ -1,14 +1,13 @@
 /*
- * mapper.h - NES cartridge mapper interface header
- * 
+ * mapper.h - NES cartridge mapper interface
+ *
  * Author: @frankischilling
- * 
- * This header defines the mapper interface and structures for NES cartridge emulation.
- * Provides function pointers for CPU/PPU read/write operations, reset, clock, and
- * mirroring control that mappers can implement.
- * 
+ *
+ * This header defines the mapper callbacks and cartridge interfaces used for CPU and PPU
+ * access, mirroring, IRQs, save memory, scanline and bus hooks, and mapper lifecycle state.
+ *
  * This file is part of Cupid NES Emulator.
- * 
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
@@ -32,11 +31,11 @@
 #include "rom.h"
 
 typedef struct Mapper {
-    // CPU space ($6000–$FFFF typically)
+    // CPU-visible cartridge space, usually $6000-$FFFF.
     uint8_t (*cpu_read)(uint16_t addr);
     void     (*cpu_write)(uint16_t addr, uint8_t v);
 
-    // PPU pattern space ($0000–$1FFF)
+    // PPU pattern-table space at $0000-$1FFF.
     uint8_t (*ppu_read)(uint16_t addr);
     void     (*ppu_write)(uint16_t addr, uint8_t v);
 

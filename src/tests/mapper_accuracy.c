@@ -1,5 +1,25 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later
- * Cartridge regression tests using synthetic PRG/CHR images and public APIs.
+/*
+ * mapper_accuracy.c - Cartridge mapper regression tests
+ *
+ * Author: @frankischilling
+ *
+ * This file uses synthetic PRG and CHR images to test mapper banking, mirroring, IRQs,
+ * RAM layouts, save persistence, bus conflicts, MMC5 features, and loader error handling.
+ *
+ * This file is part of Cupid NES Emulator.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include <stdint.h>
 #include <stdio.h>
@@ -793,7 +813,8 @@ static int test_mmc5_audio_and_pcm(void) {
     cart_cpu_write(0x5010, 0x00);
     cart_cpu_write(0x5011, 0);
     CHECK(!cart_irq_pending());
-    CHECK(cart_cpu_read(0x5010) == 0x01); // Status masks disabled IRQs but still acknowledges the trip.
+    // Status masks disabled IRQs but still acknowledges the trip.
+    CHECK(cart_cpu_read(0x5010) == 0x01);
     cart_cpu_write(0x5010, 0x80);
     CHECK(!cart_irq_pending());
     cart_cpu_write(0x5011, 0);

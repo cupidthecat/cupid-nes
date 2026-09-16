@@ -1,13 +1,13 @@
 /*
- * joypad.h - NES controller/joypad header
- * 
+ * joypad.h - NES controller interface
+ *
  * Author: @frankischilling
- * 
- * This header defines the joypad structure and button constants for NES controller emulation.
- * Provides interfaces for setting button states and reading controller data.
- * 
+ *
+ * This header defines controller button identifiers, latched input state, strobe state,
+ * and the functions used to update and read standard NES controller input.
+ *
  * This file is part of Cupid NES Emulator.
- * 
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or

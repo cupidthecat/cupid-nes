@@ -1,15 +1,14 @@
 /*
  * mapper.c - NES cartridge mapper implementations
- * 
+ *
  * Author: @frankischilling
- * 
- * This file implements various NES cartridge mappers (0-15) including NROM, MMC1, UxROM,
- * CNROM, MMC3, MMC5, AxROM, MMC2, MMC4, Color Dreams, CPROM, and others. Each mapper
- * handles bank switching, PRG-ROM/CHR-ROM mapping, and mirroring control according to
- * the specific hardware behavior.
- * 
+ *
+ * This file implements the supported cartridge mappers, including PRG and CHR banking,
+ * mirroring, mapper IRQs, cartridge RAM, bus conflicts, MMC5 expansion features, and
+ * mapper specific audio and save behavior.
+ *
  * This file is part of Cupid NES Emulator.
- * 
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
@@ -41,7 +40,7 @@ extern uint64_t cpu_get_bus_cycle(void);
 #define CHR_BANK_4K  0x1000
 #define CHR_BANK_8K  0x2000
 
-// ----------------- Cart wiring/state -----------------
+// Cartridge wiring and shared mapper state.
 typedef struct {
     uint8_t *prg; size_t prg_sz;
     uint8_t *chr; size_t chr_sz;
@@ -329,7 +328,7 @@ void cart_notify_vblank_start(void) {
     // MMC5 leaves the in-frame state when three CPU clocks pass without a PPU read.
 }
 
-// ----------------- Mapper 0 (NROM) -------------------
+// Mapper 0: NROM.
 static uint8_t nrom_cpu_read(uint16_t a) {
     if (a >= 0x6000 && a <= 0x7FFF) return prg_ram_read(a);
     if (a >= 0x8000) {
@@ -346,7 +345,7 @@ static void nrom_ppu_write(uint16_t a, uint8_t v) {
 }
 static Mirroring nrom_mirr(void) { return C.mirr_base; }
 
-// ----------------- Mapper 1 (MMC1/SxROM) -----------------
+// Mapper 1: MMC1/SxROM.
 static struct {
     uint8_t shift_reg;
     uint8_t shift_count;
@@ -489,7 +488,7 @@ static void mmc1_reset(void) {
     mmc1.last_write_cycle = 0;
 }
 
-// ----------------- Mapper 2 (UxROM) -----------------
+// Mapper 2: UxROM.
 static struct { uint8_t bank; } ux;
 static uint8_t uxrom_cpu_read(uint16_t a) {
     if (a >= 0x6000 && a <= 0x7FFF) return prg_ram_read(a);
@@ -514,7 +513,7 @@ static void uxrom_ppu_write(uint16_t a, uint8_t v) { nrom_ppu_write(a, v); }
 static Mirroring uxrom_mirr(void) { return C.mirr_base; }
 static void uxrom_reset(void) { ux.bank = 0; }
 
-// ----------------- Mapper 3 (CNROM) -----------------
+// Mapper 3: CNROM.
 static struct { uint8_t chr_bank; } cn;
 static uint8_t cnrom_cpu_read(uint16_t a) {
     if (a >= 0x6000 && a <= 0x7FFF) return prg_ram_read(a);
@@ -542,7 +541,7 @@ static void cnrom_ppu_write(uint16_t a, uint8_t v) {
 static Mirroring cnrom_mirr(void) { return C.mirr_base; }
 static void cnrom_reset(void) { cn.chr_bank = 0; }
 
-// ----------------- Mapper 4 (MMC3/TxROM) -----------------
+// Mapper 4: MMC3/TxROM.
 static struct {
     uint8_t bank_select;
     uint8_t banks[8];
@@ -743,7 +742,7 @@ static void mmc3_reset(void) {
     mapper_irq_line = false;
 }
 
-// ----------------- Mapper 5 (MMC5/ExROM) -----------------
+// Mapper 5: MMC5/ExROM.
 typedef struct {
     uint8_t duty;
     uint8_t duty_pos;
@@ -1043,8 +1042,10 @@ static inline size_t mmc5_map_chr_bank_1k(uint16_t a) {
     if (!use_bg_set) {
         switch (mode) {
             case 0: reg = mmc5.chr_regs_a[7]; sub = slot; break;                         // 8KB
-            case 1: reg = (slot < 4) ? mmc5.chr_regs_a[3] : mmc5.chr_regs_a[7]; sub = (uint8_t)(slot & 0x03u); break; // 4KB
-            case 2: reg = mmc5.chr_regs_a[1 + ((slot >> 1) * 2)]; sub = (uint8_t)(slot & 0x01u); break;               // 2KB
+            // 4 KiB mode uses one register for each half of pattern space.
+            case 1: reg = (slot < 4) ? mmc5.chr_regs_a[3] : mmc5.chr_regs_a[7]; sub = (uint8_t)(slot & 0x03u); break;
+            // 2 KiB mode uses one register for each pair of slots.
+            case 2: reg = mmc5.chr_regs_a[1 + ((slot >> 1) * 2)]; sub = (uint8_t)(slot & 0x01u); break;
             case 3:
             default: reg = mmc5.chr_regs_a[slot]; sub = 0; break;                        // 1KB
         }
@@ -1488,7 +1489,7 @@ void cart_nt_write(uint16_t addr, uint8_t v, uint8_t *nt_ram) {
     nt_ram[base_nt_index(addr)] = v;
 }
 
-// ----------------- Mapper 7 (AOROM) -----------------
+// Mapper 7: AOROM.
 static struct { uint8_t prg_bank; Mirroring mirr; } ao;
 static uint8_t aorom_cpu_read(uint16_t a) {
     if (a >= 0x6000 && a <= 0x7FFF) return prg_ram_read(a);
@@ -1511,7 +1512,7 @@ static void aorom_ppu_write(uint16_t a, uint8_t v) { nrom_ppu_write(a, v); }
 static Mirroring aorom_mirr(void) { return ao.mirr; }
 static void aorom_reset(void) { ao.prg_bank = 0; ao.mirr = MIRROR_SINGLE0; }
 
-// ----------------- Mapper 9 (MMC2/PxROM) -----------------
+// Mapper 9: MMC2/PxROM.
 static struct {
     uint8_t prg_bank;
     uint8_t chr_banks[4];
@@ -1580,7 +1581,7 @@ static void mmc2_reset(void) {
     mmc2.mirr = C.mirr_base;
 }
 
-// ----------------- Mapper 10 (MMC4/FxROM) -----------------
+// Mapper 10: MMC4/FxROM.
 static struct {
     uint8_t prg_bank;
     uint8_t chr_banks[4];
@@ -1648,7 +1649,7 @@ static void mmc4_reset(void) {
     mmc4.mirr = C.mirr_base;
 }
 
-// ----------------- Mapper 11 (Color Dreams) -----------------
+// Mapper 11: Color Dreams.
 static struct {
     uint8_t prg_bank;
     uint8_t chr_bank;
@@ -1695,7 +1696,7 @@ static void colordreams_reset(void) {
     colordreams.chr_bank = 0;
 }
 
-// ----------------- Mapper 13 (CPROM) -----------------
+// Mapper 13: CPROM.
 static struct {
     uint8_t chr_bank;
 } cprom;
@@ -1737,7 +1738,7 @@ static void cprom_ppu_write(uint16_t a, uint8_t v) {
 static Mirroring cprom_mirr(void) { return MIRROR_VERTICAL; }
 static void cprom_reset(void) { cprom.chr_bank = 0; }
 
-// ----------------- Mapper 15 (100-in-1 Contra Function 16) -----------------
+// Mapper 15: 100-in-1 Contra Function 16.
 static struct {
     uint16_t prg_banks[4];
     uint8_t mode;
@@ -1786,7 +1787,7 @@ static void m15_reset(void) {
     m15_cpu_write(0x8000, 0);
 }
 
-// ----------------- Init/Factory ----------------------
+// Mapper selection and initialization.
 static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *ram,
                                    bool chr_is_ram, size_t chr_sz) {
     size_t prg_total = ram->prg_ram + ram->prg_nvram;

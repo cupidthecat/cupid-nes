@@ -1,15 +1,14 @@
 /*
- * cpu.c - 6502 CPU emulation core
- * 
+ * cpu.c - MOS 6502 CPU emulation core
+ *
  * Author: @frankischilling
- * 
- * This file implements the MOS 6502 CPU emulator used in the NES. It handles instruction
- * execution, memory access, addressing modes, CPU registers, and interrupt handling (NMI, IRQ, BRK).
- * Includes support for all official opcodes and many unofficial ones, with accurate cycle counting
- * and timing behavior including edge cases for interrupt latency.
- * 
+ *
+ * This file implements the NES CPU core, including instruction execution, addressing
+ * modes, bus reads and writes, interrupts, DMA timing, controller I/O, and official and
+ * undocumented 6502 opcodes used by supported software.
+ *
  * This file is part of Cupid NES Emulator.
- * 
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
@@ -610,7 +609,7 @@ static void masked_indexed_store(uint16_t base, uint8_t index, uint8_t reg) {
 
 void execute(CPU* cpu, uint8_t opcode) {
     switch(opcode) {
-        // ========== CONTROL FLOW ==========
+        // Control flow.
         case 0x00: { // BRK
             // 1) Dummy read of the signature byte *and* advance PC (BRK behaves like 2-byte)
             (void)read_mem(cpu->pc++);
@@ -659,7 +658,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             cpu->pc = get_abs_indirect(cpu);
             break;
 
-        // ========== SUBROUTINES ==========
+        // Subroutines.
         case JSR_OPCODE: // 0x20
         {
             // 6502 JSR bus order:
@@ -706,7 +705,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             uint8_t newP = read_mem(0x0100 + cpu->sp);
             cpu->status = (newP & ~BREAK_FLAG) | UNUSED_FLAG;
 
-            // Pull PC — DO NOT add 1 (unlike RTS)
+            // RTI restores the saved PC directly; unlike RTS, it does not add one.
             cpu->sp++;
             uint8_t pcl = read_mem(0x0100 + cpu->sp);
             cpu->sp++;
@@ -716,7 +715,7 @@ void execute(CPU* cpu, uint8_t opcode) {
         }
         break;
 
-        // ========== STACK OPERATIONS ==========
+        // Stack operations.
         case 0x48: // PHA - Push Accumulator
             dummy_read_next(cpu);  // Add dummy read for 1-byte PHA
             write_mem(0x0100 + cpu->sp, cpu->a);
@@ -744,7 +743,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             }
             break;
 
-        // ========== BRANCHES ==========
+        // Branches.
         case 0x90: // BCC - Branch if Carry Clear
             branch_if(cpu, !(cpu->status & CARRY_FLAG));
             break;
@@ -770,7 +769,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             branch_if(cpu, !(cpu->status & OVERFLOW_FLAG));
             break;
 
-        // ========== FLAGS ==========
+        // Status flags.
         case 0x18: // CLC - Clear Carry Flag
             dummy_read_next(cpu);  // Add dummy read for 1-byte CLC
             cpu->status &= ~CARRY_FLAG;
@@ -800,7 +799,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             cpu->status &= ~OVERFLOW_FLAG;
             break;
 
-        // ========== LOAD ACCUMULATOR ==========
+        // Accumulator loads.
         case 0xA9: // LDA Immediate
             cpu->a = read_mem(cpu->pc++);
             set_zn_flags(cpu, cpu->a);
@@ -835,7 +834,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             set_zn_flags(cpu, cpu->a);
             break;
 
-        // ========== STORE ACCUMULATOR ==========
+        // Accumulator stores.
         case 0x85: // STA Zero Page
             write_mem(get_zpg_address(cpu), cpu->a);
             break;
@@ -861,7 +860,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             write_mem(a, cpu->a);
         } break;
 
-        // ========== LOAD X REGISTER ==========
+        // X-register loads.
         case 0xA2: // LDX Immediate
             cpu->x = read_mem(cpu->pc++);
             set_zn_flags(cpu, cpu->x);
@@ -883,7 +882,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             set_zn_flags(cpu, cpu->x);
             break;
 
-        // ========== STORE X REGISTER ==========
+        // X-register stores.
         case 0x86: // STX Zero Page
             write_mem(get_zpg_address(cpu), cpu->x);
             break;
@@ -894,7 +893,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             write_mem(get_abs_address(cpu), cpu->x);
             break;
 
-        // ========== LOAD Y REGISTER ==========
+        // Y-register loads.
         case 0xA0: // LDY Immediate
             cpu->y = read_mem(cpu->pc++);
             set_zn_flags(cpu, cpu->y);
@@ -916,7 +915,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             set_zn_flags(cpu, cpu->y);
             break;
 
-        // ========== STORE Y REGISTER ==========
+        // Y-register stores.
         case 0x84: // STY Zero Page
             write_mem(get_zpg_address(cpu), cpu->y);
             break;
@@ -927,7 +926,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             write_mem(get_abs_address(cpu), cpu->y);
             break;
 
-        // ========== REGISTER TRANSFERS ==========
+        // Register transfers.
         case 0xAA: // TAX - Transfer A to X
             dummy_read_next(cpu);  // Add dummy read for 1-byte TAX
             cpu->x = cpu->a;
@@ -958,7 +957,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             cpu->sp = cpu->x;
             break;
 
-        // ========== INCREMENT/DECREMENT REGISTERS ==========
+        // Register increments and decrements.
         case 0xE8: // INX - Increment X
             dummy_read_next(cpu);  // Add dummy read for 1-byte INX
             cpu->x++;
@@ -980,7 +979,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             set_zn_flags(cpu, cpu->y);
             break;
 
-        // ========== LOGICAL OPERATIONS - AND ==========
+        // AND operations.
         case 0x29: // AND Immediate
             cpu->a &= read_mem(cpu->pc++);
             set_zn_flags(cpu, cpu->a);
@@ -1015,7 +1014,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             set_zn_flags(cpu, cpu->a);
             break;
 
-        // ========== UNDOCUMENTED - ANC (AND then move N to C) ==========
+        // ANC: AND the operand, then copy the negative flag into carry.
         case 0x0B: // ANC Immediate
         case 0x2B: // ANC Immediate (alternate opcode)
             cpu->a &= read_mem(cpu->pc++);
@@ -1024,7 +1023,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             else               cpu->status &= ~CARRY_FLAG;
             break;
 
-        // ========== UNDOCUMENTED - ALR (AND then LSR A) ==========
+        // ALR: AND the operand, then shift the accumulator right.
         case 0x4B: // ALR Immediate
             cpu->a &= read_mem(cpu->pc++);
             lsr(cpu, &cpu->a);
@@ -1038,7 +1037,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             break;
         }
 
-        // ========== UNDOCUMENTED - ARR (AND then ROR A, special flags) ==========
+        // ARR: AND the operand, rotate right, then apply its unusual flag rules.
         case 0x6B: // ARR Immediate
             {
                 uint8_t imm = read_mem(cpu->pc++);
@@ -1057,7 +1056,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             }
             break;
 
-        // ========== UNDOCUMENTED - AXS/SBX ==========
+        // AXS/SBX undocumented opcode.
         case 0xCB: // AXS/SBX Immediate: X = (A & X) - imm
             {
                 uint8_t imm = read_mem(cpu->pc++);
@@ -1072,7 +1071,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             }
             break;
 
-        // ========== LOGICAL OPERATIONS - ORA ==========
+        // ORA operations.
         case 0x09: // ORA Immediate
             cpu->a |= read_mem(cpu->pc++);
             set_zn_flags(cpu, cpu->a);
@@ -1107,7 +1106,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             set_zn_flags(cpu, cpu->a);
             break;
 
-        // ========== LOGICAL OPERATIONS - EOR ==========
+        // EOR operations.
         case 0x49: // EOR Immediate
             cpu->a ^= read_mem(cpu->pc++);
             set_zn_flags(cpu, cpu->a);
@@ -1141,7 +1140,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             set_zn_flags(cpu, cpu->a);
             break;
 
-        // ========== ARITHMETIC - ADD ==========
+        // Addition.
         case 0x69: // ADC Immediate
             {
                 uint8_t operand = read_mem(cpu->pc++);
@@ -1194,7 +1193,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             }
             break;
 
-        // ========== ARITHMETIC - SUBTRACT ==========
+        // Subtraction.
         case 0xE9: // SBC Immediate
             {
                 uint8_t operand = read_mem(cpu->pc++);
@@ -1252,7 +1251,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             do_sbc(cpu, read_mem(get_indirect_y_read(cpu)));
             break;
 
-        // ========== COMPARISON ==========
+        // Comparisons.
         case 0xC9: // CMP Immediate
             {
                 uint8_t operand = read_mem(cpu->pc++);
@@ -1395,7 +1394,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             }
             break;
 
-        // ========== BIT TEST ==========
+        // BIT tests.
         case 0x24: // BIT Zero Page
             {
                 uint8_t val = read_mem(get_zpg_address(cpu));
@@ -1416,7 +1415,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             }
             break;
 
-        // ========== SHIFT LEFT ==========
+        // Left shifts.
         case 0x0A: // ASL A
             dummy_read_next(cpu);  // Add dummy read for 1-byte ASL A
             asl(cpu, &cpu->a);
@@ -1454,7 +1453,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             }
             break;
 
-        // ========== SHIFT RIGHT ==========
+        // Right shifts.
         case 0x4A: // LSR A
             dummy_read_next(cpu);  // Add dummy read for 1-byte LSR A
             lsr(cpu, &cpu->a);
@@ -1492,7 +1491,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             }
             break;
 
-        // ========== ROTATE LEFT ==========
+        // Left rotates.
         case 0x2A: // ROL A
             dummy_read_next(cpu);  // Add dummy read for 1-byte ROL A
             rol(cpu, &cpu->a);
@@ -1530,7 +1529,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             }
             break;
 
-        // ========== ROTATE RIGHT ==========
+        // Right rotates.
         case 0x6A: // ROR A
             dummy_read_next(cpu);  // Add dummy read for 1-byte ROR A
             ror(cpu, &cpu->a);
@@ -1568,7 +1567,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             }
             break;
 
-        // ========== INCREMENT MEMORY ==========
+        // Memory increments.
         case 0xE6: // INC Zero Page
             {
                 uint16_t addr = get_zpg_address(cpu);
@@ -1602,7 +1601,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             }
             break;
 
-        // ========== DECREMENT MEMORY ==========
+        // Memory decrements.
         case 0xC6: // DEC Zero Page
             {
                 uint16_t addr = get_zpg_address(cpu);
@@ -1636,7 +1635,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             }
             break;
 
-        // ========== UNDOCUMENTED OPCODES - NOPs ==========
+        // Undocumented NOP variants.
         // NOP Zero Page
         case 0x04: case 0x44: case 0x64:
             {
@@ -1681,7 +1680,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             (void)read_mem(cpu->pc++);
             break;
 
-        // ========== UNDOCUMENTED - DCP (DEC then CMP) ==========
+        // DCP: decrement memory, then compare with the accumulator.
         case 0xC7: // DCP Zero Page
             {
                 uint16_t addr = get_zpg_address(cpu);
@@ -1767,7 +1766,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             }
             break;
 
-        // ========== UNDOCUMENTED - RLA (ROL then AND) ==========
+        // RLA: rotate memory left, then AND it with the accumulator.
         case 0x27: // RLA Zero Page
             {
                 uint16_t addr = get_zpg_address(cpu);
@@ -1839,7 +1838,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             }
             break;
 
-        // ========== UNDOCUMENTED - SLO (ASL then ORA) ==========
+        // SLO: shift memory left, then OR it with the accumulator.
         case 0x07: // SLO Zero Page
             {
                 uint16_t addr = get_zpg_address(cpu);
@@ -1911,7 +1910,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             }
             break;
 
-        // ========== UNDOCUMENTED - SRE (LSR then EOR) ==========
+        // SRE: shift memory right, then XOR it with the accumulator.
         case 0x47: // SRE Zero Page
             {
                 uint16_t addr = get_zpg_address(cpu);
@@ -1983,7 +1982,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             }
             break;
 
-        // ========== UNDOCUMENTED - RRA (ROR then ADC) ==========
+        // RRA: rotate memory right, then add it to the accumulator.
         case 0x67: // RRA Zero Page
             {
                 uint16_t addr = get_zpg_address(cpu);
@@ -2048,7 +2047,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             }
             break;
 
-        // ========== UNDOCUMENTED - LAX (Load A and X) ==========
+        // LAX loads the same value into A and X.
         case 0xA7: // LAX Zero Page
             {
                 uint8_t val = read_mem(get_zpg_address(cpu));
@@ -2099,7 +2098,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             }
             break;
 
-        // ========== UNDOCUMENTED - SAX (Store A AND X) ==========
+        // SAX stores A AND X.
         case 0x87: // SAX Zero Page
             write_mem(get_zpg_address(cpu), cpu->a & cpu->x);
             break;
@@ -2113,7 +2112,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             write_mem(get_indirect_x(cpu), cpu->a & cpu->x);
             break;
 
-        // ========== UNDOCUMENTED - ISC (INC then SBC) ==========
+        // ISC increments memory, then subtracts it from the accumulator.
         case 0xE7: // ISC Zero Page
             inc_then_sbc(cpu, get_zpg_address(cpu));
             break;
@@ -2136,7 +2135,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             inc_then_sbc(cpu, get_indirect_y(cpu));
             break;
 
-        // ========== UNDOCUMENTED - LAS (Load A, X, SP) ==========
+        // LAS loads A, X, and the stack pointer from the same masked value.
         case 0xBB: // LAS Absolute,Y
             {
                 uint8_t mem = read_mem(get_absy_read(cpu));
@@ -2146,7 +2145,7 @@ void execute(CPU* cpu, uint8_t opcode) {
             }
             break;
 
-        // ========== UNDOCUMENTED - SHX/SHY/SHA/TAS ==========
+        // Unstable SHX, SHY, SHA, and TAS stores.
         case 0x9F: // AHX/SHA Absolute,Y
             masked_indexed_store(get_abs_address(cpu), cpu->y, cpu->a & cpu->x);
             break;

@@ -1,14 +1,13 @@
 /*
- * joypad.c - NES controller/joypad emulation
- * 
+ * joypad.c - NES controller emulation
+ *
  * Author: @frankischilling
- * 
- * This file implements NES controller input handling. It manages button states, shift register
- * behavior for serial reading, and strobe signal handling that matches the NES hardware behavior
- * for reading controller inputs through memory-mapped I/O.
- * 
+ *
+ * This file implements controller button state, strobe handling, input latching, and the
+ * serial shift behavior used when the CPU reads the standard NES controller ports.
+ *
  * This file is part of Cupid NES Emulator.
- * 
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or

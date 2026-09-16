@@ -1,14 +1,14 @@
 /*
- * cpu.h - 6502 CPU emulation header
- * 
+ * cpu.h - MOS 6502 CPU emulation interface
+ *
  * Author: @frankischilling
- * 
- * This header defines the CPU structure, status flags, and function prototypes for the
- * 6502 CPU emulator. It includes register definitions, memory access functions, and
- * instruction execution interfaces.
- * 
+ *
+ * This header defines CPU registers, status flags, controller references, bus helpers,
+ * interrupt lines, reset functions, and instruction stepping interfaces shared by the
+ * emulator and its hardware regression tests.
+ *
  * This file is part of Cupid NES Emulator.
- * 
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or

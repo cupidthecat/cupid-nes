@@ -1,14 +1,14 @@
 /*
- * apu.h - Audio Processing Unit (APU) header
- * 
+ * apu.h - Audio Processing Unit (APU) interface
+ *
  * Author: @frankischilling
- * 
- * This header defines the APU structure, sound channel structures (pulse, triangle, noise, DMC),
- * and function prototypes for the NES APU emulator. Includes envelope, sweep, and length counter
- * definitions for accurate sound generation.
- * 
+ *
+ * This header defines the APU state, audio channel structures, frame sequencer state,
+ * DMA hooks, register access, reset functions, and audio output interfaces used by
+ * the emulator core and frontend.
+ *
  * This file is part of Cupid NES Emulator.
- * 
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
