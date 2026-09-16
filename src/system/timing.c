@@ -1,4 +1,6 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* SPDX-License-Identifier: GPL-3.0-or-later
+ * Region-specific CPU, PPU, frame, and vblank timing tables.
+ */
 #include "timing.h"
 
 static const NesTiming timings[] = {

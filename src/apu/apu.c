@@ -1,27 +1,5 @@
-/*
- * apu.c - Audio Processing Unit (APU) emulation
- * 
- * Author: @frankischilling
- * 
- * This file implements the NES APU (Audio Processing Unit) which handles sound generation.
- * It emulates all five sound channels: two pulse wave channels, one triangle wave, one noise
- * channel, and DMC (Delta Modulation Channel). Includes envelope generators, sweep units,
- * length counters, and frame sequencer. Features accurate timing and nonlinear mixing.
- * 
- * This file is part of Cupid NES Emulator.
- * 
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+/* SPDX-License-Identifier: GPL-3.0-or-later
+ * NES APU channels, frame sequencer, mixer, and SDL audio callback.
  */
 
 #include "apu.h"
@@ -104,7 +82,7 @@ static void dmc_restart_sample(DMC* d);
 static void dmc_request_buffer(APU* a);
 static void dmc_clock_output(APU* a);
 
-// ---------------- Ring buffer ----------------
+// Audio ring buffer.
 static inline uint32_t rb_next(uint32_t v){ return (v+1) & (APU_RING_CAP-1); }
 static inline bool rb_push(APU* a, float s){
     uint32_t w = atomic_load_explicit(&a->ring_w, memory_order_relaxed);
@@ -166,7 +144,7 @@ static inline float apu_post_filter(APU *a, float s) {
     return s;
 }
 
-// ---------------- Envelope ----------------
+// Envelope unit.
 static void env_clock(Envelope* e) {
     if (e->start_flag) {
         e->start_flag = false;
@@ -189,7 +167,7 @@ static inline uint8_t env_output(const Envelope* e) {
     return e->constant_volume ? e->volume : e->decay;
 }
 
-// ---------------- Length counter ----------------
+// Length counter.
 static inline void length_clock(LengthCounter* l){
     if (!l->halt && l->length > 0) l->length--;
 }
@@ -236,7 +214,7 @@ static inline void apu_clock_half_frame(APU *a) {
     sweep_clock(&a->pulse2, true);
 }
 
-// ---------------- Sweep (pulse) ----------------
+// Pulse-channel sweep unit.
 static inline uint16_t sweep_target(uint16_t t, const Sweep* s, bool ch2){
     uint16_t change = t >> s->shift;
     if (s->negate) {
@@ -261,7 +239,7 @@ static void sweep_clock(Pulse* p, bool is_ch2){
     }
 }
 
-// ---------------- Triangle linear counter ----------------
+// Triangle linear counter.
 static void tri_linear_clock(Triangle* t){
     if (t->linear_reload) {
         t->linear_counter = t->linear_reload_val;
@@ -271,7 +249,7 @@ static void tri_linear_clock(Triangle* t){
     if (!t->control) t->linear_reload = false;
 }
 
-// ---------------- Reset & init ----------------
+// Power, reset, and audio initialization.
 static void apu_reset_state(APU *a, bool soft_reset) {
     double sample_rate = a->sample_rate > 1.0 ? a->sample_rate : 44100.0;
     bool five_step = soft_reset ? a->five_step : false;
@@ -337,7 +315,7 @@ void apu_audio_init(int sample_rate) {
     apu_init_filter_coeffs(&apu);
 }
 
-// ---------------- Reads/Writes ----------------
+// APU register access.
 static inline void apu_write_4017(APU *a, uint8_t v) {
     a->regs[0x17] = v;
     a->frame_next_five_step = (v & 0x80) != 0;
@@ -562,7 +540,7 @@ uint8_t apu_read(uint16_t addr){
     return 0x00;
 }
 
-// ---------------- Per-cycle ticking ----------------
+// Per-cycle APU clocks.
 static inline void clock_pulse(Pulse* p){
     if (p->timer == 0) {
         p->timer = p->timer_reload;
@@ -733,7 +711,7 @@ void apu_step(APU *a, int cpu_cycles){
     }
 }
 
-// ---------------- SDL callback ----------------
+// SDL audio callback.
 void apu_sdl_audio_callback(void *userdata, uint8_t *stream, int len){
     (void)userdata;
     float *out = (float*)stream;

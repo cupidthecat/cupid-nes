@@ -1,5 +1,5 @@
-/* Compare a canonical instruction trace with the running CPU.
- * SPDX-License-Identifier: GPL-3.0-or-later
+/* SPDX-License-Identifier: GPL-3.0-or-later
+ * Compare a canonical instruction trace with the running CPU.
  */
 #include <stdio.h>
 #include <string.h>

@@ -1,4 +1,6 @@
-/* NTSC audio register, divider, sequencer, and sample-reader regressions. */
+/* SPDX-License-Identifier: GPL-3.0-or-later
+ * APU register, divider, sequencer, DMA, and sample-reader regressions.
+ */
 #include "../apu/apu.h"
 #include "../cpu/cpu.h"
 #include "../rom/mapper.h"

@@ -1,27 +1,5 @@
-/*
- * main.c - Main entry point for Cupid NES Emulator
- * 
- * Author: @frankischilling
- * 
- * This file is the main entry point for the NES emulator. It initializes SDL for video
- * and audio, loads ROM files, sets up the CPU, PPU, and APU, and runs the main emulation
- * loop. It handles timing, frame rendering, input processing, and coordinates all emulator
- * subsystems.
- * 
- * This file is part of Cupid NES Emulator.
- * 
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+/* SPDX-License-Identifier: GPL-3.0-or-later
+ * SDL entry point and top-level emulation loop.
  */
 
 #include <SDL2/SDL.h>
@@ -40,11 +18,10 @@
 #include "ui/palette_tool.h"
 #include "system/timing.h"
 
-// apu con
 #define AUDIO_SAMPLE_RATE 44100
 #define AUDIO_BUFFER_SAMPLES 1024
 
-// Framebuffer definition
+// SDL presents the framebuffer that the PPU fills.
 uint32_t framebuffer[SCREEN_WIDTH * SCREEN_HEIGHT];
 
 Joypad pad1 = {0}, pad2 = {0};
@@ -67,7 +44,7 @@ int main(int argc, char *argv[]) {
     cpu_total_cycles = 0;
     ppu_power_on(&ppu);
     apu_power_on(&apu);
-    // Print header information for debugging
+    // Print ROM metadata at startup so mapper selection can be checked from the log.
     printf("=== ROM Header Info ===\n");
     printf("Signature: %c%c%c 0x%02X\n", 
            ines_header.signature[0], 
@@ -89,7 +66,6 @@ int main(int argc, char *argv[]) {
     printf("Mapper detected: %d\n", ((ines_header.flags7 & 0xF0) | ((ines_header.flags6 & 0xF0) >> 4)));
 
 
-    // Initialize CPU
     printf("Resetting CPU...\n");
     cpu_power_on(&cpu);
     printf("CPU state after reset:\n");
@@ -100,13 +76,12 @@ int main(int argc, char *argv[]) {
     printf("  Y: 0x%02X\n", cpu.y);
     printf("  Status: 0x%02X\n", cpu.status);
 
-    // Initialize SDL video
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) != 0) {
         fprintf(stderr, "SDL_Init Error: %s\n", SDL_GetError());
         return 1;
     }
 
-   /* --- AUDIO SETUP (now safe for C90) --- */
+    // Configure audio before starting the main loop.
     memset(&want, 0, sizeof want);
     memset(&have, 0, sizeof have);
     want.freq = AUDIO_SAMPLE_RATE;
@@ -153,7 +128,6 @@ int main(int argc, char *argv[]) {
     const double performance_frequency = (double)SDL_GetPerformanceFrequency();
     double frame_deadline = (double)SDL_GetPerformanceCounter();
     
-    // In main.c (inside the main loop)
     while (running) {
         Uint32 frameStart = SDL_GetTicks();
         uint64_t frame_start_cycles = cpu_total_cycles;
@@ -161,7 +135,6 @@ int main(int argc, char *argv[]) {
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT)
                 running = false;
-            // Mouse interactions for palette overlay and picker
             palette_tool_handle_event(&e, renderer);
             
             if (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP) {
@@ -183,10 +156,10 @@ int main(int argc, char *argv[]) {
                             if (audio_dev) SDL_UnlockAudioDevice(audio_dev);
                         }
                         break;
-                    case SDLK_z:        joypad_set(&pad1, BTN_A,      down); break; // Z = A
-                    case SDLK_x:        joypad_set(&pad1, BTN_B,      down); break; // X = B
-                    case SDLK_RSHIFT:   joypad_set(&pad1, BTN_SELECT, down); break; // Right Shift = Select
-                    case SDLK_RETURN:   joypad_set(&pad1, BTN_START,  down); break; // Enter = Start
+                    case SDLK_z:        joypad_set(&pad1, BTN_A,      down); break;
+                    case SDLK_x:        joypad_set(&pad1, BTN_B,      down); break;
+                    case SDLK_RSHIFT:   joypad_set(&pad1, BTN_SELECT, down); break;
+                    case SDLK_RETURN:   joypad_set(&pad1, BTN_START,  down); break;
                     case SDLK_UP:       joypad_set(&pad1, BTN_UP,     down); break;
                     case SDLK_DOWN:     joypad_set(&pad1, BTN_DOWN,   down); break;
                     case SDLK_LEFT:     joypad_set(&pad1, BTN_LEFT,   down); break;
@@ -194,7 +167,7 @@ int main(int argc, char *argv[]) {
                     default: break;
                 }
 
-                // Clipboard paste: Ctrl+V for hex palette text
+                // Ctrl+V accepts the palette text formats handled by the parser.
                 if (down && (e.key.keysym.sym == SDLK_v)) {
                     const SDL_Keymod mods = SDL_GetModState();
                     if ((mods & KMOD_CTRL) != 0) {
@@ -214,7 +187,7 @@ int main(int argc, char *argv[]) {
                 }
             }
 
-            // Drag-and-drop .pal files
+            // Dropped .pal files use the same validation as explicit palette loads.
             if (e.type == SDL_DROPFILE) {
                 char *dropped_f = e.drop.file;
                 if (dropped_f) {
@@ -229,13 +202,13 @@ int main(int argc, char *argv[]) {
             }
         }
     
-        // Run CPU and PPU in lockstep until the PPU marks a frame complete
+        // Run CPU steps until the PPU completes the current frame.
         start_frame();
         while (!ppu.frame_complete) {
             cpu_step(&cpu);
         }
 
-        // present the composed frame
+        // Present the frame, then draw the palette UI on top.
         SDL_UpdateTexture(texture, NULL, framebuffer, SCREEN_WIDTH * sizeof(uint32_t));
         SDL_RenderClear(renderer);
         SDL_RenderCopy(renderer, texture, NULL, NULL);

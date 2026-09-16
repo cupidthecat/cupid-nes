@@ -793,7 +793,8 @@ static int test_mmc5_audio_and_pcm(void) {
     cart_cpu_write(0x5010, 0x00);
     cart_cpu_write(0x5011, 0);
     CHECK(!cart_irq_pending());
-    CHECK(cart_cpu_read(0x5010) == 0x01); // Status masks disabled IRQs but still acknowledges the trip.
+    // Status masks disabled IRQs but still acknowledges the trip.
+    CHECK(cart_cpu_read(0x5010) == 0x01);
     cart_cpu_write(0x5010, 0x80);
     CHECK(!cart_irq_pending());
     cart_cpu_write(0x5011, 0);

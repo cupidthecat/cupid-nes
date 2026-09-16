@@ -1,5 +1,5 @@
-/* CPU and controller accuracy regressions.
- * SPDX-License-Identifier: GPL-3.0-or-later
+/* SPDX-License-Identifier: GPL-3.0-or-later
+ * CPU bus, DMA, interrupt, opcode, and controller regressions.
  */
 #include <stdio.h>
 #include <string.h>
@@ -230,7 +230,8 @@ static int open_bus_and_cart_decoding(void) {
     size_t count = bus_count;
     CHECK(read_mem(0x401F) == 0xFF && bus_count == count);
     ines_header.flags7 = 0x08;
-    ines_header.flags10 = 0; // Cartridge callbacks own RAM/register decoding, not CPU header guesses.
+    // Cartridge callbacks own RAM and register decoding instead of CPU header guesses.
+    ines_header.flags10 = 0;
     write_mem(0x6000, 0x99);
     CHECK(read_mem(0x6000) == 0x99);
     program(0xAD, 0x20, 0x40);
@@ -800,7 +801,8 @@ static int bus_cycle_interrupt_polling(void) {
         CHECK(bus_events[i].ppu_cycle == (i + 1) * 3 - 1);
     }
     (void)read_mem(0x9000);
-    CHECK(cpu_total_cycles == 4 && mapper_clocks == 4); // Inspection outside execution is unclocked.
+    // Reading state outside instruction execution must not advance the mapper clock.
+    CHECK(cpu_total_cycles == 4 && mapper_clocks == 4);
 
     for (unsigned edge = 1; edge <= 2; ++edge) {
         reset_fixture();
@@ -813,7 +815,8 @@ static int bus_cycle_interrupt_polling(void) {
     }
 
     reset_fixture();
-    program(0xAD, 0x15, 0x40); // The final read clears an IRQ already sampled on the previous cycle.
+    // The final read clears an IRQ that the CPU sampled on the previous cycle.
+    program(0xAD, 0x15, 0x40);
     cpu.status &= ~INTERRUPT_FLAG;
     irq_assert_cycle = 3;
     CHECK(cpu_step(&cpu) == 11 && cpu.pc == 0xA000);
@@ -822,7 +825,8 @@ static int bus_cycle_interrupt_polling(void) {
     reset_fixture();
     program(0xEA, 0xEA, 0);
     nmi_assert_cycle = nmi_clear_cycle = 1;
-    CHECK(cpu_step(&cpu) == 2 && cpu.pc == 0x8001); // A pulse ending before sampling is not latched.
+    // An NMI pulse that ends before the sampling point is not latched.
+    CHECK(cpu_step(&cpu) == 2 && cpu.pc == 0x8001);
     CHECK(cpu_step(&cpu) == 2 && cpu.pc == 0x8002);
 
     reset_fixture();

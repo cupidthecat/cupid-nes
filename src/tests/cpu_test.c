@@ -1,26 +1,5 @@
-/*
- * cpu_test.c - 6502 CPU instruction test suite
- * 
- * Author: @frankischilling
- * 
- * This file contains comprehensive tests for the 6502 CPU emulator. It tests all addressing
- * modes, arithmetic operations, logical operations, branches, jumps, stack operations, and
- * flag manipulations. Each test verifies correct instruction behavior and flag settings.
- * 
- * This file is part of Cupid NES Emulator.
- * 
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+/* SPDX-License-Identifier: GPL-3.0-or-later
+ * Legacy instruction-level tests for the 6502 core.
  */
 
 #include <stdio.h>
@@ -43,9 +22,7 @@ void reset_test(CPU *cpu) {
     cpu->pc = 0x8000; // For testing, force PC to 0x8000.
 }
 
-//-----------------------
-// LDA Instruction Tests
-//-----------------------
+// LDA instruction tests.
 
 // Immediate
 void test_LDA_immediate() {
@@ -170,9 +147,7 @@ void test_LDA_indirect_y() {
     printf("LDA (Indirect),Y: PASS\n");
 }
 
-//-----------------------
-// STA Instruction Tests
-//-----------------------
+// STA instruction tests.
 
 // STA Zero Page
 void test_STA_zero_page() {
@@ -247,9 +222,7 @@ void test_STA_absolute_y() {
     printf("STA Absolute,Y: PASS\n");
 }
 
-//-----------------------
-// ADC & SBC Tests
-//-----------------------
+// ADC and SBC tests.
 
 // ADC Immediate
 void test_ADC_immediate() {
@@ -359,9 +332,7 @@ void test_SBC_indirect_y() {
     printf("SBC (Indirect),Y: PASS\n");
 }
 
-//-----------------------
-// Logical Operations Tests
-//-----------------------
+// Logical-operation tests.
 
 // AND Immediate
 void test_AND_immediate() {
@@ -402,9 +373,7 @@ void test_EOR_immediate() {
     printf("EOR Immediate: PASS\n");
 }
 
-//-----------------------
-// Compare Instructions
-//-----------------------
+// Compare instructions.
 
 // CMP Immediate
 void test_CMP_immediate() {
@@ -446,9 +415,7 @@ void test_CPY_immediate() {
     printf("CPY Immediate: PASS\n");
 }
 
-//-----------------------
-// Transfer & Increment/Decrement
-//-----------------------
+// Register transfers, increments, and decrements.
 
 // TAX
 void test_TAX() {
@@ -522,9 +489,7 @@ void test_LDX_immediate() {
     printf("LDX Immediate: PASS\n");
 }
 
-//-----------------------
-// Jump & Subroutine
-//-----------------------
+// Jumps and subroutines.
 
 // JMP Absolute
 void test_JMP_absolute() {
@@ -582,9 +547,7 @@ void test_BRK() {
     printf("BRK: PASS\n");
 }
 
-//-----------------------
-// Stack Operations
-//-----------------------
+// Stack operations.
 
 // PHP and PLP
 void test_PHP_PLP() {
@@ -618,9 +581,7 @@ void test_PHA_PLA() {
     printf("PHA/PLA: PASS\n");
 }
 
-//-----------------------
-// BIT Instruction Tests
-//-----------------------
+// BIT instruction tests.
 
 // BIT Zero Page
 void test_BIT_zero_page() {
@@ -652,9 +613,7 @@ void test_BIT_absolute() {
     printf("BIT Absolute: PASS\n");
 }
 
-//-----------------------
-// Branch Instructions Tests
-//-----------------------
+// Branch instruction tests.
 
 // Test BEQ and BNE using relative addressing.
 void test_branch_instructions() {
@@ -690,9 +649,7 @@ void test_branch_instructions() {
     printf("Branch BNE: PASS\n");
 }
 
-//-----------------------
-// Shift/Rotate Instructions Tests
-//-----------------------
+// Shift and rotate instruction tests.
 
 // ASL Accumulator
 void test_ASL_accumulator() {
@@ -1051,7 +1008,7 @@ void test_SEC() {
 }
 
 // CLI (Clear Interrupt Disable, 0x58)
-// Precondition: The interrupt flag is set. After executing CLI the interrupt flag should be cleared.
+// CLI starts with I set and must clear it.
 void test_CLI() {
     CPU cpu;
     reset_test(&cpu);
@@ -1064,7 +1021,7 @@ void test_CLI() {
 }
 
 // SEI (Set Interrupt Disable, 0x78)
-// Precondition: The interrupt flag is clear. After executing SEI the interrupt flag should be set.
+// SEI starts with I clear and must set it.
 void test_SEI() {
     CPU cpu;
     reset_test(&cpu);
@@ -1103,7 +1060,7 @@ void test_SED() {
 }
 
 // CLV (Clear Overflow Flag, 0xB8)
-// Precondition: The overflow flag is set. After executing CLV the overflow flag should be cleared.
+// CLV starts with V set and must clear it.
 void test_CLV() {
     CPU cpu;
     reset_test(&cpu);

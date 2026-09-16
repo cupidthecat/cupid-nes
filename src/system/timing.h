@@ -1,4 +1,6 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* SPDX-License-Identifier: GPL-3.0-or-later
+ * Region timing values shared by the CPU, PPU, APU, and frontend.
+ */
 #ifndef NES_TIMING_H
 #define NES_TIMING_H
 
@@ -20,7 +22,7 @@ typedef struct {
 
 const NesTiming *nes_timing(void);
 const NesTiming *nes_timing_for_region(NesRegion region);
-/* Select the hardware before powering on or resetting its devices. */
+// Select the region before powering on or resetting the emulated hardware.
 void nes_set_region(NesRegion region);
 
 #endif

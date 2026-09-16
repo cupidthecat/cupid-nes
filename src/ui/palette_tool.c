@@ -1,25 +1,5 @@
-/*
- * palette_tool.c - Runtime palette tool overlay and picker UI (SDL) implementation for Cupid NES Emulator
- * Author: @frankischilling
- * 
- * This file implements the runtime palette tool overlay and picker UI for the NES emulator.
- * It allows the user to change the PPU palette at runtime without rebuilding the emulator.
- * It also implements the picker UI for the palette tool.
- * 
- * This file is part of Cupid NES Emulator.
- * 
- * This program is free software: you can redistribute it and modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+/* SPDX-License-Identifier: GPL-3.0-or-later
+ * SDL palette overlay, color picker, and palette-file parsing.
  */
 
 #include "palette_tool.h"
@@ -30,16 +10,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-// -------------------------------------------------------------------------
-// Runtime palette storage
-// Active base palette (no-emphasis) and optional emphasis tables (8 variants)
+// Runtime palette storage includes the base colors and eight emphasis variants.
 // Colors are stored as ARGB 0xFFRRGGBB for direct use by the renderer.
 uint32_t ppu__active_palette_base[64];
 uint32_t ppu__emphasis_palettes[8][64];
 bool     ppu__have_emphasis_tables = false;
 
-// -------------------------------------------------------------------------
-// UI overlay state
+// Palette overlay state.
 static bool show_overlay = false;
 static Uint32 overlay_flash_ms = 0;
 static Uint8 overlay_flash_r = 0, overlay_flash_g = 0, overlay_flash_b = 0;
@@ -242,8 +219,7 @@ void palette_tool_tick(Uint32 delta_ms) {
     }
 }
 
-// -------------------------------------------------------------------------
-// Palette management functions
+// Palette loading and editing.
 
 static inline uint32_t rgb_bytes_to_argb(uint8_t r, uint8_t g, uint8_t b) {
     return 0xFF000000u | ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
@@ -273,7 +249,7 @@ int ppu_palette_set_color(int index, uint8_t r, uint8_t g, uint8_t b) {
     return 0;
 }
 
-// Read whole file into memory buffer (malloc'd). Returns 0 on success.
+// Read a palette file into a caller-owned heap buffer.
 static int read_entire_file(const char *path, uint8_t **out_data, size_t *out_size) {
     FILE *f = fopen(path, "rb");
     if (!f) return -1;
@@ -305,7 +281,7 @@ int ppu_palette_load_pal_file(const char *path) {
         free(data);
         return 0;
     } else if (size == 1536) {
-        // 8 emphasis sets * 64 entries * 3 bytes
+        // A 1536-byte file contains eight 64-color emphasis palettes.
         for (int e = 0; e < 8; ++e) {
             for (int i = 0; i < 64; ++i) {
                 size_t off = (size_t)e*64*3 + (size_t)i*3;
@@ -322,7 +298,8 @@ int ppu_palette_load_pal_file(const char *path) {
         return 0;
     } else {
         free(data);
-        return -7; // unsupported size
+        // The file size does not match either supported palette layout.
+        return -7;
     }
 }
 
@@ -333,7 +310,7 @@ static int hex_digit(int c) {
     return -1;
 }
 
-// Try parsing as 64 tokens of RRGGBB (optionally prefixed by # or 0x/$)
+// Parse 64 RRGGBB tokens; each token may start with #, 0x, or $.
 static int try_parse_hex_tokens(const char *s) {
     uint32_t tmp[64];
     int count = 0;
@@ -341,11 +318,11 @@ static int try_parse_hex_tokens(const char *s) {
     while (*p && count < 64) {
         while (*p && (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t' || *p == ',' || *p == ';')) p++;
         if (!*p) break;
-        // skip prefixes
+        // Accept the common prefixes used by palette dumps.
         if (*p == '#') p++;
         if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) p += 2;
         if (*p == '$') p++;
-        // need 6 hex digits
+        // Each token must contain exactly six hex digits.
         int h[6];
         for (int i = 0; i < 6; ++i) {
             int d = hex_digit(p[i]);
@@ -357,10 +334,8 @@ static int try_parse_hex_tokens(const char *s) {
         uint8_t g = (uint8_t)((h[2] << 4) | h[3]);
         uint8_t b = (uint8_t)((h[4] << 4) | h[5]);
         tmp[count++] = rgb_bytes_to_argb(r,g,b);
-        // consume trailing token separators if any
         while (*p && ((*p >= '0' && *p <= '9') || (*p >= 'A' && *p <= 'F') || (*p >= 'a' && *p <= 'f'))) {
-            // If there are more than 6 consecutive hex digits without separators,
-            // this wasn't tokenized; fall back to raw parsing.
+            // Extra hex digits without a separator mean this is raw byte data.
             return -1;
         }
     }
@@ -372,10 +347,9 @@ static int try_parse_hex_tokens(const char *s) {
     return -1;
 }
 
-// Parse raw byte hex: accept any non-hex separators, gather hex pairs
+// Raw byte input ignores non-hex separators and groups the remaining digits into pairs.
 static int try_parse_raw_hex_bytes(const char *s) {
-    // Collect hex digits
-    size_t cap = 2048; // enough for 1536*2 digits
+    size_t cap = 2048;
     char *digits = (char*)malloc(cap);
     if (!digits) return -1;
     size_t n = 0;
