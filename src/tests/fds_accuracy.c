@@ -301,6 +301,24 @@ static int test_fds_disk_transfer(void) {
     CHECK(!fds_irq_pending());
     fds_clock_cpu(1);
     CHECK(fds_irq_pending());
+    CHECK(cart_cpu_read_bus(0x4033, 0) & 0x80);
+    fds_eject_disk();
+    CHECK(!fds_disk_inserted());
+    CHECK(cart_cpu_read_bus(0x4033, 0) & 0x80);
+    CHECK(fds_irq_pending());
+    fds_clock_cpu(1);
+    CHECK(cart_cpu_read_bus(0x4033, 0) & 0x80);
+    CHECK(fds_irq_pending());
+    (void)cart_cpu_read_bus(0x4031, 0);
+    CHECK(!fds_irq_pending());
+    CHECK(fds_insert_disk(0));
+
+    // Restart the transfer from the beginning for the byte-cadence checks below.
+    cart_cpu_write(0x4025, 0xC5);
+    fds_clock_cpu(FDS_FIRST_DATA_IRQ_CYCLES - 1u);
+    CHECK(!fds_irq_pending());
+    fds_clock_cpu(1);
+    CHECK(fds_irq_pending());
     uint8_t value = cart_cpu_read_bus(0x4031, 0);
     CHECK(value == 1);
     CHECK(!fds_irq_pending());

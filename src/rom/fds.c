@@ -636,10 +636,6 @@ bool fds_insert_disk(size_t side) {
 
 void fds_eject_disk(void) {
     fds.current_side = FDS_NO_SIDE;
-    fds.motor_on = false;
-    fds.scanning = false;
-    fds.end_of_head = true;
-    fds.disk_irq = false;
 }
 
 void fds_set_write_protected(bool protected_media) {
