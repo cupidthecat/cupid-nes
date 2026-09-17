@@ -53,7 +53,7 @@ typedef struct {
 } CartCommon;
 
 static CartCommon C;
-static Mapper mapper_nrom, mapper_mmc1, mapper_uxrom, mapper_cnrom, mapper_mmc3;
+static Mapper mapper_nrom, mapper_mmc1, mapper_uxrom, mapper_cnrom, mapper_mmc3, mapper_tqrom;
 static Mapper mapper_mmc5, mapper_aorom, mapper_mmc2, mapper_mmc4, mapper_colordreams;
 static Mapper mapper_cprom, mapper_100in1;
 Mapper *cart = NULL;
@@ -85,6 +85,7 @@ static RamBlock prg_work_ram, prg_save_ram;
 static bool prg_ram_dirty = false;
 static bool chr_ram_dirty = false;
 static uint8_t mmc5_exram[0x400];
+static uint8_t tqrom_chr_ram[CHR_BANK_8K];
 static bool mmc5_exram_dirty = false;
 static bool battery_enabled = false;
 static char *battery_save_path = NULL;
@@ -285,6 +286,7 @@ void mapper_shutdown(void) {
     mapper_irq_line = false;
     cart_ppu_fetch_source = CART_PPU_FETCH_CPU;
     memset(mmc5_exram, 0, sizeof(mmc5_exram));
+    memset(tqrom_chr_ram, 0, sizeof(tqrom_chr_ram));
     mmc5_exram_dirty = false;
 }
 
@@ -556,7 +558,7 @@ static struct {
 } mmc3;
 
 void cart_notify_ppu_address(uint16_t addr, uint64_t ppu_cycle) {
-    if (cart != &mapper_mmc3) return;
+    if (cart != &mapper_mmc3 && cart != &mapper_tqrom) return;
     uint64_t cpu_cycle = ppu_cycle / 3;
     if (!(addr & 0x1000)) {
         if (!mmc3.a12_low) {
@@ -670,11 +672,8 @@ static void mmc3_cpu_write(uint16_t a, uint8_t v) {
     }
 }
 
-static uint8_t mmc3_ppu_read(uint16_t a) {
+static size_t mmc3_chr_bank(uint16_t a) {
     a &= 0x1FFF;
-    size_t chr_1k_banks = C.chr_sz / CHR_BANK_1K;
-    if (chr_1k_banks == 0) return nrom_ppu_read(a);
-
     uint8_t slot = (uint8_t)(a >> 10);
     size_t bank = 0;
     if (mmc3.chr_mode == 0) {
@@ -696,8 +695,15 @@ static uint8_t mmc3_ppu_read(uint16_t a) {
             bank = mmc3.banks[reg];
         }
     }
+    return bank;
+}
 
-    bank %= chr_1k_banks;
+static uint8_t mmc3_ppu_read(uint16_t a) {
+    a &= 0x1FFF;
+    size_t chr_1k_banks = C.chr_sz / CHR_BANK_1K;
+    if (chr_1k_banks == 0) return nrom_ppu_read(a);
+
+    size_t bank = mmc3_chr_bank(a) % chr_1k_banks;
     return C.chr[bank * CHR_BANK_1K + (a & 0x03FF)];
 }
 
@@ -707,30 +713,35 @@ static void mmc3_ppu_write(uint16_t a, uint8_t v) {
     size_t chr_1k_banks = C.chr_sz / CHR_BANK_1K;
     if (chr_1k_banks == 0) { nrom_ppu_write(a, v); return; }
 
-    uint8_t slot = (uint8_t)(a >> 10);
-    size_t bank = 0;
-    if (mmc3.chr_mode == 0) {
-        static const uint8_t slot_map[8] = {0, 0, 1, 1, 2, 3, 4, 5};
-        uint8_t reg = slot_map[slot];
-        if (slot < 4) {
-            uint8_t pair = (uint8_t)(mmc3.banks[reg] & 0xFE);
-            bank = (size_t)(pair + (slot & 1));
-        } else {
-            bank = mmc3.banks[reg];
-        }
-    } else {
-        static const uint8_t slot_map[8] = {2, 3, 4, 5, 0, 0, 1, 1};
-        uint8_t reg = slot_map[slot];
-        if (slot >= 4) {
-            uint8_t pair = (uint8_t)(mmc3.banks[reg] & 0xFE);
-            bank = (size_t)(pair + (slot & 1));
-        } else {
-            bank = mmc3.banks[reg];
-        }
-    }
-
-    bank %= chr_1k_banks;
+    size_t bank = mmc3_chr_bank(a) % chr_1k_banks;
     chr_ram_write(bank * CHR_BANK_1K + (a & 0x03FF), v);
+}
+
+static bool tqrom_chr_uses_ram(size_t bank) {
+    return bank >= 0x40 && bank <= 0x7F;
+}
+
+static size_t tqrom_chr_ram_offset(uint16_t a, size_t bank) {
+    size_t ram_bank = (bank - 0x40) % (sizeof(tqrom_chr_ram) / CHR_BANK_1K);
+    return ram_bank * CHR_BANK_1K + (a & 0x03FF);
+}
+
+static uint8_t tqrom_ppu_read(uint16_t a) {
+    a &= 0x1FFF;
+    size_t bank = mmc3_chr_bank(a);
+    if (tqrom_chr_uses_ram(bank)) return tqrom_chr_ram[tqrom_chr_ram_offset(a, bank)];
+
+    size_t chr_1k_banks = C.chr_sz / CHR_BANK_1K;
+    if (chr_1k_banks == 0) return 0;
+    bank %= chr_1k_banks;
+    return C.chr[bank * CHR_BANK_1K + (a & 0x03FF)];
+}
+
+static void tqrom_ppu_write(uint16_t a, uint8_t v) {
+    a &= 0x1FFF;
+    size_t bank = mmc3_chr_bank(a);
+    if (!tqrom_chr_uses_ram(bank)) return;
+    tqrom_chr_ram[tqrom_chr_ram_offset(a, bank)] = v;
 }
 
 static Mirroring mmc3_mirr(void) { return mmc3.mirr; }
@@ -1811,8 +1822,13 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         return false;
     }
 
-    // No supported board currently selects separate CHR ROM/RAM or two RAM chips.
-    if ((!chr_is_ram && chr_total) || (ram->chr_ram && ram->chr_nvram)) return false;
+    if (mapper_no == 119) {
+        if (chr_is_ram || chr_sz == 0) return false;
+        if (nes2 && (ram->chr_ram != sizeof(tqrom_chr_ram) || ram->chr_nvram != 0)) return false;
+    } else {
+        // Other supported boards do not select separate CHR ROM/RAM or two RAM chips.
+        if ((!chr_is_ram && chr_total) || (ram->chr_ram && ram->chr_nvram)) return false;
+    }
     if (nes2 && chr_is_ram && chr_total != chr_sz) return false;
     size_t chr_limit;
     switch (mapper_no) {
@@ -1821,6 +1837,7 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         case 4: chr_limit = 0x40000; break;
         case 5: chr_limit = 0x100000; break;
         case 13: chr_limit = 0x4000; break;
+        case 119: chr_limit = sizeof(tqrom_chr_ram); break;
         default: chr_limit = 0x2000; break;
     }
     return chr_total <= chr_limit;
@@ -1847,7 +1864,7 @@ int mapper_init_from_header(const iNESHeader *h,
     uint8_t submapper = nes2 ? h->prg_ram_size >> 4 : 0;
     switch (mapper_no) {
         case 0: case 1: case 2: case 3: case 4: case 5:
-        case 7: case 9: case 10: case 11: case 13: case 15:
+        case 7: case 9: case 10: case 11: case 13: case 15: case 119:
             break;
         default:
             fprintf(stderr, "Unsupported mapper: %d\n", mapper_no);
@@ -1864,6 +1881,10 @@ int mapper_init_from_header(const iNESHeader *h,
     bool chr_is_ram = h->chr_rom_chunks == 0 && (!nes2 || (h->flags9 & 0xF0) == 0);
     if (mapper_no == 5 && (prg_sz > 0x100000 || (!chr_is_ram && chr_sz > 0x100000))) {
         fprintf(stderr, "Unsupported ROM size for mapper 5\n");
+        return -1;
+    }
+    if (mapper_no == 119 && (chr_is_ram || chr_sz > 0x40000 || (chr_sz % CHR_BANK_1K) != 0)) {
+        fprintf(stderr, "Unsupported ROM size for mapper 119\n");
         return -1;
     }
     if (!ram_geometry_supported(mapper_no, nes2, &ram, chr_is_ram, chr_sz)
@@ -1972,6 +1993,11 @@ int mapper_init_from_header(const iNESHeader *h,
             build_mapper(&mapper_100in1, m15_cpu_read, m15_cpu_write,
                         m15_ppu_read, m15_ppu_write, m15_reset, m15_mirr);
             cart = &mapper_100in1;
+            break;
+        case 119:
+            build_mapper(&mapper_tqrom, mmc3_cpu_read, mmc3_cpu_write,
+                        tqrom_ppu_read, tqrom_ppu_write, mmc3_reset, mmc3_mirr);
+            cart = &mapper_tqrom;
             break;
     }
     

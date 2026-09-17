@@ -906,6 +906,143 @@ static uint8_t *image_for(const iNESHeader *h, size_t prg_bytes, size_t chr_byte
     return image;
 }
 
+static iNESHeader tqrom_header(size_t chr_bytes) {
+    iNESHeader h = header_for(119, 0x20000, false);
+    h.flags7 |= 0x08;
+    h.flags10 = 7; // 8KB volatile PRG-RAM.
+    h.zero[0] = 7; // 8KB volatile CHR-RAM alongside CHR-ROM.
+    h.chr_rom_chunks = (uint8_t)(chr_bytes / 0x2000);
+    return h;
+}
+
+static uint8_t *tqrom_image(const iNESHeader *h, size_t chr_bytes, size_t *size) {
+    uint8_t *image = image_for(h, 0x20000, chr_bytes, size);
+    if (!image) return NULL;
+    size_t prg_offset = sizeof(*h);
+    size_t chr_offset = prg_offset + 0x20000;
+    for (size_t i = 0; i < 0x20000; ++i)
+        image[prg_offset + i] = (uint8_t)(i / 0x2000);
+    for (size_t i = 0; i < chr_bytes; ++i)
+        image[chr_offset + i] = (uint8_t)(i / 0x0400);
+    return image;
+}
+
+static int test_tqrom_mixed_chr_memory(void) {
+    const size_t chr_bytes = 0x40000;
+    iNESHeader h = tqrom_header(chr_bytes);
+    size_t image_size;
+    uint8_t *image = tqrom_image(&h, chr_bytes, &image_size);
+    CHECK(image != NULL);
+    CHECK(load_rom_memory(image, image_size) == 0);
+
+    // TQROM keeps MMC3 PRG banking, work RAM, and IRQ behavior.
+    cart_cpu_write(0x8000, 6);
+    cart_cpu_write(0x8001, 3);
+    CHECK(cart_cpu_read(0x8000) == 3 && cart_cpu_read(0xC000) == 14);
+    cart_cpu_write(0xA001, 0x80);
+    cart_cpu_write(0x6000, 0xA6);
+    CHECK(cart_cpu_read(0x6000) == 0xA6);
+    cart_cpu_write(0xA000, 1);
+    CHECK(cart_get_mirroring() == MIRROR_HORIZONTAL);
+    cart_cpu_write(0xA000, 0);
+    CHECK(cart_get_mirroring() == MIRROR_VERTICAL);
+    cart_cpu_write(0xC000, 0);
+    cart_cpu_write(0xC001, 0);
+    cart_cpu_write(0xE001, 0);
+    a12_pulse(0);
+    CHECK(cart_irq_pending());
+    cart_cpu_write(0xE000, 0);
+    CHECK(!cart_irq_pending());
+
+    // CHR pages $40-$7F select the board's 8KB RAM before ROM bank wrapping.
+    cart_cpu_write(0x8000, 0);
+    cart_cpu_write(0x8001, 0x40);
+    cart_ppu_write(0x0000, 0xD0);
+    cart_ppu_write(0x0400, 0xD1);
+    CHECK(cart_ppu_read(0x0000) == 0xD0 && cart_ppu_read(0x0400) == 0xD1);
+
+    cart_cpu_write(0x8000, 2);
+    cart_cpu_write(0x8001, 0x43);
+    cart_ppu_write(0x1000, 0xD3);
+    CHECK(cart_ppu_read(0x1000) == 0xD3);
+    cart_cpu_write(0x8001, 0x80);
+    CHECK(cart_ppu_read(0x1000) == 0x80);
+    cart_ppu_write(0x1000, 0xEE);
+    CHECK(cart_ppu_read(0x1000) == 0x80); // CHR-ROM stays read-only.
+    cart_cpu_write(0x8001, 0x43);
+    CHECK(cart_ppu_read(0x1000) == 0xD3);
+    cart_cpu_write(0x8001, 0x4B);
+    CHECK(cart_ppu_read(0x1000) == 0xD3); // RAM banks alias every eight pages.
+
+    // Inverted CHR mode moves the 1KB and paired registers to the opposite half.
+    cart_cpu_write(0x8000, 0x82);
+    cart_cpu_write(0x8001, 0x45);
+    cart_ppu_write(0x0000, 0xE5);
+    CHECK(cart_ppu_read(0x0000) == 0xE5);
+    cart_cpu_write(0x8001, 0x85);
+    CHECK(cart_ppu_read(0x0000) == 0x85);
+    cart_ppu_write(0x0000, 0x5E);
+    CHECK(cart_ppu_read(0x0000) == 0x85);
+    cart_cpu_write(0x8001, 0x45);
+    CHECK(cart_ppu_read(0x0000) == 0xE5);
+    cart_cpu_write(0x8000, 0x80);
+    cart_cpu_write(0x8001, 0x40);
+    CHECK(cart_ppu_read(0x1000) == 0xD0 && cart_ppu_read(0x1400) == 0xD1);
+
+    // A mapper reset restores MMC3 registers without erasing cartridge RAM.
+    cart->reset();
+    CHECK(!cart_irq_pending() && cart_ppu_read(0x0000) == 0);
+    cart_cpu_write(0x8000, 0);
+    cart_cpu_write(0x8001, 0x40);
+    CHECK(cart_ppu_read(0x0000) == 0xD0);
+
+    // Replacing the cartridge clears mapper-owned CHR-RAM.
+    CHECK(load_rom_memory(image, image_size) == 0);
+    free(image);
+    image = NULL;
+    cart_cpu_write(0x8000, 0);
+    cart_cpu_write(0x8001, 0x40);
+    CHECK(cart_ppu_read(0x0000) == 0);
+
+    // Legacy mapper 119 headers imply the board's fixed 8KB CHR-RAM.
+    iNESHeader legacy = header_for(119, 0x20000, false);
+    legacy.chr_rom_chunks = (uint8_t)(chr_bytes / 0x2000);
+    image = tqrom_image(&legacy, chr_bytes, &image_size);
+    CHECK(image != NULL);
+    CHECK(load_rom_memory(image, image_size) == 0);
+    free(image);
+    image = NULL;
+    cart_cpu_write(0x8000, 0);
+    cart_cpu_write(0x8001, 0x40);
+    CHECK(cart_ppu_read(0x0000) == 0);
+    cart_ppu_write(0x0000, 0x6C);
+
+    uint8_t *previous_prg = prg_rom;
+    uint8_t *previous_chr = chr_rom;
+    iNESHeader invalid[] = {
+        tqrom_header(chr_bytes), tqrom_header(chr_bytes), tqrom_header(chr_bytes),
+        tqrom_header(chr_bytes), tqrom_header(0), tqrom_header(0x80000)
+    };
+    invalid[0].zero[0] = 0;    // Missing CHR-RAM.
+    invalid[1].zero[0] = 6;    // 4KB is too small for TQROM.
+    invalid[2].zero[0] = 8;    // 16KB is not this board's RAM geometry.
+    invalid[3].zero[0] = 0x70; // CHR-NVRAM is a different storage model.
+    static const size_t invalid_chr_bytes[] = {
+        0x40000, 0x40000, 0x40000, 0x40000, 0, 0x80000
+    };
+    for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
+        image = tqrom_image(&invalid[i], invalid_chr_bytes[i], &image_size);
+        CHECK(image != NULL);
+        int loaded = load_rom_memory(image, image_size);
+        free(image);
+        CHECK(loaded == -1 && prg_rom == previous_prg && chr_rom == previous_chr);
+        cart_cpu_write(0x8000, 0);
+        cart_cpu_write(0x8001, 0x40);
+        CHECK(cart_ppu_read(0x0000) == 0x6C);
+    }
+    return 0;
+}
+
 static int test_loader_trainers_and_sizes(void) {
     iNESHeader h = header_for(0, 0x4000, true);
     h.flags6 |= 4;
@@ -1833,7 +1970,8 @@ int test_mapper_accuracy(void) {
         test_small_cartridges, test_mmc1_banks_and_ram, test_mmc1_serial_timing,
         test_mmc1_outer_and_fixed_banks, test_mmc2_banks_and_latches,
         test_mmc4_latches_and_chr_ram, test_mmc3_banks_and_protection,
-        test_mmc3_irq_edges, test_mmc3_render_trace, test_simple_mapper_registers,
+        test_mmc3_irq_edges, test_mmc3_render_trace, test_tqrom_mixed_chr_memory,
+        test_simple_mapper_registers,
         test_colordreams_bus_conflicts, test_bus_conflict_submappers,
         test_mapper15_modes, test_mmc5_memory_windows,
         test_mmc5_exram_and_irq, test_mmc5_chr_fetch_modes, test_mmc5_extended_rendering,
