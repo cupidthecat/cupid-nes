@@ -114,6 +114,17 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "Adapter must be none, four-score, famicom-2, or famicom-4\n");
                 return 1;
             }
+        } else if (strcmp(argv[i], "--port1") == 0 || strcmp(argv[i], "--port2") == 0) {
+            unsigned port = argv[i][6] == '2' ? 1 : 0;
+            if (++i == argc || !joypad_set_port_device_name(port, argv[i])) {
+                fprintf(stderr, "Port device must be pad, none, or arkanoid\n");
+                return 1;
+            }
+        } else if (strcmp(argv[i], "--expansion") == 0) {
+            if (++i == argc || !joypad_set_expansion_device_name(argv[i])) {
+                fprintf(stderr, "Expansion device must be none or arkanoid\n");
+                return 1;
+            }
         } else if (argv[i][0] == '-' || rom_path) {
             fprintf(stderr, "Unexpected argument: %s\n", argv[i]);
             return 1;
@@ -122,7 +133,11 @@ int main(int argc, char *argv[]) {
         }
     }
     if (!rom_path) {
-        printf("Usage: %s [--console MODEL] [--adapter TYPE] <rom-file>\n", argv[0]);
+        printf("Usage: %s [--console MODEL] [--adapter TYPE] [--port1 DEVICE] [--port2 DEVICE] [--expansion DEVICE] <rom-file>\n", argv[0]);
+        return 1;
+    }
+    if (!joypad_configuration_valid()) {
+        fprintf(stderr, "An adapter and another device cannot share the same connector\n");
         return 1;
     }
     
@@ -227,6 +242,18 @@ int main(int argc, char *argv[]) {
     
         while (SDL_PollEvent(&e)) {
             controller_event(&e);
+            bool main_mouse_event = e.type == SDL_MOUSEMOTION
+                ? e.motion.windowID == SDL_GetWindowID(window)
+                : (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP)
+                    && e.button.windowID == SDL_GetWindowID(window);
+            if (main_mouse_event) {
+                int mouse_x, mouse_y, window_width, window_height;
+                uint32_t buttons = SDL_GetMouseState(&mouse_x, &mouse_y);
+                SDL_GetWindowSize(window, &window_width, &window_height);
+                int position = window_width > 0 ? 0x54 + 160 * mouse_x / window_width : 0x54;
+                for (unsigned slot = 0; slot < 3; ++slot)
+                    joypad_set_paddle(slot, position, (buttons & SDL_BUTTON_LMASK) != 0);
+            }
             if (e.type == SDL_QUIT)
                 running = false;
             palette_tool_handle_event(&e, renderer);

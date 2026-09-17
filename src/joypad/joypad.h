@@ -44,6 +44,17 @@ typedef enum {
     NES_ADAPTER_FAMICOM_FOUR
 } NesInputAdapter;
 
+typedef enum {
+    NES_PORT_GAMEPAD,
+    NES_PORT_NONE,
+    NES_PORT_ARKANOID
+} NesPortDevice;
+
+typedef enum {
+    NES_EXPANSION_NONE,
+    NES_EXPANSION_ARKANOID
+} NesExpansionDevice;
+
 void    joypad_set(Joypad* jp, int btn, int pressed);
 void    joypad_write_strobe(Joypad* jp, uint8_t value);
 uint8_t joypad_read(Joypad* jp);
@@ -59,5 +70,16 @@ NesInputAdapter joypad_adapter(void);
 bool    joypad_set_adapter(NesInputAdapter adapter);
 bool    joypad_set_adapter_name(const char *name);
 const char *joypad_adapter_name(void);
+NesPortDevice joypad_port_device(unsigned port);
+bool    joypad_set_port_device(unsigned port, NesPortDevice device);
+bool    joypad_set_port_device_name(unsigned port, const char *name);
+const char *joypad_port_device_name(unsigned port);
+NesExpansionDevice joypad_expansion_device(void);
+bool    joypad_set_expansion_device(NesExpansionDevice device);
+bool    joypad_set_expansion_device_name(const char *name);
+const char *joypad_expansion_device_name(void);
+bool    joypad_configuration_valid(void);
+// Slots zero and one are NES ports; slot two is the Famicom expansion connector.
+bool    joypad_set_paddle(unsigned slot, int position, bool fire);
 
 #endif // JOYPAD_H

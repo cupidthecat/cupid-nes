@@ -37,6 +37,33 @@ static uint8_t adapter_signature[2];
 static const char *const adapter_names[] = {
     "none", "four-score", "famicom-2", "famicom-4"
 };
+static NesPortDevice port_devices[2];
+static NesExpansionDevice expansion_device;
+static const char *const port_device_names[] = {"pad", "none", "arkanoid"};
+static const char *const expansion_device_names[] = {"none", "arkanoid"};
+
+typedef struct {
+    uint8_t position;
+    uint8_t shift;
+    uint8_t strobe;
+    bool fire;
+} Paddle;
+
+static Paddle paddles[3] = {
+    {.position = 0x54}, {.position = 0x54}, {.position = 0x54}
+};
+
+static uint8_t read_paddle(Paddle *paddle) {
+    uint8_t value = (paddle->shift & 0x80u) ? 0 : 1;
+    paddle->shift <<= 1;
+    return value;
+}
+
+static void write_paddle(Paddle *paddle, uint8_t value) {
+    uint8_t strobe = value & 1u;
+    if (paddle->strobe && !strobe) paddle->shift = paddle->position;
+    paddle->strobe = strobe;
+}
 
 static void latch_adapter(void) {
     adapter_remaining[0] = adapter_remaining[1] = 16;
@@ -80,12 +107,17 @@ uint8_t joypad_read_port(Joypad *jp, unsigned port) {
     if (input_adapter == NES_ADAPTER_FOUR_SCORE) {
         value = read_adapter(port);
     } else {
-        value = joypad_read(jp);
+        if (port_devices[port] == NES_PORT_ARKANOID)
+            value = (read_paddle(&paddles[port]) << 4) | (paddles[port].fire ? 0x08 : 0);
+        else
+            value = port_devices[port] == NES_PORT_GAMEPAD ? joypad_read(jp) : 0;
         if (input_adapter == NES_ADAPTER_FAMICOM_TWO)
             value |= joypad_read(&expansion_pads[port]) << 1;
         else if (input_adapter == NES_ADAPTER_FAMICOM_FOUR)
             value |= read_adapter(port) << 1;
     }
+    if (expansion_device == NES_EXPANSION_ARKANOID)
+        value |= port == 0 ? (paddles[2].fire ? 0x02 : 0) : (read_paddle(&paddles[2]) << 1);
     // The second built-in controller's microphone reaches $4016 D2.
     if (port == 0 && nes_console_model() == NES_CONSOLE_HVC001 && microphone_active)
         value |= 0x04;
@@ -130,6 +162,9 @@ void joypad_write_ports(uint8_t value) {
     uint8_t strobe = value & 1u;
     if (adapter_strobe && !strobe) latch_adapter();
     adapter_strobe = strobe;
+    for (unsigned port = 0; port < 2; ++port)
+        if (port_devices[port] == NES_PORT_ARKANOID) write_paddle(&paddles[port], value);
+    if (expansion_device == NES_EXPANSION_ARKANOID) write_paddle(&paddles[2], value);
 }
 
 NesInputAdapter joypad_adapter(void) {
@@ -156,4 +191,68 @@ bool joypad_set_adapter_name(const char *name) {
 
 const char *joypad_adapter_name(void) {
     return adapter_names[input_adapter];
+}
+
+NesPortDevice joypad_port_device(unsigned port) {
+    return port < 2 ? port_devices[port] : NES_PORT_NONE;
+}
+
+bool joypad_set_port_device(unsigned port, NesPortDevice device) {
+    if (port >= 2 || (unsigned)device > NES_PORT_ARKANOID) return false;
+    port_devices[port] = device;
+    paddles[port].strobe = paddles[port].shift = 0;
+    return true;
+}
+
+bool joypad_set_port_device_name(unsigned port, const char *name) {
+    if (!name) return false;
+    for (unsigned i = 0; i < sizeof(port_device_names) / sizeof(port_device_names[0]); ++i) {
+        if (strcmp(name, port_device_names[i]) == 0)
+            return joypad_set_port_device(port, (NesPortDevice)i);
+    }
+    return false;
+}
+
+const char *joypad_port_device_name(unsigned port) {
+    return port_device_names[joypad_port_device(port)];
+}
+
+NesExpansionDevice joypad_expansion_device(void) {
+    return expansion_device;
+}
+
+bool joypad_set_expansion_device(NesExpansionDevice device) {
+    if ((unsigned)device > NES_EXPANSION_ARKANOID) return false;
+    expansion_device = device;
+    paddles[2].strobe = paddles[2].shift = 0;
+    return true;
+}
+
+bool joypad_set_expansion_device_name(const char *name) {
+    if (!name) return false;
+    for (unsigned i = 0; i < sizeof(expansion_device_names) / sizeof(expansion_device_names[0]); ++i) {
+        if (strcmp(name, expansion_device_names[i]) == 0)
+            return joypad_set_expansion_device((NesExpansionDevice)i);
+    }
+    return false;
+}
+
+const char *joypad_expansion_device_name(void) {
+    return expansion_device_names[expansion_device];
+}
+
+bool joypad_configuration_valid(void) {
+    if (input_adapter == NES_ADAPTER_FOUR_SCORE &&
+        (port_devices[0] != NES_PORT_GAMEPAD || port_devices[1] != NES_PORT_GAMEPAD))
+        return false;
+    return input_adapter < NES_ADAPTER_FAMICOM_TWO || expansion_device == NES_EXPANSION_NONE;
+}
+
+bool joypad_set_paddle(unsigned slot, int position, bool fire) {
+    if (slot >= 3) return false;
+    if (position < 0x54) position = 0x54;
+    if (position > 0xF4) position = 0xF4;
+    paddles[slot].position = (uint8_t)position;
+    paddles[slot].fire = fire;
+    return true;
 }

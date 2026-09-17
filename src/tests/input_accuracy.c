@@ -84,6 +84,9 @@ static void input_fixture(NesConsoleModel model, NesRegion region) {
     for (unsigned player = 0; player < NES_INPUT_PLAYERS; ++player)
         memset(joypad_player(player), 0, sizeof(Joypad));
     joypad_set_adapter(NES_ADAPTER_NONE);
+    joypad_set_port_device(0, NES_PORT_GAMEPAD);
+    joypad_set_port_device(1, NES_PORT_GAMEPAD);
+    joypad_set_expansion_device(NES_EXPANSION_NONE);
     nes_set_console_model(model);
     nes_set_region(region);
     joypad_set_microphone(false);
@@ -414,15 +417,181 @@ static int adapter_selection_lifetime(void) {
     return 0;
 }
 
+static int arkanoid_reports(void) {
+    static const int positions[] = {0x54, 0xA4, 0xF4};
+    static const uint8_t reports[] = {0xAB, 0x5B, 0x0B};
+    for (unsigned console = 0; console < 2; ++console) {
+        for (unsigned port = 0; port < 2; ++port) {
+            for (unsigned position = 0; position < 3; ++position) {
+                for (unsigned fire = 0; fire < 2; ++fire) {
+                    input_fixture(console ? NES_CONSOLE_NES101 : NES_CONSOLE_NES001, NES_REGION_NTSC);
+                    CHECK(joypad_set_port_device(port, NES_PORT_ARKANOID));
+                    CHECK(joypad_set_paddle(port, positions[position], fire != 0));
+                    latch_controllers();
+                    for (unsigned bit = 0; bit < 12; ++bit) {
+                        uint8_t serial = bit < 8 ? (reports[position] >> (7 - bit)) & 1u : 1;
+                        uint8_t bus = console && !port ? 0xE4 : 0xE0;
+                        write_mem(0x4018, 0xE4);
+                        CHECK(read_mem((uint16_t)(0x4016 + port)) ==
+                              (uint8_t)(bus | (serial << 4) | (fire << 3)));
+                    }
+                }
+            }
+        }
+    }
+
+    for (unsigned position = 0; position < 3; ++position) {
+        for (unsigned fire = 0; fire < 2; ++fire) {
+            input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+            joypad_set_expansion_device(NES_EXPANSION_ARKANOID);
+            joypad_set_paddle(2, positions[position], fire != 0);
+            pad1.buttons = 0x69;
+            pad2.buttons = 0x96;
+            latch_controllers();
+            for (unsigned bit = 0; bit < 12; ++bit) {
+                uint8_t serial = bit < 8 ? (reports[position] >> (7 - bit)) & 1u : 1;
+                uint8_t first = bit < 8 ? (0x69u >> bit) & 1u : 1;
+                uint8_t second = bit < 8 ? (0x96u >> bit) & 1u : 1;
+                write_mem(0x4018, 0xA0);
+                CHECK(read_mem(0x4016) == (uint8_t)(0xA0 | first | (fire << 1)));
+                CHECK(read_mem(0x4017) == (uint8_t)(0xA0 | second | (serial << 1)));
+            }
+        }
+    }
+    return 0;
+}
+
+static int arkanoid_latching(void) {
+    input_fixture(NES_CONSOLE_NES001, NES_REGION_NTSC);
+    joypad_set_port_device(1, NES_PORT_ARKANOID);
+    joypad_set_paddle(1, -1, false); // Clamp to the left stop, report $AB.
+    latch_controllers();
+    for (unsigned bit = 0; bit < 4; ++bit) {
+        write_mem(0x4018, 0);
+        CHECK(read_mem(0x4017) == (((0xABu >> (7 - bit)) & 1u) << 4));
+    }
+    joypad_set_paddle(1, 999, true);
+    for (unsigned bit = 4; bit < 8; ++bit) {
+        write_mem(0x4018, 0);
+        CHECK(read_mem(0x4017) == (0x08 | (((0xABu >> (7 - bit)) & 1u) << 4)));
+    }
+    // Reads with strobe high do not reload the Arkanoid position register.
+    write_mem(0x4016, 1);
+    for (unsigned bit = 0; bit < 3; ++bit) {
+        write_mem(0x4018, 0);
+        CHECK(read_mem(0x4017) == 0x18);
+    }
+    write_mem(0x4016, 0);
+    for (unsigned bit = 0; bit < 8; ++bit) {
+        write_mem(0x4018, 0);
+        CHECK(read_mem(0x4017) == (0x08 | (((0x0Bu >> (7 - bit)) & 1u) << 4)));
+    }
+    joypad_set_paddle(1, 0xA4, false);
+    latch_controllers();
+    write_mem(0x4018, 0);
+    CHECK(read_mem(0x4017) == 0);
+    write_mem(0x4016, 0); // Repeated low writes must not re-latch the position.
+    write_mem(0x4018, 0);
+    CHECK(read_mem(0x4017) == 0x10);
+    write_mem(0x4016, 0);
+    write_mem(0x4018, 0);
+    CHECK(read_mem(0x4017) == 0);
+
+    input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+    joypad_set_expansion_device(NES_EXPANSION_ARKANOID);
+    joypad_set_paddle(2, 0x54, false);
+    latch_controllers();
+    for (unsigned read = 0; read < 20; ++read) {
+        write_mem(0x4018, 0);
+        CHECK((read_mem(0x4016) & 2u) == 0);
+    }
+    joypad_set_paddle(2, 0xF4, true);
+    write_mem(0x4018, 0);
+    CHECK((read_mem(0x4016) & 2u) == 2);
+    CHECK((read_mem(0x4017) & 2u) == 2); // Button-port reads did not consume the old $54 report.
+    return 0;
+}
+
+static int arkanoid_cpu_clocks(void) {
+    for (unsigned famicom = 0; famicom < 2; ++famicom) {
+        input_fixture(famicom ? NES_CONSOLE_HVC001 : NES_CONSOLE_NES001, NES_REGION_NTSC);
+        if (famicom) joypad_set_expansion_device(NES_EXPANSION_ARKANOID);
+        else joypad_set_port_device(1, NES_PORT_ARKANOID);
+        joypad_set_paddle(famicom ? 2 : 1, 0xA4, false);
+        latch_controllers();
+        input_program(0x1E, 0x4017);
+        CHECK(cpu_step(&cpu) == 7);
+        write_mem(0x4018, 0);
+        CHECK(read_mem(0x4017) == (famicom ? 0 : 0x10));
+    }
+    for (unsigned phase = 0; phase < 2; ++phase) {
+        input_fixture(NES_CONSOLE_NES001, NES_REGION_NTSC);
+        joypad_set_port_device(1, NES_PORT_ARKANOID);
+        joypad_set_paddle(1, 0x54, false);
+        latch_controllers();
+        joypad_set_paddle(1, 0xF4, false);
+        pad1.shift = 0xFF;
+        cpu_total_cycles = phase;
+        input_program(0xCE, 0x4016);
+        CHECK(cpu_step(&cpu) == 6);
+        CHECK(cpu_step(&cpu) == 2);
+        write_mem(0x4018, 0);
+        CHECK(read_mem(0x4017) == (phase ? 0x10 : 0));
+    }
+    return 0;
+}
+
+static int device_selection(void) {
+    input_fixture(NES_CONSOLE_NES001, NES_REGION_NTSC);
+    CHECK(joypad_set_port_device_name(0, "arkanoid"));
+    CHECK(joypad_port_device(0) == NES_PORT_ARKANOID);
+    CHECK(strcmp(joypad_port_device_name(0), "arkanoid") == 0);
+    CHECK(!joypad_set_port_device_name(0, NULL));
+    CHECK(!joypad_set_port_device_name(0, "unknown"));
+    CHECK(!joypad_set_port_device(2, NES_PORT_GAMEPAD));
+    CHECK(!joypad_set_port_device(0, (NesPortDevice)999));
+    CHECK(!joypad_set_paddle(3, 0xA4, false));
+    CHECK(joypad_set_expansion_device_name("arkanoid"));
+    CHECK(joypad_expansion_device() == NES_EXPANSION_ARKANOID);
+    CHECK(strcmp(joypad_expansion_device_name(), "arkanoid") == 0);
+    CHECK(!joypad_set_expansion_device_name(NULL));
+    CHECK(!joypad_set_expansion_device_name("unknown"));
+    CHECK(!joypad_set_expansion_device((NesExpansionDevice)999));
+    CHECK(joypad_configuration_valid());
+    joypad_set_adapter(NES_ADAPTER_FAMICOM_TWO);
+    CHECK(!joypad_configuration_valid());
+    joypad_set_expansion_device(NES_EXPANSION_NONE);
+    CHECK(joypad_configuration_valid());
+    joypad_set_adapter(NES_ADAPTER_FOUR_SCORE);
+    CHECK(!joypad_configuration_valid());
+    CHECK(joypad_set_port_device_name(0, "pad"));
+    CHECK(joypad_configuration_valid());
+    joypad_set_adapter(NES_ADAPTER_NONE);
+    pad1.buttons = 0x81;
+    latch_controllers();
+    for (unsigned bit = 0; bit < 8; ++bit) {
+        write_mem(0x4018, 0);
+        CHECK(read_mem(0x4016) == ((0x81u >> bit) & 1u));
+    }
+    CHECK(joypad_set_port_device_name(0, "none"));
+    write_mem(0x4018, 0);
+    CHECK(read_mem(0x4016) == 0);
+    return 0;
+}
+
 int test_input_accuracy(void) {
     static int (*const tests[])(void) = {
         console_open_bus, console_read_clocks, console_strobe_timing,
         famicom_microphone, console_dma_reads, console_selection_lifetime,
         adapter_reports, adapter_strobes_and_disconnect, adapter_cpu_and_dma_clocks,
-        adapter_selection_lifetime
+        adapter_selection_lifetime, arkanoid_reports, arkanoid_latching,
+        arkanoid_cpu_clocks, device_selection
     };
     NesConsoleModel saved_model = nes_console_model();
     NesRegion saved_region = nes_timing()->region;
+    NesInputAdapter saved_adapter = joypad_adapter();
+    NesPortDevice saved_ports[] = {joypad_port_device(0), joypad_port_device(1)};
+    NesExpansionDevice saved_expansion = joypad_expansion_device();
     int failures = 0;
     input_checks = 0;
     for (unsigned i = 0; i < sizeof(tests) / sizeof(tests[0]); ++i) failures += tests[i]();
@@ -430,7 +599,10 @@ int test_input_accuracy(void) {
     nes_set_console_model(saved_model);
     nes_set_region(saved_region);
     joypad_set_microphone(false);
-    joypad_set_adapter(NES_ADAPTER_NONE);
+    joypad_set_adapter(saved_adapter);
+    joypad_set_port_device(0, saved_ports[0]);
+    joypad_set_port_device(1, saved_ports[1]);
+    joypad_set_expansion_device(saved_expansion);
     printf("Input: %u checks, %d failures\n", input_checks, failures);
     return failures;
 }
