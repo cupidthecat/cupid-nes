@@ -482,8 +482,15 @@ int main(int argc, char *argv[]) {
                     joypad_set_zapper(slot, aim_x, aim_y, trigger);
                 }
             }
-            if (e.type == SDL_QUIT)
-                running = false;
+            if (e.type == SDL_QUIT) {
+                if (rom_is_fds() && !fds_flush()) {
+                    fprintf(stderr, "Failed to save modified FDS media; keeping the emulator open\n");
+                    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "FDS Save Error",
+                        "The modified disk image could not be saved. The emulator will remain open so the media changes are not discarded.", window);
+                } else {
+                    running = false;
+                }
+            }
             if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
                 && e.key.windowID == SDL_GetWindowID(window)
                 && family_basic_key_event(&e.key, tape_play_path, tape_record_path)) continue;
@@ -571,6 +578,10 @@ int main(int argc, char *argv[]) {
                 }
             }
         }
+
+        // A successful quit flush must be the last chance for emulation to mutate
+        // writable disk media. Do not run another frame after accepting SDL_QUIT.
+        if (!running) break;
     
         // Run CPU steps until the PPU completes the current frame.
         start_frame();
@@ -610,7 +621,11 @@ int main(int argc, char *argv[]) {
     bool tape_failed = family_basic_tape_failed();
     if (tape_failed) fprintf(stderr, "Tape recording stopped because the capture buffer could not grow\n");
     family_basic_shutdown();
-    unload_rom();
+    if (!unload_rom()) {
+        fprintf(stderr, "Failed to unload modified FDS media\n");
+        SDL_Quit();
+        return 1;
+    }
     SDL_Quit();
     return tape_saved && !tape_failed ? 0 : 1;
 }

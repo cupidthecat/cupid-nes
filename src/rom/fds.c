@@ -36,16 +36,16 @@
 #define FDS_WORK_RAM_SIZE 0x8000u
 #define FDS_CHR_RAM_SIZE 0x2000u
 #define FDS_SIDE_SIZE 65500u
+#define QD_SIDE_SIZE 65536u
 #define FDS_INITIAL_GAP_BYTES (28300u / 8u)
 #define FDS_BLOCK_GAP_BYTES (976u / 8u)
 #define FDS_NO_SIDE SIZE_MAX
-#define FDS_NO_RAW_OFFSET UINT32_MAX
 
 typedef struct {
     uint8_t *raw;
     uint8_t *drive;
-    uint32_t *raw_offset;
     size_t drive_size;
+    bool dirty;
 } FdsSide;
 
 typedef struct {
@@ -85,7 +85,9 @@ struct FdsImage {
     uint8_t bios[FDS_BIOS_SIZE];
     FdsSide *sides;
     size_t side_count;
+    size_t side_capacity;
     bool headered;
+    bool qd_format;
     uint8_t header[16];
     char *disk_path;
     bool write_protected;
@@ -131,7 +133,6 @@ static FdsState fds;
 
 typedef struct {
     uint8_t *data;
-    uint32_t *raw_offset;
     size_t size;
     size_t capacity;
 } DriveBuilder;
@@ -156,17 +157,13 @@ static bool builder_reserve(DriveBuilder *builder, size_t extra) {
     uint8_t *data = (uint8_t *)realloc(builder->data, capacity);
     if (!data) return false;
     builder->data = data;
-    uint32_t *offsets = (uint32_t *)realloc(builder->raw_offset, capacity * sizeof(*offsets));
-    if (!offsets) return false;
-    builder->raw_offset = offsets;
     builder->capacity = capacity;
     return true;
 }
 
-static bool builder_append(DriveBuilder *builder, uint8_t value, uint32_t raw_offset) {
+static bool builder_append(DriveBuilder *builder, uint8_t value) {
     if (!builder_reserve(builder, 1)) return false;
     builder->data[builder->size] = value;
-    builder->raw_offset[builder->size] = raw_offset;
     builder->size++;
     return true;
 }
@@ -174,55 +171,52 @@ static bool builder_append(DriveBuilder *builder, uint8_t value, uint32_t raw_of
 static bool builder_fill(DriveBuilder *builder, uint8_t value, size_t count) {
     if (!builder_reserve(builder, count)) return false;
     memset(builder->data + builder->size, value, count);
-    for (size_t i = 0; i < count; ++i)
-        builder->raw_offset[builder->size + i] = FDS_NO_RAW_OFFSET;
     builder->size += count;
     return true;
 }
 
-static size_t fds_block_length(const uint8_t *raw, size_t pos) {
+static size_t fds_block_length(const uint8_t *raw, size_t pos, bool qd_format) {
     switch (raw[pos]) {
         case 1: return 56;
         case 2: return 2;
         case 3: return 16;
         case 4:
-            if (pos < 3) return 0;
-            return 1u + raw[pos - 3] + ((size_t)raw[pos - 2] << 8);
+            if (pos < (qd_format ? 5u : 3u)) return 0;
+            return 1u + raw[pos - (qd_format ? 5u : 3u)]
+                + ((size_t)raw[pos - (qd_format ? 4u : 2u)] << 8);
         default: return 0;
     }
 }
 
-static bool build_drive_side(FdsSide *side) {
+static bool build_drive_side(FdsSide *side, size_t side_capacity, bool qd_format) {
     DriveBuilder builder = {0};
     if (!builder_fill(&builder, 0, FDS_INITIAL_GAP_BYTES)) goto fail;
 
     size_t pos = 0;
-    while (pos < FDS_SIDE_SIZE) {
-        size_t block_length = fds_block_length(side->raw, pos);
-        if (!block_length || block_length > FDS_SIDE_SIZE - pos) {
-            if (!builder_append(&builder, 0x80, FDS_NO_RAW_OFFSET)) goto fail;
-            for (; pos < FDS_SIDE_SIZE; ++pos)
-                if (!builder_append(&builder, side->raw[pos], (uint32_t)pos)) goto fail;
+    while (pos < side_capacity) {
+        size_t block_length = fds_block_length(side->raw, pos, qd_format);
+        size_t stored_length = block_length + (qd_format && block_length ? 2u : 0u);
+        if (!block_length || stored_length > side_capacity - pos) {
+            if (!builder_append(&builder, 0x80)) goto fail;
+            for (; pos < side_capacity; ++pos)
+                if (!builder_append(&builder, side->raw[pos])) goto fail;
             break;
         }
 
-        if (!builder_append(&builder, 0x80, FDS_NO_RAW_OFFSET)) goto fail;
-        for (size_t i = 0; i < block_length; ++i)
-            if (!builder_append(&builder, side->raw[pos + i], (uint32_t)(pos + i))) goto fail;
-        if (!builder_append(&builder, 0x4D, FDS_NO_RAW_OFFSET)
-            || !builder_append(&builder, 0x62, FDS_NO_RAW_OFFSET)
-            || !builder_fill(&builder, 0, FDS_BLOCK_GAP_BYTES)) goto fail;
-        pos += block_length;
+        if (!builder_append(&builder, 0x80)) goto fail;
+        for (size_t i = 0; i < stored_length; ++i)
+            if (!builder_append(&builder, side->raw[pos + i])) goto fail;
+        if (!qd_format && (!builder_append(&builder, 0x4D) || !builder_append(&builder, 0x62))) goto fail;
+        if (!builder_fill(&builder, 0, FDS_BLOCK_GAP_BYTES)) goto fail;
+        pos += stored_length;
     }
-    if (builder.size < FDS_SIDE_SIZE && !builder_fill(&builder, 0, FDS_SIDE_SIZE - builder.size)) goto fail;
+    if (builder.size < side_capacity && !builder_fill(&builder, 0, side_capacity - builder.size)) goto fail;
     side->drive = builder.data;
-    side->raw_offset = builder.raw_offset;
     side->drive_size = builder.size;
     return true;
 
 fail:
     free(builder.data);
-    free(builder.raw_offset);
     return false;
 }
 
@@ -230,7 +224,6 @@ static void free_side(FdsSide *side) {
     if (!side) return;
     free(side->raw);
     free(side->drive);
-    free(side->raw_offset);
     memset(side, 0, sizeof(*side));
 }
 
@@ -242,14 +235,26 @@ FdsImage *fds_image_create(const uint8_t *disk, size_t disk_size,
     bool headered = disk_size >= 16 && memcmp(disk, "FDS\x1A", 4) == 0;
     size_t side_count;
     size_t offset;
+    size_t side_capacity;
+    bool qd_format;
     if (headered) {
         side_count = disk[4];
         offset = 16;
-        if (!side_count || side_count > (SIZE_MAX - offset) / FDS_SIDE_SIZE
-            || disk_size != offset + side_count * FDS_SIDE_SIZE) return NULL;
+        if (!side_count) return NULL;
+        bool fds_size = side_count <= (SIZE_MAX - offset) / FDS_SIDE_SIZE
+            && disk_size == offset + side_count * FDS_SIDE_SIZE;
+        bool qd_size = side_count <= (SIZE_MAX - offset) / QD_SIDE_SIZE
+            && disk_size == offset + side_count * QD_SIDE_SIZE;
+        if (!fds_size && !qd_size) return NULL;
+        qd_format = qd_size;
+        side_capacity = qd_format ? QD_SIDE_SIZE : FDS_SIDE_SIZE;
     } else {
-        if (!disk_size || disk_size % FDS_SIDE_SIZE) return NULL;
-        side_count = disk_size / FDS_SIDE_SIZE;
+        bool fds_size = disk_size && disk_size % FDS_SIDE_SIZE == 0;
+        bool qd_size = disk_size && disk_size % QD_SIDE_SIZE == 0;
+        if (!fds_size && !qd_size) return NULL;
+        qd_format = qd_size && !fds_size;
+        side_capacity = qd_format ? QD_SIDE_SIZE : FDS_SIDE_SIZE;
+        side_count = disk_size / side_capacity;
         offset = 0;
         if (!side_count || side_count > 255) return NULL;
     }
@@ -262,15 +267,20 @@ FdsImage *fds_image_create(const uint8_t *disk, size_t disk_size,
     if (disk_path && !image->disk_path) { fds_image_destroy(image); return NULL; }
     memcpy(image->bios, bios, FDS_BIOS_SIZE);
     image->side_count = side_count;
+    image->side_capacity = side_capacity;
     image->headered = headered;
+    image->qd_format = qd_format;
     image->write_protected = write_protected;
     if (headered) memcpy(image->header, disk, sizeof(image->header));
 
     for (size_t side = 0; side < side_count; ++side) {
-        image->sides[side].raw = (uint8_t *)malloc(FDS_SIDE_SIZE);
+        image->sides[side].raw = (uint8_t *)malloc(side_capacity);
         if (!image->sides[side].raw) { fds_image_destroy(image); return NULL; }
-        memcpy(image->sides[side].raw, disk + offset + side * FDS_SIDE_SIZE, FDS_SIDE_SIZE);
-        if (!build_drive_side(&image->sides[side])) { fds_image_destroy(image); return NULL; }
+        memcpy(image->sides[side].raw, disk + offset + side * side_capacity, side_capacity);
+        if (!build_drive_side(&image->sides[side], side_capacity, qd_format)) {
+            fds_image_destroy(image);
+            return NULL;
+        }
     }
     return image;
 }
@@ -396,9 +406,9 @@ static uint8_t audio_read(FdsAudio *audio, uint16_t addr, uint8_t open_bus) {
     }
     switch (addr) {
         case 0x4090: return (uint8_t)((open_bus & 0xC0) | (audio->volume.gain & 0x3F));
-        case 0x4091: return (uint8_t)(((uint32_t)audio->wave_position << 6 | (audio->wave_overflow >> 10)) & 0xFF);
+        case 0x4091: return (uint8_t)(((uint32_t)audio->wave_position << 6 | (audio->wave_overflow >> 12)) & 0xFF);
         case 0x4092: return (uint8_t)((open_bus & 0xC0) | (audio->mod.envelope.gain & 0x3F));
-        case 0x4093: return (uint8_t)((open_bus & 0x80) | (((uint32_t)audio->mod.table_position << 7 | (audio->mod.overflow >> 9)) & 0x7F));
+        case 0x4093: return (uint8_t)((open_bus & 0x80) | ((audio->mod.overflow >> 5) & 0x7F));
         case 0x4094: return (uint8_t)(((int)audio->mod.counter * audio->mod.envelope.gain >> 4) & 0xFF);
         case 0x4095: {
             static const int8_t lut[8] = {0, 1, 2, 4, 12, -4, -2, -1};
@@ -482,6 +492,64 @@ void fds_activate(FdsImage *image) {
 
 bool fds_active(void) { return fds.image != NULL; }
 
+static bool rebuild_side(const FdsImage *image, const FdsSide *side, uint8_t *output) {
+    if (!image || !side || !output) return false;
+    size_t capacity = image->side_capacity;
+    if (!side->dirty) {
+        memcpy(output, side->raw, capacity);
+        return true;
+    }
+
+    memset(output, 0, capacity);
+    bool in_gap = true;
+    size_t input = 0, written = 0;
+    size_t file_size = 0;
+    while (input < side->drive_size && written < capacity) {
+        if (in_gap) {
+            if (side->drive[input] == 0x80) in_gap = false;
+            input++;
+            continue;
+        }
+
+        size_t block_length;
+        switch (side->drive[input]) {
+            case 1:
+                block_length = 56;
+                break;
+            case 2:
+                block_length = 2;
+                break;
+            case 3:
+                block_length = 16;
+                if (input + 14 >= side->drive_size) return false;
+                file_size = side->drive[input + 13] | ((size_t)side->drive[input + 14] << 8);
+                break;
+            case 4:
+                block_length = 1u + file_size;
+                break;
+            default: {
+                size_t remaining = side->drive_size - input;
+                if (remaining > capacity - written) remaining = capacity - written;
+                memcpy(output + written, side->drive + input, remaining);
+                return true;
+            }
+        }
+
+        size_t stored_length = block_length + (image->qd_format ? 2u : 0u);
+        if (stored_length > side->drive_size - input) return false;
+        if (stored_length > capacity - written) break;
+        memcpy(output + written, side->drive + input, stored_length);
+        written += stored_length;
+        input += stored_length;
+        if (!image->qd_format) {
+            if (side->drive_size - input < 2) return false;
+            input += 2; // Skip the synthetic CRC bytes in the drive stream.
+        }
+        in_gap = true;
+    }
+    return true;
+}
+
 static bool atomic_replace(const char *path, const uint8_t *data, size_t size) {
     size_t path_len = strlen(path);
     const char suffix[] = ".cupid-fds.tmp";
@@ -491,8 +559,7 @@ static bool atomic_replace(const char *path, const uint8_t *data, size_t size) {
     memcpy(temp, path, path_len);
     memcpy(temp + path_len, suffix, sizeof(suffix));
 
-    remove(temp);
-    FILE *fp = fopen(temp, "wb");
+    FILE *fp = fopen(temp, "wbx");
     if (!fp) { free(temp); return false; }
     size_t written = fwrite(data, 1, size, fp);
     int close_result = fclose(fp);
@@ -517,14 +584,28 @@ bool fds_flush(void) {
     if (!fds.image || !fds.dirty) return true;
     if (fds.image->write_protected || !fds.image->disk_path) return false;
     size_t prefix = fds.image->headered ? 16u : 0u;
-    if (fds.image->side_count > (SIZE_MAX - prefix) / FDS_SIDE_SIZE) return false;
-    size_t size = prefix + fds.image->side_count * FDS_SIDE_SIZE;
+    if (fds.image->side_count > (SIZE_MAX - prefix) / fds.image->side_capacity) return false;
+    size_t size = prefix + fds.image->side_count * fds.image->side_capacity;
     uint8_t *output = (uint8_t *)malloc(size);
     if (!output) return false;
     if (prefix) memcpy(output, fds.image->header, 16);
-    for (size_t side = 0; side < fds.image->side_count; ++side)
-        memcpy(output + prefix + side * FDS_SIDE_SIZE, fds.image->sides[side].raw, FDS_SIDE_SIZE);
+    for (size_t side = 0; side < fds.image->side_count; ++side) {
+        uint8_t *side_output = output + prefix + side * fds.image->side_capacity;
+        if (!rebuild_side(fds.image, &fds.image->sides[side], side_output)) {
+            free(output);
+            return false;
+        }
+    }
     bool ok = atomic_replace(fds.image->disk_path, output, size);
+    if (ok) {
+        for (size_t side = 0; side < fds.image->side_count; ++side) {
+            FdsSide *disk_side = &fds.image->sides[side];
+            if (!disk_side->dirty) continue;
+            memcpy(disk_side->raw, output + prefix + side * fds.image->side_capacity,
+                   fds.image->side_capacity);
+            disk_side->dirty = false;
+        }
+    }
     free(output);
     if (ok) fds.dirty = false;
     return ok;
@@ -532,7 +613,8 @@ bool fds_flush(void) {
 
 void fds_shutdown(void) {
     if (!fds.image) return;
-    (void)fds_flush();
+    if (!fds_flush() && fds.dirty)
+        fprintf(stderr, "Failed to flush modified FDS disk image; unsaved media changes are being discarded\n");
     fds_image_destroy(fds.image);
     memset(&fds, 0, sizeof(fds));
     fds.current_side = FDS_NO_SIDE;
@@ -586,11 +668,8 @@ static void disk_write_byte(uint8_t value) {
     FdsSide *side = &fds.image->sides[fds.current_side];
     if (fds.disk_position >= side->drive_size || side->drive[fds.disk_position] == value) return;
     side->drive[fds.disk_position] = value;
-    uint32_t raw_offset = side->raw_offset[fds.disk_position];
-    if (raw_offset != FDS_NO_RAW_OFFSET && raw_offset < FDS_SIDE_SIZE) {
-        side->raw[raw_offset] = value;
-        fds.dirty = true;
-    }
+    side->dirty = true;
+    fds.dirty = true;
 }
 
 static void clock_timer(void) {
@@ -671,8 +750,7 @@ static void clock_disk(void) {
         fds.end_of_head = true;
         if (fds.transfer_irq_enabled) fds.disk_irq = true;
     } else {
-        // The physical byte period is 149 1/3 CPU cycles. The controller uses the
-        // integer 149-cycle interval here; tests lock this approximation explicitly.
+        // A delay value of 149 produces the next transfer on the 150th CPU clock.
         fds.transfer_delay = 149;
     }
 }
@@ -739,7 +817,7 @@ uint8_t fds_cpu_read_bus(uint16_t addr, uint8_t open_bus) {
             uint8_t value = open_bus & 0x24;
             if (fds.timer_irq) value |= 0x01;
             if (fds.mirroring == MIRROR_HORIZONTAL) value |= 0x08;
-            if (fds.bad_crc) value |= 0x10;
+            if (fds.image->qd_format && fds.bad_crc) value |= 0x10;
             if (fds.transfer_complete) value |= 0x80;
             fds.timer_irq = false;
             return value;

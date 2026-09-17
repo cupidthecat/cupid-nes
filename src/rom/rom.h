@@ -57,8 +57,9 @@ extern uint8_t   *chr_rom;
 
 int load_rom(const char *filename);
 int load_fds(const char *disk_path, const char *bios_path, bool write_protected);
-// Eject the cartridge and release loader-owned buffers; safe to call repeatedly.
-void unload_rom(void);
+// Eject the cartridge and release loader-owned buffers; false preserves dirty FDS media
+// when its pending disk image cannot be flushed.
+bool unload_rom(void);
 // Load an iNES image without a disk file or battery save path; copies its bytes.
 // Failed loads preserve the currently inserted cartridge.
 int load_rom_memory(const uint8_t *data, size_t size);

@@ -205,6 +205,13 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
     memcpy(new_prg, data + offset, new_prg_size);
     if (rom_chr_size) memcpy(new_chr, data + offset + new_prg_size, rom_chr_size);
 
+    if (fds_active() && fds_disk_dirty() && !fds_flush()) {
+        fprintf(stderr, "Cannot replace the active FDS disk while modified media is unsaved\n");
+        free(new_prg);
+        free(new_chr);
+        return -1;
+    }
+
     int mapper_no = mapper_init_from_header(&header, new_prg, new_prg_size,
                                             new_chr, new_chr_size);
     if (mapper_no < 0) {
@@ -245,6 +252,12 @@ int load_fds_memory(const uint8_t *disk, size_t disk_size,
         return -1;
     }
 
+    if (fds_active() && fds_disk_dirty() && !fds_flush()) {
+        fprintf(stderr, "Cannot replace the active FDS disk while modified media is unsaved\n");
+        fds_image_destroy(image);
+        return -1;
+    }
+
     // The prepared image owns all allocations needed by the new machine, so activation
     // cannot strand the current cartridge after a validation or allocation failure.
     if (mapper_init_fds(image) != 0) {
@@ -268,7 +281,11 @@ int load_fds_memory(const uint8_t *disk, size_t disk_size,
 
 bool rom_is_fds(void) { return fds_loaded != 0; }
 
-void unload_rom(void) {
+bool unload_rom(void) {
+    if (fds_active() && fds_disk_dirty() && !fds_flush()) {
+        fprintf(stderr, "Cannot unload FDS disk while modified media is unsaved\n");
+        return false;
+    }
     mapper_shutdown();
     free(prg_rom);
     free(chr_rom);
@@ -278,6 +295,7 @@ void unload_rom(void) {
     mirroring_mode = 0;
     fds_loaded = 0;
     nes_set_region(NES_REGION_NTSC);
+    return true;
 }
 
 static int read_file(const char *path, uint8_t **data, size_t *size) {
