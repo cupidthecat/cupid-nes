@@ -357,6 +357,181 @@ static int test_mmc3_render_trace(void) {
     return 0;
 }
 
+static int test_taito_banks_aliases_and_mirroring(void) {
+    CHECK(fixture(33, 0x80000, 0x20000, false) == 33);
+    CHECK(cart_cpu_read_bus(0x8000, 0x56) == 0x56 && cart_cpu_read_bus(0xA000, 0x96) == 0x96);
+    CHECK(cart_cpu_read(0xC000) == 62 && cart_cpu_read(0xE000) == 63);
+
+    cart_cpu_write(0x9000, 0x7F); // $9000 aliases $8000.
+    cart_cpu_write(0xD001, 0x42); // $D001 aliases $8001.
+    CHECK(cart_cpu_read(0x8000) == 63 && cart_cpu_read(0xA000) == 2);
+    CHECK(cart_get_mirroring() == MIRROR_HORIZONTAL);
+    cart_cpu_write(0x8000, 3);
+    CHECK(cart_get_mirroring() == MIRROR_VERTICAL);
+
+    cart_cpu_write(0x9002, 3);
+    cart_cpu_write(0xD003, 5);
+    cart_cpu_write(0xB000, 12);
+    cart_cpu_write(0xB001, 13);
+    cart_cpu_write(0xF002, 14);
+    cart_cpu_write(0xF003, 15);
+    static const uint8_t expected_chr[] = {6, 7, 10, 11, 12, 13, 14, 15};
+    for (unsigned slot = 0; slot < 8; ++slot)
+        CHECK(cart_ppu_read((uint16_t)(slot * 0x400)) == expected_chr[slot]);
+
+    uint8_t nt[0x1000] = {0};
+    cart_nt_write(0x2000, 0x33, nt);
+    CHECK(cart_nt_read(0x2800, nt) == 0x33);
+    CHECK(cart_nt_read(0x2400, nt) == 0);
+    CHECK(!cart_irq_pending());
+    a12_pulse(0);
+    a12_pulse(12);
+    CHECK(!cart_irq_pending() && cart->clock == NULL);
+
+    cart->reset();
+    CHECK(cart_cpu_read_bus(0x8000, 0x56) == 0x56 && cart_cpu_read_bus(0xA000, 0x96) == 0x96);
+    CHECK(cart_ppu_read(0x0012) == 0x12 && cart_ppu_read(0x1C34) == 0x34);
+    CHECK(cart_get_mirroring() == MIRROR_HORIZONTAL && !cart_irq_pending());
+
+    CHECK(fixture(48, 0x80000, 0x20000, false) == 48);
+    CHECK(cart != NULL && cart->clock != NULL);
+    CHECK(cart_cpu_read_bus(0x8000, 0x56) == 0x56 && cart_cpu_read_bus(0xA000, 0x96) == 0x96);
+    CHECK(cart_ppu_read(0x0012) == 0x12 && cart_ppu_read(0x1C34) == 0x34);
+    cart_cpu_write(0xE000, 0);
+    CHECK(cart_get_mirroring() == MIRROR_VERTICAL);
+    cart_cpu_write(0x9000, 0x41); // Bank write does not carry mapper 33's mirroring bit.
+    cart_cpu_write(0x9001, 4);
+    CHECK(cart_cpu_read(0x8000) == 1 && cart_cpu_read(0xA000) == 4);
+    CHECK(cart_cpu_read(0xC000) == 62 && cart_cpu_read(0xE000) == 63);
+    CHECK(cart_get_mirroring() == MIRROR_VERTICAL);
+    cart_cpu_write(0x9002, 7);
+    cart_cpu_write(0x9003, 9);
+    cart_cpu_write(0xB000, 20);
+    cart_cpu_write(0xB001, 21);
+    cart_cpu_write(0xB002, 22);
+    cart_cpu_write(0xB003, 23);
+    static const uint8_t expected_chr48[] = {14, 15, 18, 19, 20, 21, 22, 23};
+    for (unsigned slot = 0; slot < 8; ++slot)
+        CHECK(cart_ppu_read((uint16_t)(slot * 0x400)) == expected_chr48[slot]);
+    cart_cpu_write(0xE001, 0x40); // Only $E000 is decoded in this register group.
+    CHECK(cart_get_mirroring() == MIRROR_VERTICAL);
+    cart_cpu_write(0xF000, 0x40); // $F000 aliases $E000.
+    CHECK(cart_get_mirroring() == MIRROR_HORIZONTAL);
+
+    memset(nt, 0, sizeof(nt));
+    cart_nt_write(0x2000, 0x48, nt);
+    CHECK(cart_nt_read(0x2400, nt) == 0x48);
+    CHECK(cart_nt_read(0x2800, nt) == 0);
+    cart->reset();
+    CHECK(cart_cpu_read_bus(0x8000, 0x56) == 0x56 && cart_cpu_read_bus(0xA000, 0x96) == 0x96);
+    CHECK(cart_get_mirroring() == MIRROR_HORIZONTAL && !cart_irq_pending());
+    return 0;
+}
+
+static int test_taito48_irq(void) {
+    CHECK(fixture(48, 0x20000, 0x2000, false) == 48);
+    cart_cpu_write(0xC000, 0xFD); // Inverted reload value is 2 on the original board.
+    cart_cpu_write(0xC001, 0);
+    cart_cpu_write(0xC002, 0);
+    a12_pulse(0);
+    CHECK(!cart_irq_pending());
+    cart_notify_ppu_address(0x2000, 12);
+    cart_notify_ppu_address(0x1000, 18); // Two CPU clocks low does not qualify.
+    CHECK(!cart_irq_pending());
+    a12_pulse(24);
+    CHECK(!cart_irq_pending());
+    a12_pulse(36);
+    CHECK(!cart_irq_pending()); // Counter reached zero, but assertion is delayed.
+    cart->clock(21);
+    CHECK(!cart_irq_pending());
+    cart->clock(1);
+    CHECK(cart_irq_pending());
+
+    cart_cpu_write(0xD000, 0xFF); // $D000 aliases $C000 and acknowledges the line.
+    CHECK(!cart_irq_pending());
+    cart_cpu_write(0xD001, 0);
+    cart_cpu_write(0xD002, 0);
+    a12_pulse(48); // Reload zero schedules an IRQ on this qualifying edge.
+    cart->clock(22);
+    CHECK(cart_irq_pending());
+    cart_cpu_write(0xD003, 0);
+    CHECK(!cart_irq_pending());
+    cart_cpu_write(0xC001, 0);
+    a12_pulse(60);
+    cart->clock(22);
+    CHECK(!cart_irq_pending()); // Disabled counter activity cannot schedule another IRQ.
+
+    cart_cpu_write(0xC002, 0);
+    cart_cpu_write(0xC001, 0);
+    a12_pulse(72);
+    cart->clock(5);
+    cart_cpu_write(0xC003, 0);
+    cart->clock(16);
+    CHECK(!cart_irq_pending());
+    cart->clock(1);
+    CHECK(cart_irq_pending()); // Disabling the counter does not cancel an already latched delay.
+
+    iNESHeader h = header_for(48, 0x20000, false);
+    h.flags7 |= 0x08;
+    h.prg_ram_size = 0x10; // Submapper 1.
+    CHECK(fixture_with_header(&h, 0x20000, 0x2000) == 48);
+    cart_cpu_write(0xC000, 0xFF); // Submapper 1 adds one after inversion.
+    cart_cpu_write(0xC001, 0);
+    cart_cpu_write(0xC002, 0);
+    a12_pulse(0);
+    cart->clock(6);
+    CHECK(!cart_irq_pending()); // First edge loaded one, so no delay was scheduled.
+    a12_pulse(12);
+    cart->clock(5);
+    CHECK(!cart_irq_pending());
+    cart->clock(1);
+    CHECK(cart_irq_pending());
+    cart->reset();
+    CHECK(!cart_irq_pending());
+    cart->clock(32);
+    CHECK(!cart_irq_pending());
+    return 0;
+}
+
+static int test_taito48_cpu_irq(void) {
+    for (unsigned submapper = 0; submapper < 2; ++submapper) {
+        iNESHeader h = header_for(48, 0x20000, false);
+        h.flags7 |= 8;
+        h.prg_ram_size = (uint8_t)(submapper << 4);
+        CHECK(fixture_with_header(&h, 0x20000, 0x2000) == 48);
+        fixture_prg[0x1FFFC] = 0;
+        fixture_prg[0x1FFFD] = 2;
+        fixture_prg[0x1FFFE] = 0;
+        fixture_prg[0x1FFFF] = 3;
+        nes_set_region(NES_REGION_NTSC);
+        ppu_power_on(&ppu);
+        apu_power_on(&apu);
+        cpu_power_on(&cpu);
+        cart->reset();
+        for (unsigned i = 0; i < 32; ++i) write_mem((uint16_t)(0x0200 + i), 0xEA);
+        cpu.status &= (uint8_t)~INTERRUPT_FLAG;
+        cart_cpu_write(0xC000, submapper ? 0 : 0xFF);
+        cart_cpu_write(0xC001, 0);
+        cart_cpu_write(0xC002, 0);
+        a12_pulse(0);
+        unsigned delay = submapper ? 6 : 22;
+        for (unsigned elapsed = 2; elapsed < delay; elapsed += 2) {
+            CHECK(cpu_step(&cpu) == 2);
+            CHECK(!cart_irq_pending());
+        }
+        CHECK(cpu_step(&cpu) == 2 && cart_irq_pending());
+        for (unsigned step = 0; step < 3 && cpu.pc != 0x0300; ++step) (void)cpu_step(&cpu);
+        CHECK(cpu.pc == 0x0300 && (cpu.status & INTERRUPT_FLAG));
+        CHECK(cart_irq_pending());
+        write_mem(0xC003, 0);
+        CHECK(!cart_irq_pending());
+        write_mem(0x8000, 3);
+        cpu_soft_reset(&cpu);
+        CHECK(cart_cpu_read(0x8000) == 3);
+    }
+    return 0;
+}
+
 static int test_simple_mapper_registers(void) {
     CHECK(fixture(2, 0x100000, 0x2000, true) == 2);
     cart_cpu_write(0x8000, 32);
@@ -1413,6 +1588,50 @@ static int test_mcacc_cpu_ppu_irq_path(void) {
     CHECK(cart_irq_pending());
     write_mem(0xE000, 0);
     CHECK(!cart_irq_pending());
+    return 0;
+}
+
+static int test_taito_loader_transaction(void) {
+    size_t image_size;
+    iNESHeader h = header_for(33, 0x8000, false);
+    uint8_t *image = image_for(&h, 0x8000, 0x2000, &image_size);
+    CHECK(image != NULL);
+    CHECK(load_rom_memory(image, image_size) == 0);
+    free(image);
+    image = NULL;
+    CHECK(rom_mapper_number(&ines_header) == 33 && cart != NULL);
+    uint8_t *previous_prg = prg_rom;
+    uint8_t *previous_chr = chr_rom;
+
+    h.flags7 |= 0x08; // NES 2.0 mapper 33 with an unsupported 16KB PRG-RAM layout.
+    h.flags10 = 8;
+    image = image_for(&h, 0x8000, 0x2000, &image_size);
+    CHECK(image != NULL);
+    CHECK(load_rom_memory(image, image_size) == -1);
+    free(image);
+    image = NULL;
+    CHECK(prg_rom == previous_prg && chr_rom == previous_chr);
+    CHECK(rom_mapper_number(&ines_header) == 33);
+
+    h = header_for(48, 0x8000, false);
+    h.flags7 |= 0x08;
+    h.prg_ram_size = 0x10; // Supported mapper 48 submapper 1.
+    image = image_for(&h, 0x8000, 0x2000, &image_size);
+    CHECK(image != NULL);
+    CHECK(load_rom_memory(image, image_size) == 0);
+    free(image);
+    image = NULL;
+    CHECK(rom_mapper_number(&ines_header) == 48 && cart != NULL && cart->clock != NULL);
+    previous_prg = prg_rom;
+    previous_chr = chr_rom;
+
+    h.prg_ram_size = 0x20; // Unknown mapper 48 submapper 2.
+    image = image_for(&h, 0x8000, 0x2000, &image_size);
+    CHECK(image != NULL);
+    CHECK(load_rom_memory(image, image_size) == -1);
+    free(image);
+    CHECK(prg_rom == previous_prg && chr_rom == previous_chr);
+    CHECK(rom_mapper_number(&ines_header) == 48);
     return 0;
 }
 
@@ -2484,6 +2703,8 @@ int test_mapper_accuracy(void) {
         test_mmc3_irq_edges, test_mmc3_render_trace, test_tqrom_mixed_chr_memory,
         test_mcacc_irq_divider, test_mcacc_irq_reload_and_enable,
         test_mcacc_banks_ram_and_loader, test_mcacc_cpu_ppu_irq_path,
+        test_taito_banks_aliases_and_mirroring, test_taito48_irq, test_taito_loader_transaction,
+        test_taito48_cpu_irq,
         test_simple_mapper_registers,
         test_colordreams_bus_conflicts, test_bus_conflict_submappers,
         test_mapper15_modes, test_action53_banks_and_mirroring, test_mmc5_memory_windows,

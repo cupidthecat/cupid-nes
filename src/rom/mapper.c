@@ -58,6 +58,7 @@ static CartCommon C;
 static Mapper mapper_nrom, mapper_mmc1, mapper_uxrom, mapper_cnrom, mapper_mmc3, mapper_tqrom;
 static Mapper mapper_mmc5, mapper_aorom, mapper_mmc2, mapper_mmc4, mapper_colordreams;
 static Mapper mapper_cprom, mapper_100in1, mapper_bandai, mapper_action53;
+static Mapper mapper_taito33, mapper_taito48;
 Mapper *cart = NULL;
 static bool mapper_irq_line = false;
 static uint8_t cart_cpu_bus_input = 0xFF;
@@ -583,7 +584,41 @@ static struct {
     uint8_t mcacc_divider;
 } mmc3;
 
+typedef struct {
+    uint8_t prg[2];
+    uint16_t chr[8];
+    uint8_t prg_mapped, chr_mapped;
+    Mirroring mirr;
+} TaitoBankState;
+
+static TaitoBankState taito33, taito48;
+static struct {
+    uint8_t latch, counter;
+    uint8_t delay;
+    bool enabled, reload;
+    bool a12_low;
+    uint64_t a12_low_cycle;
+} taito48_irq;
+
+static void taito48_irq_clock(void);
+
 void cart_notify_ppu_address(uint16_t addr, uint64_t ppu_cycle) {
+    if (cart == &mapper_taito48) {
+        uint64_t cpu_cycle = ppu_cycle / 3;
+        if (!(addr & 0x1000)) {
+            if (!taito48_irq.a12_low) {
+                taito48_irq.a12_low = true;
+                taito48_irq.a12_low_cycle = cpu_cycle;
+            }
+        } else {
+            if (taito48_irq.a12_low && cpu_cycle >= taito48_irq.a12_low_cycle
+                && cpu_cycle - taito48_irq.a12_low_cycle >= 3) {
+                taito48_irq_clock();
+            }
+            taito48_irq.a12_low = false;
+        }
+        return;
+    }
     if (cart != &mapper_mmc3 && cart != &mapper_tqrom) return;
     if (C.submapper == 3) {
         bool high = (addr & 0x1000) != 0;
@@ -789,6 +824,160 @@ static void mmc3_reset(void) {
     memcpy(mmc3.banks, initial_banks, sizeof(initial_banks));
     mmc3.mirr = C.mirr_base;
     if (C.submapper == 3 && C.mirr_base != MIRROR_FOUR) mmc3.mirr = MIRROR_VERTICAL;
+    mapper_irq_line = false;
+}
+
+// Mappers 33 and 48: Taito TC0190/TC0690 family.
+static uint8_t taito_cpu_read(const TaitoBankState *state, uint16_t a) {
+    if (a >= 0x6000 && a <= 0x7FFF) return prg_ram_read(a);
+    if (a >= 0x8000) {
+        size_t banks = C.prg_sz / PRG_BANK_8K;
+        if (!banks) return cart_cpu_bus_input;
+        size_t slot = (a - 0x8000u) >> 13;
+        size_t bank;
+        if (slot < 2) {
+            if (!(state->prg_mapped & (1u << slot))) return cart_cpu_bus_input;
+            bank = state->prg[slot];
+        }
+        else if (slot == 2) bank = banks > 1 ? banks - 2 : 0;
+        else bank = banks - 1;
+        bank %= banks;
+        return C.prg[bank * PRG_BANK_8K + (a & 0x1FFFu)];
+    }
+    return cart_cpu_bus_input;
+}
+
+static uint8_t taito_ppu_read(const TaitoBankState *state, uint16_t a) {
+    a &= 0x1FFFu;
+    if (!(state->chr_mapped & (1u << (a >> 10)))) return (uint8_t)a;
+    size_t banks = C.chr_sz / CHR_BANK_1K;
+    if (!banks) return nrom_ppu_read(a);
+    size_t bank = state->chr[a >> 10] % banks;
+    return C.chr[bank * CHR_BANK_1K + (a & 0x03FFu)];
+}
+
+static void taito_ppu_write(const TaitoBankState *state, uint16_t a, uint8_t v) {
+    if (!C.chr_is_ram) return;
+    a &= 0x1FFFu;
+    size_t banks = C.chr_sz / CHR_BANK_1K;
+    if (!banks) { nrom_ppu_write(a, v); return; }
+    size_t bank = state->chr[a >> 10] % banks;
+    chr_ram_write(bank * CHR_BANK_1K + (a & 0x03FFu), v);
+}
+
+static void taito_reset_banks(TaitoBankState *state) {
+    state->prg[0] = 0;
+    state->prg[1] = 1;
+    for (unsigned i = 0; i < 8; ++i) state->chr[i] = (uint16_t)i;
+    state->mirr = C.mirr_base;
+    state->prg_mapped = 0;
+    state->chr_mapped = C.chr_is_ram ? 0xFF : 0;
+}
+
+static uint8_t taito33_cpu_read(uint16_t a) { return taito_cpu_read(&taito33, a); }
+static void taito33_cpu_write(uint16_t a, uint8_t v) {
+    if (a >= 0x6000 && a <= 0x7FFF) { prg_ram_write(a, v); return; }
+    if (a < 0x8000) return;
+    switch (a & 0xA003u) {
+        case 0x8000:
+            taito33.prg[0] = v & 0x3Fu;
+            taito33.prg_mapped |= 1;
+            taito33.mirr = (v & 0x40u) ? MIRROR_HORIZONTAL : MIRROR_VERTICAL;
+            break;
+        case 0x8001:
+            taito33.prg[1] = v & 0x3Fu;
+            taito33.prg_mapped |= 2;
+            break;
+        case 0x8002:
+        case 0x8003: {
+            unsigned slot = (unsigned)(a & 3u) * 2u - 4u;
+            taito33.chr[slot] = (uint16_t)v * 2u;
+            taito33.chr[slot + 1] = (uint16_t)v * 2u + 1u;
+            taito33.chr_mapped |= (uint8_t)(3u << slot);
+        } break;
+        case 0xA000: case 0xA001: case 0xA002: case 0xA003:
+            taito33.chr[4u + (a & 3u)] = v;
+            taito33.chr_mapped |= (uint8_t)(1u << (4u + (a & 3u)));
+            break;
+    }
+}
+static uint8_t taito33_ppu_read(uint16_t a) { return taito_ppu_read(&taito33, a); }
+static void taito33_ppu_write(uint16_t a, uint8_t v) { taito_ppu_write(&taito33, a, v); }
+static Mirroring taito33_mirr(void) { return taito33.mirr; }
+static void taito33_reset(void) {
+    taito_reset_banks(&taito33);
+    mapper_irq_line = false;
+}
+
+static void taito48_irq_clock(void) {
+    if (taito48_irq.counter == 0 || taito48_irq.reload) {
+        taito48_irq.counter = taito48_irq.latch;
+        taito48_irq.reload = false;
+    } else {
+        taito48_irq.counter--;
+    }
+    if (taito48_irq.counter == 0 && taito48_irq.enabled)
+        taito48_irq.delay = C.submapper == 1 ? 6 : 22;
+}
+
+static void taito48_clock(int cpu_cycles) {
+    while (cpu_cycles-- > 0 && taito48_irq.delay) {
+        taito48_irq.delay--;
+        if (!taito48_irq.delay) mapper_irq_line = true;
+    }
+}
+
+static uint8_t taito48_cpu_read(uint16_t a) { return taito_cpu_read(&taito48, a); }
+static void taito48_cpu_write(uint16_t a, uint8_t v) {
+    if (a >= 0x6000 && a <= 0x7FFF) { prg_ram_write(a, v); return; }
+    if (a < 0x8000) return;
+    switch (a & 0xE003u) {
+        case 0x8000:
+            taito48.prg[0] = v & 0x3Fu;
+            taito48.prg_mapped |= 1;
+            break;
+        case 0x8001:
+            taito48.prg[1] = v & 0x3Fu;
+            taito48.prg_mapped |= 2;
+            break;
+        case 0x8002:
+        case 0x8003: {
+            unsigned slot = (unsigned)(a & 3u) * 2u - 4u;
+            taito48.chr[slot] = (uint16_t)v * 2u;
+            taito48.chr[slot + 1] = (uint16_t)v * 2u + 1u;
+            taito48.chr_mapped |= (uint8_t)(3u << slot);
+        } break;
+        case 0xA000: case 0xA001: case 0xA002: case 0xA003:
+            taito48.chr[4u + (a & 3u)] = v;
+            taito48.chr_mapped |= (uint8_t)(1u << (4u + (a & 3u)));
+            break;
+        case 0xC000:
+            mapper_irq_line = false;
+            taito48_irq.latch = (uint8_t)((v ^ 0xFFu) + (C.submapper == 1 ? 1u : 0u));
+            break;
+        case 0xC001:
+            mapper_irq_line = false;
+            taito48_irq.counter = 0;
+            taito48_irq.reload = true;
+            break;
+        case 0xC002:
+            taito48_irq.enabled = true;
+            break;
+        case 0xC003:
+            taito48_irq.enabled = false;
+            mapper_irq_line = false;
+            break;
+        case 0xE000:
+            taito48.mirr = (v & 0x40u) ? MIRROR_HORIZONTAL : MIRROR_VERTICAL;
+            break;
+    }
+}
+static uint8_t taito48_ppu_read(uint16_t a) { return taito_ppu_read(&taito48, a); }
+static void taito48_ppu_write(uint16_t a, uint8_t v) { taito_ppu_write(&taito48, a, v); }
+static Mirroring taito48_mirr(void) { return taito48.mirr; }
+static void taito48_reset(void) {
+    taito_reset_banks(&taito48);
+    memset(&taito48_irq, 0, sizeof(taito48_irq));
     mapper_irq_line = false;
 }
 
@@ -2177,6 +2366,7 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         case 1: case 9: case 10: case 11: case 155: chr_limit = 0x20000; break;
         case 3: chr_limit = 0x200000; break;
         case 4: chr_limit = 0x40000; break;
+        case 33: case 48: chr_limit = 0x80000; break;
         case 5: chr_limit = 0x100000; break;
         case 13: chr_limit = 0x4000; break;
         case 28: chr_limit = 0x8000; break;
@@ -2209,6 +2399,7 @@ int mapper_init_from_header(const iNESHeader *h,
         case 0: case 1: case 2: case 3: case 4: case 5:
         case 7: case 9: case 10: case 11: case 13: case 15: case 28: case 119: case 155:
         case 16: case 153: case 157: case 159:
+        case 33: case 48:
             break;
         default:
             fprintf(stderr, "Unsupported mapper: %d\n", mapper_no);
@@ -2217,6 +2408,7 @@ int mapper_init_from_header(const iNESHeader *h,
     if (submapper && !((mapper_no == 1 && submapper == 5)
         || (mapper_no == 4 && (submapper == 1 || submapper == 3))
         || (mapper_no == 16 && (submapper == 4 || submapper == 5))
+        || (mapper_no == 48 && submapper == 1)
         || ((mapper_no == 2 || mapper_no == 3 || mapper_no == 7) && submapper <= 2))) {
         fprintf(stderr, "Unsupported mapper/submapper: %d/%u\n", mapper_no, submapper);
         return -1;
@@ -2237,6 +2429,12 @@ int mapper_init_from_header(const iNESHeader *h,
     }
     if (mapper_no == 5 && (prg_sz > 0x100000 || (!chr_is_ram && chr_sz > 0x100000))) {
         fprintf(stderr, "Unsupported ROM size for mapper 5\n");
+        return -1;
+    }
+    if ((mapper_no == 33 || mapper_no == 48)
+        && (prg_sz > 0x80000 || prg_sz % PRG_BANK_8K != 0
+            || chr_sz % CHR_BANK_1K != 0 || (!chr_is_ram && chr_sz > 0x80000))) {
+        fprintf(stderr, "Unsupported ROM size for mapper %d\n", mapper_no);
         return -1;
     }
     if (mapper_no == 119 && (chr_is_ram || chr_sz > 0x40000 || (chr_sz % CHR_BANK_1K) != 0)) {
@@ -2357,6 +2555,17 @@ int mapper_init_from_header(const iNESHeader *h,
                         m28_ppu_read, m28_ppu_write, NULL, m28_mirr);
             cart = &mapper_action53;
             m28_power_on();
+            break;
+        case 33:
+            build_mapper(&mapper_taito33, taito33_cpu_read, taito33_cpu_write,
+                        taito33_ppu_read, taito33_ppu_write, taito33_reset, taito33_mirr);
+            cart = &mapper_taito33;
+            break;
+        case 48:
+            build_mapper(&mapper_taito48, taito48_cpu_read, taito48_cpu_write,
+                        taito48_ppu_read, taito48_ppu_write, taito48_reset, taito48_mirr);
+            mapper_taito48.clock = taito48_clock;
+            cart = &mapper_taito48;
             break;
         case 119:
             build_mapper(&mapper_tqrom, mmc3_cpu_read, mmc3_cpu_write,
