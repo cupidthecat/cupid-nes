@@ -72,7 +72,7 @@ static Mapper mapper_cprom, mapper_100in1, mapper_bandai, mapper_action53, mappe
 static Mapper mapper_taito33, mapper_taito48, mapper_jaleco18, mapper_irem32, mapper_irem65;
 static Mapper mapper_rambo1, mapper_rambo158;
 static Mapper mapper_vrc24, mapper_vrc7;
-static Mapper mapper_sunsoft69, mapper_namco, mapper_m34, mapper_gxrom;
+static Mapper mapper_sunsoft69, mapper_namco, mapper_m34, mapper_gxrom, mapper_m71;
 Mapper *cart = NULL;
 static bool mapper_irq_line = false;
 static uint8_t cart_cpu_bus_input = 0xFF;
@@ -159,6 +159,13 @@ static struct {
     uint8_t prg_bank;
     uint8_t chr_bank;
 } gxrom;
+
+static struct {
+    uint8_t prg_bank;
+    bool bf9097_mode;
+    bool force_bf9097;
+    Mirroring mirr;
+} m71;
 
 void cart_apply_trainer(const uint8_t trainer[512]) {
     if (!trainer) return;
@@ -2655,6 +2662,50 @@ static void gxrom_ppu_write(uint16_t address, uint8_t value) {
 static Mirroring gxrom_mirr(void) { return C.mirr_base; }
 static void gxrom_reset(void) { memset(&gxrom, 0, sizeof(gxrom)); }
 
+// Mapper 71: Codemasters/Camerica BF909x family.
+static uint8_t m71_cpu_read(uint16_t address) {
+    if (address >= 0x6000u && address < 0x8000u) return prg_ram_read(address);
+    if (address >= 0x8000u) {
+        size_t banks = C.prg_sz / PRG_BANK_16K;
+        size_t bank = address < 0xC000u
+            ? (banks ? (size_t)m71.prg_bank % banks : 0)
+            : banks - 1u;
+        return C.prg[bank * PRG_BANK_16K + (address & 0x3FFFu)];
+    }
+    return cart_cpu_bus_input;
+}
+
+static void m71_cpu_write(uint16_t address, uint8_t value) {
+    if (address >= 0x6000u && address < 0x8000u) {
+        prg_ram_write(address, value);
+        return;
+    }
+    if (address < 0x8000u) return;
+    if (address == 0x9000u) m71.bf9097_mode = true;
+    if (address >= 0xC000u || !m71.bf9097_mode) {
+        m71.prg_bank = value;
+    } else {
+        m71.mirr = (value & 0x10u) ? MIRROR_SINGLE0 : MIRROR_SINGLE1;
+    }
+}
+
+static uint8_t m71_ppu_read(uint16_t address) {
+    return C.chr[address & 0x1FFFu];
+}
+
+static void m71_ppu_write(uint16_t address, uint8_t value) {
+    if (C.chr_is_ram) chr_ram_write(address & 0x1FFFu, value);
+}
+
+static Mirroring m71_mirr(void) { return m71.mirr; }
+static void m71_reset(void) {
+    bool force = m71.force_bf9097;
+    memset(&m71, 0, sizeof(m71));
+    m71.force_bf9097 = force;
+    m71.bf9097_mode = force;
+    m71.mirr = C.mirr_base;
+}
+
 // Mapper 69: Sunsoft FME-7 / 5B.
 static struct {
     uint8_t command;
@@ -4225,7 +4276,7 @@ int mapper_init_from_header(const iNESHeader *h,
         case 16: case 153: case 157: case 159:
         case 18: case 32: case 33: case 34: case 48: case 64: case 65: case 158:
         case 21: case 22: case 23: case 25: case 27: case 183:
-        case 19: case 66: case 69: case 85: case 210:
+        case 19: case 66: case 69: case 71: case 85: case 210:
             break;
         default:
             fprintf(stderr, "Unsupported mapper: %d\n", mapper_no);
@@ -4239,6 +4290,7 @@ int mapper_init_from_header(const iNESHeader *h,
         || (mapper_no == 34 && submapper <= 2)
         || (mapper_no == 48 && submapper == 1)
         || (mapper_no == 32 && submapper == 1)
+        || (mapper_no == 71 && submapper == 1)
         || (mapper_no == 210 && submapper <= 2)
         || ((mapper_no == 2 || mapper_no == 3 || mapper_no == 7) && submapper <= 2)
         || (mapper_no == 30 && submapper <= 4))) {
@@ -4346,6 +4398,12 @@ int mapper_init_from_header(const iNESHeader *h,
         && ((prg_sz % PRG_BANK_32K) != 0 || prg_sz > 0x20000
             || (chr_sz % CHR_BANK_8K) != 0 || chr_sz > 0x8000)) {
         fprintf(stderr, "Unsupported ROM/RAM size for mapper 66\n");
+        return -1;
+    }
+    if (mapper_no == 71
+        && ((prg_sz % PRG_BANK_16K) != 0 || prg_sz > 0x400000
+            || chr_sz != CHR_BANK_8K)) {
+        fprintf(stderr, "Unsupported ROM/RAM size for mapper 71\n");
         return -1;
     }
     if (!ram_geometry_supported(mapper_no, nes2, &ram, chr_is_ram, chr_sz)
@@ -4492,6 +4550,12 @@ int mapper_init_from_header(const iNESHeader *h,
             build_mapper(&mapper_gxrom, gxrom_cpu_read, gxrom_cpu_write,
                          gxrom_ppu_read, gxrom_ppu_write, gxrom_reset, gxrom_mirr);
             cart = &mapper_gxrom;
+            break;
+        case 71:
+            m71.force_bf9097 = submapper == 1;
+            build_mapper(&mapper_m71, m71_cpu_read, m71_cpu_write,
+                         m71_ppu_read, m71_ppu_write, m71_reset, m71_mirr);
+            cart = &mapper_m71;
             break;
         case 48:
             build_mapper(&mapper_taito48, taito48_cpu_read, taito48_cpu_write,
