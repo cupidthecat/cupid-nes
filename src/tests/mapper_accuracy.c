@@ -2430,6 +2430,137 @@ static int test_tqrom_mixed_chr_memory(void) {
     return 0;
 }
 
+static uint8_t *txsrom_image(size_t *size) {
+    const size_t prg_bytes = 0x20000, chr_bytes = 0x40000;
+    iNESHeader h = header_for(118, prg_bytes, false);
+    h.flags7 |= 8;
+    h.flags10 = 7;
+    h.chr_rom_chunks = (uint8_t)(chr_bytes / 0x2000);
+    uint8_t *image = image_for(&h, prg_bytes, chr_bytes, size);
+    if (!image) return NULL;
+    for (size_t i = 0; i < prg_bytes; ++i) image[sizeof(h) + i] = (uint8_t)(i / 0x2000);
+    for (size_t i = 0; i < chr_bytes; ++i) image[sizeof(h) + prg_bytes + i] = (uint8_t)(i / 0x0400);
+    return image;
+}
+
+static int test_txsrom_nametable_routing(void) {
+    size_t image_size;
+    uint8_t *image = txsrom_image(&image_size);
+    CHECK(image != NULL);
+    int loaded = load_rom_memory(image, image_size);
+    free(image);
+    CHECK(loaded == 0);
+    const uint16_t offset = 0x012;
+    memset(ppu_vram, 0, NT_RAM_SIZE);
+    ppu_vram[offset] = 0x10;
+    ppu_vram[0x400 + offset] = 0x20;
+    cart_cpu_write(0x9FFE, 0);
+    cart_cpu_write(0x9FFF, 0x80);
+    cart_cpu_write(0x8000, 1);
+    cart_cpu_write(0x8001, 0);
+    CHECK(cart_ppu_read(0) == 0x80 && cart_ppu_read(0x0400) == 0x81);
+    CHECK(ppu_read(0x2000 + offset) == 0x20 && ppu_read(0x2400 + offset) == 0x20);
+    CHECK(ppu_read(0x2800 + offset) == 0x10 && ppu_read(0x2C00 + offset) == 0x10);
+    ppu_write(0x2400 + offset, 0xA1);
+    ppu_write(0x2C00 + offset, 0xB2);
+    CHECK(ppu_vram[0x400 + offset] == 0xA1 && ppu_vram[offset] == 0xB2);
+    CHECK(ppu_read(0x3000 + offset) == 0xA1 && ppu_read(0x3800 + offset) == 0xB2);
+
+    cart_cpu_write(0x8000, 0x82);
+    CHECK(ppu_read(0x2000 + offset) == 0xA1 && ppu_read(0x2400 + offset) == 0xA1);
+    CHECK(ppu_read(0x2800 + offset) == 0xB2 && ppu_read(0x2C00 + offset) == 0xB2);
+    cart_cpu_write(0x8001, 0x80);
+    cart_cpu_write(0x8000, 0x83);
+    cart_cpu_write(0x8001, 0);
+    cart_cpu_write(0x8000, 0x84);
+    cart_cpu_write(0x8001, 0x80);
+    cart_cpu_write(0x8000, 0x85);
+    cart_cpu_write(0x8001, 0);
+    CHECK(cart_ppu_read(0) == 0x80 && cart_ppu_read(0x0800) == 0x80);
+    CHECK(ppu_read(0x2000 + offset) == 0xA1 && ppu_read(0x2400 + offset) == 0xB2);
+    CHECK(ppu_read(0x2800 + offset) == 0xA1 && ppu_read(0x2C00 + offset) == 0xB2);
+    for (unsigned reg = 0; reg < 8; ++reg) {
+        if (reg >= 2 && reg <= 5) continue;
+        cart_cpu_write(0x8000, (uint8_t)(0x80 | reg));
+        cart_cpu_write(0x8001, 0xFF);
+        CHECK(ppu_read(0x2000 + offset) == 0xA1 && ppu_read(0x2400 + offset) == 0xB2);
+        CHECK(ppu_read(0x2800 + offset) == 0xA1 && ppu_read(0x2C00 + offset) == 0xB2);
+    }
+    cart_cpu_write(0xA000, 1);
+    cart_cpu_write(0xBFFE, 0);
+    CHECK(ppu_read(0x2000 + offset) == 0xA1 && ppu_read(0x2400 + offset) == 0xB2);
+    CHECK(ppu_read(0x2800 + offset) == 0xA1 && ppu_read(0x2C00 + offset) == 0xB2);
+    cart_cpu_write(0x8000, 6);
+    cart_cpu_write(0x8001, 3);
+    CHECK(cart_cpu_read(0x8000) == 3 && cart_cpu_read(0xC000) == 14);
+    cart_cpu_write(0xA001, 0x80);
+    cart_cpu_write(0x6000, 0x6A);
+    CHECK(cart_cpu_read(0x6000) == 0x6A);
+    cart_cpu_write(0xA001, 0xC0);
+    cart_cpu_write(0x6000, 0xFF);
+    CHECK(cart_cpu_read(0x6000) == 0x6A);
+    cart_cpu_write(0xA001, 0);
+    CHECK(cart_cpu_read_bus(0x6000, 0x56) == 0x56);
+    // Nametable accesses above have already driven A12 at the running PPU time.
+    uint64_t irq_cycle = ppu.total_cycles;
+    cart_notify_ppu_address(0x1000, irq_cycle);
+    cart_cpu_write(0xC000, 0);
+    cart_cpu_write(0xC001, 0);
+    cart_cpu_write(0xE001, 0);
+    cart_notify_ppu_address(0x2000, irq_cycle + 3);
+    cart_notify_ppu_address(0x1000, irq_cycle + 9);
+    CHECK(!cart_irq_pending());
+    a12_pulse(irq_cycle + 12);
+    CHECK(cart_irq_pending());
+    cart_cpu_write(0xE000, 0);
+    CHECK(!cart_irq_pending());
+    return 0;
+}
+
+static int test_txsrom_startup_ram_and_loader(void) {
+    const uint8_t flags[] = {0, 1, 8};
+    const uint8_t pages[][4] = {{0, 0, 1, 1}, {0, 1, 0, 1}, {0, 1, 2, 3}};
+    uint8_t nt[0x1000] = {0};
+    for (unsigned page = 0; page < 4; ++page) nt[page * 0x400] = (uint8_t)(0x10 + page);
+    for (unsigned i = 0; i < sizeof(flags); ++i) {
+        iNESHeader h = header_for(118, 0x20000, true);
+        h.flags6 |= flags[i];
+        CHECK(fixture_with_header(&h, 0x20000, 0x2000) == 118);
+        for (unsigned page = 0; page < 4; ++page)
+            CHECK(cart_nt_read((uint16_t)(0x2000 + page * 0x400), nt) == 0x10 + pages[i][page]);
+        cart_cpu_write(0x8000, 0);
+        cart_cpu_write(0x8001, 0x84);
+        cart_ppu_write(0x0123, 0x96);
+        cart_cpu_write(0x8001, 4);
+        CHECK(cart_ppu_read(0x0123) == 0x96);
+        CHECK(cart_nt_read(0x2000, nt) == 0x10 && cart_nt_read(0x2400, nt) == 0x10);
+        cart_cpu_write(0x8001, 0x80);
+        cart->reset();
+        for (unsigned page = 0; page < 4; ++page)
+            CHECK(cart_nt_read((uint16_t)(0x2000 + page * 0x400), nt) == 0x10 + pages[i][page]);
+    }
+    size_t bytes;
+    uint8_t *image = txsrom_image(&bytes);
+    CHECK(image != NULL);
+    int loaded = load_rom_memory(image, bytes);
+    CHECK(loaded == 0);
+    uint8_t *old_prg = prg_rom, *old_chr = chr_rom;
+    cart_cpu_write(0x8000, 0);
+    cart_cpu_write(0x8001, 0x80);
+    iNESHeader *h = (iNESHeader *)image;
+    h->prg_ram_size = 0x10;
+    CHECK(load_rom_memory(image, bytes) == -1);
+    h->prg_ram_size = 0;
+    h->flags10 = 8;
+    CHECK(load_rom_memory(image, bytes) == -1);
+    h->flags10 = 7;
+    CHECK(load_rom_memory(image, bytes - 1) == -1);
+    free(image);
+    CHECK(prg_rom == old_prg && chr_rom == old_chr);
+    CHECK(cart_ppu_read(0) == 0x80 && cart_nt_read(0x2000, nt) == 0x11);
+    return 0;
+}
+
 static int test_loader_trainers_and_sizes(void) {
     iNESHeader h = header_for(0, 0x4000, true);
     h.flags6 |= 4;
@@ -3807,6 +3938,7 @@ int test_mapper_accuracy(void) {
         test_mcacc_banks_ram_and_loader, test_mcacc_cpu_ppu_irq_path,
         test_taito_banks_aliases_and_mirroring, test_taito48_irq, test_taito_loader_transaction,
         test_taito48_cpu_irq,
+        test_txsrom_nametable_routing, test_txsrom_startup_ram_and_loader,
         test_rambo1_banks_and_modes, test_rambo1_irq_sources, test_rambo158_nametables,
         test_rambo1_ram_and_odd_chr_banks, test_rambo1_irq_boundaries,
         test_rambo1_cpu_and_rendering_irq, test_rambo1_loader,

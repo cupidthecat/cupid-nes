@@ -61,7 +61,7 @@ typedef struct {
 } CartCommon;
 
 static CartCommon C;
-static Mapper mapper_nrom, mapper_mmc1, mapper_uxrom, mapper_cnrom, mapper_mmc3, mapper_tqrom;
+static Mapper mapper_nrom, mapper_mmc1, mapper_uxrom, mapper_cnrom, mapper_mmc3, mapper_tqrom, mapper_txsrom;
 static Mapper mapper_mmc5, mapper_aorom, mapper_mmc2, mapper_mmc4, mapper_colordreams;
 static Mapper mapper_cprom, mapper_100in1, mapper_bandai, mapper_action53, mapper_unrom512;
 static Mapper mapper_taito33, mapper_taito48, mapper_jaleco18, mapper_irem32, mapper_irem65;
@@ -652,6 +652,7 @@ static struct {
     bool mcacc_a12_high;
     uint8_t mcacc_divider;
 } mmc3;
+static uint8_t txsrom_nt[4];
 
 typedef struct {
     uint8_t prg[2];
@@ -721,7 +722,7 @@ void cart_notify_ppu_address(uint16_t addr, uint64_t ppu_cycle) {
         }
         return;
     }
-    if (cart != &mapper_mmc3 && cart != &mapper_tqrom) return;
+    if (cart != &mapper_mmc3 && cart != &mapper_tqrom && cart != &mapper_txsrom) return;
     if (C.submapper == 3) {
         bool high = (addr & 0x1000) != 0;
         if (mmc3.mcacc_a12_high && !high) {
@@ -847,6 +848,23 @@ static void mmc3_cpu_write(uint16_t a, uint8_t v) {
     }
 }
 
+static void txsrom_cpu_write(uint16_t a, uint8_t v) {
+    if (a >= 0x8000 && (a & 0xE001) == 0x8001) {
+        uint8_t nametable = v >> 7;
+        if (mmc3.chr_mode == 0) {
+            if (mmc3.bank_select < 2) {
+                txsrom_nt[mmc3.bank_select * 2] = nametable;
+                txsrom_nt[mmc3.bank_select * 2 + 1] = nametable;
+            }
+        } else if (mmc3.bank_select >= 2 && mmc3.bank_select <= 5) {
+            txsrom_nt[mmc3.bank_select - 2] = nametable;
+        }
+    }
+    // CIRAM routing is latched by CHR data writes; the mirroring register is disconnected.
+    if (a >= 0x8000 && (a & 0xE001) == 0xA000) return;
+    mmc3_cpu_write(a, v);
+}
+
 static size_t mmc3_chr_bank(uint16_t a) {
     a &= 0x1FFF;
     uint8_t slot = (uint8_t)(a >> 10);
@@ -927,6 +945,19 @@ static void mmc3_reset(void) {
     mmc3.mirr = C.mirr_base;
     if (C.submapper == 3 && C.mirr_base != MIRROR_FOUR) mmc3.mirr = MIRROR_VERTICAL;
     mapper_irq_line = false;
+}
+
+static void txsrom_reset(void) {
+    mmc3_reset();
+    for (unsigned page = 0; page < 4; ++page) {
+        switch (C.mirr_base) {
+            case MIRROR_HORIZONTAL: txsrom_nt[page] = (uint8_t)(page >> 1); break;
+            case MIRROR_VERTICAL: txsrom_nt[page] = (uint8_t)(page & 1); break;
+            case MIRROR_FOUR: txsrom_nt[page] = (uint8_t)page; break;
+            case MIRROR_SINGLE1: txsrom_nt[page] = 1; break;
+            default: txsrom_nt[page] = 0; break;
+        }
+    }
 }
 
 // Mappers 33 and 48: Taito TC0190/TC0690 family.
@@ -1927,6 +1958,10 @@ static void mmc5_reset(void) {
 }
 
 uint8_t cart_nt_read(uint16_t addr, uint8_t *nt_ram) {
+    if (cart == &mapper_txsrom) {
+        uint16_t off = (uint16_t)((addr - 0x2000u) & 0x0FFFu);
+        return nt_ram[(size_t)txsrom_nt[off >> 10] * 0x400u + (off & 0x03FFu)];
+    }
     if (cart == &mapper_unrom512 && unrom512_four_screen_chr) {
         size_t offset = 0x6000u + ((addr - 0x2000u) & 0x1FFFu);
         return C.chr[offset];
@@ -1965,6 +2000,11 @@ uint8_t cart_nt_read(uint16_t addr, uint8_t *nt_ram) {
 }
 
 void cart_nt_write(uint16_t addr, uint8_t v, uint8_t *nt_ram) {
+    if (cart == &mapper_txsrom) {
+        uint16_t off = (uint16_t)((addr - 0x2000u) & 0x0FFFu);
+        nt_ram[(size_t)txsrom_nt[off >> 10] * 0x400u + (off & 0x03FFu)] = v;
+        return;
+    }
     if (cart == &mapper_unrom512 && unrom512_four_screen_chr) {
         size_t offset = 0x6000u + ((addr - 0x2000u) & 0x1FFFu);
         chr_ram_write(offset, v);
@@ -3142,7 +3182,7 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
     switch (mapper_no) {
         case 1: case 9: case 10: case 11: case 155: chr_limit = 0x20000; break;
         case 3: chr_limit = 0x200000; break;
-        case 4: chr_limit = 0x40000; break;
+        case 4: case 118: chr_limit = 0x40000; break;
         case 33: case 48: chr_limit = 0x80000; break;
         case 64: case 158: chr_limit = 0x40000; break;
         case 5: chr_limit = 0x100000; break;
@@ -3176,7 +3216,7 @@ int mapper_init_from_header(const iNESHeader *h,
     uint8_t submapper = nes2 ? h->prg_ram_size >> 4 : 0;
     switch (mapper_no) {
         case 0: case 1: case 2: case 3: case 4: case 5:
-        case 7: case 9: case 10: case 11: case 13: case 15: case 28: case 30: case 119: case 155:
+        case 7: case 9: case 10: case 11: case 13: case 15: case 28: case 30: case 118: case 119: case 155:
         case 16: case 153: case 157: case 159:
         case 18: case 32: case 33: case 48: case 64: case 65: case 158:
             break;
@@ -3222,6 +3262,11 @@ int mapper_init_from_header(const iNESHeader *h,
         && (prg_sz > 0x200000 || prg_sz % PRG_BANK_8K != 0
             || chr_sz > 0x40000 || chr_sz % CHR_BANK_1K != 0)) {
         fprintf(stderr, "Unsupported ROM size for mapper %d\n", mapper_no);
+        return -1;
+    }
+    if (mapper_no == 118 && (prg_sz > 0x200000 || prg_sz % PRG_BANK_8K != 0
+        || chr_sz > 0x40000 || chr_sz % CHR_BANK_1K != 0)) {
+        fprintf(stderr, "Unsupported ROM size for mapper 118\n");
         return -1;
     }
     if (mapper_no == 119 && (chr_is_ram || chr_sz > 0x40000 || (chr_sz % CHR_BANK_1K) != 0)) {
@@ -3401,6 +3446,11 @@ int mapper_init_from_header(const iNESHeader *h,
                         rambo1_ppu_read, rambo1_ppu_write, rambo1_reset, rambo1_mirr);
             mapper_rambo1.clock = rambo1_clock;
             cart = &mapper_rambo1;
+            break;
+        case 118:
+            build_mapper(&mapper_txsrom, mmc3_cpu_read, txsrom_cpu_write,
+                         mmc3_ppu_read, mmc3_ppu_write, txsrom_reset, mmc3_mirr);
+            cart = &mapper_txsrom;
             break;
         case 119:
             build_mapper(&mapper_tqrom, mmc3_cpu_read, mmc3_cpu_write,
