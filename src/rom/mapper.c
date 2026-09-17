@@ -46,6 +46,7 @@ typedef struct {
     uint8_t *chr; size_t chr_sz;
     bool chr_is_ram;
     uint8_t submapper;
+    bool mmc1a;
     bool bus_conflicts;
     bool nes2;
     RomRamSizes ram;
@@ -393,7 +394,7 @@ static RamBlock *mmc1_ram_location(uint16_t a, size_t *offset) {
 
 static uint8_t mmc1_cpu_read(uint16_t a) {
     if (a >= 0x6000 && a <= 0x7FFF) {
-        if (mmc1.prg_bank & 0x10) return cart_cpu_bus_input;
+        if (!C.mmc1a && (mmc1.prg_bank & 0x10)) return cart_cpu_bus_input;
         size_t offset;
         RamBlock *ram = mmc1_ram_location(a, &offset);
         return ram_read(ram, offset);
@@ -420,7 +421,7 @@ static uint8_t mmc1_cpu_read(uint16_t a) {
 
 static void mmc1_cpu_write(uint16_t a, uint8_t v) {
     if (a >= 0x6000 && a <= 0x7FFF) {
-        if (!(mmc1.prg_bank & 0x10)) {
+        if (C.mmc1a || !(mmc1.prg_bank & 0x10)) {
             size_t offset;
             RamBlock *ram = mmc1_ram_location(a, &offset);
             ram_write(ram, offset, v);
@@ -1807,9 +1808,9 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
 
     // Only these boards have implemented selection between separate PRG RAM chips.
     bool split_prg = ram->prg_ram && ram->prg_nvram;
-    if (split_prg && !((mapper_no == 1 || mapper_no == 5)
+    if (split_prg && !((mapper_no == 1 || mapper_no == 155 || mapper_no == 5)
         && ram->prg_ram == 0x2000 && ram->prg_nvram == 0x2000)) return false;
-    if (mapper_no == 1) {
+    if (mapper_no == 1 || mapper_no == 155) {
         if (prg_total > 0x8000) return false;
     } else if (mapper_no == 5) {
         if (nes2) {
@@ -1832,7 +1833,7 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
     if (nes2 && chr_is_ram && chr_total != chr_sz) return false;
     size_t chr_limit;
     switch (mapper_no) {
-        case 1: case 9: case 10: case 11: chr_limit = 0x20000; break;
+        case 1: case 9: case 10: case 11: case 155: chr_limit = 0x20000; break;
         case 3: chr_limit = 0x200000; break;
         case 4: chr_limit = 0x40000; break;
         case 5: chr_limit = 0x100000; break;
@@ -1864,7 +1865,7 @@ int mapper_init_from_header(const iNESHeader *h,
     uint8_t submapper = nes2 ? h->prg_ram_size >> 4 : 0;
     switch (mapper_no) {
         case 0: case 1: case 2: case 3: case 4: case 5:
-        case 7: case 9: case 10: case 11: case 13: case 15: case 119:
+        case 7: case 9: case 10: case 11: case 13: case 15: case 119: case 155:
             break;
         default:
             fprintf(stderr, "Unsupported mapper: %d\n", mapper_no);
@@ -1918,6 +1919,7 @@ int mapper_init_from_header(const iNESHeader *h,
     C.ram = ram;
     C.nes2 = nes2;
     C.submapper = submapper;
+    C.mmc1a = mapper_no == 155;
     C.bus_conflicts = mapper_no == 11
         || (submapper == 2 && (mapper_no == 2 || mapper_no == 3 || mapper_no == 7));
     
@@ -1938,7 +1940,7 @@ int mapper_init_from_header(const iNESHeader *h,
                         nrom_ppu_read, nrom_ppu_write, NULL, nrom_mirr);
             cart = &mapper_nrom;
             break;
-        case 1:
+        case 1: case 155:
             build_mapper(&mapper_mmc1, mmc1_cpu_read, mmc1_cpu_write,
                         mmc1_ppu_read, mmc1_ppu_write, mmc1_reset, mmc1_mirr);
             cart = &mapper_mmc1;

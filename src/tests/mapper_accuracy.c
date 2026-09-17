@@ -36,6 +36,7 @@
 #include "../rom/mapper.h"
 #include "../cpu/cpu.h"
 #include "../ppu/ppu.h"
+#include "../apu/apu.h"
 #include "../system/timing.h"
 #include "../../include/globals.h"
 
@@ -904,6 +905,176 @@ static uint8_t *image_for(const iNESHeader *h, size_t prg_bytes, size_t chr_byte
     memset(image + sizeof(*h) + trainer_bytes, 0x5C, prg_bytes);
     memset(image + sizeof(*h) + trainer_bytes + prg_bytes, 0xA5, chr_bytes);
     return image;
+}
+
+static int test_mmc1a_ram_revision(void) {
+    const unsigned boards[] = {1, 155};
+    for (size_t board = 0; board < sizeof(boards) / sizeof(boards[0]); ++board) {
+        for (unsigned nes2 = 0; nes2 < 2; ++nes2) {
+            iNESHeader h = header_for(boards[board], 0x20000, false);
+            h.chr_rom_chunks = 4;
+            if (nes2) {
+                h.flags7 |= 8;
+                h.flags10 = 7;
+            }
+            size_t size;
+            uint8_t *image = image_for(&h, 0x20000, 0x8000, &size);
+            CHECK(image != NULL);
+            for (size_t i = 0; i < 0x20000; ++i)
+                image[sizeof(h) + i] = (uint8_t)(i / 0x2000);
+            for (size_t i = 0; i < 0x8000; ++i)
+                image[sizeof(h) + 0x20000 + i] = (uint8_t)(i / 0x0400);
+            int loaded = load_rom_memory(image, size);
+            free(image);
+            CHECK(loaded == 0 && rom_mapper_number(&ines_header) == (int)boards[board]);
+
+            cart_cpu_write(0x6123, 0xA6);
+            serial_write(0xE000, 0x13);
+            CHECK(cart_cpu_read(0x8000) == 6 && cart_cpu_read(0xC000) == 14);
+            CHECK(cart_cpu_read_bus(0x6123, 0x56) == (board ? 0xA6 : 0x56));
+            cart_cpu_write(0x6123, 0x55);
+            serial_write(0xE000, 3);
+            CHECK(cart_cpu_read(0x6123) == (board ? 0x55 : 0xA6));
+
+            static const uint8_t prg_pages[4][2] = {{4, 6}, {4, 6}, {0, 6}, {6, 14}};
+            static const Mirroring mirrors[4] = {
+                MIRROR_SINGLE0, MIRROR_SINGLE1, MIRROR_VERTICAL, MIRROR_HORIZONTAL
+            };
+            serial_write(0xA000, 1);
+            serial_write(0xC000, 3);
+            for (unsigned mode = 0; mode < 4; ++mode) {
+                serial_write(0x8000, (uint8_t)(0x10 | (mode << 2) | mode));
+                CHECK(cart_cpu_read(0x8000) == prg_pages[mode][0]);
+                CHECK(cart_cpu_read(0xC000) == prg_pages[mode][1]);
+                CHECK(cart_get_mirroring() == mirrors[mode]);
+                CHECK(cart_ppu_read(0) == 4 && cart_ppu_read(0x1000) == 12);
+            }
+            serial_write(0x8000, 0x0C);
+            serial_write(0xA000, 3);
+            CHECK(cart_ppu_read(0) == 8 && cart_ppu_read(0x1000) == 12);
+            cart_ppu_write(0, 0x77);
+            CHECK(cart_ppu_read(0) == 8);
+            cart->reset();
+            CHECK(cart_cpu_read(0x8000) == 0 && cart_cpu_read(0xC000) == 14);
+            CHECK(cart_get_mirroring() == MIRROR_SINGLE0);
+            CHECK(cart_cpu_read(0x6123) == (board ? 0x55 : 0xA6));
+        }
+    }
+    return 0;
+}
+
+static int test_mmc1a_cpu_serial_writes(void) {
+    CHECK(fixture(155, 0x20000, 0x2000, true) == 155);
+    nes_set_region(NES_REGION_NTSC);
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    cpu_power_on(&cpu);
+    for (uint16_t addr = 0; addr < 0x0800; ++addr) write_mem(addr, 0);
+    fixture_prg[0x1E000] = 1;
+    const uint8_t program[] = {
+        0xEE, 0x00, 0xE0,       // INC $E000: serial bit 1, then an ignored adjacent write.
+        0xA9, 0x00,             // LDA #0
+        0x8D, 0x00, 0xE0,       // STA $E000
+        0x8D, 0x00, 0xE0,
+        0x8D, 0x00, 0xE0,
+        0xA9, 0x01,             // LDA #1
+        0x8D, 0x00, 0xE0,       // Commit $11, selecting PRG bank 1 with bit 4 set.
+        0xA9, 0xA6,
+        0x8D, 0x23, 0x61,       // STA $6123
+        0xAD, 0x23, 0x61        // LDA $6123
+    };
+    for (size_t i = 0; i < sizeof(program); ++i)
+        write_mem((uint16_t)(0x0200 + i), program[i]);
+    cpu.pc = 0x0200;
+    const int cycles[] = {6, 2, 4, 4, 4, 2, 4, 2, 4, 4};
+    for (size_t i = 0; i < sizeof(cycles) / sizeof(cycles[0]); ++i)
+        CHECK(cpu_step(&cpu) == cycles[i]);
+    CHECK(cpu.a == 0xA6 && cart_cpu_read(0x6123) == 0xA6);
+    CHECK(cart_cpu_read(0x8000) == 2 && cart_cpu_read(0xC000) == 14);
+
+    // An adjacent reset-bit write is accepted and discards the partial shift.
+    serial_write(0x8000, 3);
+    fixture_prg[0x4000] = 0x7F;
+    const uint8_t reset_program[] = {0xEE, 0x00, 0xC0}; // INC $C000 writes $7F, then $80.
+    for (size_t i = 0; i < sizeof(reset_program); ++i)
+        write_mem((uint16_t)(0x0200 + i), reset_program[i]);
+    cpu.pc = 0x0200;
+    CHECK(cpu_step(&cpu) == 6);
+    CHECK(cart_cpu_read(0xC000) == 14 && cart_get_mirroring() == MIRROR_HORIZONTAL);
+    serial_write(0xE000, 2);
+    CHECK(cart_cpu_read(0x8000) == 4 && cart_cpu_read(0x6123) == 0xA6);
+    cart_ppu_write(0x0123, 0x69);
+    CHECK(cart_ppu_read(0x0123) == 0x69);
+    return 0;
+}
+
+static int test_mmc1a_ram_layouts_and_loader(void) {
+    iNESHeader h = header_for(155, 0x80000, true);
+    h.flags7 |= 8;
+    h.flags10 = 9;
+    h.zero[0] = 7;
+    CHECK(fixture_with_header(&h, 0x80000, 0x2000) == 155);
+    serial_write(0xE000, 0x10);
+    for (unsigned bank = 0; bank < 4; ++bank) {
+        serial_write(0xA000, (uint8_t)(0x10 | (bank << 2)));
+        cart_cpu_write(0x6000, (uint8_t)(0xA0 + bank));
+        cart_cpu_write(0x7FFF, (uint8_t)(0xB0 + bank));
+    }
+    for (unsigned bank = 0; bank < 4; ++bank) {
+        serial_write(0xA000, (uint8_t)(0x10 | (bank << 2)));
+        CHECK(cart_cpu_read(0x6000) == 0xA0 + bank && cart_cpu_read(0x7FFF) == 0xB0 + bank);
+        CHECK(cart_cpu_read(0x8000) == 32 && cart_cpu_read(0xC000) == 62);
+    }
+    serial_write(0x8000, 0x1C);
+    serial_write(0xC000, 4);
+    CHECK(cart_cpu_read(0x6000) == 0xA1);
+    CHECK(cart_cpu_read(0x8000) == 0 && cart_cpu_read(0xC000) == 30);
+    serial_write(0x8000, 0x0C);
+    CHECK(cart_cpu_read(0x6000) == 0xA3 && cart_cpu_read(0xC000) == 62);
+
+    h.flags6 |= 2;
+    h.flags10 = 0x77;
+    CHECK(fixture_with_header(&h, 0x80000, 0x2000) == 155);
+    serial_write(0xE000, 0x10);
+    cart_cpu_write(0x6000, 0x35);
+    serial_write(0xA000, 8);
+    cart_cpu_write(0x6000, 0x73);
+    serial_write(0xA000, 4);
+    CHECK(cart_cpu_read(0x6000) == 0x35);
+    serial_write(0xA000, 8);
+    CHECK(cart_cpu_read(0x6000) == 0x73);
+
+    size_t size;
+    uint8_t *image = image_for(&h, 0x80000, 0, &size);
+    CHECK(image != NULL);
+    int loaded = load_rom_memory(image, size);
+    free(image);
+    CHECK(loaded == 0);
+    serial_write(0xE000, 0x10);
+    cart_cpu_write(0x6000, 0x96);
+    uint8_t *previous_prg = prg_rom;
+    uint8_t *previous_chr = chr_rom;
+    iNESHeader invalid[] = {h, h, h, h};
+    invalid[0].prg_ram_size = 0x50; // Fixed-PRG submapper 5 belongs to mapper 1.
+    invalid[1].flags10 = 10;        // More than 32KB of PRG-RAM.
+    invalid[2].zero[0] = 0x77;     // Separate volatile and nonvolatile CHR chips.
+    invalid[3].flags6 &= (uint8_t)~2u;
+    for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
+        image = image_for(&invalid[i], 0x80000, 0, &size);
+        CHECK(image != NULL);
+        loaded = load_rom_memory(image, size);
+        free(image);
+        CHECK(loaded == -1 && prg_rom == previous_prg && chr_rom == previous_chr);
+        CHECK(cart_cpu_read(0x6000) == 0x96);
+    }
+
+    h.flags6 &= (uint8_t)~2u;
+    h.flags10 = 0;
+    CHECK(fixture_with_header(&h, 0x80000, 0x2000) == 155);
+    serial_write(0xE000, 0x10);
+    cart_cpu_write(0x6000, 0x77);
+    CHECK(cart_cpu_read_bus(0x6000, 0x56) == 0x56);
+    return 0;
 }
 
 static iNESHeader tqrom_header(size_t chr_bytes) {
@@ -1968,6 +2139,7 @@ static int test_cartridge_unload(void) {
 int test_mapper_accuracy(void) {
     static int (*const tests[])(void) = {
         test_small_cartridges, test_mmc1_banks_and_ram, test_mmc1_serial_timing,
+        test_mmc1a_ram_revision, test_mmc1a_cpu_serial_writes, test_mmc1a_ram_layouts_and_loader,
         test_mmc1_outer_and_fixed_banks, test_mmc2_banks_and_latches,
         test_mmc4_latches_and_chr_ram, test_mmc3_banks_and_protection,
         test_mmc3_irq_edges, test_mmc3_render_trace, test_tqrom_mixed_chr_memory,
