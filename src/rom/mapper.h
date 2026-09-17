@@ -66,6 +66,8 @@ void    cart_set_ppu_fetch_source(CartPpuFetchSource src);
 void    cart_notify_ppu_ctrl_write(uint8_t value);
 // Current cartridge expansion-audio contribution, zero when the board has none.
 float   cart_expansion_audio(void);
+// Scan an EAN-8 or EAN-13 code through the connected Datach reader.
+bool    cart_set_barcode(const char *digits);
 
 // Mapper-aware nametable access ($2000-$2FFF decoded by PPU)
 uint8_t cart_nt_read (uint16_t addr, uint8_t *nt_ram);
@@ -85,7 +87,7 @@ void cart_notify_scanline_early(void);
 // Notify mapper when vblank starts (MMC5 in-frame/IRQ state)
 void cart_notify_vblank_start(void);
 
-// Persist only nonvolatile memory: PRG in .sav, CHR in .chr.sav.
+// Persist nonvolatile PRG, CHR and serial EEPROM chips in separate save images.
 void cart_battery_configure(const char *rom_path, bool has_battery);
 void cart_battery_flush(void);
 void cart_battery_shutdown(void);

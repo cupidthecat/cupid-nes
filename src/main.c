@@ -128,6 +128,7 @@ int main(int argc, char *argv[]) {
     SDL_AudioDeviceID audio_dev = 0;
 
     const char *rom_path = NULL;
+    const char *barcode = NULL;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--console") == 0) {
             if (++i == argc || !nes_set_console_model_name(argv[i])) {
@@ -163,6 +164,12 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "Expansion device must be none, arkanoid, family-trainer-a, or family-trainer-b\n");
                 return 1;
             }
+        } else if (strcmp(argv[i], "--barcode") == 0) {
+            if (++i == argc) {
+                fprintf(stderr, "Barcode requires 8 or 13 decimal digits\n");
+                return 1;
+            }
+            barcode = argv[i];
         } else if (argv[i][0] == '-' || rom_path) {
             fprintf(stderr, "Unexpected argument: %s\n", argv[i]);
             return 1;
@@ -173,7 +180,7 @@ int main(int argc, char *argv[]) {
     if (!rom_path) {
         printf("Usage: %s [--console MODEL] [--cpu-revision REVISION] "
                "[--adapter TYPE] [--port1 DEVICE] [--port2 DEVICE] "
-               "[--expansion DEVICE] <rom-file>\n", argv[0]);
+               "[--expansion DEVICE] [--barcode DIGITS] <rom-file>\n", argv[0]);
         return 1;
     }
     if (!joypad_configuration_valid()) {
@@ -190,6 +197,12 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Failed to load ROM\n");
         return 1;
     }
+    if (barcode && !cart_set_barcode(barcode)) {
+        fprintf(stderr, "Barcode input requires a Datach cartridge and 8 or 13 decimal digits\n");
+        unload_rom();
+        return 1;
+    }
+    if (barcode) printf("Press F8 to scan the configured barcode\n");
     cpu_total_cycles = 0;
     ppu_power_on(&ppu);
     apu_power_on(&apu);
@@ -305,6 +318,9 @@ int main(int argc, char *argv[]) {
                 int down = (e.type == SDL_KEYDOWN);
     
                 switch (e.key.keysym.sym) {
+                    case SDLK_F8:
+                        if (down && !e.key.repeat && barcode) cart_set_barcode(barcode);
+                        break;
                     case SDLK_F7:
                         if (down) { palette_tool_toggle_overlay(); }
                         break;

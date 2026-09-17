@@ -27,6 +27,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include "mapper.h"
+#include "eeprom.h"
 #include "../system/timing.h"
 
 extern uint64_t cpu_total_cycles;
@@ -56,7 +57,7 @@ typedef struct {
 static CartCommon C;
 static Mapper mapper_nrom, mapper_mmc1, mapper_uxrom, mapper_cnrom, mapper_mmc3, mapper_tqrom;
 static Mapper mapper_mmc5, mapper_aorom, mapper_mmc2, mapper_mmc4, mapper_colordreams;
-static Mapper mapper_cprom, mapper_100in1;
+static Mapper mapper_cprom, mapper_100in1, mapper_bandai;
 Mapper *cart = NULL;
 static bool mapper_irq_line = false;
 static uint8_t cart_cpu_bus_input = 0xFF;
@@ -91,6 +92,8 @@ static bool mmc5_exram_dirty = false;
 static bool battery_enabled = false;
 static char *battery_save_path = NULL;
 static char *chr_save_path = NULL;
+static Eeprom24 bandai_eeprom[2];
+static char *eeprom_save_path[2];
 static RamBlock *mmc5_ram_location(uint16_t a, size_t *offset);
 
 void cart_apply_trainer(const uint8_t trainer[512]) {
@@ -219,6 +222,9 @@ void cart_battery_flush(void) {
     if (cart == &mapper_mmc5) flush_mmc5_battery();
     else flush_battery(battery_save_path, prg_save_ram.data, prg_save_ram.size, &prg_ram_dirty);
     flush_battery(chr_save_path, C.chr, C.ram.chr_nvram, &chr_ram_dirty);
+    for (unsigned i = 0; i < 2; ++i)
+        flush_battery(eeprom_save_path[i], bandai_eeprom[i].bytes,
+                      bandai_eeprom[i].capacity, &bandai_eeprom[i].dirty);
 }
 
 void cart_battery_shutdown(void) {
@@ -227,6 +233,11 @@ void cart_battery_shutdown(void) {
     free(chr_save_path);
     battery_save_path = NULL;
     chr_save_path = NULL;
+    for (unsigned i = 0; i < 2; ++i) {
+        free(eeprom_save_path[i]);
+        eeprom_save_path[i] = NULL;
+        bandai_eeprom[i].dirty = false;
+    }
     battery_enabled = false;
     prg_ram_dirty = false;
     chr_ram_dirty = false;
@@ -262,18 +273,29 @@ static void load_mmc5_battery(const char *path) {
 
 void cart_battery_configure(const char *rom_path, bool has_battery) {
     cart_battery_shutdown();
-    if (!has_battery || !rom_path) return;
-    if (prg_save_ram.size) battery_save_path = build_save_path(rom_path, ".sav");
-    if (C.ram.chr_nvram) chr_save_path = build_save_path(rom_path, ".chr.sav");
-    if ((prg_save_ram.size && !battery_save_path) || (C.ram.chr_nvram && !chr_save_path)) {
+    bool serial_storage = bandai_eeprom[0].capacity || bandai_eeprom[1].capacity;
+    if (!rom_path || (!has_battery && !serial_storage)) return;
+    if (has_battery && prg_save_ram.size) battery_save_path = build_save_path(rom_path, ".sav");
+    if (has_battery && C.ram.chr_nvram) chr_save_path = build_save_path(rom_path, ".chr.sav");
+    bool paths_valid = (!has_battery || !prg_save_ram.size || battery_save_path)
+                    && (!has_battery || !C.ram.chr_nvram || chr_save_path);
+    for (unsigned i = 0; i < 2; ++i) {
+        if (!bandai_eeprom[i].capacity) continue;
+        eeprom_save_path[i] = build_save_path(rom_path,
+            bandai_eeprom[i].capacity == 128 ? ".eeprom128" : ".eeprom256");
+        if (!eeprom_save_path[i]) paths_valid = false;
+    }
+    if (!paths_valid) {
         fprintf(stderr, "Failed to allocate battery save path\n");
         cart_battery_shutdown();
         return;
     }
-    battery_enabled = battery_save_path || chr_save_path;
+    battery_enabled = battery_save_path || chr_save_path || eeprom_save_path[0] || eeprom_save_path[1];
     if (cart == &mapper_mmc5) load_mmc5_battery(battery_save_path);
     else load_battery(battery_save_path, prg_save_ram.data, prg_save_ram.size);
     load_battery(chr_save_path, C.chr, C.ram.chr_nvram);
+    for (unsigned i = 0; i < 2; ++i)
+        load_battery(eeprom_save_path[i], bandai_eeprom[i].bytes, bandai_eeprom[i].capacity);
 }
 
 void mapper_shutdown(void) {
@@ -288,6 +310,7 @@ void mapper_shutdown(void) {
     cart_ppu_fetch_source = CART_PPU_FETCH_CPU;
     memset(mmc5_exram, 0, sizeof(mmc5_exram));
     memset(tqrom_chr_ram, 0, sizeof(tqrom_chr_ram));
+    memset(bandai_eeprom, 0, sizeof(bandai_eeprom));
     mmc5_exram_dirty = false;
 }
 
@@ -1814,7 +1837,213 @@ static void m15_reset(void) {
     m15_cpu_write(0x8000, 0);
 }
 
+// Bandai FCG and LZ93D50 boards, including SRAM and Datach peripherals.
+static struct {
+    int mapper;
+    uint8_t chr_regs[8], chr_banks[8], chr_mapped;
+    uint8_t prg_bank, outer_bank;
+    bool prg_selected, ram_enabled, irq_enabled;
+    uint16_t irq_counter, irq_reload;
+    Mirroring mirroring;
+    uint8_t barcode[160];
+    unsigned barcode_length, barcode_cycles;
+} bandai;
+
+static uint8_t bandai_cpu_read(uint16_t address) {
+    if (address >= 0x8000) {
+        if (address < 0xC000 && !bandai.prg_selected) return cart_cpu_bus_input;
+        unsigned page = (address < 0xC000 ? bandai.prg_bank : 15u) | bandai.outer_bank;
+        return C.prg[((size_t)page * PRG_BANK_16K + (address & 0x3FFF)) % C.prg_sz];
+    }
+    if (address < 0x6000) return cart_cpu_bus_input;
+    if (bandai.mapper == 153)
+        return bandai.ram_enabled ? prg_ram_read(address) : cart_cpu_bus_input;
+    uint8_t output = cart_cpu_bus_input & 0xE7;
+    if (bandai.mapper == 157 && bandai.barcode_cycles / 1000 < bandai.barcode_length)
+        output |= bandai.barcode[bandai.barcode_cycles / 1000];
+    if (bandai_eeprom[0].capacity && bandai_eeprom[0].output
+        && (!bandai_eeprom[1].capacity || bandai_eeprom[1].output)) output |= 0x10;
+    return output;
+}
+
+static void bandai_cpu_write(uint16_t address, uint8_t value) {
+    if (address < 0x6000) return;
+    if (address < 0x8000 && bandai.mapper != 16) {
+        if (bandai.mapper == 153 && bandai.ram_enabled) prg_ram_write(address, value);
+        return;
+    }
+    if (bandai.mapper == 16
+        && ((C.submapper == 4 && address >= 0x8000)
+            || (C.submapper == 5 && address < 0x8000))) return;
+    unsigned reg = address & 15;
+    if (reg < 8) {
+        bandai.chr_regs[reg] = value;
+        if (bandai.mapper == 153 || C.prg_sz >= 0x80000) {
+            bandai.outer_bank = 0;
+            for (unsigned i = 0; i < 8; ++i)
+                bandai.outer_bank |= (bandai.chr_regs[i] & 1u) << 4;
+            bandai.prg_selected = true;
+        } else if (!C.chr_is_ram && bandai.mapper != 157) {
+            bandai.chr_banks[reg] = value;
+            bandai.chr_mapped |= (uint8_t)(1u << reg);
+        }
+        if (bandai.mapper == 157 && reg < 4)
+            eeprom24_write(&bandai_eeprom[1], (value & 8) != 0, bandai_eeprom[1].sda);
+        return;
+    }
+    bool direct_counter = bandai.mapper == 16 && C.submapper == 4;
+    switch (reg) {
+        case 8:
+            bandai.prg_bank = value & 15;
+            bandai.prg_selected = true;
+            break;
+        case 9: {
+            static const Mirroring modes[] = {
+                MIRROR_VERTICAL, MIRROR_HORIZONTAL, MIRROR_SINGLE0, MIRROR_SINGLE1
+            };
+            bandai.mirroring = modes[value & 3];
+            break;
+        }
+        case 10:
+            bandai.irq_enabled = (value & 1) != 0;
+            if (!direct_counter) bandai.irq_counter = bandai.irq_reload;
+            mapper_irq_line = false;
+            break;
+        case 11:
+            if (direct_counter) bandai.irq_counter = (bandai.irq_counter & 0xFF00u) | value;
+            else bandai.irq_reload = (bandai.irq_reload & 0xFF00u) | value;
+            break;
+        case 12:
+            if (direct_counter) bandai.irq_counter = (uint16_t)((bandai.irq_counter & 0xFFu) | ((unsigned)value << 8));
+            else bandai.irq_reload = (uint16_t)((bandai.irq_reload & 0xFFu) | ((unsigned)value << 8));
+            break;
+        case 13:
+            if (bandai.mapper == 153) {
+                bandai.ram_enabled = (value & 0x20) != 0;
+            } else {
+                eeprom24_write(&bandai_eeprom[0], (value & 0x20) != 0, (value & 0x40) != 0);
+                eeprom24_write(&bandai_eeprom[1], bandai_eeprom[1].scl, (value & 0x40) != 0);
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+static uint8_t bandai_ppu_read(uint16_t address) {
+    unsigned slot = (address >> 10) & 7;
+    if (!(bandai.chr_mapped & (1u << slot))) return (uint8_t)address;
+    size_t offset = (size_t)bandai.chr_banks[slot] * CHR_BANK_1K + (address & 0x03FF);
+    return C.chr[offset % C.chr_sz];
+}
+
+static void bandai_ppu_write(uint16_t address, uint8_t value) {
+    if (C.chr_is_ram) chr_ram_write(address & 0x1FFF, value);
+}
+
+static void bandai_clock(int cycles) {
+    if (cycles <= 0) return;
+    if (bandai.irq_enabled) {
+        // The output asserts on the clock after zero, before the counter wraps.
+        if ((unsigned)cycles > bandai.irq_counter) mapper_irq_line = true;
+        bandai.irq_counter = (uint16_t)(bandai.irq_counter - (unsigned)cycles);
+    }
+    unsigned end = bandai.barcode_length * 1000;
+    if (bandai.barcode_cycles < end) {
+        unsigned remaining = end - bandai.barcode_cycles;
+        bandai.barcode_cycles += (unsigned)cycles < remaining ? (unsigned)cycles : remaining;
+    }
+}
+
+static Mirroring bandai_mirroring(void) { return bandai.mirroring; }
+
+static void bandai_init(int mapper, unsigned standard_eeprom, unsigned extra_eeprom) {
+    memset(&bandai, 0, sizeof(bandai));
+    bandai.mapper = mapper;
+    bandai.mirroring = C.mirr_base;
+    bandai.ram_enabled = true;
+    bandai.chr_mapped = C.chr_is_ram ? 0xFF : 0;
+    for (unsigned i = 0; i < 8; ++i) bandai.chr_banks[i] = (uint8_t)i;
+    eeprom24_init(&bandai_eeprom[0], standard_eeprom);
+    eeprom24_init(&bandai_eeprom[1], extra_eeprom);
+}
+
+static void barcode_pattern(uint8_t *bits, unsigned *length, unsigned pattern, unsigned width) {
+    for (unsigned bit = width; bit > 0; --bit)
+        bits[(*length)++] = (pattern & (1u << (bit - 1))) ? 0 : 8;
+}
+
+bool cart_set_barcode(const char *digits) {
+    if (cart != &mapper_bandai || bandai.mapper != 157 || !digits) return false;
+    size_t count = strlen(digits);
+    if (count != 8 && count != 13) return false;
+    for (size_t i = 0; i < count; ++i)
+        if (digits[i] < '0' || digits[i] > '9') return false;
+    static const uint8_t left[] = {0x0D, 0x19, 0x13, 0x3D, 0x23, 0x31, 0x2F, 0x3B, 0x37, 0x0B};
+    static const uint8_t parity[] = {0x3F, 0x34, 0x32, 0x31, 0x2C, 0x26, 0x23, 0x2A, 0x29, 0x25};
+    uint8_t bits[160];
+    unsigned length = 33;
+    memset(bits, 8, length);
+    barcode_pattern(bits, &length, 5, 3);
+    unsigned left_count = count == 13 ? 6 : 4;
+    for (unsigned i = 0; i < left_count; ++i) {
+        unsigned digit = (unsigned)(digits[i + (count == 13 ? 1 : 0)] - '0');
+        unsigned pattern = left[digit];
+        if (count == 13 && !(parity[digits[0] - '0'] & (1u << (5 - i)))) {
+            unsigned reversed = 0;
+            for (unsigned bit = 0; bit < 7; ++bit) reversed = (reversed << 1) | ((pattern >> bit) & 1);
+            pattern = reversed ^ 0x7F;
+        }
+        barcode_pattern(bits, &length, pattern, 7);
+    }
+    barcode_pattern(bits, &length, 0x0A, 5);
+    for (unsigned i = count == 13 ? 7 : 4; i + 1 < count; ++i)
+        barcode_pattern(bits, &length, left[digits[i] - '0'] ^ 0x7Fu, 7);
+    unsigned sum = 0;
+    for (unsigned i = 0; i + 1 < count; ++i)
+        sum += (unsigned)(digits[i] - '0') * (((i & 1) != (count == 13)) ? 1u : 3u);
+    unsigned checksum = (10 - sum % 10) % 10;
+    barcode_pattern(bits, &length, left[checksum] ^ 0x7Fu, 7);
+    barcode_pattern(bits, &length, 5, 3);
+    memset(bits + length, 8, 32);
+    length += 32;
+    memcpy(bandai.barcode, bits, length);
+    bandai.barcode_length = length;
+    bandai.barcode_cycles = 0;
+    return true;
+}
+
 // Mapper selection and initialization.
+static bool bandai_layout(int mapper, uint8_t submapper, bool nes2,
+                          size_t prg_bytes, size_t chr_bytes, bool chr_is_ram,
+                          RomRamSizes *ram, unsigned eeprom_sizes[2]) {
+    if (prg_bytes > 0x80000 || (prg_bytes & (prg_bytes - 1)) != 0) return false;
+    if ((mapper == 153 || mapper == 157 || prg_bytes == 0x80000) && !chr_is_ram) return false;
+    if ((chr_is_ram && chr_bytes != CHR_BANK_8K)
+        || (!chr_is_ram && (chr_bytes > 0x40000 || (chr_bytes % CHR_BANK_1K) != 0))) return false;
+    if (mapper == 153)
+        return (!ram->prg_ram || ram->prg_ram == PRG_BANK_8K)
+            && (!ram->prg_nvram || ram->prg_nvram == PRG_BANK_8K);
+
+    unsigned serial_bytes = mapper == 159 || mapper == 157 ? 128 : submapper == 4 ? 0 : 256;
+    if (nes2) {
+        if (ram->prg_ram || (ram->prg_nvram && ram->prg_nvram != serial_bytes)) return false;
+    } else if (ram->prg_ram + ram->prg_nvram > PRG_BANK_8K) {
+        return false;
+    }
+    if (mapper == 157) {
+        eeprom_sizes[0] = 256;
+        eeprom_sizes[1] = !nes2 || ram->prg_nvram == 128 ? 128 : 0;
+    } else if (mapper == 159) {
+        eeprom_sizes[0] = 128;
+    } else if (submapper == 0 || (submapper == 5 && ram->prg_nvram == 256)) {
+        eeprom_sizes[0] = 256;
+    }
+    // The header describes the serial device, not an addressable PRG-RAM chip.
+    ram->prg_ram = ram->prg_nvram = 0;
+    return true;
+}
+
 static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *ram,
                                    bool chr_is_ram, size_t chr_sz) {
     size_t prg_total = ram->prg_ram + ram->prg_nvram;
@@ -1881,6 +2110,7 @@ int mapper_init_from_header(const iNESHeader *h,
     switch (mapper_no) {
         case 0: case 1: case 2: case 3: case 4: case 5:
         case 7: case 9: case 10: case 11: case 13: case 15: case 119: case 155:
+        case 16: case 153: case 157: case 159:
             break;
         default:
             fprintf(stderr, "Unsupported mapper: %d\n", mapper_no);
@@ -1888,13 +2118,25 @@ int mapper_init_from_header(const iNESHeader *h,
     }
     if (submapper && !((mapper_no == 1 && submapper == 5)
         || (mapper_no == 4 && (submapper == 1 || submapper == 3))
+        || (mapper_no == 16 && (submapper == 4 || submapper == 5))
         || ((mapper_no == 2 || mapper_no == 3 || mapper_no == 7) && submapper <= 2))) {
         fprintf(stderr, "Unsupported mapper/submapper: %d/%u\n", mapper_no, submapper);
         return -1;
     }
     RomRamSizes ram;
     rom_ram_sizes(h, &ram);
+    if ((ram.prg_nvram || ram.chr_nvram) && !(h->flags6 & 2)) {
+        fprintf(stderr, "Nonvolatile RAM declared without the battery flag\n");
+        return -1;
+    }
     bool chr_is_ram = h->chr_rom_chunks == 0 && (!nes2 || (h->flags9 & 0xF0) == 0);
+    unsigned eeprom_sizes[2] = {0, 0};
+    bool is_bandai = mapper_no == 16 || mapper_no == 153 || mapper_no == 157 || mapper_no == 159;
+    if (is_bandai && !bandai_layout(mapper_no, submapper, nes2, prg_sz, chr_sz,
+                                    chr_is_ram, &ram, eeprom_sizes)) {
+        fprintf(stderr, "Unsupported cartridge layout for mapper %d\n", mapper_no);
+        return -1;
+    }
     if (mapper_no == 5 && (prg_sz > 0x100000 || (!chr_is_ram && chr_sz > 0x100000))) {
         fprintf(stderr, "Unsupported ROM size for mapper 5\n");
         return -1;
@@ -1907,10 +2149,6 @@ int mapper_init_from_header(const iNESHeader *h,
         || (mapper_no == 4 && submapper == 1 && ram.prg_ram + ram.prg_nvram != 0x400)) {
         fprintf(stderr, "Unsupported RAM layout for mapper %d (PRG %zu+%zu, CHR %zu+%zu)\n",
                 mapper_no, ram.prg_ram, ram.prg_nvram, ram.chr_ram, ram.chr_nvram);
-        return -1;
-    }
-    if ((ram.prg_nvram || ram.chr_nvram) && !(h->flags6 & 2)) {
-        fprintf(stderr, "Nonvolatile RAM declared without the battery flag\n");
         return -1;
     }
     RamBlock new_work = {NULL, ram.prg_ram};
@@ -2015,6 +2253,13 @@ int mapper_init_from_header(const iNESHeader *h,
             build_mapper(&mapper_tqrom, mmc3_cpu_read, mmc3_cpu_write,
                         tqrom_ppu_read, tqrom_ppu_write, mmc3_reset, mmc3_mirr);
             cart = &mapper_tqrom;
+            break;
+        case 16: case 153: case 157: case 159:
+            build_mapper(&mapper_bandai, bandai_cpu_read, bandai_cpu_write,
+                         bandai_ppu_read, bandai_ppu_write, NULL, bandai_mirroring);
+            mapper_bandai.clock = bandai_clock;
+            bandai_init(mapper_no, eeprom_sizes[0], eeprom_sizes[1]);
+            cart = &mapper_bandai;
             break;
     }
     
