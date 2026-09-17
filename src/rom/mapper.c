@@ -72,7 +72,7 @@ static Mapper mapper_cprom, mapper_100in1, mapper_bandai, mapper_action53, mappe
 static Mapper mapper_taito33, mapper_taito48, mapper_jaleco18, mapper_irem32, mapper_irem65;
 static Mapper mapper_rambo1, mapper_rambo158;
 static Mapper mapper_vrc24, mapper_vrc7;
-static Mapper mapper_sunsoft69, mapper_namco, mapper_m34;
+static Mapper mapper_sunsoft69, mapper_namco, mapper_m34, mapper_gxrom;
 Mapper *cart = NULL;
 static bool mapper_irq_line = false;
 static uint8_t cart_cpu_bus_input = 0xFF;
@@ -154,6 +154,11 @@ static struct {
     uint8_t chr_bank[2];
     bool chr_mapped[2];
 } m34;
+
+static struct {
+    uint8_t prg_bank;
+    uint8_t chr_bank;
+} gxrom;
 
 void cart_apply_trainer(const uint8_t trainer[512]) {
     if (!trainer) return;
@@ -2610,6 +2615,46 @@ static void m34_reset(void) {
     m34.nina = nina;
 }
 
+// Mapper 66: GxROM.
+static uint8_t gxrom_cpu_read(uint16_t address) {
+    if (address >= 0x6000u && address < 0x8000u) return prg_ram_read(address);
+    if (address >= 0x8000u) {
+        size_t banks = C.prg_sz / PRG_BANK_32K;
+        size_t bank = banks ? (size_t)gxrom.prg_bank % banks : 0;
+        return C.prg[bank * PRG_BANK_32K + (address & 0x7FFFu)];
+    }
+    return cart_cpu_bus_input;
+}
+
+static void gxrom_cpu_write(uint16_t address, uint8_t value) {
+    if (address >= 0x6000u && address < 0x8000u) {
+        prg_ram_write(address, value);
+        return;
+    }
+    if (address >= 0x8000u) {
+        gxrom.prg_bank = (value >> 4) & 3u;
+        gxrom.chr_bank = value & 3u;
+    }
+}
+
+static uint8_t gxrom_ppu_read(uint16_t address) {
+    address &= 0x1FFFu;
+    size_t banks = C.chr_sz / CHR_BANK_8K;
+    size_t bank = banks ? (size_t)gxrom.chr_bank % banks : 0;
+    return C.chr[bank * CHR_BANK_8K + address];
+}
+
+static void gxrom_ppu_write(uint16_t address, uint8_t value) {
+    if (!C.chr_is_ram) return;
+    address &= 0x1FFFu;
+    size_t banks = C.chr_sz / CHR_BANK_8K;
+    size_t bank = banks ? (size_t)gxrom.chr_bank % banks : 0;
+    chr_ram_write(bank * CHR_BANK_8K + address, value);
+}
+
+static Mirroring gxrom_mirr(void) { return C.mirr_base; }
+static void gxrom_reset(void) { memset(&gxrom, 0, sizeof(gxrom)); }
+
 // Mapper 69: Sunsoft FME-7 / 5B.
 static struct {
     uint8_t command;
@@ -4180,7 +4225,7 @@ int mapper_init_from_header(const iNESHeader *h,
         case 16: case 153: case 157: case 159:
         case 18: case 32: case 33: case 34: case 48: case 64: case 65: case 158:
         case 21: case 22: case 23: case 25: case 27: case 183:
-        case 19: case 69: case 85: case 210:
+        case 19: case 66: case 69: case 85: case 210:
             break;
         default:
             fprintf(stderr, "Unsupported mapper: %d\n", mapper_no);
@@ -4296,6 +4341,12 @@ int mapper_init_from_header(const iNESHeader *h,
             fprintf(stderr, "Unsupported ROM/RAM size for mapper 34\n");
             return -1;
         }
+    }
+    if (mapper_no == 66
+        && ((prg_sz % PRG_BANK_32K) != 0 || prg_sz > 0x20000
+            || (chr_sz % CHR_BANK_8K) != 0 || chr_sz > 0x8000)) {
+        fprintf(stderr, "Unsupported ROM/RAM size for mapper 66\n");
+        return -1;
     }
     if (!ram_geometry_supported(mapper_no, nes2, &ram, chr_is_ram, chr_sz)
         || (mapper_no == 4 && submapper == 1 && ram.prg_ram + ram.prg_nvram != 0x400)) {
@@ -4436,6 +4487,11 @@ int mapper_init_from_header(const iNESHeader *h,
             build_mapper(&mapper_m34, m34_cpu_read, m34_cpu_write,
                          m34_ppu_read, m34_ppu_write, m34_reset, m34_mirr);
             cart = &mapper_m34;
+            break;
+        case 66:
+            build_mapper(&mapper_gxrom, gxrom_cpu_read, gxrom_cpu_write,
+                         gxrom_ppu_read, gxrom_ppu_write, gxrom_reset, gxrom_mirr);
+            cart = &mapper_gxrom;
             break;
         case 48:
             build_mapper(&mapper_taito48, taito48_cpu_read, taito48_cpu_write,
