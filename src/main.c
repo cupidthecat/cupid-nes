@@ -48,6 +48,55 @@ uint32_t framebuffer[SCREEN_WIDTH * SCREEN_HEIGHT];
 
 Joypad pad1 = {0}, pad2 = {0};
 
+static SDL_GameController *controllers[NES_INPUT_PLAYERS];
+
+static void open_controller(int device) {
+    if (!SDL_IsGameController(device)) return;
+    SDL_JoystickID id = SDL_JoystickGetDeviceInstanceID(device);
+    for (unsigned player = 0; player < NES_INPUT_PLAYERS; ++player) {
+        if (controllers[player] &&
+            SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controllers[player])) == id)
+            return;
+    }
+    for (unsigned player = 0; player < NES_INPUT_PLAYERS; ++player) {
+        if (!controllers[player]) {
+            controllers[player] = SDL_GameControllerOpen(device);
+            return;
+        }
+    }
+}
+
+static void controller_event(const SDL_Event *event) {
+    if (event->type == SDL_CONTROLLERDEVICEADDED) {
+        open_controller(event->cdevice.which);
+        return;
+    }
+    for (unsigned player = 0; player < NES_INPUT_PLAYERS; ++player) {
+        if (!controllers[player]) continue;
+        SDL_JoystickID id = SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controllers[player]));
+        if (event->type == SDL_CONTROLLERDEVICEREMOVED && event->cdevice.which == id) {
+            SDL_GameControllerClose(controllers[player]);
+            controllers[player] = NULL;
+            joypad_player(player)->buttons = 0;
+        } else if ((event->type == SDL_CONTROLLERBUTTONDOWN || event->type == SDL_CONTROLLERBUTTONUP)
+                   && event->cbutton.which == id) {
+            int button;
+            switch (event->cbutton.button) {
+                case SDL_CONTROLLER_BUTTON_A: button = BTN_A; break;
+                case SDL_CONTROLLER_BUTTON_B: button = BTN_B; break;
+                case SDL_CONTROLLER_BUTTON_BACK: button = BTN_SELECT; break;
+                case SDL_CONTROLLER_BUTTON_START: button = BTN_START; break;
+                case SDL_CONTROLLER_BUTTON_DPAD_UP: button = BTN_UP; break;
+                case SDL_CONTROLLER_BUTTON_DPAD_DOWN: button = BTN_DOWN; break;
+                case SDL_CONTROLLER_BUTTON_DPAD_LEFT: button = BTN_LEFT; break;
+                case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: button = BTN_RIGHT; break;
+                default: continue;
+            }
+            joypad_set_player(player, button, event->type == SDL_CONTROLLERBUTTONDOWN);
+        }
+    }
+}
+
 int main(int argc, char *argv[]) {
     SDL_AudioSpec want;
     SDL_AudioSpec have;
@@ -60,6 +109,11 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "Console must be nes-001, nes-101, famicom, or av-famicom\n");
                 return 1;
             }
+        } else if (strcmp(argv[i], "--adapter") == 0) {
+            if (++i == argc || !joypad_set_adapter_name(argv[i])) {
+                fprintf(stderr, "Adapter must be none, four-score, famicom-2, or famicom-4\n");
+                return 1;
+            }
         } else if (argv[i][0] == '-' || rom_path) {
             fprintf(stderr, "Unexpected argument: %s\n", argv[i]);
             return 1;
@@ -68,11 +122,12 @@ int main(int argc, char *argv[]) {
         }
     }
     if (!rom_path) {
-        printf("Usage: %s [--console MODEL] <rom-file>\n", argv[0]);
+        printf("Usage: %s [--console MODEL] [--adapter TYPE] <rom-file>\n", argv[0]);
         return 1;
     }
     
     printf("Console: %s\n", nes_console_model_name());
+    printf("Input adapter: %s\n", joypad_adapter_name());
     printf("Loading ROM: %s\n", rom_path);
     if(load_rom(rom_path) != 0) {
         fprintf(stderr, "Failed to load ROM\n");
@@ -113,10 +168,11 @@ int main(int argc, char *argv[]) {
     printf("  Y: 0x%02X\n", cpu.y);
     printf("  Status: 0x%02X\n", cpu.status);
 
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) != 0) {
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
         fprintf(stderr, "SDL_Init Error: %s\n", SDL_GetError());
         return 1;
     }
+    for (int device = 0; device < SDL_NumJoysticks(); ++device) open_controller(device);
 
     // Configure audio before starting the main loop.
     memset(&want, 0, sizeof want);
@@ -170,6 +226,7 @@ int main(int argc, char *argv[]) {
         uint64_t frame_start_cycles = cpu_total_cycles;
     
         while (SDL_PollEvent(&e)) {
+            controller_event(&e);
             if (e.type == SDL_QUIT)
                 running = false;
             palette_tool_handle_event(&e, renderer);
@@ -272,6 +329,8 @@ int main(int argc, char *argv[]) {
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     if (audio_dev) SDL_CloseAudioDevice(audio_dev);
+    for (unsigned player = 0; player < NES_INPUT_PLAYERS; ++player)
+        if (controllers[player]) SDL_GameControllerClose(controllers[player]);
     unload_rom();
     SDL_Quit();
     return 0;

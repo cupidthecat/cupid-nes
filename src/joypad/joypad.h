@@ -36,6 +36,14 @@ typedef struct {
 
 enum { BTN_A, BTN_B, BTN_SELECT, BTN_START, BTN_UP, BTN_DOWN, BTN_LEFT, BTN_RIGHT };
 
+enum { NES_INPUT_PLAYERS = 6 };
+typedef enum {
+    NES_ADAPTER_NONE,
+    NES_ADAPTER_FOUR_SCORE,
+    NES_ADAPTER_FAMICOM_TWO,
+    NES_ADAPTER_FAMICOM_FOUR
+} NesInputAdapter;
+
 void    joypad_set(Joypad* jp, int btn, int pressed);
 void    joypad_write_strobe(Joypad* jp, uint8_t value);
 uint8_t joypad_read(Joypad* jp);
@@ -44,5 +52,12 @@ uint8_t joypad_read_port(Joypad *jp, unsigned port);
 uint8_t joypad_open_bus_mask(unsigned port);
 bool    joypad_clocks_adjacent_reads(void);
 void    joypad_set_microphone(bool active);
+Joypad *joypad_player(unsigned player);
+bool    joypad_set_player(unsigned player, int button, bool pressed);
+void    joypad_write_ports(uint8_t value);
+NesInputAdapter joypad_adapter(void);
+bool    joypad_set_adapter(NesInputAdapter adapter);
+bool    joypad_set_adapter_name(const char *name);
+const char *joypad_adapter_name(void);
 
 #endif // JOYPAD_H

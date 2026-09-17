@@ -81,8 +81,9 @@ static void input_fixture(NesConsoleModel model, NesRegion region) {
     unload_rom();
     memset(input_memory, 0, sizeof(input_memory));
     memset(ram, 0, 0x0800);
-    memset(&pad1, 0, sizeof(pad1));
-    memset(&pad2, 0, sizeof(pad2));
+    for (unsigned player = 0; player < NES_INPUT_PLAYERS; ++player)
+        memset(joypad_player(player), 0, sizeof(Joypad));
+    joypad_set_adapter(NES_ADAPTER_NONE);
     nes_set_console_model(model);
     nes_set_region(region);
     joypad_set_microphone(false);
@@ -286,10 +287,139 @@ static int console_selection_lifetime(void) {
     return 0;
 }
 
+static int adapter_reports(void) {
+    static const uint8_t buttons[] = {0xA5, 0x5A, 0x3C, 0xC3, 0x96, 0x69};
+    static const uint32_t nes_reports[] = {0x083CA5, 0x04C35A};
+    static const uint32_t famicom_reports[] = {0x04963C, 0x0869C3};
+    for (unsigned adapter = NES_ADAPTER_FOUR_SCORE; adapter <= NES_ADAPTER_FAMICOM_FOUR; ++adapter) {
+        input_fixture(adapter == NES_ADAPTER_FOUR_SCORE ? NES_CONSOLE_NES001 : NES_CONSOLE_HVC001,
+                      NES_REGION_NTSC);
+        CHECK(joypad_set_adapter((NesInputAdapter)adapter));
+        for (unsigned player = 0; player < NES_INPUT_PLAYERS; ++player)
+            joypad_player(player)->buttons = buttons[player];
+        latch_controllers();
+        // Button changes after the falling edge must not replace the latched packet.
+        for (unsigned player = 0; player < NES_INPUT_PLAYERS; ++player)
+            joypad_player(player)->buttons = (uint8_t)~buttons[player];
+        for (unsigned bit = 0; bit < 32; ++bit) {
+            for (unsigned port = 0; port < 2; ++port) {
+                uint8_t expected;
+                if (adapter == NES_ADAPTER_FOUR_SCORE) {
+                    expected = bit < 24 ? (uint8_t)((nes_reports[port] >> bit) & 1u) : 1;
+                } else {
+                    uint8_t built_in = bit < 8 ? (uint8_t)((buttons[port] >> bit) & 1u) : 1;
+                    uint8_t expansion;
+                    if (adapter == NES_ADAPTER_FAMICOM_TWO)
+                        expansion = bit < 8 ? (uint8_t)((buttons[port + 2] >> bit) & 1u) : 1;
+                    else
+                        expansion = bit < 24 ? (uint8_t)((famicom_reports[port] >> bit) & 1u) : 1;
+                    expected = built_in | (expansion << 1);
+                }
+                write_mem(0x4018, 0xA0);
+                CHECK(read_mem((uint16_t)(0x4016 + port)) == (uint8_t)(0xA0 | expected));
+            }
+        }
+    }
+    return 0;
+}
+
+static int adapter_strobes_and_disconnect(void) {
+    for (unsigned adapter = NES_ADAPTER_FOUR_SCORE; adapter <= NES_ADAPTER_FAMICOM_FOUR; ++adapter) {
+        input_fixture(adapter == NES_ADAPTER_FOUR_SCORE ? NES_CONSOLE_NES001 : NES_CONSOLE_HVC001,
+                      NES_REGION_NTSC);
+        CHECK(joypad_set_adapter((NesInputAdapter)adapter));
+        write_mem(0x4016, 1);
+        for (unsigned pressed = 0; pressed < 2; ++pressed) {
+            for (unsigned player = 0; player < NES_INPUT_PLAYERS; ++player)
+                CHECK(joypad_set_player(player, BTN_A, pressed != 0));
+            for (unsigned read = 0; read < 28; ++read) {
+                write_mem(0x4018, 0);
+                CHECK(read_mem(0x4016) == (pressed ? (adapter == NES_ADAPTER_FOUR_SCORE ? 1 : 3) : 0));
+            }
+        }
+        CHECK(!joypad_set_adapter((NesInputAdapter)4));
+        CHECK(joypad_adapter() == (NesInputAdapter)adapter);
+        CHECK(!joypad_set_player(NES_INPUT_PLAYERS, BTN_A, true));
+        CHECK(!joypad_set_player(0, -1, true));
+        CHECK(!joypad_set_player(0, 8, true));
+        CHECK(joypad_set_adapter(NES_ADAPTER_NONE));
+        pad1.buttons = 0x81;
+        pad2.buttons = 0x18;
+        latch_controllers();
+        for (unsigned bit = 0; bit < 8; ++bit) {
+            write_mem(0x4018, 0);
+            CHECK(read_mem(0x4016) == ((0x81u >> bit) & 1u));
+            CHECK(read_mem(0x4017) == ((0x18u >> bit) & 1u));
+        }
+    }
+    return 0;
+}
+
+static int adapter_cpu_and_dma_clocks(void) {
+    input_fixture(NES_CONSOLE_NES001, NES_REGION_NTSC);
+    joypad_set_adapter(NES_ADAPTER_FOUR_SCORE);
+    pad2.buttons = 0x02;
+    latch_controllers();
+    input_program(0x1E, 0x4017);
+    CHECK(cpu_step(&cpu) == 7);
+    write_mem(0x4018, 0);
+    CHECK(read_mem(0x4017) == 1);
+
+    input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+    joypad_set_adapter(NES_ADAPTER_FAMICOM_FOUR);
+    pad2.buttons = 0x02;
+    joypad_player(3)->buttons = 0x04;
+    latch_controllers();
+    input_program(0x1E, 0x4017);
+    CHECK(cpu_step(&cpu) == 7);
+    write_mem(0x4018, 0);
+    CHECK(read_mem(0x4017) == 2);
+
+    for (unsigned famicom = 0; famicom < 2; ++famicom) {
+        input_fixture(famicom ? NES_CONSOLE_HVC001 : NES_CONSOLE_NES001, NES_REGION_NTSC);
+        joypad_set_adapter(famicom ? NES_ADAPTER_FAMICOM_FOUR : NES_ADAPTER_FOUR_SCORE);
+        pad1.buttons = 0x12;
+        joypad_player(2)->buttons = 0x22;
+        latch_controllers();
+        input_program(0xAD, 0x4016);
+        input_memory[0xC016] = 0xFF;
+        apu.dmc.current_addr = 0xC016;
+        apu.dmc.bytes_remaining = 1;
+        apu.dmc.enabled = true;
+        apu.dmc.sample_buffer_empty = false;
+        apu.dmc.timer = 1000;
+        dmc_request_cycle = 3;
+        CHECK(cpu_step(&cpu) == 8);
+        CHECK(apu.dmc.sample_buffer == (famicom ? 0xF8 : 0xE0));
+        CHECK(cpu.a == (famicom ? 0xF9 : 0xE0));
+        write_mem(0x4018, 0);
+        CHECK(read_mem(0x4016) == (famicom ? 2 : 1));
+    }
+    return 0;
+}
+
+static int adapter_selection_lifetime(void) {
+    static const char *const names[] = {"none", "four-score", "famicom-2", "famicom-4"};
+    for (unsigned adapter = 0; adapter < 4; ++adapter) {
+        input_fixture(NES_CONSOLE_NES001, NES_REGION_NTSC);
+        CHECK(joypad_set_adapter_name(names[adapter]));
+        CHECK(joypad_adapter() == (NesInputAdapter)adapter);
+        CHECK(strcmp(joypad_adapter_name(), names[adapter]) == 0);
+        CHECK(!joypad_set_adapter_name(NULL) && !joypad_set_adapter_name("unknown"));
+        cpu_soft_reset(&cpu);
+        CHECK(joypad_adapter() == (NesInputAdapter)adapter);
+        unload_rom();
+        CHECK(joypad_adapter() == (NesInputAdapter)adapter);
+    }
+    return 0;
+}
+
 int test_input_accuracy(void) {
     static int (*const tests[])(void) = {
         console_open_bus, console_read_clocks, console_strobe_timing,
-        famicom_microphone, console_dma_reads, console_selection_lifetime
+        famicom_microphone, console_dma_reads, console_selection_lifetime,
+        adapter_reports, adapter_strobes_and_disconnect, adapter_cpu_and_dma_clocks,
+        adapter_selection_lifetime
     };
     NesConsoleModel saved_model = nes_console_model();
     NesRegion saved_region = nes_timing()->region;
@@ -300,6 +430,7 @@ int test_input_accuracy(void) {
     nes_set_console_model(saved_model);
     nes_set_region(saved_region);
     joypad_set_microphone(false);
+    joypad_set_adapter(NES_ADAPTER_NONE);
     printf("Input: %u checks, %d failures\n", input_checks, failures);
     return failures;
 }

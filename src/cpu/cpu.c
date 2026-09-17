@@ -100,8 +100,7 @@ static void begin_cpu_cycle(bool read) {
     if (cart && cart->clock) cart->clock(1);
     apu_step(&apu, 1);
     if (joypad_write_pending && --joypad_write_pending == 0) {
-        joypad_write_strobe(&pad1, joypad_write_value);
-        joypad_write_strobe(&pad2, joypad_write_value);
+        joypad_write_ports(joypad_write_value);
     }
 }
 
@@ -327,8 +326,7 @@ static void write_bus(uint16_t addr, uint8_t value) {
         }
         if (addr == 0x4016) {
             if (!running_cpu || !in_bus_cycle) {
-                joypad_write_strobe(&pad1, value);
-                joypad_write_strobe(&pad2, value);
+                joypad_write_ports(value);
                 joypad_write_pending = 0;
             } else {
                 joypad_write_value = value;
