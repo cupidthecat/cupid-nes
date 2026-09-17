@@ -210,20 +210,41 @@ int test_apu_accuracy(void) {
 
     reset_audio();
     apu.frame_irq = true;
+    apu.frame_irq_source = true;
     cpu_total_cycles = 0;
     CHECK("even-aligned status read observes frame IRQ", apu_read(0x4015) & 0x40);
-    CHECK("even-aligned status read clears at the next APU clock", apu.frame_irq_clear_delay == 1);
+    CHECK("even-aligned status read acknowledges the CPU IRQ source immediately", !apu.frame_irq_source && !apu_irq_pending(&apu));
+    CHECK("even-aligned status read keeps the readable flag until the next APU clock", apu.frame_irq && apu.frame_irq_clear_delay == 1);
     apu_step(&apu, 1);
     CHECK("even-aligned status clear has matured", !apu.frame_irq);
     reset_audio();
     apu.frame_irq = true;
+    apu.frame_irq_source = true;
     cpu_total_cycles = 1;
     CHECK("odd-aligned status read observes frame IRQ", apu_read(0x4015) & 0x40);
-    CHECK("odd-aligned status read retains IRQ through one intervening clock", apu.frame_irq_clear_delay == 2);
+    CHECK("odd-aligned status read acknowledges the CPU IRQ source immediately", !apu.frame_irq_source && !apu_irq_pending(&apu));
+    CHECK("odd-aligned status read retains the readable flag through one intervening clock", apu.frame_irq && apu.frame_irq_clear_delay == 2);
     apu_step(&apu, 1);
-    CHECK("odd-aligned status read has not cleared one clock early", apu.frame_irq);
+    CHECK("odd-aligned status read has not cleared one clock early", apu.frame_irq && !apu.frame_irq_source);
+    CHECK("consecutive odd-window status read still sees bit six", apu_read(0x4015) & 0x40);
+    CHECK("consecutive status read does not extend the pending clear", apu.frame_irq_clear_delay == 1);
     apu_step(&apu, 1);
     CHECK("odd-aligned status clear matures on the following APU clock", !apu.frame_irq);
+
+    reset_audio();
+    apu.cycle_in_seq = 29827;
+    apu_step(&apu, 1);
+    CHECK("terminal frame event asserts both readable flag and CPU IRQ source", apu.frame_irq && apu.frame_irq_source && apu_irq_pending(&apu));
+    CHECK("status read acknowledges the terminal IRQ source", (apu_read(0x4015) & 0x40) && !apu.frame_irq_source);
+    apu_step(&apu, 1);
+    CHECK("next terminal frame event can reassert a new CPU IRQ", apu.frame_irq && apu.frame_irq_source && apu_irq_pending(&apu));
+
+    reset_audio();
+    apu.frame_irq = true;
+    apu.frame_irq_source = true;
+    apu.dmc.irq_flag = true;
+    CHECK("status reports frame and DMC IRQs together", (apu_read(0x4015) & 0xC0) == 0xC0);
+    CHECK("frame acknowledgment leaves the independent DMC IRQ pending", !apu.frame_irq_source && apu.dmc.irq_flag && apu_irq_pending(&apu));
 
     reset_audio();
     start_pulse();
@@ -253,10 +274,13 @@ int test_apu_accuracy(void) {
     CHECK("odd-cycle mode write applies on its fourth clock", apu.five_step);
     reset_audio();
     apu.frame_irq = true;
+    apu.frame_irq_source = true;
     apu_write(0x4017, 0x80);
-    CHECK("bit six clear preserves a pending frame IRQ", apu.frame_irq);
+    CHECK("bit six clear preserves a pending frame IRQ", apu.frame_irq && apu.frame_irq_source);
+    apu.dmc.irq_flag = true;
     apu_write(0x4017, 0x40);
-    CHECK("IRQ inhibit clears a pending frame IRQ immediately", !apu.frame_irq);
+    CHECK("IRQ inhibit clears the pending frame flag and CPU source immediately", !apu.frame_irq && !apu.frame_irq_source);
+    CHECK("IRQ inhibit does not acknowledge an independent DMC IRQ", apu.dmc.irq_flag && apu_irq_pending(&apu));
     reset_audio();
     start_pulse();
     apu.cycle_in_seq = 7455;

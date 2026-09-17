@@ -343,6 +343,7 @@ static inline void apu_write_4017(APU *a, uint8_t v) {
     a->irq_inhibit = (v & 0x40) != 0;
     if (a->irq_inhibit) {
         a->frame_irq = false;
+        a->frame_irq_source = false;
         a->frame_irq_clear_delay = 0;
     }
 
@@ -359,6 +360,7 @@ static inline uint8_t apu_read_4015(APU *a) {
     if (a->dmc.bytes_remaining > 0) s |= 0x10;
     if (a->frame_irq)        s |= 0x40;
     if (a->dmc.irq_flag)     s |= 0x80;
+    a->frame_irq_source = false;
     if (a->frame_irq && !a->frame_irq_clear_delay)
         a->frame_irq_clear_delay = (cpu_total_cycles & 1u) ? 2 : 1;
     return s;
@@ -667,8 +669,11 @@ void apu_step(APU *a, int cpu_cycles){
         if (!a->five_step && a->cycle_in_seq >= frame_steps[0][3]) {
             a->frame_irq = true;
             a->frame_irq_clear_delay = 0;
-            if (a->irq_inhibit && a->cycle_in_seq >= frame_steps[0][5])
+            if (!a->irq_inhibit) a->frame_irq_source = true;
+            if (a->irq_inhibit && a->cycle_in_seq >= frame_steps[0][5]) {
                 a->frame_irq = false;
+                a->frame_irq_source = false;
+            }
         }
         if (a->cycle_in_seq >= frame_steps[frame_mode][5])
             a->cycle_in_seq = 0;

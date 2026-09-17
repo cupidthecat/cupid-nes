@@ -138,7 +138,8 @@ typedef struct {
     uint32_t cycle_in_seq;
     bool five_step;
     bool irq_inhibit;
-    bool frame_irq;
+    bool frame_irq;           // readable $4015 bit 6
+    bool frame_irq_source;    // CPU IRQ source, acknowledged immediately by $4015
     uint8_t frame_irq_clear_delay;
     uint8_t frame_reset_delay;
     bool frame_reset_pending;
@@ -194,9 +195,10 @@ uint8_t apu_read(uint16_t addr);
 void apu_step(APU *a, int cpu_cycles);
 
 // IRQ
-static inline bool apu_irq_pending(const APU *a) { return (a->frame_irq && !a->irq_inhibit) || a->dmc.irq_flag; }
+static inline bool apu_irq_pending(const APU *a) { return (a->frame_irq_source && !a->irq_inhibit) || a->dmc.irq_flag; }
 static inline void apu_clear_frame_irq(APU *a) {
     ((APU*)a)->frame_irq = false;
+    ((APU*)a)->frame_irq_source = false;
     ((APU*)a)->frame_irq_clear_delay = 0;
 }
 bool apu_dmc_dma_pending(const APU *a);
