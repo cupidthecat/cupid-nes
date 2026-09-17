@@ -1180,7 +1180,13 @@ void OPLL_reset(OPLL *opll) {
     set_patch(opll, i, 0);
   }
 
-  for (i = 0; i < 0x40; i++)
+  for (i = 0; i < 0x10; i++)
+    OPLL_writeReg(opll, i, 0);
+  for (i = 0x10; i <= 0x18; i++)
+    OPLL_writeReg(opll, i, 0);
+  for (i = 0x20; i <= 0x28; i++)
+    OPLL_writeReg(opll, i, 0);
+  for (i = 0x30; i <= 0x38; i++)
     OPLL_writeReg(opll, i, 0);
 
   for (i = 0; i < 15; i++) {
