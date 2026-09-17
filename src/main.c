@@ -222,6 +222,8 @@ int main(int argc, char *argv[]) {
             ppu_set_oam_row_corruption_worst_case(true);
         } else if (strcmp(argv[i], "--ppu-startup-restriction") == 0) {
             ppu_set_startup_write_restriction(true);
+        } else if (strcmp(argv[i], "--ppu-oam-decay") == 0) {
+            ppu_set_oam_decay(true);
         } else if (strcmp(argv[i], "--adapter") == 0) {
             if (++i == argc || !joypad_set_adapter_name(argv[i])) {
                 fprintf(stderr, "Adapter must be none, four-score, famicom-2, or famicom-4\n");
@@ -274,7 +276,7 @@ int main(int argc, char *argv[]) {
     if (!rom_path) {
         printf("Usage: %s [--console MODEL] [--cpu-revision REVISION] "
                "[--ppu-revision REVISION] [--ppu-oam-row-corruption] "
-               "[--ppu-startup-restriction] "
+               "[--ppu-startup-restriction] [--ppu-oam-decay] "
                "[--adapter TYPE] [--port1 DEVICE] [--port2 DEVICE] "
                "[--expansion DEVICE] [--barcode DIGITS] "
                "[--zapper-radius PIXELS] [--tape-play FILE | --tape-record FILE] <rom-file>\n", argv[0]);
@@ -297,6 +299,7 @@ int main(int argc, char *argv[]) {
            ppu_oam_row_corruption_worst_case() ? "worst-case" : "compatibility");
     printf("PPU startup write restriction: %s\n",
            ppu_startup_write_restriction_enabled() ? "enabled" : "compatibility");
+    printf("PPU OAM decay: %s\n", ppu_oam_decay_enabled() ? "enabled" : "compatibility");
     printf("Input adapter: %s\n", joypad_adapter_name());
     printf("Loading ROM: %s\n", rom_path);
     if(load_rom(rom_path) != 0) {

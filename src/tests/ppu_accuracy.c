@@ -99,6 +99,15 @@ static void cpu_sta_abs(uint16_t address, uint8_t value) {
     cpu_step(&cpu);
 }
 
+static uint8_t cpu_lda_abs(uint16_t address) {
+    test_prg[0] = 0xAD;
+    test_prg[1] = (uint8_t)address;
+    test_prg[2] = (uint8_t)(address >> 8);
+    cpu.pc = 0x8000;
+    cpu_step(&cpu);
+    return cpu.a;
+}
+
 static PpuWriteState cpu_sta_ppu(NesRegion region, int scanline, int start_dot,
                                   uint8_t render_mask, uint16_t initial_v,
                                   uint16_t initial_t, uint8_t initial_x,
@@ -129,6 +138,15 @@ static bool oam_row_matches_seed(unsigned dest_row, unsigned source_row) {
     for (unsigned byte = 0; byte < 8; ++byte) {
         if (ppu.oam[dest_row * 8 + byte] != (uint8_t)(source_row * 8 + byte))
             return false;
+    }
+    return true;
+}
+
+static bool oam_row_matches_decay_value(unsigned row) {
+    for (unsigned byte = 0; byte < 8; ++byte) {
+        uint8_t address = (uint8_t)(row * 8 + byte);
+        uint8_t expected = (address & 3) == 2 ? (uint8_t)(address & 0xE3) : address;
+        if (ppu.oam[address] != expected) return false;
     }
     return true;
 }
@@ -689,6 +707,148 @@ static void test_startup_register_restriction(void) {
     nes_set_region(NES_REGION_NTSC);
 }
 
+static void test_oam_decay_refresh(void) {
+    bool saved_decay = ppu_oam_decay_enabled();
+    ppu_set_oam_decay(true);
+
+    reset_video(0);
+    memset(ppu.oam, 0xA5, sizeof(ppu.oam));
+    ppu.oam_addr = 0x18;
+    ppu.oam_decay_cycles[3] = 500;
+    cpu_total_cycles = 5000;
+    CHECK("OAM row remains intact at the 4500-cycle decay threshold",
+          ppu_reg_read(OAMDATA) == 0xA5 && ppu.oam[0x18] == 0xA5);
+    CHECK("fresh OAM read refreshes only the selected row timestamp",
+          ppu.oam_decay_cycles[3] == 5000 && ppu.oam_decay_cycles[4] == 0);
+
+    memset(&ppu.oam[4 * 8], 0xA5, 8);
+    memset(&ppu.oam[5 * 8], 0x6C, 8);
+    ppu.oam_decay_cycles[4] = 499;
+    ppu.oam_decay_cycles[5] = 499;
+    ppu.oam_addr = 4 * 8;
+    CHECK("OAM row decays immediately after the 4500-cycle threshold",
+          ppu_reg_read(OAMDATA) == 0x20 && oam_row_matches_decay_value(4));
+    CHECK("decay clears nonexistent attribute bits and leaves unrelated rows alone",
+          ppu.oam[0x22] == 0x22 && ppu.oam[0x26] == 0x22
+          && ppu.oam[5 * 8] == 0x6C && ppu.oam_decay_cycles[5] == 499);
+    CHECK("reading an already-expired row does not manufacture a refresh timestamp",
+          ppu.oam_decay_cycles[4] == 499);
+
+    memset(&ppu.oam[6 * 8], 0xC6, 8);
+    memset(&ppu.oam[7 * 8], 0xD7, 8);
+    ppu.oam_decay_cycles[6] = 1000;
+    ppu.oam_decay_cycles[7] = 1000;
+    cpu_total_cycles = 5400;
+    ppu.oam_addr = 6 * 8;
+    CHECK("refreshing one OAM row preserves that row", ppu_reg_read(OAMDATA) == 0xC6);
+    CHECK("refreshing one OAM row does not refresh its neighbor",
+          ppu.oam_decay_cycles[6] == 5400 && ppu.oam_decay_cycles[7] == 1000);
+    cpu_total_cycles = 5501;
+    ppu.oam_addr = 7 * 8;
+    (void)ppu_reg_read(OAMDATA);
+    CHECK("unrefreshed neighboring row can decay independently",
+          oam_row_matches_decay_value(7) && ppu.oam[6 * 8] == 0xC6);
+
+    reset_video(0);
+    ppu.oam_addr = 8 * 8;
+    ppu.oam[8 * 8] = 0x66;
+    uint64_t before_cpu_read = ppu.oam_decay_cycles[8];
+    CHECK("real CPU OAMDATA read uses the decay-aware primary OAM path",
+          cpu_lda_abs(OAMDATA) == 0x66);
+    CHECK("real CPU OAMDATA read refreshes the selected row",
+          ppu.oam_decay_cycles[8] > before_cpu_read
+          && ppu.oam_decay_cycles[9] == 0);
+
+    ppu.oam_addr = 9 * 8;
+    uint64_t before_cpu_write = ppu.oam_decay_cycles[9];
+    cpu_sta_abs(OAMDATA, 0x7B);
+    CHECK("real CPU OAMDATA write stores through the decay-aware path",
+          ppu.oam[9 * 8] == 0x7B);
+    CHECK("real CPU OAMDATA write refreshes its row",
+          ppu.oam_decay_cycles[9] > before_cpu_write);
+
+    reset_video(0);
+    for (int i = 0; i < 256; ++i) write_mem(0x0200 + i, (uint8_t)i);
+    ppu.oam_addr = 0;
+    ppu_oam_dma(2);
+    cpu_step(&cpu);
+    bool dma_refreshed_all_rows = true;
+    for (unsigned row = 0; row < 32; ++row)
+        dma_refreshed_all_rows &= ppu.oam_decay_cycles[row] != 0;
+    CHECK("OAM DMA refreshes every row through the production $2004 write path",
+          dma_refreshed_all_rows);
+
+    reset_video(0);
+    cpu_total_cycles = 4300;
+    ppu.scanline = 20;
+    ppu.dot = 65;
+    set_render_mask(0x10);
+    ppu.oam_addr = 10 * 8;
+    ppu.oam[10 * 8] = 20;
+    ppu.oam_decay_cycles[10] = 100;
+    ppu_step_dots(1);
+    CHECK("sprite evaluation refreshes the primary OAM row it reads",
+          ppu.oam_decay_cycles[10] == 4300);
+
+    reset_video(0);
+    cpu_total_cycles = 7000;
+    ppu.scanline = 100;
+    ppu.dot = 0;
+    set_render_mask(0);
+    ppu.oam_addr = 11 * 8;
+    ppu.oam_decay_cycles[11] = 25;
+    ppu.oam_decay_cycles[12] = 25;
+    ppu_step_dots(1);
+    CHECK("blanking refreshes the selected primary OAM row",
+          ppu.oam_decay_cycles[11] == 7000 && ppu.oam_decay_cycles[12] == 25);
+
+    reset_video_region(0, NES_REGION_PAL);
+    cpu_total_cycles = 8000;
+    ppu.scanline = 265;
+    ppu.dot = 2;
+    set_render_mask(0);
+    ppu.oam_addr = 0x17;
+    ppu.oam_decay_cycles[2] = 40;
+    ppu.oam_decay_cycles[3] = 40;
+    ppu_step_dots(1);
+    CHECK("PAL late-vblank OAM clock advances the address", ppu.oam_addr == 0x18);
+    CHECK("PAL late-vblank OAM clock refreshes the row it enters",
+          ppu.oam_decay_cycles[3] == 8000 && ppu.oam_decay_cycles[2] == 40);
+
+    reset_video_region(0, NES_REGION_DENDY);
+    memset(&ppu.oam[13 * 8], 0x4D, 8);
+    ppu.oam_addr = 13 * 8;
+    ppu.oam_decay_cycles[13] = 0;
+    cpu_total_cycles = PPU_OAM_DECAY_CPU_CYCLES + 1;
+    (void)ppu_reg_read(OAMDATA);
+    CHECK("Dendy opt-in profile uses the same deterministic OAM decay model",
+          oam_row_matches_decay_value(13));
+
+    nes_set_region(NES_REGION_NTSC);
+    ppu.oam[14 * 8] = 0x9E;
+    ppu.oam_decay_cycles[14] = 777;
+    cpu_total_cycles = 9000;
+    ppu_soft_reset(&ppu);
+    CHECK("soft reset preserves OAM bytes while clearing decay timestamps",
+          ppu.oam[14 * 8] == 0x9E && ppu.oam_decay_cycles[14] == 0);
+    ppu.oam_addr = 14 * 8;
+    (void)ppu_reg_read(OAMDATA);
+    CHECK("cleared soft-reset timestamp participates in later deterministic decay",
+          oam_row_matches_decay_value(14));
+
+    ppu_set_oam_decay(false);
+    reset_video(0);
+    memset(&ppu.oam[15 * 8], 0xEF, 8);
+    ppu.oam_addr = 15 * 8;
+    ppu.oam_decay_cycles[15] = 0;
+    cpu_total_cycles = PPU_OAM_DECAY_CPU_CYCLES * 4u;
+    CHECK("compatibility profile leaves OAM decay disabled",
+          ppu_reg_read(OAMDATA) == 0xEF && ppu.oam[15 * 8] == 0xEF);
+
+    ppu_set_oam_decay(saved_decay);
+    nes_set_region(NES_REGION_NTSC);
+}
+
 static void test_regional_video(void) {
     reset_video(0);
     ppu.mask = 0x20;
@@ -1198,6 +1358,7 @@ int test_ppu_accuracy(void) {
     test_dot257_scroll_glitches();
     test_oam_row_corruption_profiles();
     test_startup_register_restriction();
+    test_oam_decay_refresh();
     test_regional_video();
     test_video_reset();
     test_sprite_shifters();

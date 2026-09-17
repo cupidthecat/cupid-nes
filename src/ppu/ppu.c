@@ -48,6 +48,7 @@ PPU ppu;
 static PpuRevision active_ppu_revision = PPU_REVISION_2C02_E_PLUS;
 static bool oam_row_corruption_worst_case = false;
 static bool startup_write_restriction = false;
+static bool oam_decay = false;
 static const char *const ppu_revision_names[] = {"2c02-pre-e", "2c02e-plus"};
 
 PpuRevision ppu_revision(void) {
@@ -92,6 +93,14 @@ void ppu_set_startup_write_restriction(bool enabled) {
 
 bool ppu_startup_writes_restricted(void) {
     return ppu.startup_writes_restricted;
+}
+
+bool ppu_oam_decay_enabled(void) {
+    return oam_decay;
+}
+
+void ppu_set_oam_decay(bool enabled) {
+    oam_decay = enabled;
 }
 
 static bool rendering_line(void) {
@@ -209,6 +218,35 @@ static void ppu_corrupt_oam_row(uint8_t source_row, uint8_t dest_row) {
     ppu.secondary_oam[dest_row] = ppu.secondary_oam[source_row];
 }
 
+static void ppu_refresh_oam_row(uint8_t row) {
+    if (oam_decay) ppu.oam_decay_cycles[row & 0x1F] = cpu_total_cycles;
+}
+
+static uint8_t ppu_read_oam(uint8_t address) {
+    if (!oam_decay) return ppu.oam[address];
+
+    uint8_t row = address >> 3;
+    uint64_t stamp = ppu.oam_decay_cycles[row];
+    uint64_t elapsed = cpu_total_cycles >= stamp ? cpu_total_cycles - stamp : 0;
+    if (elapsed <= PPU_OAM_DECAY_CPU_CYCLES) {
+        ppu_refresh_oam_row(row);
+    } else {
+        uint8_t base = address & 0xF8;
+        for (unsigned byte = 0; byte < 8; ++byte) {
+            uint8_t oam_address = (uint8_t)(base | byte);
+            ppu.oam[oam_address] = (oam_address & 3) == 2
+                                 ? (uint8_t)(oam_address & 0xE3)
+                                 : oam_address;
+        }
+    }
+    return ppu.oam[address];
+}
+
+static void ppu_write_oam(uint8_t address, uint8_t value) {
+    ppu.oam[address] = value;
+    ppu_refresh_oam_row(address >> 3);
+}
+
 static uint8_t ppu_oam_corruption_row(int dot) {
     uint8_t row = ppu.secondary_index & 0x1F;
     if (dot >= 65 && dot <= 256 && (row & 3)) row = (uint8_t)((row + 3) & 0x1C);
@@ -294,7 +332,7 @@ uint8_t ppu_reg_read(uint16_t reg) {
                     ppu.oam_bus = ppu.secondary_oam[ppu.secondary_index & 0x1F];
                 value = ppu.oam_bus;
             } else {
-                value = ppu.oam[ppu.oam_addr];
+                value = ppu_read_oam(ppu.oam_addr);
                 if ((ppu.oam_addr & 3) == 2) value &= 0xE3;
             }
             set_open_bus(value);
@@ -383,7 +421,7 @@ void ppu_reg_write_cpu(uint16_t reg, uint8_t value, uint8_t cpu_open_bus) {
                 ppu.oam_addr = (ppu.oam_addr + 4) & 0xFC;
             } else {
                 if ((ppu.oam_addr & 3) == 2) value &= 0xE3;
-                ppu.oam[ppu.oam_addr] = value;
+                ppu_write_oam(ppu.oam_addr, value);
                 // PAL refresh also clocks this address latch late in vblank.
                 int previous_dot = (ppu.dot + 340) % 341;
                 bool refresh = nes_timing()->region == NES_REGION_PAL
@@ -510,6 +548,7 @@ void ppu_power_on(PPU *state) {
     memset(ppu_ob_expire, 0, sizeof(ppu_ob_expire));
     memset(state->oam, 0xFF, sizeof(state->oam));
     memset(state->secondary_oam, 0xFF, sizeof(state->secondary_oam));
+    memset(state->oam_decay_cycles, 0, sizeof(state->oam_decay_cycles));
     state->oam_bus = 0xFF;
     state->oam_read_latch = 0xFF;
     state->scanline = (int)nes_timing()->scanlines - 1;
@@ -549,6 +588,7 @@ void ppu_soft_reset(PPU *state) {
     state->oam_bus = 0xFF;
     state->oam_read_latch = 0xFF;
     state->startup_writes_restricted = startup_write_restriction;
+    memset(state->oam_decay_cycles, 0, sizeof(state->oam_decay_cycles));
     memset(ppu_ob_expire, 0, sizeof(ppu_ob_expire));
     cpu_set_nmi_line(false);
 }
@@ -571,7 +611,7 @@ static void ppu_evaluate_sprites(void) {
         ppu.overflow_count = 0;
     }
     if (ppu.dot & 1) {
-        ppu.oam_bus = ppu.oam[ppu.oam_addr];
+        ppu.oam_bus = ppu_read_oam(ppu.oam_addr);
         if ((ppu.oam_addr & 3) == 2) ppu.oam_bus &= 0xE3;
         return;
     }
@@ -830,6 +870,8 @@ void ppu_step_dots(int ppu_cycles) {
         }
 
         if (dot == 0) {
+            if (oam_decay && ((!prerender && line >= 240) || !ppu.rendering_enabled))
+                ppu_refresh_oam_row(ppu.oam_addr >> 3);
             if (prerender && oam_row_corruption_worst_case && ppu.rendering_enabled
                 && active_ppu_revision == PPU_REVISION_2C02_E_PLUS) {
                 // Later 2C02 revisions can copy the selected primary row at
@@ -860,8 +902,10 @@ void ppu_step_dots(int ppu_cycles) {
             ppu.suppress_vblank = false;
         }
         if (nes_timing()->region == NES_REGION_PAL && line >= 265 && !prerender
-            && dot && !(dot & 1))
+            && dot && !(dot & 1)) {
             ppu.oam_addr++;
+            ppu_refresh_oam_row(ppu.oam_addr >> 3);
+        }
         if (visible && dot >= 1 && dot <= 256) {
             // X counters continue counting while rendering is disabled; the
             // pattern shifters hold their data until rendering resumes.

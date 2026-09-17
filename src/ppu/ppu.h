@@ -43,6 +43,7 @@
 #define PPUADDR   0x2006
 #define PPUDATA   0x2007
 #define OAMDMA    0x4014
+#define PPU_OAM_DECAY_CPU_CYCLES 4500u
 
 typedef enum {
     PPU_REVISION_2C02_PRE_E,
@@ -100,6 +101,7 @@ typedef struct {
 
     uint8_t oam_bus;
     uint8_t oam_read_latch; // CPU-visible OAM output from the preceding PPU clock
+    uint64_t oam_decay_cycles[32]; // Last refresh CPU cycle for each eight-byte primary OAM row
     uint8_t secondary_index;
     uint8_t overflow_count;
     bool eval_in_range;
@@ -189,6 +191,8 @@ void ppu_set_oam_row_corruption_worst_case(bool enabled);
 bool ppu_startup_write_restriction_enabled(void);
 void ppu_set_startup_write_restriction(bool enabled);
 bool ppu_startup_writes_restricted(void);
+bool ppu_oam_decay_enabled(void);
+void ppu_set_oam_decay(bool enabled);
 void ppu_oam_dma(uint8_t page);
 void ppu_begin_vblank(void);
 void ppu_end_vblank(void);
