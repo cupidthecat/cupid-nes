@@ -40,6 +40,7 @@ typedef struct {
     PpuMachineContext sub_ppu;
     APU sub_apu;
     uint32_t sub_framebuffer[SCREEN_WIDTH * SCREEN_HEIGHT];
+    uint32_t dual_framebuffer[2 * SCREEN_WIDTH * SCREEN_HEIGHT];
 } VsState;
 
 static VsState vs;
@@ -208,9 +209,10 @@ void vs_power_on_secondary(void) {
     select_side(0);
 }
 
-void vs_soft_reset_secondary(void) {
-    if (!vs_dual_system()) return;
+void vs_soft_reset(void) {
+    if (!vs_enabled()) return;
     reset_control_state();
+    if (!vs_dual_system()) return;
     select_side(1);
     ppu_soft_reset(&vs.sub_ppu.state);
     apu_soft_reset(&vs.sub_apu);
@@ -236,6 +238,52 @@ int vs_cpu_step(void) {
 void vs_start_frame(void) {
     start_frame();
     if (vs_dual_system()) vs.sub_ppu.state.frame_complete = false;
+}
+
+unsigned vs_video_width(void) {
+    return vs_dual_system() ? 2 * SCREEN_WIDTH : SCREEN_WIDTH;
+}
+
+const uint32_t *vs_video_framebuffer(void) {
+    if (!vs_dual_system()) return framebuffer;
+    for (size_t row = 0; row < SCREEN_HEIGHT; ++row) {
+        uint32_t *output = vs.dual_framebuffer + row * 2 * SCREEN_WIDTH;
+        memcpy(output, framebuffer + row * SCREEN_WIDTH, SCREEN_WIDTH * sizeof(*output));
+        memcpy(output + SCREEN_WIDTH, vs.sub_framebuffer + row * SCREEN_WIDTH,
+               SCREEN_WIDTH * sizeof(*output));
+    }
+    return vs.dual_framebuffer;
+}
+
+APU *vs_side_apu(unsigned side) {
+    if (side == 0) return &apu;
+    return side == 1 && vs_dual_system() ? &vs.sub_apu : NULL;
+}
+
+void vs_audio_init(int sample_rate) {
+    apu_audio_init_state(vs_side_apu(0), sample_rate);
+    apu_audio_init_state(vs_side_apu(1), sample_rate);
+}
+
+void vs_audio_callback(void *userdata, uint8_t *stream, int len) {
+    if (!vs_dual_system()) {
+        apu_sdl_audio_callback(userdata, stream, len);
+        return;
+    }
+    if (!stream || len <= 0) return;
+    float *output = (float *)stream;
+    int count = len / (int)sizeof(*output);
+    // The callback uses stable APU storage, never the CPU's active-machine selector.
+    apu_audio_pull(&apu, output, count);
+    float secondary[256];
+    for (int offset = 0; offset < count;) {
+        int chunk = count - offset;
+        if (chunk > (int)(sizeof(secondary) / sizeof(secondary[0]))) chunk = 256;
+        apu_audio_pull(&vs.sub_apu, secondary, chunk);
+        for (int i = 0; i < chunk; ++i)
+            output[offset + i] = 0.5f * (output[offset + i] + secondary[i]);
+        offset += chunk;
+    }
 }
 
 uint64_t vs_side_cpu_cycles(unsigned side) {

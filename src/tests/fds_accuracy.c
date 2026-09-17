@@ -41,6 +41,7 @@
 #include "../ppu/ppu.h"
 #include "../apu/apu.h"
 #include "../system/timing.h"
+#include "../system/vs_system.h"
 #include "../../include/globals.h"
 
 #define FDS_SIDE_SIZE 65500u
@@ -156,7 +157,10 @@ static uint8_t *make_unsupported_mapper(size_t *size) {
 static int test_fds_loader_and_memory(void) {
     size_t nrom_size;
     uint8_t *nrom = make_nrom(&nrom_size);
+    CHECK(nrom != NULL);
+    ((iNESHeader *)nrom)->flags7 = 0x09; // A single VS cabinet also uses an NROM board.
     CHECK(nrom != NULL && load_rom_memory(nrom, nrom_size) == 0);
+    CHECK(vs_enabled());
     free(nrom);
     Mapper *previous = cart;
     CHECK(cart_cpu_read(0x8000) == 0x5C);
@@ -167,6 +171,7 @@ static int test_fds_loader_and_memory(void) {
     CHECK(disk != NULL);
     CHECK(load_fds_memory(disk, disk_size, bios, sizeof(bios) - 1, NULL, false) == -1);
     CHECK(cart == previous && cart_cpu_read(0x8000) == 0x5C);
+    CHECK(vs_enabled());
     CHECK(load_fds_memory(disk, disk_size - 1, bios, sizeof(bios), NULL, false) == -1);
     CHECK(cart == previous && cart_cpu_read(0x8000) == 0x5C);
     disk[4] = 3;
@@ -176,6 +181,7 @@ static int test_fds_loader_and_memory(void) {
 
     for (size_t i = 0; i < sizeof(bios); ++i) bios[i] = (uint8_t)(i ^ 0xA5);
     CHECK(load_fds_memory(disk, disk_size, bios, sizeof(bios), NULL, false) == 0);
+    CHECK(!vs_enabled());
     free(disk);
     CHECK(rom_is_fds() && fds_side_count() == 2 && fds_current_side() == 0);
     CHECK(cart_cpu_read(0xE000) == 0xA5 && cart_cpu_read(0xFFFF) == (uint8_t)(0x1FFF ^ 0xA5));

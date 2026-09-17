@@ -176,6 +176,7 @@ typedef struct {
     float hp440_prev_out;
     float lp14k_prev_out;
     float last_output_sample;
+    float last_read_sample;  // Owned by the audio consumer; used during underruns.
 
     // Lockless ring buffer (very simple)
     #define APU_RING_CAP 8192
@@ -194,6 +195,8 @@ void apu_reset(APU *a);
 void apu_select_machine(APU *state);
 APU *apu_active_state(void);
 void apu_audio_init(int sample_rate);
+void apu_audio_init_state(APU *state, int sample_rate);
+void apu_audio_pull(APU *state, float *samples, int count);
 // Select the DMC CPU timing model. The selection persists across APU resets.
 bool apu_set_cpu_revision(ApuCpuRevision revision);
 ApuCpuRevision apu_get_cpu_revision(void);

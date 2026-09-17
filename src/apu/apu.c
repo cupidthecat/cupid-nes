@@ -339,12 +339,18 @@ void apu_reset(APU *a) {
 }
 
 void apu_audio_init(int sample_rate) {
-    apu.sample_rate = (double)sample_rate;
-    apu.cycles_per_sample = nes_timing()->cpu_hz / apu.sample_rate;
-    apu.sample_accum = 0.0;
-    atomic_store_explicit(&apu.ring_w, 0, memory_order_relaxed);
-    atomic_store_explicit(&apu.ring_r, 0, memory_order_relaxed);
-    apu_init_filter_coeffs(&apu);
+    apu_audio_init_state(&apu, sample_rate);
+}
+
+void apu_audio_init_state(APU *state, int sample_rate) {
+    if (!state || sample_rate <= 0) return;
+    state->sample_rate = (double)sample_rate;
+    state->cycles_per_sample = nes_timing()->cpu_hz / state->sample_rate;
+    state->sample_accum = 0.0;
+    state->last_read_sample = 0.0f;
+    atomic_store_explicit(&state->ring_w, 0, memory_order_relaxed);
+    atomic_store_explicit(&state->ring_r, 0, memory_order_relaxed);
+    apu_init_filter_coeffs(state);
 }
 
 bool apu_set_cpu_revision(ApuCpuRevision revision) {
@@ -771,10 +777,16 @@ void apu_step(APU *a, int cpu_cycles){
 }
 
 // SDL audio callback.
+void apu_audio_pull(APU *state, float *samples, int count) {
+    if (!state || !samples || count <= 0) return;
+    int got = rb_pull(state, samples, count);
+    if (got) state->last_read_sample = samples[got - 1];
+    for (int i = got; i < count; ++i) samples[i] = state->last_read_sample;
+}
+
 void apu_sdl_audio_callback(void *userdata, uint8_t *stream, int len){
     (void)userdata;
     float *out = (float*)stream;
     int frames = len / sizeof(float);
-    int got = rb_pull(main_apu, out, frames);
-    for (int i=got; i<frames; ++i) out[i] = main_apu->last_output_sample;
+    apu_audio_pull(main_apu, out, frames);
 }

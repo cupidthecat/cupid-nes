@@ -21,6 +21,8 @@
 #include "../rom/mapper.h"
 #include "../rom/rom.h"
 #include "../system/vs_system.h"
+#include "../../include/globals.h"
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -362,7 +364,7 @@ static int test_vs_dual_execution(void) {
     CHECK(vs_side_frame_count(1) >= vs_side_frame_count(0));
 
     write_mem(0x6000, 0x00);
-    vs_soft_reset_secondary();
+    vs_soft_reset();
     CHECK(!vs_shared_ram_access_allowed());
     CHECK(!vs_external_irq_pending());
     for (unsigned i = 0; i < 8; ++i) vs_cpu_step();
@@ -374,13 +376,128 @@ static int test_vs_dual_execution(void) {
     return 0;
 }
 
+static int test_vs_reset_and_declared_ram(void) {
+    static const uint8_t loop[] = {0x4C, 0x00, 0x80};
+    CHECK(load_vs_program(VS_TYPE_TKO_BOXING, 0, VS_INPUT_STANDARD, loop, sizeof(loop)) == 0);
+    power_main();
+    (void)read_mem(0x5E00);
+    CHECK(read_mem(0x5E01) == 0xFF && read_mem(0x5E01) == 0xBF);
+    ppu_soft_reset(&ppu);
+    apu_soft_reset(&apu);
+    cpu_soft_reset(&cpu);
+    vs_soft_reset();
+    CHECK(read_mem(0x5E01) == 0xFF);
+    CHECK(unload_rom());
+
+    iNESHeader h = nes20_vs_header(99, 2, 1, VS_TYPE_DEFAULT, 0, VS_INPUT_STANDARD);
+    size_t image_size;
+    uint8_t *image = build_image(&h, 0x8000, 0x2000, &image_size);
+    CHECK(image != NULL && load_rom_memory(image, image_size) == 0);
+    cart_cpu_write(0x6000, 0x39);
+    CHECK(cart_cpu_read_bus(0x6000, 0xA7) == 0xA7);
+    CHECK(cart_cpu_read_bus(0x6000, 0x5C) == 0x5C);
+
+    h.flags10 = 6; // Explicit 4 KiB work RAM must not become the 2 KiB legacy default.
+    memcpy(image, &h, sizeof(h));
+    CHECK(load_rom_memory(image, image_size) == 0);
+    cart_cpu_write(0x6000, 0x24);
+    cart_cpu_write(0x6800, 0x68);
+    CHECK(cart_cpu_read(0x6000) == 0x24 && cart_cpu_read(0x6800) == 0x68);
+    CHECK(cart_cpu_read(0x7000) == 0x24 && cart_cpu_read(0x7800) == 0x68);
+    Mapper *previous = cart;
+    uint8_t *previous_prg = prg_rom;
+    h.flags10 = 8; // This board implementation cannot address more than 8 KiB.
+    memcpy(image, &h, sizeof(h));
+    CHECK(load_rom_memory(image, image_size) == -1);
+    CHECK(cart == previous && prg_rom == previous_prg && vs_enabled());
+    CHECK(cart_cpu_read(0x6000) == 0x24 && cart_cpu_read(0x6800) == 0x68);
+    h.flags6 |= 2;
+    h.flags10 = 0x55; // Separate work and save chips are not silently collapsed.
+    memcpy(image, &h, sizeof(h));
+    CHECK(load_rom_memory(image, image_size) == -1);
+    CHECK(cart == previous && prg_rom == previous_prg);
+    free(image);
+    CHECK(unload_rom());
+    return 0;
+}
+
+static int test_vs_dual_video_and_audio(void) {
+    iNESHeader h = legacy_vs99_header();
+    size_t image_size;
+    uint8_t *image = build_image(&h, 0x10000, 0x8000, &image_size);
+    CHECK(image != NULL);
+    uint8_t *prg = image + sizeof(h);
+    memset(prg, 0xEA, 0x10000);
+    static const uint8_t paint[] = {
+        0xA9,0x3F, 0x8D,0x06,0x20,
+        0xA9,0x00, 0x8D,0x06,0x20,
+        0xA9,0x01, 0x8D,0x07,0x20,
+        0xA9,0x00, 0x8D,0x06,0x20, 0x8D,0x06,0x20
+    };
+    static const uint8_t pulse[] = {
+        0xA9,0x01, 0x8D,0x15,0x40,
+        0xA9,0xBF, 0x8D,0x00,0x40,
+        0xA9,0x40, 0x8D,0x02,0x40,
+        0xA9,0x00, 0x8D,0x03,0x40,
+        0x4C,0x2B,0x80
+    };
+    memcpy(prg, paint, sizeof(paint));
+    prg[23] = 0x4C; prg[24] = 0x17; prg[25] = 0x80;
+    memcpy(prg + 0x8000, paint, sizeof(paint));
+    prg[0x800B] = 2;
+    memcpy(prg + 0x8000 + sizeof(paint), pulse, sizeof(pulse));
+    for (size_t side = 0; side < 2; ++side) {
+        size_t base = side * 0x8000;
+        set_vector(prg, base + 0x7FFA, 0x8000);
+        set_vector(prg, base + 0x7FFC, 0x8000);
+        set_vector(prg, base + 0x7FFE, 0x8000);
+    }
+    CHECK(load_rom_memory(image, image_size) == 0);
+    free(image);
+    power_main();
+    vs_power_on_secondary();
+    vs_audio_init(48000);
+    CHECK(vs_side_apu(0) == &apu && vs_side_apu(1) != NULL && vs_side_apu(2) == NULL);
+    CHECK(vs_side_apu(0)->sample_rate == 48000 && vs_side_apu(1)->sample_rate == 48000);
+    for (unsigned frame = 0; frame < 2; ++frame) {
+        vs_start_frame();
+        for (unsigned i = 0; i < 40000 && !ppu.frame_complete; ++i) vs_cpu_step();
+        CHECK(ppu.frame_complete);
+    }
+    CHECK(vs_video_width() == 2 * SCREEN_WIDTH);
+    const uint32_t *pixels = vs_video_framebuffer();
+    size_t pixel = 100 * vs_video_width() + 100;
+    CHECK(pixels[pixel] == 0xFF002491u);
+    CHECK(pixels[pixel + SCREEN_WIDTH] == 0xFF0000DAu);
+    CHECK(!apu.pulse1.enabled && vs_side_apu(1)->pulse1.enabled);
+
+    uint64_t main_cycles = vs_side_cpu_cycles(0), sub_cycles = vs_side_cpu_cycles(1);
+    float samples[513];
+    vs_audio_callback(NULL, (uint8_t *)samples, sizeof(samples));
+    bool audible = false;
+    for (size_t i = 0; i < sizeof(samples) / sizeof(samples[0]); ++i) {
+        CHECK(isfinite(samples[i]));
+        if (fabsf(samples[i]) > 0.000001f) audible = true;
+    }
+    CHECK(audible); // Only the secondary cabinet can supply this sound.
+    CHECK(vs_side_cpu_cycles(0) == main_cycles && vs_side_cpu_cycles(1) == sub_cycles);
+    CHECK(vs_active_side() == 0);
+    CHECK(atomic_load(&vs_side_apu(0)->ring_r) == 513);
+    CHECK(atomic_load(&vs_side_apu(1)->ring_r) == 513);
+    CHECK(unload_rom());
+    CHECK(vs_video_width() == SCREEN_WIDTH && vs_video_framebuffer() == framebuffer);
+    return 0;
+}
+
 int test_vs_accuracy(void) {
     static int (*const tests[])(void) = {
         test_vs_metadata_transaction,
         test_vs_ppu_models,
         test_vs_inputs_and_protection,
         test_mapper99_banks,
-        test_vs_dual_execution
+        test_vs_dual_execution,
+        test_vs_reset_and_declared_ram,
+        test_vs_dual_video_and_audio
     };
     int failures = 0;
     for (size_t i = 0; i < sizeof(tests) / sizeof(tests[0]); ++i) failures += tests[i]();

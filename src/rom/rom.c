@@ -285,6 +285,7 @@ int load_fds_memory(const uint8_t *disk, size_t disk_size,
     prg_size = 0;
     chr_size = 0;
     memset(&ines_header, 0, sizeof(ines_header));
+    vs_clear_config();
     mirroring_mode = (int)cart_get_mirroring();
     nes_set_region(NES_REGION_NTSC);
     fds_loaded = 1;

@@ -3441,6 +3441,37 @@ static int test_prg_nvram_persistence(void) {
     return result | save_fixture_end(&paths);
 }
 
+static int vs_nvram_persistence_cases(const SaveFixture *paths) {
+    iNESHeader h = header_for(99, 0x8000, false);
+    h.flags7 |= 0x09;
+    h.flags6 |= 2;
+    h.prg_ram_size = 0;
+    h.flags10 = 0x50; // Explicit 2 KiB battery-backed RAM.
+    size_t image_size;
+    uint8_t *image = image_for(&h, 0x8000, 0x2000, &image_size);
+    CHECK(image != NULL && load_rom_memory(image, image_size) == 0);
+    cart_battery_configure(paths->rom, true);
+    cart_cpu_write(0x6000, 0x62);
+    cart_cpu_write(0x67FF, 0xC3);
+    cart_battery_flush();
+    CHECK(saved_file_size(paths->prg_save) == 0x800);
+    CHECK(saved_byte(paths->prg_save, 0) == 0x62 && saved_byte(paths->prg_save, 0x7FF) == 0xC3);
+    CHECK(unload_rom());
+    CHECK(load_rom_memory(image, image_size) == 0);
+    free(image);
+    cart_battery_configure(paths->rom, true);
+    CHECK(cart_cpu_read(0x6000) == 0x62 && cart_cpu_read(0x67FF) == 0xC3);
+    return 0;
+}
+
+static int test_vs_nvram_persistence(void) {
+    SaveFixture paths;
+    CHECK(save_fixture_begin(&paths) == 0);
+    int result = vs_nvram_persistence_cases(&paths);
+    unload_rom();
+    return result | save_fixture_end(&paths);
+}
+
 static int test_unrom512_flash_persistence(void) {
     SaveFixture paths;
     CHECK(save_fixture_begin(&paths) == 0);
@@ -5746,6 +5777,7 @@ int test_mapper_accuracy(void) {
         test_loader_region_and_console_type,
         test_ram_header_sizes, test_prg_ram_capacity, test_mmc1_banked_ram,
         test_mmc5_banked_ram, test_loader_ram_layouts, test_prg_nvram_persistence,
+        test_vs_nvram_persistence,
         test_unrom512_flash_persistence,
         test_mmc5_persistence,
         test_chr_nvram_persistence, test_chr_nvram_writers,

@@ -445,7 +445,7 @@ int main(int argc, char *argv[]) {
     want.format = AUDIO_F32;     // float32 mono
     want.channels = 1;
     want.samples = AUDIO_BUFFER_SAMPLES;
-    want.callback = apu_sdl_audio_callback;   // from apu.h
+    want.callback = vs_audio_callback;
 
     audio_dev = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
     if (!audio_dev) {
@@ -456,12 +456,13 @@ int main(int argc, char *argv[]) {
         printf("Requested: %d samples buffer, Got: %d samples\n", want.samples, have.samples);
         printf("Cycles per sample: %.6f\n", nes_timing()->cpu_hz / have.freq);
         printf("==================\n");
-        apu_audio_init(have.freq);
+        vs_audio_init(have.freq);
         SDL_PauseAudioDevice(audio_dev, 0);
     }
 
+    int video_width = (int)vs_video_width();
     SDL_Window *window = SDL_CreateWindow("Cupid NES Emulator",
-        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, SCREEN_WIDTH * 2, SCREEN_HEIGHT * 2, SDL_WINDOW_SHOWN);
+        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, video_width * 2, SCREEN_HEIGHT * 2, SDL_WINDOW_SHOWN);
     if(!window) {
         fprintf(stderr, "SDL_CreateWindow Error: %s\n", SDL_GetError());
         return 1;
@@ -472,7 +473,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     SDL_Texture *texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
-        SDL_TEXTUREACCESS_STREAMING, SCREEN_WIDTH, SCREEN_HEIGHT);
+        SDL_TEXTUREACCESS_STREAMING, video_width, SCREEN_HEIGHT);
     if(!texture) {
         fprintf(stderr, "SDL_CreateTexture Error: %s\n", SDL_GetError());
         return 1;
@@ -557,7 +558,7 @@ int main(int argc, char *argv[]) {
                             ppu_soft_reset(&ppu);
                             apu_soft_reset(&apu);
                             cpu_soft_reset(&cpu);
-                            vs_soft_reset_secondary();
+                            vs_soft_reset();
                             if (audio_dev) SDL_UnlockAudioDevice(audio_dev);
                         }
                         break;
@@ -625,7 +626,7 @@ int main(int argc, char *argv[]) {
         }
 
         // Present the frame, then draw the palette UI on top.
-        SDL_UpdateTexture(texture, NULL, framebuffer, SCREEN_WIDTH * sizeof(uint32_t));
+        SDL_UpdateTexture(texture, NULL, vs_video_framebuffer(), video_width * sizeof(uint32_t));
         SDL_RenderClear(renderer);
         SDL_RenderCopy(renderer, texture, NULL, NULL);
         int ww = 0, hh = 0; SDL_GetRendererOutputSize(renderer, &ww, &hh);

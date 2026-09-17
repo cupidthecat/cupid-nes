@@ -4788,9 +4788,8 @@ int mapper_init_from_header(const iNESHeader *h,
     }
     RomRamSizes ram;
     rom_ram_sizes(h, &ram);
-    if (mapper_no == 99) {
+    if (mapper_no == 99 && !nes2 && !(h->flags6 & 2)) {
         ram.prg_ram = 0x800;
-        ram.prg_nvram = 0;
     }
     if ((ram.prg_nvram || ram.chr_nvram) && !(h->flags6 & 2)) {
         fprintf(stderr, "Nonvolatile RAM declared without the battery flag\n");
