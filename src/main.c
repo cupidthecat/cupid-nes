@@ -156,12 +156,24 @@ int main(int argc, char *argv[]) {
         } else if (strcmp(argv[i], "--port1") == 0 || strcmp(argv[i], "--port2") == 0) {
             unsigned port = argv[i][6] == '2' ? 1 : 0;
             if (++i == argc || !joypad_set_port_device_name(port, argv[i])) {
-                fprintf(stderr, "Port device must be pad, none, arkanoid, power-pad-a, or power-pad-b\n");
+                fprintf(stderr, "Port device must be pad, none, arkanoid, power-pad-a, power-pad-b, or zapper\n");
                 return 1;
             }
         } else if (strcmp(argv[i], "--expansion") == 0) {
             if (++i == argc || !joypad_set_expansion_device_name(argv[i])) {
-                fprintf(stderr, "Expansion device must be none, arkanoid, family-trainer-a, or family-trainer-b\n");
+                fprintf(stderr, "Expansion device must be none, arkanoid, family-trainer-a, family-trainer-b, or zapper\n");
+                return 1;
+            }
+        } else if (strcmp(argv[i], "--zapper-radius") == 0) {
+            if (++i == argc) {
+                fprintf(stderr, "Zapper radius must be an integer from 0 to 255\n");
+                return 1;
+            }
+            char *end;
+            unsigned long radius = strtoul(argv[i], &end, 10);
+            if (end == argv[i] || *end || radius > NES_ZAPPER_MAX_RADIUS
+                || !joypad_set_zapper_radius((unsigned)radius)) {
+                fprintf(stderr, "Zapper radius must be an integer from 0 to 255\n");
                 return 1;
             }
         } else if (strcmp(argv[i], "--barcode") == 0) {
@@ -180,7 +192,8 @@ int main(int argc, char *argv[]) {
     if (!rom_path) {
         printf("Usage: %s [--console MODEL] [--cpu-revision REVISION] "
                "[--adapter TYPE] [--port1 DEVICE] [--port2 DEVICE] "
-               "[--expansion DEVICE] [--barcode DIGITS] <rom-file>\n", argv[0]);
+               "[--expansion DEVICE] [--barcode DIGITS] "
+               "[--zapper-radius PIXELS] <rom-file>\n", argv[0]);
         return 1;
     }
     if (!joypad_configuration_valid()) {
@@ -306,8 +319,15 @@ int main(int argc, char *argv[]) {
                 uint32_t buttons = SDL_GetMouseState(&mouse_x, &mouse_y);
                 SDL_GetWindowSize(window, &window_width, &window_height);
                 int position = window_width > 0 ? 0x54 + 160 * mouse_x / window_width : 0x54;
-                for (unsigned slot = 0; slot < 3; ++slot)
+                bool on_screen = mouse_x >= 0 && mouse_y >= 0 && mouse_x < window_width
+                    && mouse_y < window_height && !(buttons & SDL_BUTTON_RMASK);
+                int aim_x = on_screen ? 256 * mouse_x / window_width : -1;
+                int aim_y = on_screen ? 240 * mouse_y / window_height : -1;
+                bool trigger = (buttons & (SDL_BUTTON_LMASK | SDL_BUTTON_RMASK)) != 0;
+                for (unsigned slot = 0; slot < 3; ++slot) {
                     joypad_set_paddle(slot, position, (buttons & SDL_BUTTON_LMASK) != 0);
+                    joypad_set_zapper(slot, aim_x, aim_y, trigger);
+                }
             }
             if (e.type == SDL_QUIT)
                 running = false;

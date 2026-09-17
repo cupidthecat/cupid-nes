@@ -430,6 +430,7 @@ void start_frame(void) {
 
 void ppu_power_on(PPU *state) {
     memset(state, 0, sizeof(*state));
+    memset(state->pixel_indices, 0x0F, sizeof(state->pixel_indices));
     memset(ppu_ob_expire, 0, sizeof(ppu_ob_expire));
     memset(state->oam, 0xFF, sizeof(state->oam));
     memset(state->secondary_oam, 0xFF, sizeof(state->secondary_oam));
@@ -461,6 +462,7 @@ void ppu_soft_reset(PPU *state) {
     uint8_t status = state->status;
     uint64_t clocks = state->total_cycles;
     memset(state, 0, sizeof(*state));
+    memset(state->pixel_indices, 0x0F, sizeof(state->pixel_indices));
     memcpy(state->oam, oam, sizeof(oam));
     memcpy(state->secondary_oam, secondary_oam, sizeof(secondary_oam));
     state->v = v;
@@ -722,6 +724,7 @@ static void ppu_render_dot(int x, int y) {
     if (sprite && (!sprite_behind || !background)) color = ppu_palette[0x10 + sprite_palette * 4 + sprite];
     else if (background) color = ppu_palette[background_palette * 4 + background];
     bg_opaque[y * 256 + x] = background != 0;
+    ppu.pixel_indices[y * 256 + x] = color & 0x3F;
     framebuffer[y * 256 + x] = get_color(color);
 }
 
@@ -858,6 +861,20 @@ void ppu_step(int cpu_cycles) {
         ppu_step_dots((int)(clocks / timing->ppu_divider));
         ppu.cpu_clock_phase = clocks % timing->ppu_divider;
     }
+}
+
+uint16_t ppu_pixel_brightness(unsigned x, unsigned y) {
+    // Fixed RGB-sum approximation for the light sensor. Display palette edits
+    // do not change the emulated signal, and emphasis is not resolved here.
+    static const uint16_t brightness[64] = {
+        306, 178, 205, 223, 218, 174, 114, 115, 104, 83, 82, 87, 141, 0, 0, 0,
+        519, 333, 385, 410, 390, 336, 262, 231, 216, 191, 159, 193, 265, 0, 0, 0,
+        764, 531, 545, 571, 604, 568, 495, 426, 378, 352, 368, 423, 499, 237, 0, 0,
+        764, 670, 676, 687, 700, 684, 655, 628, 605, 596, 604, 626, 658, 552, 0, 0
+    };
+    if (x >= 256 || y >= 240) return 0;
+    uint8_t color = ppu.pixel_indices[y * 256 + x] & ((ppu.mask & 1u) ? 0x30 : 0x3F);
+    return brightness[color];
 }
 
 uint32_t get_color(uint8_t idx) {

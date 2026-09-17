@@ -87,6 +87,8 @@ static void input_fixture(NesConsoleModel model, NesRegion region) {
     joypad_set_port_device(0, NES_PORT_GAMEPAD);
     joypad_set_port_device(1, NES_PORT_GAMEPAD);
     joypad_set_expansion_device(NES_EXPANSION_NONE);
+    joypad_set_zapper_radius(0);
+    for (unsigned slot = 0; slot < 3; ++slot) joypad_set_zapper(slot, -1, -1, false);
     for (unsigned slot = 0; slot < 3; ++slot)
         for (unsigned pad = 0; pad < 12; ++pad) joypad_set_mat_pad(slot, pad, false);
     nes_set_console_model(model);
@@ -741,6 +743,175 @@ static int mat_selection_and_disconnect(void) {
     return 0;
 }
 
+static void sensor_pixel(unsigned x, unsigned y, uint8_t color) {
+    ppu.scanline = (int)y;
+    ppu.dot = (int)x + 1;
+    ppu.mask = 0;
+    ppu.rendering_enabled = false;
+    ppu.fetches_enabled = false;
+    ppu.v = 0;
+    ppu_write(0x3F00, color);
+    ppu_step_dots(1);
+}
+
+static int zapper_port_signals(void) {
+    for (unsigned console = 0; console < 2; ++console) {
+        for (unsigned port = 0; port < 2; ++port) {
+            input_fixture(console ? NES_CONSOLE_NES101 : NES_CONSOLE_NES001, NES_REGION_NTSC);
+            CHECK(joypad_set_port_device(port, NES_PORT_ZAPPER));
+            CHECK(joypad_set_zapper(port, 32, 20, false));
+            uint8_t floating = console && !port ? 0xE4 : 0xE0;
+            ppu.scanline = 20;
+            ppu.dot = 33;
+            write_mem(0x4018, 0xE4);
+            CHECK(read_mem((uint16_t)(0x4016 + port)) == (uint8_t)(floating | 0x08));
+            sensor_pixel(32, 20, 0x20);
+            write_mem(0x4018, 0xE4);
+            CHECK(read_mem((uint16_t)(0x4016 + port)) == floating);
+            joypad_set_zapper(port, 32, 20, true);
+            for (unsigned read = 0; read < 16; ++read) {
+                write_mem(0x4016, (uint8_t)(read & 1u));
+                write_mem(0x4018, 0xE4);
+                CHECK(read_mem((uint16_t)(0x4016 + port)) == (uint8_t)(floating | 0x10));
+            }
+            joypad_set_zapper(port, -1, -1, true);
+            write_mem(0x4018, 0xE4);
+            CHECK(read_mem((uint16_t)(0x4016 + port)) == (uint8_t)(floating | 0x18));
+        }
+    }
+
+    input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+    joypad_set_expansion_device(NES_EXPANSION_ZAPPER);
+    joypad_set_zapper(2, 32, 20, true);
+    pad1.buttons = 0xA5;
+    pad2.buttons = 0x5A;
+    latch_controllers();
+    sensor_pixel(32, 20, 0x20);
+    for (unsigned bit = 0; bit < 8; ++bit) {
+        write_mem(0x4018, 0xA0);
+        CHECK(read_mem(0x4016) == (uint8_t)(0xA0 | ((0xA5u >> bit) & 1u)));
+        CHECK(read_mem(0x4017) == (uint8_t)(0xB0 | ((0x5Au >> bit) & 1u)));
+    }
+    return 0;
+}
+
+static int zapper_beam_and_persistence(void) {
+    static const NesRegion regions[] = {NES_REGION_NTSC, NES_REGION_PAL, NES_REGION_DENDY};
+    for (unsigned region = 0; region < 3; ++region) {
+        input_fixture(NES_CONSOLE_NES001, regions[region]);
+        joypad_set_port_device(1, NES_PORT_ZAPPER);
+        joypad_set_zapper(1, 32, 20, false);
+        sensor_pixel(32, 20, 0x20);
+        write_mem(0x4018, 0);
+        CHECK(read_mem(0x4017) == 0);
+        ppu_step_dots(20 * 341);
+        CHECK(ppu.scanline == 40 && read_mem(0x4017) == 0);
+        ppu_step_dots(341);
+        CHECK(ppu.scanline == 41 && read_mem(0x4017) == 8);
+
+        // The old bright pixel must not be detected ahead of the current beam.
+        ppu.scanline = 19;
+        ppu.dot = 340;
+        CHECK(read_mem(0x4017) == 8);
+        ppu_step_dots(2);
+        CHECK(ppu.scanline == 20 && ppu.dot == 1 && read_mem(0x4017) == 8);
+        ppu_step_dots(32);
+        CHECK(ppu.dot == 33 && read_mem(0x4017) == 8);
+        ppu_step_dots(1);
+        CHECK(ppu.dot == 34 && read_mem(0x4017) == 0);
+        ppu.scanline = (int)nes_timing()->scanlines - 1;
+        CHECK(read_mem(0x4017) == 8);
+    }
+    return 0;
+}
+
+static int zapper_brightness_and_area(void) {
+    input_fixture(NES_CONSOLE_NES001, NES_REGION_NTSC);
+    joypad_set_port_device(1, NES_PORT_ZAPPER);
+    joypad_set_zapper(1, 32, 20, false);
+    sensor_pixel(32, 20, 0x09);
+    write_mem(0x4018, 0);
+    CHECK(ppu_pixel_brightness(32, 20) == 83 && read_mem(0x4017) == 8);
+    sensor_pixel(32, 20, 0x0B);
+    CHECK(ppu_pixel_brightness(32, 20) == 87 && read_mem(0x4017) == 0);
+    sensor_pixel(32, 20, 0x0F);
+    CHECK(ppu_pixel_brightness(32, 20) == 0 && read_mem(0x4017) == 8);
+    ppu.mask = 1;
+    CHECK(ppu_pixel_brightness(32, 20) == 306 && read_mem(0x4017) == 0);
+    ppu.mask = 0;
+    sensor_pixel(32, 20, 0x20);
+    joypad_set_zapper(1, 33, 20, false);
+    CHECK(read_mem(0x4017) == 8);
+    CHECK(joypad_set_zapper_radius(1));
+    CHECK(read_mem(0x4017) == 0);
+    joypad_set_zapper(1, 34, 20, false);
+    CHECK(read_mem(0x4017) == 8);
+    CHECK(joypad_set_zapper_radius(2));
+    CHECK(read_mem(0x4017) == 0);
+    joypad_set_zapper(1, -1, 20, false);
+    CHECK(read_mem(0x4017) == 8);
+    joypad_set_zapper(1, 0x7FFFFFFF, 0x7FFFFFFF, true);
+    CHECK(read_mem(0x4017) == 0x18);
+    CHECK(!joypad_set_zapper_radius(NES_ZAPPER_MAX_RADIUS + 1));
+    CHECK(joypad_zapper_radius() == 2);
+    CHECK(!joypad_set_zapper(3, 0, 0, false));
+    CHECK(ppu_pixel_brightness(256, 0) == 0 && ppu_pixel_brightness(0, 240) == 0);
+
+    sensor_pixel(0, 0, 0x20);
+    joypad_set_zapper(1, 0, 0, false);
+    CHECK(read_mem(0x4017) == 0);
+    ppu_power_on(&ppu);
+    CHECK(read_mem(0x4017) == 8);
+    return 0;
+}
+
+static int zapper_cpu_and_dma(void) {
+    for (unsigned expansion = 0; expansion < 2; ++expansion) {
+        for (unsigned phase = 0; phase < 2; ++phase) {
+            input_fixture(expansion ? NES_CONSOLE_HVC001 : NES_CONSOLE_NES001, NES_REGION_NTSC);
+            if (expansion) joypad_set_expansion_device(NES_EXPANSION_ZAPPER);
+            else joypad_set_port_device(1, NES_PORT_ZAPPER);
+            joypad_set_zapper(expansion ? 2 : 1, 32, 20, true);
+            sensor_pixel(32, 20, 0x20);
+            input_program(0xAD, 0x4017);
+            CHECK(cpu_step(&cpu) == 4 && cpu.a == 0x50);
+
+            cpu_total_cycles = phase;
+            cpu.pc = 0x8000;
+            input_memory[0xC017] = 0xFF;
+            apu.dmc.current_addr = 0xC017;
+            apu.dmc.bytes_remaining = 1;
+            apu.dmc.enabled = true;
+            apu.dmc.sample_buffer_empty = false;
+            apu.dmc.timer = 1000;
+            dmc_request_cycle = phase + 3;
+            CHECK(cpu_step(&cpu) == (phase ? 7 : 8));
+            CHECK(apu.dmc.sample_buffer == 0xF0 && cpu.a == 0xF0);
+            CHECK(!apu_dmc_dma_pending(&apu));
+        }
+    }
+    return 0;
+}
+
+static int zapper_selection_and_disconnect(void) {
+    input_fixture(NES_CONSOLE_NES001, NES_REGION_NTSC);
+    CHECK(joypad_set_port_device_name(1, "zapper"));
+    CHECK(joypad_port_device(1) == NES_PORT_ZAPPER);
+    CHECK(joypad_set_expansion_device_name("zapper"));
+    CHECK(joypad_expansion_device() == NES_EXPANSION_ZAPPER);
+    joypad_set_zapper(1, -1, -1, true);
+    joypad_set_zapper(2, -1, -1, true);
+    CHECK(joypad_set_port_device_name(1, "pad"));
+    CHECK(joypad_set_expansion_device_name("none"));
+    pad2.buttons = 0xA5;
+    latch_controllers();
+    for (unsigned bit = 0; bit < 8; ++bit) {
+        write_mem(0x4018, 0);
+        CHECK(read_mem(0x4017) == ((0xA5u >> bit) & 1u));
+    }
+    return 0;
+}
+
 int test_input_accuracy(void) {
     static int (*const tests[])(void) = {
         console_open_bus, console_read_clocks, console_strobe_timing,
@@ -749,13 +920,15 @@ int test_input_accuracy(void) {
         adapter_selection_lifetime, arkanoid_reports, arkanoid_latching,
         arkanoid_cpu_clocks, device_selection, power_pad_button_order,
         power_pad_latching, family_trainer_rows, family_trainer_cpu_writes,
-        mat_selection_and_disconnect
+        mat_selection_and_disconnect, zapper_port_signals, zapper_beam_and_persistence,
+        zapper_brightness_and_area, zapper_cpu_and_dma, zapper_selection_and_disconnect
     };
     NesConsoleModel saved_model = nes_console_model();
     NesRegion saved_region = nes_timing()->region;
     NesInputAdapter saved_adapter = joypad_adapter();
     NesPortDevice saved_ports[] = {joypad_port_device(0), joypad_port_device(1)};
     NesExpansionDevice saved_expansion = joypad_expansion_device();
+    unsigned saved_zapper_radius = joypad_zapper_radius();
     int failures = 0;
     input_checks = 0;
     for (unsigned i = 0; i < sizeof(tests) / sizeof(tests[0]); ++i) failures += tests[i]();
@@ -767,6 +940,7 @@ int test_input_accuracy(void) {
     joypad_set_port_device(0, saved_ports[0]);
     joypad_set_port_device(1, saved_ports[1]);
     joypad_set_expansion_device(saved_expansion);
+    joypad_set_zapper_radius(saved_zapper_radius);
     printf("Input: %u checks, %d failures\n", input_checks, failures);
     return failures;
 }

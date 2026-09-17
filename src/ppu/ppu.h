@@ -137,6 +137,7 @@ typedef struct {
     uint16_t at_shift_hi;    // Attribute high shifter
     uint8_t  at_latch_lo;    // Attribute latch for next tile
     uint8_t  at_latch_hi;    // Attribute latch for next tile
+    uint8_t  pixel_indices[256 * 240]; // Beam output before the frontend's RGB palette.
 } PPU;
 
 // PPU Memory
@@ -164,6 +165,7 @@ void ppu_reset(PPU* ppu);
 void ppu_power_on(PPU* ppu);
 void ppu_soft_reset(PPU* ppu);
 uint32_t get_color(uint8_t pixel);
+uint16_t ppu_pixel_brightness(unsigned x, unsigned y);
 void start_frame();
 // Cycle-stepped rendering API
 void ppu_begin_frame_render(uint32_t *framebuffer);

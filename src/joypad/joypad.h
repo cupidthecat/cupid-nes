@@ -49,14 +49,16 @@ typedef enum {
     NES_PORT_NONE,
     NES_PORT_ARKANOID,
     NES_PORT_POWER_PAD_A,
-    NES_PORT_POWER_PAD_B
+    NES_PORT_POWER_PAD_B,
+    NES_PORT_ZAPPER
 } NesPortDevice;
 
 typedef enum {
     NES_EXPANSION_NONE,
     NES_EXPANSION_ARKANOID,
     NES_EXPANSION_FAMILY_TRAINER_A,
-    NES_EXPANSION_FAMILY_TRAINER_B
+    NES_EXPANSION_FAMILY_TRAINER_B,
+    NES_EXPANSION_ZAPPER
 } NesExpansionDevice;
 
 void    joypad_set(Joypad* jp, int btn, int pressed);
@@ -87,5 +89,9 @@ bool    joypad_configuration_valid(void);
 bool    joypad_set_paddle(unsigned slot, int position, bool fire);
 // Mat positions are three rows of four, viewed from left to right on side A.
 bool    joypad_set_mat_pad(unsigned slot, unsigned pad, bool pressed);
+enum { NES_ZAPPER_MAX_RADIUS = 255 };
+bool    joypad_set_zapper(unsigned slot, int x, int y, bool trigger);
+unsigned joypad_zapper_radius(void);
+bool    joypad_set_zapper_radius(unsigned radius);
 
 #endif // JOYPAD_H

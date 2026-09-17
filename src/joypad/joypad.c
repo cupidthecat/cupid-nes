@@ -25,6 +25,7 @@
 #include "joypad.h"
 #include "../system/hardware.h"
 #include "../system/timing.h"
+#include "../ppu/ppu.h"
 #include <string.h>
 
 static bool microphone_active;
@@ -40,11 +41,45 @@ static const char *const adapter_names[] = {
 static NesPortDevice port_devices[2];
 static NesExpansionDevice expansion_device;
 static const char *const port_device_names[] = {
-    "pad", "none", "arkanoid", "power-pad-a", "power-pad-b"
+    "pad", "none", "arkanoid", "power-pad-a", "power-pad-b", "zapper"
 };
 static const char *const expansion_device_names[] = {
-    "none", "arkanoid", "family-trainer-a", "family-trainer-b"
+    "none", "arkanoid", "family-trainer-a", "family-trainer-b", "zapper"
 };
+
+typedef struct {
+    int x;
+    int y;
+    bool trigger;
+} Zapper;
+
+static Zapper zappers[3] = {{-1, -1, false}, {-1, -1, false}, {-1, -1, false}};
+static unsigned zapper_radius;
+
+static bool zapper_light(const Zapper *zapper) {
+    int radius = (int)zapper_radius;
+    if (zapper->x < 0 || zapper->y < 0 || zapper->x > 255 + radius || zapper->y > 239 + radius)
+        return false;
+    int scanline = ppu.scanline == (int)nes_timing()->scanlines - 1 ? -1 : ppu.scanline;
+    int cycle = ppu.dot - 1; // PPU.dot names the next clock to execute.
+    int left = zapper->x > radius ? zapper->x - radius : 0;
+    int right = zapper->x + radius < 255 ? zapper->x + radius : 255;
+    int top = zapper->y > radius ? zapper->y - radius : 0;
+    int bottom = zapper->y + radius < 239 ? zapper->y + radius : 239;
+    for (int y = top; y <= bottom; ++y) {
+        // This sensor model retains light through the twentieth following line.
+        if (scanline < y || scanline - y > 20) continue;
+        for (int x = left; x <= right; ++x) {
+            if (scanline == y && cycle <= x) continue;
+            if (ppu_pixel_brightness((unsigned)x, (unsigned)y) >= 85) return true;
+        }
+    }
+    return false;
+}
+
+static uint8_t read_zapper(unsigned slot) {
+    return (zapper_light(&zappers[slot]) ? 0 : 0x08) | (zappers[slot].trigger ? 0x10 : 0);
+}
 
 typedef struct {
     uint16_t buttons;
@@ -170,6 +205,8 @@ uint8_t joypad_read_port(Joypad *jp, unsigned port) {
             value = (read_paddle(&paddles[port]) << 4) | (paddles[port].fire ? 0x08 : 0);
         else if (port_devices[port] == NES_PORT_POWER_PAD_A || port_devices[port] == NES_PORT_POWER_PAD_B)
             value = read_mat(port);
+        else if (port_devices[port] == NES_PORT_ZAPPER)
+            value = read_zapper(port);
         else
             value = port_devices[port] == NES_PORT_GAMEPAD ? joypad_read(jp) : 0;
         if (input_adapter == NES_ADAPTER_FAMICOM_TWO)
@@ -182,6 +219,8 @@ uint8_t joypad_read_port(Joypad *jp, unsigned port) {
     else if (port == 1 && (expansion_device == NES_EXPANSION_FAMILY_TRAINER_A
                           || expansion_device == NES_EXPANSION_FAMILY_TRAINER_B))
         value |= read_family_trainer();
+    else if (port == 1 && expansion_device == NES_EXPANSION_ZAPPER)
+        value |= read_zapper(2);
     // The second built-in controller's microphone reaches $4016 D2.
     if (port == 0 && nes_console_model() == NES_CONSOLE_HVC001 && microphone_active)
         value |= 0x04;
@@ -268,7 +307,7 @@ NesPortDevice joypad_port_device(unsigned port) {
 }
 
 bool joypad_set_port_device(unsigned port, NesPortDevice device) {
-    if (port >= 2 || (unsigned)device > NES_PORT_POWER_PAD_B) return false;
+    if (port >= 2 || (unsigned)device > NES_PORT_ZAPPER) return false;
     port_devices[port] = device;
     paddles[port].strobe = paddles[port].shift = 0;
     mats[port].strobe = mats[port].low = mats[port].high = 0;
@@ -293,7 +332,7 @@ NesExpansionDevice joypad_expansion_device(void) {
 }
 
 bool joypad_set_expansion_device(NesExpansionDevice device) {
-    if ((unsigned)device > NES_EXPANSION_FAMILY_TRAINER_B) return false;
+    if ((unsigned)device > NES_EXPANSION_ZAPPER) return false;
     expansion_device = device;
     paddles[2].strobe = paddles[2].shift = 0;
     family_trainer_rows = 0;
@@ -333,5 +372,21 @@ bool joypad_set_mat_pad(unsigned slot, unsigned pad, bool pressed) {
     if (slot >= 3 || pad >= 12) return false;
     if (pressed) mats[slot].buttons |= (uint16_t)(1u << pad);
     else mats[slot].buttons &= (uint16_t)~(1u << pad);
+    return true;
+}
+
+bool joypad_set_zapper(unsigned slot, int x, int y, bool trigger) {
+    if (slot >= 3) return false;
+    zappers[slot] = (Zapper){x, y, trigger};
+    return true;
+}
+
+unsigned joypad_zapper_radius(void) {
+    return zapper_radius;
+}
+
+bool joypad_set_zapper_radius(unsigned radius) {
+    if (radius > NES_ZAPPER_MAX_RADIUS) return false;
+    zapper_radius = radius;
     return true;
 }
