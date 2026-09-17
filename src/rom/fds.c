@@ -764,35 +764,8 @@ void fds_clock_cpu(int cpu_cycles) {
 }
 
 void fds_reset(void) {
-    if (!fds.image) return;
-    fds.timer_reload = 0;
-    fds.timer_counter = 0;
-    fds.timer_enabled = false;
-    fds.timer_repeat = false;
-    fds.timer_irq = false;
-    fds.disk_irq = false;
-    fds.disk_regs_enabled = true;
-    fds.sound_regs_enabled = true;
-    fds.write_data = 0;
-    fds.read_data = 0;
-    fds.motor_on = false;
-    fds.reset_transfer = true;
-    fds.read_mode = true;
-    fds.crc_control = false;
-    fds.disk_ready = false;
-    fds.transfer_irq_enabled = false;
-    fds.transfer_complete = false;
-    fds.end_of_head = true;
-    fds.scanning = false;
-    fds.gap_ended = true;
-    fds.previous_crc_control = false;
-    fds.bad_crc = false;
-    fds.ext_connector = 0;
-    fds.mirroring = MIRROR_VERTICAL;
-    fds.disk_position = 0;
-    fds.transfer_delay = 0;
-    fds.crc = 0;
-    audio_reset(&fds.audio);
+    // Console reset does not reset FDS controller or audio state. Fresh device
+    // state is established when fds_activate() installs a new disk image.
 }
 
 bool fds_irq_pending(void) { return fds.timer_irq || fds.disk_irq; }
@@ -883,7 +856,7 @@ void fds_cpu_write(uint16_t addr, uint8_t value) {
             }
             if (!fds.sound_regs_enabled) {
                 audio_write(&fds.audio, 0x4080, 0x80);
-                mod_set_counter(&fds.audio.mod, 0);
+                audio_write(&fds.audio, 0x4085, 0x00);
             }
             break;
         case 0x4024:

@@ -251,11 +251,16 @@ static int test_fds_timer_irq(void) {
     CHECK(!fds_irq_pending());
 
     cart_cpu_write(0x4023, 3);
+    cart_cpu_write(0x4025, 0x08); // Horizontal mirroring survives console reset.
     cart_cpu_write(0x4020, 1);
     cart_cpu_write(0x4022, 3);
+    fds_clock_cpu(2);
+    CHECK(fds_irq_pending());
     cart->reset();
-    fds_clock_cpu(4);
-    CHECK(!fds_irq_pending() && cart_get_mirroring() == MIRROR_VERTICAL);
+    CHECK(fds_irq_pending() && cart_get_mirroring() == MIRROR_HORIZONTAL);
+    (void)cart_cpu_read_bus(0x4030, 0);
+    fds_clock_cpu(2);
+    CHECK(fds_irq_pending());
     return 0;
 }
 
@@ -544,6 +549,18 @@ static int test_fds_audio(void) {
     cart_cpu_write(0x4087, 0x00);
     fds_clock_cpu(32);
     CHECK((cart_cpu_read_bus(0x4093, 0) & 0x7F) == 0x01);
+
+    // Audio reset clears the modulation counter and cached pitch contribution.
+    CHECK(load_fixture(1, false, NULL, false) == 0);
+    cart_cpu_write(0x4082, 0x00);
+    cart_cpu_write(0x4083, 0x04); // Wave pitch = $400.
+    cart_cpu_write(0x4084, 0xA0); // Fixed modulation gain = 32.
+    cart_cpu_write(0x4085, 0x20); // Counter = 32, yielding +$400 modulation.
+    cart_cpu_write(0x4087, 0x80); // Freeze the modulator with its current output.
+    cart_cpu_write(0x4023, 0x01); // Keep disk registers enabled, reset audio registers.
+    CHECK((cart_cpu_read_bus(0x4097, 0) & 0x7F) == 0);
+    fds_clock_cpu(4);
+    CHECK(cart_cpu_read_bus(0x4091, 0) == 0x01);
     return 0;
 }
 
