@@ -39,8 +39,67 @@ static const char *const adapter_names[] = {
 };
 static NesPortDevice port_devices[2];
 static NesExpansionDevice expansion_device;
-static const char *const port_device_names[] = {"pad", "none", "arkanoid"};
-static const char *const expansion_device_names[] = {"none", "arkanoid"};
+static const char *const port_device_names[] = {
+    "pad", "none", "arkanoid", "power-pad-a", "power-pad-b"
+};
+static const char *const expansion_device_names[] = {
+    "none", "arkanoid", "family-trainer-a", "family-trainer-b"
+};
+
+typedef struct {
+    uint16_t buttons;
+    uint8_t low;
+    uint8_t high;
+    uint8_t strobe;
+} Mat;
+
+static Mat mats[3];
+static uint8_t family_trainer_rows;
+
+static bool mat_side_b(unsigned slot) {
+    return slot == 2 ? expansion_device == NES_EXPANSION_FAMILY_TRAINER_B
+                     : port_devices[slot] == NES_PORT_POWER_PAD_B;
+}
+
+static uint8_t mat_button(unsigned slot, unsigned button) {
+    if (mat_side_b(slot)) button = (button & ~3u) | (3u - (button & 3u));
+    return (uint8_t)((mats[slot].buttons >> button) & 1u);
+}
+
+static void latch_mat(unsigned slot) {
+    static const uint8_t low_order[] = {1, 0, 4, 8, 5, 9, 10, 6};
+    static const uint8_t high_order[] = {3, 2, 11, 7};
+    Mat *mat = &mats[slot];
+    mat->low = 0;
+    mat->high = 0xF0;
+    for (unsigned bit = 0; bit < 8; ++bit) mat->low |= mat_button(slot, low_order[bit]) << bit;
+    for (unsigned bit = 0; bit < 4; ++bit) mat->high |= mat_button(slot, high_order[bit]) << bit;
+}
+
+static uint8_t read_mat(unsigned slot) {
+    Mat *mat = &mats[slot];
+    if (mat->strobe) latch_mat(slot);
+    uint8_t value = ((mat->low & 1u) << 3) | ((mat->high & 1u) << 4);
+    mat->low = (mat->low >> 1) | 0x80;
+    mat->high = (mat->high >> 1) | 0x80;
+    return value;
+}
+
+static void write_mat(unsigned slot, uint8_t value) {
+    uint8_t strobe = value & 1u;
+    if (mats[slot].strobe && !strobe) latch_mat(slot);
+    mats[slot].strobe = strobe;
+}
+
+static uint8_t read_family_trainer(void) {
+    uint8_t pressed = 0;
+    for (unsigned row = 0; row < 3; ++row) {
+        if (family_trainer_rows & (1u << (2 - row))) continue;
+        for (unsigned column = 0; column < 4; ++column)
+            pressed |= mat_button(2, row * 4 + column) << (4 - column);
+    }
+    return (uint8_t)(~pressed & 0x1E);
+}
 
 typedef struct {
     uint8_t position;
@@ -109,6 +168,8 @@ uint8_t joypad_read_port(Joypad *jp, unsigned port) {
     } else {
         if (port_devices[port] == NES_PORT_ARKANOID)
             value = (read_paddle(&paddles[port]) << 4) | (paddles[port].fire ? 0x08 : 0);
+        else if (port_devices[port] == NES_PORT_POWER_PAD_A || port_devices[port] == NES_PORT_POWER_PAD_B)
+            value = read_mat(port);
         else
             value = port_devices[port] == NES_PORT_GAMEPAD ? joypad_read(jp) : 0;
         if (input_adapter == NES_ADAPTER_FAMICOM_TWO)
@@ -118,6 +179,9 @@ uint8_t joypad_read_port(Joypad *jp, unsigned port) {
     }
     if (expansion_device == NES_EXPANSION_ARKANOID)
         value |= port == 0 ? (paddles[2].fire ? 0x02 : 0) : (read_paddle(&paddles[2]) << 1);
+    else if (port == 1 && (expansion_device == NES_EXPANSION_FAMILY_TRAINER_A
+                          || expansion_device == NES_EXPANSION_FAMILY_TRAINER_B))
+        value |= read_family_trainer();
     // The second built-in controller's microphone reaches $4016 D2.
     if (port == 0 && nes_console_model() == NES_CONSOLE_HVC001 && microphone_active)
         value |= 0x04;
@@ -162,9 +226,15 @@ void joypad_write_ports(uint8_t value) {
     uint8_t strobe = value & 1u;
     if (adapter_strobe && !strobe) latch_adapter();
     adapter_strobe = strobe;
-    for (unsigned port = 0; port < 2; ++port)
+    for (unsigned port = 0; port < 2; ++port) {
         if (port_devices[port] == NES_PORT_ARKANOID) write_paddle(&paddles[port], value);
+        else if (port_devices[port] == NES_PORT_POWER_PAD_A || port_devices[port] == NES_PORT_POWER_PAD_B)
+            write_mat(port, value);
+    }
     if (expansion_device == NES_EXPANSION_ARKANOID) write_paddle(&paddles[2], value);
+    else if (expansion_device == NES_EXPANSION_FAMILY_TRAINER_A
+             || expansion_device == NES_EXPANSION_FAMILY_TRAINER_B)
+        family_trainer_rows = value & 7u;
 }
 
 NesInputAdapter joypad_adapter(void) {
@@ -198,9 +268,10 @@ NesPortDevice joypad_port_device(unsigned port) {
 }
 
 bool joypad_set_port_device(unsigned port, NesPortDevice device) {
-    if (port >= 2 || (unsigned)device > NES_PORT_ARKANOID) return false;
+    if (port >= 2 || (unsigned)device > NES_PORT_POWER_PAD_B) return false;
     port_devices[port] = device;
     paddles[port].strobe = paddles[port].shift = 0;
+    mats[port].strobe = mats[port].low = mats[port].high = 0;
     return true;
 }
 
@@ -222,9 +293,10 @@ NesExpansionDevice joypad_expansion_device(void) {
 }
 
 bool joypad_set_expansion_device(NesExpansionDevice device) {
-    if ((unsigned)device > NES_EXPANSION_ARKANOID) return false;
+    if ((unsigned)device > NES_EXPANSION_FAMILY_TRAINER_B) return false;
     expansion_device = device;
     paddles[2].strobe = paddles[2].shift = 0;
+    family_trainer_rows = 0;
     return true;
 }
 
@@ -254,5 +326,12 @@ bool joypad_set_paddle(unsigned slot, int position, bool fire) {
     if (position > 0xF4) position = 0xF4;
     paddles[slot].position = (uint8_t)position;
     paddles[slot].fire = fire;
+    return true;
+}
+
+bool joypad_set_mat_pad(unsigned slot, unsigned pad, bool pressed) {
+    if (slot >= 3 || pad >= 12) return false;
+    if (pressed) mats[slot].buttons |= (uint16_t)(1u << pad);
+    else mats[slot].buttons &= (uint16_t)~(1u << pad);
     return true;
 }

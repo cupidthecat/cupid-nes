@@ -47,12 +47,16 @@ typedef enum {
 typedef enum {
     NES_PORT_GAMEPAD,
     NES_PORT_NONE,
-    NES_PORT_ARKANOID
+    NES_PORT_ARKANOID,
+    NES_PORT_POWER_PAD_A,
+    NES_PORT_POWER_PAD_B
 } NesPortDevice;
 
 typedef enum {
     NES_EXPANSION_NONE,
-    NES_EXPANSION_ARKANOID
+    NES_EXPANSION_ARKANOID,
+    NES_EXPANSION_FAMILY_TRAINER_A,
+    NES_EXPANSION_FAMILY_TRAINER_B
 } NesExpansionDevice;
 
 void    joypad_set(Joypad* jp, int btn, int pressed);
@@ -81,5 +85,7 @@ const char *joypad_expansion_device_name(void);
 bool    joypad_configuration_valid(void);
 // Slots zero and one are NES ports; slot two is the Famicom expansion connector.
 bool    joypad_set_paddle(unsigned slot, int position, bool fire);
+// Mat positions are three rows of four, viewed from left to right on side A.
+bool    joypad_set_mat_pad(unsigned slot, unsigned pad, bool pressed);
 
 #endif // JOYPAD_H

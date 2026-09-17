@@ -87,6 +87,8 @@ static void input_fixture(NesConsoleModel model, NesRegion region) {
     joypad_set_port_device(0, NES_PORT_GAMEPAD);
     joypad_set_port_device(1, NES_PORT_GAMEPAD);
     joypad_set_expansion_device(NES_EXPANSION_NONE);
+    for (unsigned slot = 0; slot < 3; ++slot)
+        for (unsigned pad = 0; pad < 12; ++pad) joypad_set_mat_pad(slot, pad, false);
     nes_set_console_model(model);
     nes_set_region(region);
     joypad_set_microphone(false);
@@ -579,13 +581,175 @@ static int device_selection(void) {
     return 0;
 }
 
+static int power_pad_button_order(void) {
+    static const uint8_t low_masks[2][12] = {
+        {2, 1, 0, 0, 4, 0x10, 0x80, 0, 8, 0x20, 0x40, 0},
+        {0, 0, 1, 2, 0, 0x80, 0x10, 4, 0, 0x40, 0x20, 8}
+    };
+    static const uint8_t high_masks[2][12] = {
+        {0, 0, 2, 1, 0, 0, 0, 8, 0, 0, 0, 4},
+        {1, 2, 0, 0, 8, 0, 0, 0, 4, 0, 0, 0}
+    };
+    for (unsigned side = 0; side < 2; ++side) {
+        for (unsigned port = 0; port < 2; ++port) {
+            for (unsigned pad = 0; pad < 12; ++pad) {
+                input_fixture(NES_CONSOLE_NES001, NES_REGION_NTSC);
+                CHECK(joypad_set_port_device(port, side ? NES_PORT_POWER_PAD_B : NES_PORT_POWER_PAD_A));
+                CHECK(joypad_set_mat_pad(port, pad, true));
+                latch_controllers();
+                joypad_set_mat_pad(port, pad, false);
+                for (unsigned bit = 0; bit < 12; ++bit) {
+                    uint8_t low = bit < 8 ? (low_masks[side][pad] >> bit) & 1u : 1;
+                    uint8_t high = bit < 8 ? ((0xF0 | high_masks[side][pad]) >> bit) & 1u : 1;
+                    write_mem(0x4018, 0xA0);
+                    CHECK(read_mem((uint16_t)(0x4016 + port)) == (uint8_t)(0xA0 | (low << 3) | (high << 4)));
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+static int power_pad_latching(void) {
+    input_fixture(NES_CONSOLE_NES001, NES_REGION_NTSC);
+    joypad_set_port_device(1, NES_PORT_POWER_PAD_A);
+    write_mem(0x4016, 1);
+    for (unsigned buttons = 0; buttons < 4; ++buttons) {
+        joypad_set_mat_pad(1, 1, (buttons & 1u) != 0);
+        joypad_set_mat_pad(1, 3, (buttons & 2u) != 0);
+        for (unsigned read = 0; read < 12; ++read) {
+            write_mem(0x4018, 0);
+            CHECK(read_mem(0x4017) == ((buttons & 1u) << 3 | (buttons & 2u) << 3));
+        }
+    }
+    for (unsigned pad = 0; pad < 12; ++pad) joypad_set_mat_pad(1, pad, true);
+    write_mem(0x4016, 0);
+    for (unsigned pad = 0; pad < 12; ++pad) joypad_set_mat_pad(1, pad, false);
+    for (unsigned bit = 0; bit < 12; ++bit) {
+        write_mem(0x4018, 0);
+        CHECK(read_mem(0x4017) == 0x18);
+    }
+    latch_controllers();
+    for (unsigned bit = 0; bit < 12; ++bit) {
+        write_mem(0x4018, 0);
+        CHECK(read_mem(0x4017) == (bit < 4 ? 0 : bit < 8 ? 0x10 : 0x18));
+    }
+
+    joypad_set_mat_pad(1, 1, true);
+    latch_controllers();
+    for (unsigned read = 0; read < 24; ++read) (void)read_mem(0x4016);
+    write_mem(0x4018, 0);
+    CHECK(read_mem(0x4017) == 0x08);
+    CHECK(read_mem(0x4017) == 0);
+
+    latch_controllers();
+    input_program(0x1E, 0x4017); // One report bit is clocked across the held read line.
+    CHECK(cpu_step(&cpu) == 7);
+    write_mem(0x4018, 0);
+    CHECK(read_mem(0x4017) == 0);
+    return 0;
+}
+
+static int family_trainer_rows(void) {
+    static const uint8_t columns[2][4] = {{0x10, 0x08, 0x04, 0x02}, {0x02, 0x04, 0x08, 0x10}};
+    for (unsigned side = 0; side < 2; ++side) {
+        for (unsigned pad = 0; pad < 12; ++pad) {
+            input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+            CHECK(joypad_set_expansion_device(side ? NES_EXPANSION_FAMILY_TRAINER_B
+                                                   : NES_EXPANSION_FAMILY_TRAINER_A));
+            CHECK(joypad_set_mat_pad(2, pad, true));
+            for (unsigned ignore = 0; ignore < 8; ++ignore) {
+                write_mem(0x4016, (uint8_t)(0xF8 | ignore));
+                write_mem(0x4018, 0xA0);
+                CHECK((read_mem(0x4016) & 0xFEu) == 0xA0);
+                uint8_t expected = 0x1E;
+                if (!(ignore & (1u << (2 - pad / 4)))) expected ^= columns[side][pad % 4];
+                CHECK((read_mem(0x4017) & 0xFEu) == (uint8_t)(0xA0 | expected));
+            }
+        }
+    }
+
+    input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+    joypad_set_expansion_device(NES_EXPANSION_FAMILY_TRAINER_A);
+    write_mem(0x4016, 0);
+    joypad_set_mat_pad(2, 0, true);
+    joypad_set_mat_pad(2, 4, true); // Two rows share a column; the result stays asserted.
+    joypad_set_mat_pad(2, 10, true);
+    write_mem(0x4018, 0);
+    CHECK((read_mem(0x4017) & 0x1E) == 0x0A);
+    joypad_set_mat_pad(2, 0, false);
+    CHECK((read_mem(0x4017) & 0x1E) == 0x0A);
+    joypad_set_mat_pad(2, 4, false);
+    CHECK((read_mem(0x4017) & 0x1E) == 0x1A);
+    joypad_set_mat_pad(2, 10, false);
+    CHECK((read_mem(0x4017) & 0x1E) == 0x1E);
+
+    pad1.buttons = 0xA5;
+    pad2.buttons = 0x5A;
+    latch_controllers();
+    for (unsigned bit = 0; bit < 8; ++bit) {
+        write_mem(0x4018, 0);
+        CHECK(read_mem(0x4016) == ((0xA5u >> bit) & 1u));
+        CHECK(read_mem(0x4017) == (0x1E | ((0x5Au >> bit) & 1u)));
+    }
+    return 0;
+}
+
+static int family_trainer_cpu_writes(void) {
+    for (unsigned side = 0; side < 2; ++side) {
+        for (unsigned phase = 0; phase < 2; ++phase) {
+            input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+            joypad_set_expansion_device(side ? NES_EXPANSION_FAMILY_TRAINER_B
+                                             : NES_EXPANSION_FAMILY_TRAINER_A);
+            joypad_set_mat_pad(2, 3, true);
+            joypad_set_mat_pad(2, 4, true);
+            cpu_total_cycles = phase;
+            input_program(0x8D, 0x4016);
+            input_memory[0x8003] = 0xAD;
+            input_memory[0x8004] = 0x17;
+            input_memory[0x8005] = 0x40;
+            cpu.a = 5; // Only the middle row is selected.
+            CHECK(cpu_step(&cpu) == 4);
+            CHECK(cpu_step(&cpu) == 4 && cpu.a == (side ? 0x5C : 0x4E));
+        }
+    }
+    return 0;
+}
+
+static int mat_selection_and_disconnect(void) {
+    input_fixture(NES_CONSOLE_NES001, NES_REGION_NTSC);
+    CHECK(joypad_set_port_device_name(1, "power-pad-a"));
+    CHECK(joypad_port_device(1) == NES_PORT_POWER_PAD_A);
+    CHECK(joypad_set_port_device_name(1, "power-pad-b"));
+    CHECK(joypad_port_device(1) == NES_PORT_POWER_PAD_B);
+    CHECK(joypad_set_expansion_device_name("family-trainer-a"));
+    CHECK(joypad_expansion_device() == NES_EXPANSION_FAMILY_TRAINER_A);
+    CHECK(joypad_set_expansion_device_name("family-trainer-b"));
+    CHECK(joypad_expansion_device() == NES_EXPANSION_FAMILY_TRAINER_B);
+    CHECK(!joypad_set_mat_pad(3, 0, true));
+    CHECK(!joypad_set_mat_pad(0, 12, true));
+    for (unsigned slot = 0; slot < 3; ++slot)
+        for (unsigned pad = 0; pad < 12; ++pad) joypad_set_mat_pad(slot, pad, true);
+    joypad_set_port_device(1, NES_PORT_GAMEPAD);
+    joypad_set_expansion_device(NES_EXPANSION_NONE);
+    pad2.buttons = 0xA5;
+    latch_controllers();
+    for (unsigned bit = 0; bit < 8; ++bit) {
+        write_mem(0x4018, 0);
+        CHECK(read_mem(0x4017) == ((0xA5u >> bit) & 1u));
+    }
+    return 0;
+}
+
 int test_input_accuracy(void) {
     static int (*const tests[])(void) = {
         console_open_bus, console_read_clocks, console_strobe_timing,
         famicom_microphone, console_dma_reads, console_selection_lifetime,
         adapter_reports, adapter_strobes_and_disconnect, adapter_cpu_and_dma_clocks,
         adapter_selection_lifetime, arkanoid_reports, arkanoid_latching,
-        arkanoid_cpu_clocks, device_selection
+        arkanoid_cpu_clocks, device_selection, power_pad_button_order,
+        power_pad_latching, family_trainer_rows, family_trainer_cpu_writes,
+        mat_selection_and_disconnect
     };
     NesConsoleModel saved_model = nes_console_model();
     NesRegion saved_region = nes_timing()->region;

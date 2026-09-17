@@ -97,6 +97,31 @@ static void controller_event(const SDL_Event *event) {
     }
 }
 
+static bool mat_key_event(const SDL_KeyboardEvent *event) {
+    static const SDL_Keycode keys[] = {
+        SDLK_1, SDLK_2, SDLK_3, SDLK_4,
+        SDLK_q, SDLK_w, SDLK_e, SDLK_r,
+        SDLK_a, SDLK_s, SDLK_d, SDLK_f
+    };
+    bool handled = false;
+    for (unsigned pad = 0; pad < 12; ++pad) {
+        if (event->keysym.sym != keys[pad]) continue;
+        for (unsigned slot = 0; slot < 3; ++slot) {
+            bool active = slot == 2
+                ? joypad_expansion_device() == NES_EXPANSION_FAMILY_TRAINER_A
+                    || joypad_expansion_device() == NES_EXPANSION_FAMILY_TRAINER_B
+                : joypad_port_device(slot) == NES_PORT_POWER_PAD_A
+                    || joypad_port_device(slot) == NES_PORT_POWER_PAD_B;
+            if (active) {
+                joypad_set_mat_pad(slot, pad, event->type == SDL_KEYDOWN);
+                handled = true;
+            }
+        }
+        break;
+    }
+    return handled;
+}
+
 int main(int argc, char *argv[]) {
     SDL_AudioSpec want;
     SDL_AudioSpec have;
@@ -130,12 +155,12 @@ int main(int argc, char *argv[]) {
         } else if (strcmp(argv[i], "--port1") == 0 || strcmp(argv[i], "--port2") == 0) {
             unsigned port = argv[i][6] == '2' ? 1 : 0;
             if (++i == argc || !joypad_set_port_device_name(port, argv[i])) {
-                fprintf(stderr, "Port device must be pad, none, or arkanoid\n");
+                fprintf(stderr, "Port device must be pad, none, arkanoid, power-pad-a, or power-pad-b\n");
                 return 1;
             }
         } else if (strcmp(argv[i], "--expansion") == 0) {
             if (++i == argc || !joypad_set_expansion_device_name(argv[i])) {
-                fprintf(stderr, "Expansion device must be none or arkanoid\n");
+                fprintf(stderr, "Expansion device must be none, arkanoid, family-trainer-a, or family-trainer-b\n");
                 return 1;
             }
         } else if (argv[i][0] == '-' || rom_path) {
@@ -276,6 +301,7 @@ int main(int argc, char *argv[]) {
             palette_tool_handle_event(&e, renderer);
             
             if (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP) {
+                if (mat_key_event(&e.key)) continue;
                 int down = (e.type == SDL_KEYDOWN);
     
                 switch (e.key.keysym.sym) {
