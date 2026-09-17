@@ -120,10 +120,11 @@ int rom_ram_sizes(const iNESHeader *header, RomRamSizes *sizes) {
     } else {
         int mapper = rom_mapper_number(header);
         // Legacy MMC5 and FME-7 boards default to eight and four 8KB RAM banks.
-        // Other iNES boards use the conventional 8KB default when byte 8 is zero.
+        // Other iNES boards use the conventional 8KB default. Legacy byte 8 is
+        // not reliable enough to override the board default.
         if (mapper != 30) {
             size_t default_units = mapper == 5 ? 8u : mapper == 69 ? 4u : 1u;
-            size_t prg_ram_bytes = (size_t)(header->prg_ram_size ? header->prg_ram_size : default_units) * 0x2000;
+            size_t prg_ram_bytes = default_units * 0x2000;
             if (header->flags6 & 2) sizes->prg_nvram = prg_ram_bytes;
             else sizes->prg_ram = prg_ram_bytes;
         }
@@ -160,7 +161,8 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
             return -1;
         }
     } else {
-        new_prg_size = (size_t)header.prg_rom_chunks * PRG_ROM_BANK_SIZE;
+        size_t prg_units = header.prg_rom_chunks ? header.prg_rom_chunks : 256u;
+        new_prg_size = prg_units * PRG_ROM_BANK_SIZE;
         rom_chr_size = (size_t)header.chr_rom_chunks * CHR_ROM_BANK_SIZE;
     }
     if (new_prg_size < PRG_ROM_BANK_SIZE) {

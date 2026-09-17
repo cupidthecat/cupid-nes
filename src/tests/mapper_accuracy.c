@@ -3092,7 +3092,7 @@ static int test_ram_header_sizes(void) {
     h.flags6 |= 2;
     h.prg_ram_size = 4;
     CHECK(rom_ram_sizes(&h, &ram) == 0);
-    CHECK(ram.prg_ram == 0 && ram.prg_nvram == 0x8000);
+    CHECK(ram.prg_ram == 0 && ram.prg_nvram == 0x2000);
     h = header_for(13, 0x8000, true);
     CHECK(rom_ram_sizes(&h, &ram) == 0 && ram.chr_ram == 0x4000);
     h = header_for(5, 0x20000, true);
@@ -3146,8 +3146,11 @@ static int test_prg_ram_capacity(void) {
 
 static int test_mmc1_banked_ram(void) {
     iNESHeader h = header_for(1, 0x20000, true);
-    h.prg_ram_size = 4;
+    h.flags7 |= 8;
+    h.prg_ram_size = 0;
     h.flags6 |= 2;
+    h.flags10 = 0x90; // SXROM: 32KB battery-backed PRG RAM.
+    h.zero[0] = 7;
     CHECK(fixture_with_header(&h, 0x20000, 0x2000) == 1);
     for (unsigned bank = 0; bank < 4; ++bank) {
         serial_write(0xA000, (uint8_t)(bank << 2));
@@ -3169,7 +3172,7 @@ static int test_mmc1_banked_ram(void) {
     serial_write(0xE000, 0);
     CHECK(cart_cpu_read(0x6000) == 0xA3);
 
-    h.prg_ram_size = 2;
+    h.flags10 = 8; // 16KB volatile PRG RAM.
     h.flags6 &= (uint8_t)~2u;
     CHECK(fixture_with_header(&h, 0x20000, 0x2000) == 1);
     cart_cpu_write(0x6000, 1);
@@ -3180,8 +3183,6 @@ static int test_mmc1_banked_ram(void) {
     serial_write(0xA000, 4);
     CHECK(cart_cpu_read(0x6000) == 2);
 
-    h.flags7 = 8;
-    h.prg_ram_size = 0;
     h.flags6 |= 2;
     h.flags10 = 0x77; // SOROM: one 8KB work chip and one 8KB battery chip.
     h.zero[0] = 7;
@@ -3387,8 +3388,11 @@ static int prg_persistence_cases(const SaveFixture *paths) {
     int closed = fclose(fp);
     CHECK(written == sizeof(legacy_save) && closed == 0);
     iNESHeader h = header_for(1, 0x20000, true);
-    h.prg_ram_size = 4;
+    h.flags7 |= 8;
+    h.prg_ram_size = 0;
     h.flags6 |= 2;
+    h.flags10 = 0x90;
+    h.zero[0] = 7;
     CHECK(fixture_with_header(&h, 0x20000, 0x2000) == 1);
     cart_battery_configure(paths->rom, true);
     CHECK(cart_cpu_read(0x6000) == 0xA5 && cart_cpu_read(0x7FFF) == 0x5A);
@@ -3396,7 +3400,7 @@ static int prg_persistence_cases(const SaveFixture *paths) {
     CHECK(cart_cpu_read(0x6000) == 0 && cart_cpu_read(0x7FFF) == 0);
     cart_cpu_write(0x6000, 0x73);
     cart_cpu_write(0x7FFF, 0x39);
-    cart_ppu_write(0, 0x22); // Legacy CHR-RAM is volatile.
+    cart_ppu_write(0, 0x22); // CHR-RAM is volatile.
     cart_battery_flush();
     CHECK(saved_file_size(paths->prg_save) == 0x8000);
     CHECK(saved_file_size(paths->chr_save) == -1);
@@ -3413,10 +3417,7 @@ static int prg_persistence_cases(const SaveFixture *paths) {
     serial_write(0xA000, 12);
     CHECK(cart_cpu_read(0x6000) == 0x73 && cart_cpu_read(0x7FFF) == 0x39);
 
-    h.flags7 = 8;
-    h.prg_ram_size = 0;
     h.flags10 = 0x77;
-    h.zero[0] = 7;
     CHECK(fixture_with_header(&h, 0x20000, 0x2000) == 1);
     cart_battery_configure(paths->rom, true);
     cart_cpu_write(0x6000, 0x66);
@@ -3862,7 +3863,7 @@ static int test_sunsoft69_legacy_ram_defaults(void) {
         }
         h.prg_ram_size = 1;
         CHECK(rom_ram_sizes(&h, &sizes) == 0);
-        CHECK(sizes.prg_ram + sizes.prg_nvram == 0x2000);
+        CHECK(sizes.prg_ram + sizes.prg_nvram == 0x8000);
     }
     return 0;
 }
@@ -4517,6 +4518,74 @@ static int test_mapper71_image_loading(void) {
         CHECK(cart_cpu_read(0x8000) == 5 && cart_cpu_read(0xC000) == 7);
         CHECK(cart_cpu_read(0x6123) == 0xA6 && cart_ppu_read(0x0123) == 0xC7);
     }
+    return 0;
+}
+
+static int test_legacy_loader_ram_and_large_prg_metadata(void) {
+    const struct {
+        unsigned mapper;
+        size_t prg_bytes;
+        size_t chr_bytes;
+        bool chr_ram;
+    } ram_cases[] = {
+        {34, 0x40000, 0x2000, true},
+        {66, 0x20000, 0x2000, false},
+        {71, 0x20000, 0x2000, true},
+        {206, 0x20000, 0x2000, false},
+    };
+    for (size_t i = 0; i < sizeof(ram_cases) / sizeof(ram_cases[0]); ++i) {
+        iNESHeader h = header_for(ram_cases[i].mapper, ram_cases[i].prg_bytes,
+                                  ram_cases[i].chr_ram);
+        h.prg_ram_size = 2; // Legacy byte 8 does not override the board's 8 KiB default.
+        CHECK(fixture_with_header(&h, ram_cases[i].prg_bytes, ram_cases[i].chr_bytes)
+              == (int)ram_cases[i].mapper);
+        cart_cpu_write(0x6123, 0xA5);
+        cart_cpu_write(0x7FFF, 0x5A);
+        CHECK(cart_cpu_read(0x6123) == 0xA5 && cart_cpu_read(0x7FFF) == 0x5A);
+    }
+
+    iNESHeader bnrom = header_for(34, 0x400000, true);
+    CHECK(bnrom.prg_rom_chunks == 0);
+    size_t bnrom_size;
+    uint8_t *bnrom_image = image_for(&bnrom, 0x400000, 0, &bnrom_size);
+    CHECK(bnrom_image != NULL);
+    for (size_t bank = 0; bank < 128; ++bank)
+        memset(bnrom_image + sizeof(bnrom) + bank * 0x8000, (uint8_t)bank, 0x8000);
+    bnrom_image[sizeof(bnrom) + 0x7FFF] = 0xFF;
+    CHECK(load_rom_memory(bnrom_image, bnrom_size) == 0);
+    CHECK(cart_cpu_read(0x8000) == 0);
+    cart_cpu_write(0xFFFF, 0x7F);
+    CHECK(cart_cpu_read(0x8000) == 0x7F);
+    Mapper *previous = cart;
+    CHECK(load_rom_memory(bnrom_image, bnrom_size - 1) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 0x7F);
+    free(bnrom_image);
+
+    iNESHeader bf909x = header_for(71, 0x400000, false);
+    CHECK(bf909x.prg_rom_chunks == 0);
+    size_t bf909x_size;
+    uint8_t *bf909x_image = image_for(&bf909x, 0x400000, 0x2000, &bf909x_size);
+    CHECK(bf909x_image != NULL);
+    for (size_t bank = 0; bank < 256; ++bank)
+        memset(bf909x_image + sizeof(bf909x) + bank * 0x4000, (uint8_t)bank, 0x4000);
+    CHECK(load_rom_memory(bf909x_image, bf909x_size) == 0);
+    CHECK(cart_cpu_read(0x8000) == 0 && cart_cpu_read(0xC000) == 0xFF);
+    cart_cpu_write(0xC000, 0xFE);
+    CHECK(cart_cpu_read(0x8000) == 0xFE && cart_cpu_read(0xC000) == 0xFF);
+    previous = cart;
+    CHECK(load_rom_memory(bf909x_image, bf909x_size - 1) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 0xFE && cart_cpu_read(0xC000) == 0xFF);
+    free(bf909x_image);
+
+    iNESHeader nes2_zero = mapper34_header(2, true, true);
+    nes2_zero.prg_rom_chunks = 0;
+    size_t nes2_zero_size;
+    uint8_t *nes2_zero_image = image_for(&nes2_zero, 0, 0, &nes2_zero_size);
+    CHECK(nes2_zero_image != NULL);
+    previous = cart;
+    CHECK(load_rom_memory(nes2_zero_image, nes2_zero_size) == -1);
+    free(nes2_zero_image);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 0xFE && cart_cpu_read(0xC000) == 0xFF);
     return 0;
 }
 
@@ -5687,7 +5756,7 @@ int test_mapper_accuracy(void) {
         test_mapper34_loader_preserves_cart, test_mapper34_image_loading,
         test_gxrom_banks_reset_and_ram, test_gxrom_chr_ram_and_loader,
         test_mapper71_variants_and_mirroring, test_mapper71_loader_and_chr_rom,
-        test_mapper71_image_loading,
+        test_mapper71_image_loading, test_legacy_loader_ram_and_large_prg_metadata,
         test_namco108_banks_aliases_and_irq_absence, test_namco108_submapper_loader_and_chr_ram,
         test_sunsoft69_banks_ram_and_startup, test_sunsoft69_legacy_ram_defaults,
         test_sunsoft69_irq_cpu_clock,
