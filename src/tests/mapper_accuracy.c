@@ -3658,6 +3658,243 @@ static int test_sunsoft69_persistence_and_loader(void) {
     return save_fixture_end(&paths);
 }
 
+static iNESHeader namco210_header(unsigned submapper, bool ram) {
+    iNESHeader h = header_for(210, 0x20000, false);
+    h.flags7 |= 0x08;
+    h.prg_ram_size = (uint8_t)(submapper << 4);
+    h.flags10 = ram ? 7 : 0;
+    return h;
+}
+
+static void namco163_ram_write(uint8_t address, uint8_t value) {
+    cart_cpu_write(0xF800, address);
+    cart_cpu_write(0x4800, value);
+}
+
+static int test_namco163_banks_ram_and_nametables(void) {
+    CHECK(fixture(19, 0x40000, 0x20000, false) == 19);
+    CHECK(cart_cpu_read_bus(0x8000, 0x56) == 0x56);
+    CHECK(cart_cpu_read_bus(0xA000, 0x96) == 0x96);
+    CHECK(cart_cpu_read_bus(0xC000, 0x69) == 0x69);
+    CHECK(cart_cpu_read(0xE000) == 31);
+
+    cart_cpu_write(0xE000, 3);
+    cart_cpu_write(0xE800, 5);
+    cart_cpu_write(0xF000, 7);
+    CHECK(cart_cpu_read(0x8000) == 3 && cart_cpu_read(0xA000) == 5);
+    CHECK(cart_cpu_read(0xC000) == 7 && cart_cpu_read(0xE000) == 31);
+
+    cart_cpu_write(0x8000, 4);
+    cart_cpu_write(0xA800, 9);
+    CHECK(cart_ppu_read(0x0000) == 4 && cart_ppu_read(0x1400) == 9);
+
+    memset(ppu_vram, 0, sizeof(ppu_vram));
+    ppu_vram[0x400] = 0xA5;
+    cart_cpu_write(0x8000, 0xE1);
+    CHECK(cart_ppu_read(0x0000) == 0xA5);
+    cart_cpu_write(0xE800, 0x45); // Force low pattern banks to CHR even for $E0-$FF values.
+    cart_cpu_write(0x8000, 0xE1);
+    CHECK(cart_ppu_read(0x0000) == (0xE1u % 0x80u));
+
+    ppu_vram[0] = 0x35;
+    cart_cpu_write(0xC000, 0xE0);
+    cart_cpu_write(0xC800, 3);
+    CHECK(cart_nt_read(0x2000, ppu_vram) == 0x35);
+    CHECK(cart_nt_read(0x2400, ppu_vram) == 3);
+    cart_nt_write(0x2001, 0x53, ppu_vram);
+    CHECK(ppu_vram[1] == 0x53);
+
+    cart_cpu_write(0xF800, 0x40); // Global RAM writes enabled, all four 2 KiB blocks writable.
+    cart_cpu_write(0x6123, 0x11);
+    cart_cpu_write(0x6923, 0x22);
+    cart_cpu_write(0x7123, 0x33);
+    cart_cpu_write(0x7923, 0x44);
+    CHECK(cart_cpu_read(0x6123) == 0x11 && cart_cpu_read(0x6923) == 0x22);
+    CHECK(cart_cpu_read(0x7123) == 0x33 && cart_cpu_read(0x7923) == 0x44);
+    cart_cpu_write(0xF800, 0x45); // Protect blocks 0 and 2 while keeping global write enable.
+    cart_cpu_write(0x6123, 0xA1);
+    cart_cpu_write(0x6923, 0xA2);
+    cart_cpu_write(0x7123, 0xA3);
+    cart_cpu_write(0x7923, 0xA4);
+    CHECK(cart_cpu_read(0x6123) == 0x11 && cart_cpu_read(0x6923) == 0xA2);
+    CHECK(cart_cpu_read(0x7123) == 0x33 && cart_cpu_read(0x7923) == 0xA4);
+    cart_cpu_write(0xF800, 0x05); // Global write disable preserves readable RAM.
+    cart_cpu_write(0x6923, 0x55);
+    CHECK(cart_cpu_read(0x6923) == 0xA2);
+    return 0;
+}
+
+static int test_namco163_irq_and_audio(void) {
+    CHECK(fixture(19, 0x20000, 0x20000, false) == 19);
+    CHECK(cart != NULL && cart->clock != NULL && cart_expansion_audio() == 0.0f);
+
+    cart_cpu_write(0x5000, 0xFD);
+    cart_cpu_write(0x5800, 0xFF);
+    cart->clock(1);
+    CHECK(!cart_irq_pending() && cart_cpu_read(0x5000) == 0xFE);
+    cart->clock(1);
+    CHECK(cart_irq_pending() && cart_cpu_read(0x5000) == 0xFF);
+    cart_cpu_write(0x5000, 0);
+    CHECK(!cart_irq_pending());
+    cart_cpu_write(0x5800, 0x7F);
+    cart->clock(8);
+    CHECK(!cart_irq_pending() && cart_cpu_read(0x5800) == 0x7F);
+
+    fixture_prg[0] = 0xEA;
+    nes_set_region(NES_REGION_NTSC);
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    cpu_power_on(&cpu);
+    cart_cpu_write(0xE000, 0);
+    cpu.pc = 0x8000;
+    cpu.status = INTERRUPT_FLAG | UNUSED_FLAG;
+    cart_cpu_write(0x5000, 0xFD);
+    cart_cpu_write(0x5800, 0xFF);
+    CHECK(cpu_step(&cpu) == 2 && cart_irq_pending());
+    cart_cpu_write(0x5800, 0);
+
+    cart_cpu_write(0xF800, 0x80);
+    cart_cpu_write(0x4800, 0x12);
+    cart_cpu_write(0x4800, 0x34);
+    cart_cpu_write(0xF800, 0x80);
+    CHECK(cart_cpu_read(0x4800) == 0x12);
+    CHECK(cart_cpu_read(0x4800) == 0x34);
+
+    cart->reset();
+    namco163_ram_write(0x00, 0x00);
+    namco163_ram_write(0x78, 0x01);
+    namco163_ram_write(0x79, 0x00);
+    namco163_ram_write(0x7A, 0x00);
+    namco163_ram_write(0x7B, 0x00);
+    namco163_ram_write(0x7C, 0x00);
+    namco163_ram_write(0x7D, 0x00);
+    namco163_ram_write(0x7E, 0x00);
+    namco163_ram_write(0x7F, 0x0F);
+    cart->clock(14);
+    CHECK(cart_expansion_audio() == 0.0f);
+    cart->clock(1);
+    CHECK(cart_expansion_audio() > 0.47f && cart_expansion_audio() < 0.49f);
+
+    float held = cart_expansion_audio();
+    cart_cpu_write(0xE000, 0x40);
+    cart->clock(30);
+    CHECK(cart_expansion_audio() == held);
+
+    cart->reset();
+    namco163_ram_write(0x78, 1);
+    namco163_ram_write(0x70, 2);
+    namco163_ram_write(0x7F, 0x10); // Channels seven and six share the 15-cycle sequencer.
+    cart->clock(14);
+    cart_cpu_write(0xF800, 0x79);
+    CHECK(cart_cpu_read(0x4800) == 0);
+    cart_cpu_write(0xE000, 0x40);
+    cart->clock(60);
+    cart_cpu_write(0xE000, 0);
+    cart->clock(1);
+    cart_cpu_write(0xF800, 0x79);
+    CHECK(cart_cpu_read(0x4800) == 1);
+    cart_cpu_write(0xF800, 0x71);
+    CHECK(cart_cpu_read(0x4800) == 0);
+    cart->clock(15);
+    cart_cpu_write(0xF800, 0x71);
+    CHECK(cart_cpu_read(0x4800) == 2);
+    cart->clock(15);
+    cart_cpu_write(0xF800, 0x79);
+    CHECK(cart_cpu_read(0x4800) == 2);
+    return 0;
+}
+
+static int test_namco175_340_variants(void) {
+    iNESHeader h = namco210_header(1, true);
+    CHECK(fixture_with_header(&h, 0x20000, 0x2000) == 210);
+    CHECK(cart_cpu_read(0xE000) == 15);
+    CHECK(cart_cpu_read_bus(0x4800, 0xA6) == 0xA6);
+    CHECK(cart_cpu_read_bus(0x5000, 0x53) == 0x53);
+    cart_cpu_write(0x6123, 0x11);
+    CHECK(cart_cpu_read(0x6123) == 0);
+    cart_cpu_write(0xC000, 1);
+    cart_cpu_write(0x6123, 0xA5);
+    CHECK(cart_cpu_read(0x6123) == 0xA5);
+    cart_cpu_write(0xC000, 0);
+    cart_cpu_write(0x6123, 0x5A);
+    CHECK(cart_cpu_read(0x6123) == 0xA5);
+    cart_cpu_write(0x5000, 0xFF);
+    cart_cpu_write(0x5800, 0xFF);
+    cart->clock(8);
+    CHECK(!cart_irq_pending() && cart_expansion_audio() == 0.0f);
+
+    h = namco210_header(2, true);
+    CHECK(fixture_with_header(&h, 0x20000, 0x2000) == 210);
+    CHECK(cart_cpu_read_bus(0x6000, 0x69) == 0x69);
+    cart_cpu_write(0x6000, 0xA5);
+    CHECK(cart_cpu_read_bus(0x6000, 0x69) == 0x69);
+    cart_cpu_write(0xE000, 0x03);
+    CHECK(cart_cpu_read(0x8000) == 3 && cart_get_mirroring() == MIRROR_SINGLE0);
+    cart_cpu_write(0xE000, 0x43);
+    CHECK(cart_get_mirroring() == MIRROR_VERTICAL);
+    cart_cpu_write(0xE000, 0x83);
+    CHECK(cart_get_mirroring() == MIRROR_SINGLE1);
+    cart_cpu_write(0xE000, 0xC3);
+    CHECK(cart_get_mirroring() == MIRROR_HORIZONTAL);
+    memset(ppu_vram, 0, sizeof(ppu_vram));
+    ppu_vram[0x400] = 0x96;
+    cart_cpu_write(0xC000, 0xE1);
+    CHECK(cart_nt_read(0x2000, ppu_vram) == 0x96);
+    cart_cpu_write(0xE000, 0x03);
+    CHECK(cart_nt_read(0x2000, ppu_vram) == 0);
+    CHECK(cart_nt_read(0x2400, ppu_vram) == 0);
+    cart_cpu_write(0x5000, 0xFF);
+    cart_cpu_write(0x5800, 0xFF);
+    cart->clock(8);
+    CHECK(!cart_irq_pending() && cart_cpu_read_bus(0x5000, 0x53) == 0x53);
+    return 0;
+}
+
+static int test_namco163_persistence_and_loader(void) {
+    SaveFixture paths;
+    CHECK(save_fixture_begin(&paths) == 0);
+    iNESHeader h = header_for(19, 0x20000, false);
+    h.flags6 |= 0x02;
+    CHECK(fixture_with_header(&h, 0x20000, 0x2000) == 19);
+    cart_battery_configure(paths.rom, true);
+    cart_cpu_write(0xF800, 0x40);
+    cart_cpu_write(0x6123, 0xA5);
+    namco163_ram_write(0, 0x5A);
+    cart_battery_flush();
+    CHECK(saved_file_size(paths.prg_save) == 0x2080);
+    CHECK(saved_byte(paths.prg_save, 0x123) == 0xA5);
+    CHECK(saved_byte(paths.prg_save, 0x2000) == 0x5A);
+
+    CHECK(fixture_with_header(&h, 0x20000, 0x2000) == 19);
+    cart_battery_configure(paths.rom, true);
+    cart_cpu_write(0xF800, 0x40);
+    CHECK(cart_cpu_read(0x6123) == 0xA5);
+    cart_cpu_write(0xF800, 0);
+    CHECK(cart_cpu_read(0x4800) == 0x5A);
+
+    // Phase bytes are writable audio RAM, including writes performed by the chip.
+    namco163_ram_write(0x78, 1);
+    cart_battery_flush();
+    CHECK(saved_byte(paths.prg_save, 0x2079) == 0);
+    cart->clock(15);
+    cart_battery_flush();
+    CHECK(saved_byte(paths.prg_save, 0x2079) == 1);
+    CHECK(fixture_with_header(&h, 0x20000, 0x2000) == 19);
+    cart_battery_configure(paths.rom, true);
+    cart->clock(15); // No CPU write after loading the saved audio state.
+    cart_battery_flush();
+    CHECK(saved_byte(paths.prg_save, 0x2079) == 2);
+
+    cart_cpu_write(0xE000, 3);
+    Mapper *previous = cart;
+    iNESHeader invalid = namco210_header(3, true);
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x20000, fixture_chr, 0x2000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 3);
+    CHECK(mapper_init_from_header(&h, fixture_prg, 0x80001, fixture_chr, 0x2000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 3);
+    return save_fixture_end(&paths);
+}
+
 static void jaleco18_write_bank(uint16_t reg, uint8_t value) {
     uint16_t alias = (uint16_t)(reg | 0x0FFCu);
     cart_cpu_write(alias, value & 0x0F);
@@ -4390,6 +4627,8 @@ int test_mapper_accuracy(void) {
         test_mmc5_persistence,
         test_chr_nvram_persistence, test_chr_nvram_writers,
         test_mmc6_ram_mirroring, test_mmc6_protection, test_mmc6_banks_and_irq,
+        test_namco163_banks_ram_and_nametables, test_namco163_irq_and_audio,
+        test_namco175_340_variants, test_namco163_persistence_and_loader,
         test_sunsoft69_banks_ram_and_startup, test_sunsoft69_legacy_ram_defaults,
         test_sunsoft69_irq_cpu_clock,
         test_sunsoft5b_tone_noise_envelope, test_sunsoft69_persistence_and_loader,

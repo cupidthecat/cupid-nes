@@ -34,7 +34,9 @@
 #endif
 #include "mapper.h"
 #include "eeprom.h"
+#include "namco163.h"
 #include "sunsoft5b.h"
+#include "../ppu/ppu.h"
 #include "../system/timing.h"
 
 extern uint64_t cpu_total_cycles;
@@ -69,12 +71,13 @@ static Mapper mapper_cprom, mapper_100in1, mapper_bandai, mapper_action53, mappe
 static Mapper mapper_taito33, mapper_taito48, mapper_jaleco18, mapper_irem32, mapper_irem65;
 static Mapper mapper_rambo1, mapper_rambo158;
 static Mapper mapper_vrc24;
-static Mapper mapper_sunsoft69;
+static Mapper mapper_sunsoft69, mapper_namco;
 Mapper *cart = NULL;
 static bool mapper_irq_line = false;
 static uint8_t cart_cpu_bus_input = 0xFF;
 static CartPpuFetchSource cart_ppu_fetch_source = CART_PPU_FETCH_CPU;
 static void mmc3_irq_clock(void);
+static size_t namco_chr_bank(uint8_t bank);
 
 #ifdef PPU_DEBUG_LOG
 static uint32_t mmc3_log_count = 0;
@@ -111,6 +114,36 @@ static bool flash_dirty = false;
 static bool unrom512_four_screen_chr = false;
 static RamBlock *mmc5_ram_location(uint16_t a, size_t *offset);
 static Sunsoft5B sunsoft5b_audio;
+static Namco163Audio namco163_audio;
+static bool namco163_audio_dirty = false;
+
+typedef enum {
+    NAMCO_VARIANT_163,
+    NAMCO_VARIANT_175,
+    NAMCO_VARIANT_340,
+    NAMCO_VARIANT_UNKNOWN
+} NamcoVariant;
+
+static struct {
+    NamcoVariant variant;
+    bool auto_detect;
+    bool not_340;
+    uint8_t write_protect;
+    bool low_chr_nt_mode;
+    bool high_chr_nt_mode;
+    uint16_t irq_counter;
+    uint8_t prg_bank[3];
+    bool prg_mapped[3];
+    uint8_t chr_bank[8];
+    bool chr_mapped[8];
+    bool chr_ciram[8];
+    uint8_t chr_ciram_page[8];
+    uint8_t nt_bank[4];
+    bool nt_mapped[4];
+    bool nt_ciram[4];
+    uint8_t nt_ciram_page[4];
+    Mirroring mirr;
+} namco;
 
 void cart_apply_trainer(const uint8_t trainer[512]) {
     if (!trainer) return;
@@ -234,6 +267,33 @@ static void flush_mmc5_battery(void) {
     mmc5_exram_dirty = false;
 }
 
+static bool namco_has_audio(void) {
+    return cart == &mapper_namco && namco.variant == NAMCO_VARIANT_163;
+}
+
+static void flush_namco_battery(void) {
+    bool audio = namco_has_audio();
+    if (!battery_enabled || !battery_save_path
+        || (!prg_ram_dirty && (!audio || !namco163_audio_dirty))) return;
+    FILE *fp = fopen(battery_save_path, "wb");
+    if (!fp) {
+        perror("battery save open");
+        return;
+    }
+    size_t prg_written = prg_save_ram.size
+        ? fwrite(prg_save_ram.data, 1, prg_save_ram.size, fp) : 0;
+    size_t audio_written = audio
+        ? fwrite(namco163_audio_ram(&namco163_audio), 1, NAMCO163_RAM_SIZE, fp) : 0;
+    int close_result = fclose(fp);
+    if (prg_written != prg_save_ram.size
+        || (audio && audio_written != NAMCO163_RAM_SIZE) || close_result != 0) {
+        fprintf(stderr, "Failed to write battery save '%s'\n", battery_save_path);
+        return;
+    }
+    prg_ram_dirty = false;
+    if (audio) namco163_audio_dirty = false;
+}
+
 static void flush_flash_battery(void) {
     if (!battery_enabled || !flash_save_path || !flash_dirty) return;
     size_t path_size = strlen(flash_save_path);
@@ -275,6 +335,7 @@ void cart_battery_flush(void) {
     if (cart == &mapper_unrom512)
         flush_flash_battery();
     else if (cart == &mapper_mmc5) flush_mmc5_battery();
+    else if (cart == &mapper_namco) flush_namco_battery();
     else flush_battery(battery_save_path, prg_save_ram.data, prg_save_ram.size, &prg_ram_dirty);
     flush_battery(chr_save_path, C.chr, C.ram.chr_nvram, &chr_ram_dirty);
     for (unsigned i = 0; i < 2; ++i)
@@ -299,6 +360,7 @@ void cart_battery_shutdown(void) {
     prg_ram_dirty = false;
     chr_ram_dirty = false;
     mmc5_exram_dirty = false;
+    namco163_audio_dirty = false;
     flash_dirty = false;
 }
 
@@ -329,6 +391,23 @@ static void load_mmc5_battery(const char *path) {
     fclose(fp);
 }
 
+static void load_namco_battery(const char *path) {
+    if (prg_save_ram.size) memset(prg_save_ram.data, 0, prg_save_ram.size);
+    if (namco_has_audio()) memset(namco163_audio_ram(&namco163_audio), 0, NAMCO163_RAM_SIZE);
+    if (!path) return;
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return;
+    size_t prg_read = prg_save_ram.size
+        ? fread(prg_save_ram.data, 1, prg_save_ram.size, fp) : 0;
+    size_t audio_read = 0;
+    if (namco_has_audio() && prg_read == prg_save_ram.size)
+        audio_read = fread(namco163_audio_ram(&namco163_audio), 1, NAMCO163_RAM_SIZE, fp);
+    if ((prg_read < prg_save_ram.size
+        || (namco_has_audio() && audio_read < NAMCO163_RAM_SIZE)) && ferror(fp))
+        fprintf(stderr, "Failed to read battery save '%s'\n", path);
+    fclose(fp);
+}
+
 static void load_flash_battery(const char *path) {
     if (!path || !C.prg || !C.prg_sz) return;
     FILE *fp = fopen(path, "rb");
@@ -346,9 +425,10 @@ void cart_battery_configure(const char *rom_path, bool has_battery) {
     if (!rom_path || (!has_battery && !serial_storage)) return;
     if (has_battery && cart == &mapper_unrom512)
         flash_save_path = build_save_path(rom_path, ".flash.sav");
-    if (has_battery && prg_save_ram.size) battery_save_path = build_save_path(rom_path, ".sav");
+    if (has_battery && (prg_save_ram.size || namco_has_audio()))
+        battery_save_path = build_save_path(rom_path, ".sav");
     if (has_battery && C.ram.chr_nvram) chr_save_path = build_save_path(rom_path, ".chr.sav");
-    bool paths_valid = (!has_battery || !prg_save_ram.size || battery_save_path)
+    bool paths_valid = (!has_battery || (!prg_save_ram.size && !namco_has_audio()) || battery_save_path)
                     && (!has_battery || !C.ram.chr_nvram || chr_save_path)
                     && (!has_battery || cart != &mapper_unrom512 || flash_save_path);
     for (unsigned i = 0; i < 2; ++i) {
@@ -366,6 +446,7 @@ void cart_battery_configure(const char *rom_path, bool has_battery) {
                     || eeprom_save_path[0] || eeprom_save_path[1];
     if (cart == &mapper_unrom512) load_flash_battery(flash_save_path);
     else if (cart == &mapper_mmc5) load_mmc5_battery(battery_save_path);
+    else if (cart == &mapper_namco) load_namco_battery(battery_save_path);
     else load_battery(battery_save_path, prg_save_ram.data, prg_save_ram.size);
     load_battery(chr_save_path, C.chr, C.ram.chr_nvram);
     for (unsigned i = 0; i < 2; ++i)
@@ -1375,6 +1456,8 @@ float cart_expansion_audio(void) {
         // against the native nonlinear mixer's 5000-unit reference scale.
         return -(float)raw * (14.0f / 5000.0f);
     }
+    if (cart == &mapper_namco && namco.variant == NAMCO_VARIANT_163)
+        return namco163_audio_output(&namco163_audio);
     if (cart == &mapper_sunsoft69) return sunsoft5b_output(&sunsoft5b_audio);
     return 0.0f;
 }
@@ -1996,6 +2079,17 @@ uint8_t cart_nt_read(uint16_t addr, uint8_t *nt_ram) {
                 return nt_ram[in];
         }
     }
+    if (cart == &mapper_namco
+        && (namco.variant == NAMCO_VARIANT_163 || namco.variant == NAMCO_VARIANT_340)) {
+        unsigned slot = (unsigned)(((addr - 0x2000u) & 0x0FFFu) >> 10);
+        uint16_t in = (uint16_t)((addr - 0x2000u) & 0x03FFu);
+        if (namco.nt_mapped[slot]) {
+            if (namco.nt_ciram[slot])
+                return nt_ram[(size_t)namco.nt_ciram_page[slot] * CHR_BANK_1K + in];
+            size_t bank = namco_chr_bank(namco.nt_bank[slot]);
+            return C.chr[bank * CHR_BANK_1K + in];
+        }
+    }
 
     if (cart == &mapper_rambo158) {
         uint16_t off = (uint16_t)((addr - 0x2000u) & 0x0FFFu);
@@ -2043,6 +2137,20 @@ void cart_nt_write(uint16_t addr, uint8_t v, uint8_t *nt_ram) {
             default:
                 nt_ram[in] = v;
                 return;
+        }
+    }
+    if (cart == &mapper_namco
+        && (namco.variant == NAMCO_VARIANT_163 || namco.variant == NAMCO_VARIANT_340)) {
+        unsigned slot = (unsigned)(((addr - 0x2000u) & 0x0FFFu) >> 10);
+        uint16_t in = (uint16_t)((addr - 0x2000u) & 0x03FFu);
+        if (namco.nt_mapped[slot]) {
+            if (namco.nt_ciram[slot]) {
+                nt_ram[(size_t)namco.nt_ciram_page[slot] * CHR_BANK_1K + in] = v;
+            } else if (C.chr_is_ram) {
+                size_t bank = namco_chr_bank(namco.nt_bank[slot]);
+                chr_ram_write(bank * CHR_BANK_1K + in, v);
+            }
+            return;
         }
     }
 
@@ -2215,6 +2323,218 @@ static void mmc4_reset(void) {
     memset(&mmc4, 0, sizeof(mmc4));
     mmc4.latch[0] = mmc4.latch[1] = 1;
     mmc4.mirr = C.mirr_base;
+}
+
+// Mappers 19/210: Namco 163, 175, and 340.
+static void namco_set_variant(NamcoVariant variant) {
+    if (!namco.auto_detect) return;
+    if (!namco.not_340 || variant != NAMCO_VARIANT_340) namco.variant = variant;
+}
+
+static size_t namco_prg_bank(uint8_t bank) {
+    size_t banks = C.prg_sz / PRG_BANK_8K;
+    return banks ? (size_t)(bank & 0x3Fu) % banks : 0;
+}
+
+static size_t namco_chr_bank(uint8_t bank) {
+    size_t banks = C.chr_sz / CHR_BANK_1K;
+    return banks ? (size_t)bank % banks : 0;
+}
+
+static bool namco_ram_write_allowed(uint16_t address) {
+    if (!default_prg_ram()->size) return false;
+    if (namco.variant == NAMCO_VARIANT_163) {
+        unsigned block = (unsigned)((address - 0x6000u) >> 11);
+        return (namco.write_protect & 0x40u) != 0
+            && (namco.write_protect & (1u << block)) == 0;
+    }
+    if (namco.variant == NAMCO_VARIANT_175)
+        return (namco.write_protect & 0x01u) != 0;
+    return false;
+}
+
+static bool namco_ram_read_allowed(void) {
+    return default_prg_ram()->size
+        && (namco.variant == NAMCO_VARIANT_163 || namco.variant == NAMCO_VARIANT_175);
+}
+
+static uint8_t namco_cpu_read(uint16_t address) {
+    uint16_t reg = address & 0xF800u;
+    if (reg == 0x4800u && namco.variant == NAMCO_VARIANT_163)
+        return namco163_audio_read_data(&namco163_audio);
+    if (reg == 0x5000u && namco.variant == NAMCO_VARIANT_163)
+        return (uint8_t)namco.irq_counter;
+    if (reg == 0x5800u && namco.variant == NAMCO_VARIANT_163)
+        return (uint8_t)(namco.irq_counter >> 8);
+    if (address >= 0x6000u && address < 0x8000u)
+        return namco_ram_read_allowed() ? prg_ram_read(address) : cart_cpu_bus_input;
+    if (address >= 0x8000u) {
+        unsigned slot = (unsigned)((address - 0x8000u) / PRG_BANK_8K);
+        if (slot == 3) {
+            size_t bank = C.prg_sz / PRG_BANK_8K - 1;
+            return C.prg[bank * PRG_BANK_8K + (address & 0x1FFFu)];
+        }
+        if (!namco.prg_mapped[slot]) return cart_cpu_bus_input;
+        size_t bank = namco_prg_bank(namco.prg_bank[slot]);
+        return C.prg[bank * PRG_BANK_8K + (address & 0x1FFFu)];
+    }
+    return cart_cpu_bus_input;
+}
+
+static void namco_set_pattern_bank(unsigned slot, uint8_t value) {
+    bool low_half = slot < 4;
+    bool nt_mode = low_half ? namco.low_chr_nt_mode : namco.high_chr_nt_mode;
+    namco.chr_mapped[slot] = true;
+    namco.chr_ciram[slot] = namco.variant == NAMCO_VARIANT_163 && !nt_mode && value >= 0xE0u;
+    namco.chr_ciram_page[slot] = value & 1u;
+    namco.chr_bank[slot] = value;
+}
+
+static void namco_set_nt_bank(unsigned slot, uint8_t value) {
+    namco.nt_mapped[slot] = true;
+    namco.nt_ciram[slot] = value >= 0xE0u;
+    namco.nt_ciram_page[slot] = value & 1u;
+    namco.nt_bank[slot] = value;
+}
+
+static void namco_cpu_write(uint16_t address, uint8_t value) {
+    uint16_t reg = address & 0xF800u;
+    if (reg == 0x4800u) {
+        namco_set_variant(NAMCO_VARIANT_163);
+        if (namco.variant == NAMCO_VARIANT_163
+            && namco163_audio_write_data(&namco163_audio, value))
+            namco163_audio_dirty = true;
+        return;
+    }
+    if (reg == 0x5000u) {
+        namco_set_variant(NAMCO_VARIANT_163);
+        if (namco.variant == NAMCO_VARIANT_163) {
+            namco.irq_counter = (uint16_t)((namco.irq_counter & 0xFF00u) | value);
+            mapper_irq_line = false;
+        }
+        return;
+    }
+    if (reg == 0x5800u) {
+        namco_set_variant(NAMCO_VARIANT_163);
+        if (namco.variant == NAMCO_VARIANT_163) {
+            namco.irq_counter = (uint16_t)((namco.irq_counter & 0x00FFu) | ((uint16_t)value << 8));
+            mapper_irq_line = false;
+        }
+        return;
+    }
+    if (address >= 0x6000u && address < 0x8000u) {
+        namco.not_340 = true;
+        if (namco.variant == NAMCO_VARIANT_340) namco_set_variant(NAMCO_VARIANT_UNKNOWN);
+        if (namco_ram_write_allowed(address)) {
+            prg_ram_write(address, value);
+        }
+        return;
+    }
+
+    switch (reg) {
+        case 0x8000: case 0x8800: case 0x9000: case 0x9800:
+            namco_set_pattern_bank((unsigned)((reg - 0x8000u) >> 11), value);
+            break;
+        case 0xA000: case 0xA800: case 0xB000: case 0xB800:
+            namco_set_pattern_bank((unsigned)(((reg - 0xA000u) >> 11) + 4u), value);
+            break;
+        case 0xC000: case 0xC800: case 0xD000: case 0xD800:
+            if (reg >= 0xC800u) namco_set_variant(NAMCO_VARIANT_163);
+            else if (namco.variant != NAMCO_VARIANT_163) namco_set_variant(NAMCO_VARIANT_175);
+            if (namco.variant == NAMCO_VARIANT_175) {
+                namco.write_protect = value;
+            } else {
+                namco_set_nt_bank((unsigned)((reg - 0xC000u) >> 11), value);
+            }
+            break;
+        case 0xE000:
+            if (value & 0x80u) namco_set_variant(NAMCO_VARIANT_340);
+            else if ((value & 0x40u) && namco.variant != NAMCO_VARIANT_163)
+                namco_set_variant(NAMCO_VARIANT_340);
+            namco.prg_bank[0] = value & 0x3Fu;
+            namco.prg_mapped[0] = true;
+            if (namco.variant == NAMCO_VARIANT_340) {
+                static const Mirroring modes[4] = {
+                    MIRROR_SINGLE0, MIRROR_VERTICAL, MIRROR_SINGLE1, MIRROR_HORIZONTAL
+                };
+                namco.mirr = modes[value >> 6];
+                memset(namco.nt_mapped, 0, sizeof(namco.nt_mapped));
+            } else if (namco.variant == NAMCO_VARIANT_163) {
+                namco163_audio_set_disabled(&namco163_audio, (value & 0x40u) != 0);
+            }
+            break;
+        case 0xE800:
+            namco.prg_bank[1] = value & 0x3Fu;
+            namco.prg_mapped[1] = true;
+            if (namco.variant == NAMCO_VARIANT_163) {
+                namco.low_chr_nt_mode = (value & 0x40u) != 0;
+                namco.high_chr_nt_mode = (value & 0x80u) != 0;
+            }
+            break;
+        case 0xF000:
+            namco.prg_bank[2] = value & 0x3Fu;
+            namco.prg_mapped[2] = true;
+            break;
+        case 0xF800:
+            namco_set_variant(NAMCO_VARIANT_163);
+            if (namco.variant == NAMCO_VARIANT_163) {
+                namco.write_protect = value;
+                namco163_audio_write_address(&namco163_audio, value);
+            }
+            break;
+    }
+}
+
+static uint8_t namco_ppu_read(uint16_t address) {
+    address &= 0x1FFFu;
+    unsigned slot = address / CHR_BANK_1K;
+    if (!namco.chr_mapped[slot])
+        return C.chr_is_ram ? C.chr[address % C.chr_sz] : (uint8_t)address;
+    if (namco.chr_ciram[slot])
+        return ppu_vram[(size_t)namco.chr_ciram_page[slot] * CHR_BANK_1K + (address & 0x03FFu)];
+    size_t bank = namco_chr_bank(namco.chr_bank[slot]);
+    return C.chr[bank * CHR_BANK_1K + (address & 0x03FFu)];
+}
+
+static void namco_ppu_write(uint16_t address, uint8_t value) {
+    address &= 0x1FFFu;
+    unsigned slot = address / CHR_BANK_1K;
+    if (namco.chr_mapped[slot] && namco.chr_ciram[slot]) {
+        ppu_vram[(size_t)namco.chr_ciram_page[slot] * CHR_BANK_1K + (address & 0x03FFu)] = value;
+        return;
+    }
+    if (!C.chr_is_ram) return;
+    size_t index = namco.chr_mapped[slot]
+        ? namco_chr_bank(namco.chr_bank[slot]) * CHR_BANK_1K + (address & 0x03FFu)
+        : address % C.chr_sz;
+    chr_ram_write(index, value);
+}
+
+static Mirroring namco_mirr(void) { return namco.mirr; }
+
+static void namco_clock(int cpu_cycles) {
+    if (namco.variant == NAMCO_VARIANT_163) {
+        for (int cycle = 0; cycle < cpu_cycles; ++cycle) {
+            if ((namco.irq_counter & 0x8000u) && (namco.irq_counter & 0x7FFFu) != 0x7FFFu) {
+                namco.irq_counter++;
+                if ((namco.irq_counter & 0x7FFFu) == 0x7FFFu) mapper_irq_line = true;
+            }
+        }
+        if (namco163_audio_clock(&namco163_audio, cpu_cycles))
+            namco163_audio_dirty = true;
+    }
+}
+
+static void namco_reset(void) {
+    NamcoVariant variant = namco.variant;
+    bool auto_detect = namco.auto_detect;
+    memset(&namco, 0, sizeof(namco));
+    namco.variant = variant;
+    namco.auto_detect = auto_detect;
+    namco.mirr = C.mirr_base;
+    namco163_audio_reset(&namco163_audio);
+    namco163_audio_dirty = false;
+    mapper_irq_line = false;
 }
 
 // Mapper 69: Sunsoft FME-7 / 5B.
@@ -3578,6 +3898,8 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         }
     } else if (mapper_no == 69) {
         if (split_prg || prg_total > 0x80000) return false;
+    } else if (mapper_no == 19 || mapper_no == 210) {
+        if (split_prg || prg_total > 0x2000) return false;
     } else if (mapper_no == 30) {
         if (prg_total != 0) return false;
     } else if (prg_total > 0x2000) {
@@ -3605,7 +3927,7 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         case 18: case 32: case 65: chr_limit = 0x40000; break;
         case 21: case 23: case 25: case 27: case 183: chr_limit = 0x80000; break;
         case 22: chr_limit = 0x40000; break;
-        case 69: chr_limit = 0x40000; break;
+        case 19: case 69: case 210: chr_limit = 0x40000; break;
         case 119: chr_limit = sizeof(tqrom_chr_ram); break;
         default: chr_limit = 0x2000; break;
     }
@@ -3637,7 +3959,7 @@ int mapper_init_from_header(const iNESHeader *h,
         case 16: case 153: case 157: case 159:
         case 18: case 32: case 33: case 48: case 64: case 65: case 158:
         case 21: case 22: case 23: case 25: case 27: case 183:
-        case 69:
+        case 19: case 69: case 210:
             break;
         default:
             fprintf(stderr, "Unsupported mapper: %d\n", mapper_no);
@@ -3649,6 +3971,7 @@ int mapper_init_from_header(const iNESHeader *h,
         || (mapper_no == 16 && (submapper == 4 || submapper == 5))
         || (mapper_no == 48 && submapper == 1)
         || (mapper_no == 32 && submapper == 1)
+        || (mapper_no == 210 && submapper <= 2)
         || ((mapper_no == 2 || mapper_no == 3 || mapper_no == 7) && submapper <= 2)
         || (mapper_no == 30 && submapper <= 4))) {
         fprintf(stderr, "Unsupported mapper/submapper: %d/%u\n", mapper_no, submapper);
@@ -3726,6 +4049,12 @@ int mapper_init_from_header(const iNESHeader *h,
     if (mapper_no == 69 && (prg_sz > 0x80000 || (prg_sz % PRG_BANK_8K) != 0
         || chr_sz > 0x40000 || (chr_sz % CHR_BANK_1K) != 0)) {
         fprintf(stderr, "Unsupported ROM size for mapper 69\n");
+        return -1;
+    }
+    if ((mapper_no == 19 || mapper_no == 210)
+        && (prg_sz > 0x80000 || (prg_sz % PRG_BANK_8K) != 0
+            || chr_sz > 0x40000 || (chr_sz % CHR_BANK_1K) != 0)) {
+        fprintf(stderr, "Unsupported ROM size for mapper %d\n", mapper_no);
         return -1;
     }
     if (!ram_geometry_supported(mapper_no, nes2, &ram, chr_is_ram, chr_sz)
@@ -3898,6 +4227,18 @@ int mapper_init_from_header(const iNESHeader *h,
                          sunsoft69_ppu_read, sunsoft69_ppu_write, sunsoft69_reset, sunsoft69_mirr);
             mapper_sunsoft69.clock = sunsoft69_clock;
             cart = &mapper_sunsoft69;
+            break;
+        case 19: case 210:
+            if (mapper_no == 19) namco.variant = NAMCO_VARIANT_163;
+            else if (submapper == 1) namco.variant = NAMCO_VARIANT_175;
+            else if (submapper == 2) namco.variant = NAMCO_VARIANT_340;
+            else namco.variant = NAMCO_VARIANT_UNKNOWN;
+            namco.auto_detect = (mapper_no == 210 && submapper == 0)
+                             || (mapper_no == 19 && !nes2);
+            build_mapper(&mapper_namco, namco_cpu_read, namco_cpu_write,
+                         namco_ppu_read, namco_ppu_write, namco_reset, namco_mirr);
+            mapper_namco.clock = namco_clock;
+            cart = &mapper_namco;
             break;
         case 119:
             build_mapper(&mapper_tqrom, mmc3_cpu_read, mmc3_cpu_write,
