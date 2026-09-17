@@ -57,7 +57,7 @@ typedef struct {
 static CartCommon C;
 static Mapper mapper_nrom, mapper_mmc1, mapper_uxrom, mapper_cnrom, mapper_mmc3, mapper_tqrom;
 static Mapper mapper_mmc5, mapper_aorom, mapper_mmc2, mapper_mmc4, mapper_colordreams;
-static Mapper mapper_cprom, mapper_100in1, mapper_bandai;
+static Mapper mapper_cprom, mapper_100in1, mapper_bandai, mapper_action53;
 Mapper *cart = NULL;
 static bool mapper_irq_line = false;
 static uint8_t cart_cpu_bus_input = 0xFF;
@@ -2013,6 +2013,103 @@ bool cart_set_barcode(const char *digits) {
     return true;
 }
 
+// Mapper 28: Action 53.
+static struct {
+    uint8_t selected_reg;
+    uint8_t regs[4];
+    uint8_t mirroring_bit;
+    size_t prg_bank[2];
+    uint8_t chr_bank;
+    bool prg_selected;
+    Mirroring mirr;
+} m28;
+
+static void m28_update_state(void) {
+    m28.prg_selected = true;
+    uint8_t mirroring = m28.regs[2] & 0x03;
+    if (!(mirroring & 0x02)) mirroring = m28.mirroring_bit;
+    switch (mirroring) {
+        case 0: m28.mirr = MIRROR_SINGLE0; break;
+        case 1: m28.mirr = MIRROR_SINGLE1; break;
+        case 2: m28.mirr = MIRROR_VERTICAL; break;
+        default: m28.mirr = MIRROR_HORIZONTAL; break;
+    }
+
+    unsigned game_size = (m28.regs[2] >> 4) & 0x03;
+    bool prg_16k = (m28.regs[2] & 0x08) != 0;
+    bool slot_select = (m28.regs[2] & 0x04) != 0;
+    unsigned prg_select = m28.regs[1] & 0x0F;
+    unsigned outer = (unsigned)m28.regs[3] << 1;
+    static const unsigned outer_mask[4] = {0x1FE, 0x1FC, 0x1F8, 0x1F0};
+    static const unsigned inner_mask[4] = {0x01, 0x03, 0x07, 0x0F};
+    size_t banks = C.prg_sz / PRG_BANK_16K;
+
+    if (prg_16k) {
+        unsigned selected = (outer & outer_mask[game_size]) | (prg_select & inner_mask[game_size]);
+        unsigned fixed = (outer & 0x1FE) | (slot_select ? 1u : 0u);
+        m28.prg_bank[slot_select ? 0 : 1] = selected % banks;
+        m28.prg_bank[slot_select ? 1 : 0] = fixed % banks;
+    } else {
+        unsigned selected = prg_select << 1;
+        unsigned base = (outer & outer_mask[game_size]) | (selected & inner_mask[game_size]);
+        m28.prg_bank[0] = base % banks;
+        m28.prg_bank[1] = ((outer & outer_mask[game_size])
+            | ((selected | 1u) & inner_mask[game_size])) % banks;
+    }
+    m28.chr_bank = m28.regs[0] & 0x03;
+}
+
+static uint8_t m28_cpu_read(uint16_t a) {
+    if (a >= 0x6000 && a <= 0x7FFF) return prg_ram_read(a);
+    if (a >= 0x8000) {
+        if (a < 0xC000 && !m28.prg_selected) return cart_cpu_bus_input;
+        size_t slot = (a >> 14) & 1u;
+        size_t offset = m28.prg_bank[slot] * PRG_BANK_16K + (a & 0x3FFF);
+        return C.prg[offset % C.prg_sz];
+    }
+    return cart_cpu_bus_input;
+}
+
+static void m28_cpu_write(uint16_t a, uint8_t v) {
+    if (a >= 0x5000 && a <= 0x5FFF) {
+        m28.selected_reg = (uint8_t)(((v & 0x80) >> 6) | (v & 0x01));
+        return;
+    }
+    if (a >= 0x6000 && a <= 0x7FFF) {
+        prg_ram_write(a, v);
+        return;
+    }
+    if (a < 0x8000) return;
+
+    if (m28.selected_reg <= 1) m28.mirroring_bit = (v >> 4) & 1;
+    else if (m28.selected_reg == 2) m28.mirroring_bit = v & 1;
+    m28.regs[m28.selected_reg] = v;
+    m28_update_state();
+}
+
+static uint8_t m28_ppu_read(uint16_t a) {
+    a &= 0x1FFF;
+    size_t banks = C.chr_sz / CHR_BANK_8K;
+    size_t bank = m28.chr_bank % banks;
+    return C.chr[bank * CHR_BANK_8K + a];
+}
+
+static void m28_ppu_write(uint16_t a, uint8_t v) {
+    a &= 0x1FFF;
+    size_t banks = C.chr_sz / CHR_BANK_8K;
+    size_t bank = m28.chr_bank % banks;
+    chr_ram_write(bank * CHR_BANK_8K + a, v);
+}
+
+static Mirroring m28_mirr(void) { return m28.mirr; }
+
+static void m28_power_on(void) {
+    memset(&m28, 0, sizeof(m28));
+    m28.mirr = C.mirr_base;
+    m28.prg_bank[0] = 0;
+    m28.prg_bank[1] = C.prg_sz / PRG_BANK_16K - 1;
+}
+
 // Mapper selection and initialization.
 static bool bandai_layout(int mapper, uint8_t submapper, bool nes2,
                           size_t prg_bytes, size_t chr_bytes, bool chr_is_ram,
@@ -2082,6 +2179,7 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         case 4: chr_limit = 0x40000; break;
         case 5: chr_limit = 0x100000; break;
         case 13: chr_limit = 0x4000; break;
+        case 28: chr_limit = 0x8000; break;
         case 119: chr_limit = sizeof(tqrom_chr_ram); break;
         default: chr_limit = 0x2000; break;
     }
@@ -2109,7 +2207,7 @@ int mapper_init_from_header(const iNESHeader *h,
     uint8_t submapper = nes2 ? h->prg_ram_size >> 4 : 0;
     switch (mapper_no) {
         case 0: case 1: case 2: case 3: case 4: case 5:
-        case 7: case 9: case 10: case 11: case 13: case 15: case 119: case 155:
+        case 7: case 9: case 10: case 11: case 13: case 15: case 28: case 119: case 155:
         case 16: case 153: case 157: case 159:
             break;
         default:
@@ -2143,6 +2241,11 @@ int mapper_init_from_header(const iNESHeader *h,
     }
     if (mapper_no == 119 && (chr_is_ram || chr_sz > 0x40000 || (chr_sz % CHR_BANK_1K) != 0)) {
         fprintf(stderr, "Unsupported ROM size for mapper 119\n");
+        return -1;
+    }
+    if (mapper_no == 28 && ((prg_sz % PRG_BANK_16K) != 0 || prg_sz > 0x800000
+        || !chr_is_ram || (chr_sz != 0x2000 && chr_sz != 0x4000 && chr_sz != 0x8000))) {
+        fprintf(stderr, "Unsupported ROM/RAM size for mapper 28\n");
         return -1;
     }
     if (!ram_geometry_supported(mapper_no, nes2, &ram, chr_is_ram, chr_sz)
@@ -2248,6 +2351,12 @@ int mapper_init_from_header(const iNESHeader *h,
             build_mapper(&mapper_100in1, m15_cpu_read, m15_cpu_write,
                         m15_ppu_read, m15_ppu_write, m15_reset, m15_mirr);
             cart = &mapper_100in1;
+            break;
+        case 28:
+            build_mapper(&mapper_action53, m28_cpu_read, m28_cpu_write,
+                        m28_ppu_read, m28_ppu_write, NULL, m28_mirr);
+            cart = &mapper_action53;
+            m28_power_on();
             break;
         case 119:
             build_mapper(&mapper_tqrom, mmc3_cpu_read, mmc3_cpu_write,

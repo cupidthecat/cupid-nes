@@ -44,6 +44,7 @@ extern uint64_t cpu_total_cycles;
 
 static uint8_t fixture_prg[0x200000];
 static uint8_t fixture_chr[0x20000];
+static uint8_t *image_for(const iNESHeader *h, size_t prg_bytes, size_t chr_bytes, size_t *size);
 
 #define CHECK(condition) do { \
     if (!(condition)) { \
@@ -448,6 +449,144 @@ static int test_mapper15_modes(void) {
         cart_ppu_write(0, 0x69);
         CHECK(cart_ppu_read(0) == ((mode == 1 || mode == 2) ? 0x69 : 0x42));
     }
+    return 0;
+}
+
+static iNESHeader action53_header(size_t prg_bytes, uint8_t chr_ram_shift) {
+    iNESHeader h = header_for(28, prg_bytes, true);
+    h.flags7 |= 0x08;
+    h.prg_ram_size = 0;
+    h.flags10 = 0;
+    h.zero[0] = chr_ram_shift;
+    return h;
+}
+
+static int test_action53_banks_and_mirroring(void) {
+    iNESHeader h = action53_header(0x200000, 9); // 32KB CHR-RAM.
+    CHECK(fixture_with_header(&h, 0x200000, 0x8000) == 28);
+
+    // Power-up guarantees only the fixed last 16KB page at $C000.
+    CHECK(cart_cpu_read_bus(0x8000, 0x56) == 0x56 && cart_cpu_read(0xC000) == 0xFE);
+    CHECK(cart_get_mirroring() == MIRROR_HORIZONTAL && cart->reset == NULL);
+
+    // $81 selects the outer register. Mode $38 is 16KB banking with $8000 fixed.
+    cart_cpu_write(0x5000, 0x81);
+    CHECK(cart_cpu_read_bus(0x8123, 0x96) == 0x96);
+    cart_cpu_write(0x8000, 0x12);
+    cart_cpu_write(0x5000, 0x80);
+    cart_cpu_write(0x8000, 0x38);
+    cart_cpu_write(0x5000, 0x01);
+    cart_cpu_write(0x8000, 0x06);
+    CHECK(cart_cpu_read(0x8000) == 0x48 && cart_cpu_read(0xC000) == 0x4C);
+
+    // Slot-select flips which 16KB half is fixed; 32KB mode keeps the pair adjacent.
+    cart_cpu_write(0x5000, 0x80);
+    cart_cpu_write(0x8000, 0x3C);
+    CHECK(cart_cpu_read(0x8000) == 0x4C && cart_cpu_read(0xC000) == 0x4A);
+    cart_cpu_write(0x8000, 0x20);
+    CHECK(cart_cpu_read(0x8000) == 0x48 && cart_cpu_read(0xC000) == 0x4A);
+
+    // Mirroring can be one-screen, vertical, or horizontal depending on mode and data bit.
+    cart_cpu_write(0x8000, 0x00);
+    CHECK(cart_get_mirroring() == MIRROR_SINGLE0);
+    cart_cpu_write(0x5000, 0x01);
+    cart_cpu_write(0x8000, 0x10);
+    CHECK(cart_get_mirroring() == MIRROR_SINGLE1);
+    cart_cpu_write(0x5000, 0x80);
+    cart_cpu_write(0x8000, 0x02);
+    CHECK(cart_get_mirroring() == MIRROR_VERTICAL);
+    cart_cpu_write(0x8000, 0x03);
+    CHECK(cart_get_mirroring() == MIRROR_HORIZONTAL);
+
+    // Four 8KB CHR-RAM pages are independently writable; upper selector bits alias.
+    cart_cpu_write(0x5000, 0x00);
+    cart_cpu_write(0x8000, 0x00);
+    cart_ppu_write(0x0123, 0xA0);
+    cart_cpu_write(0x8000, 0x01);
+    cart_ppu_write(0x0123, 0xB1);
+    cart_cpu_write(0x8000, 0x02);
+    cart_ppu_write(0x0123, 0xC2);
+    cart_cpu_write(0x8000, 0x03);
+    cart_ppu_write(0x0123, 0xD3);
+    cart_cpu_write(0x8000, 0x05);
+    CHECK(cart_ppu_read(0x0123) == 0xB1);
+
+    // Addresses outside $5000-$5FFF do not change the selected register.
+    cart_cpu_write(0x5000, 0x00);
+    cart_cpu_write(0x4FFF, 0x81);
+    cart_cpu_write(0x8000, 0x02);
+    CHECK(cart_ppu_read(0x0123) == 0xC2);
+
+    // Unsupported CHR-RAM geometry fails transactionally through the loader.
+    size_t image_size;
+    iNESHeader valid = action53_header(0x20000, 9);
+    uint8_t *image = image_for(&valid, 0x20000, 0, &image_size);
+    CHECK(image != NULL && load_rom_memory(image, image_size) == 0);
+    free(image);
+    uint8_t *previous_prg = prg_rom;
+    uint8_t *previous_chr = chr_rom;
+    iNESHeader previous_header = ines_header;
+    iNESHeader invalid = action53_header(0x20000, 10); // 64KB exceeds the board's CHR-RAM lines.
+    image = image_for(&invalid, 0x20000, 0, &image_size);
+    CHECK(image != NULL && load_rom_memory(image, image_size) == -1);
+    free(image);
+    CHECK(prg_rom == previous_prg && chr_rom == previous_chr);
+    CHECK(memcmp(&ines_header, &previous_header, sizeof(ines_header)) == 0);
+    CHECK(cart_cpu_read(0xC000) == 0x5C);
+    unload_rom();
+    return 0;
+}
+
+static int test_action53_game_sizes(void) {
+    iNESHeader h = action53_header(0x200000, 9);
+    CHECK(fixture_with_header(&h, 0x200000, 0x8000) == 28);
+    cart_cpu_write(0x5FFF, 0x81);
+    cart_cpu_write(0xFFFF, 0x13);
+    cart_cpu_write(0x5000, 1);
+    cart_cpu_write(0x8000, 13);
+    const uint8_t switched16[] = {39, 37, 37, 45};
+    const uint8_t pair32[] = {38, 38, 34, 42};
+    for (unsigned game = 0; game < 4; ++game) {
+        cart_cpu_write(0x5000, 0x80);
+        cart_cpu_write(0x8000, (uint8_t)(game << 4));
+        CHECK(cart_cpu_read(0x8000) == pair32[game] * 2);
+        CHECK(cart_cpu_read(0xC000) == (pair32[game] + 1) * 2);
+        for (unsigned slot = 0; slot < 2; ++slot) {
+            cart_cpu_write(0x8000, (uint8_t)((game << 4) | 8 | (slot << 2)));
+            CHECK(cart_cpu_read(slot ? 0x8000 : 0xC000) == switched16[game] * 2);
+            CHECK(cart_cpu_read(slot ? 0xC000 : 0x8000) == (38 + slot) * 2);
+        }
+    }
+    return 0;
+}
+
+static int test_action53_largest_image(void) {
+    iNESHeader h = action53_header(0x800000, 9);
+    h.flags9 = 2;
+    size_t bytes;
+    uint8_t *image = image_for(&h, 0x800000, 0, &bytes);
+    CHECK(image != NULL);
+    for (size_t bank = 0; bank < 512; ++bank) {
+        image[sizeof(h) + bank * 0x4000] = (uint8_t)bank;
+        image[sizeof(h) + bank * 0x4000 + 1] = (uint8_t)(bank >> 8);
+    }
+    int loaded = load_rom_memory(image, bytes);
+    free(image);
+    CHECK(loaded == 0);
+    CHECK(cart_cpu_read_bus(0x8000, 0x56) == 0x56);
+    CHECK(cart_cpu_read(0xC000) == 0xFF && cart_cpu_read(0xC001) == 1);
+    cart_cpu_write(0x5000, 0x81);
+    cart_cpu_write(0x8000, 0xFF);
+    CHECK(cart_cpu_read(0x8000) == 0xFE && cart_cpu_read(0x8001) == 1);
+    CHECK(cart_cpu_read(0xC000) == 0xFF && cart_cpu_read(0xC001) == 1);
+    uint8_t *old_prg = prg_rom;
+    h = action53_header(0x20000, 0);
+    h.chr_rom_chunks = 1;
+    image = image_for(&h, 0x20000, 0x2000, &bytes);
+    CHECK(image != NULL);
+    loaded = load_rom_memory(image, bytes);
+    free(image);
+    CHECK(loaded == -1 && prg_rom == old_prg && cart_cpu_read(0x8001) == 1);
     return 0;
 }
 
@@ -2347,7 +2486,8 @@ int test_mapper_accuracy(void) {
         test_mcacc_banks_ram_and_loader, test_mcacc_cpu_ppu_irq_path,
         test_simple_mapper_registers,
         test_colordreams_bus_conflicts, test_bus_conflict_submappers,
-        test_mapper15_modes, test_mmc5_memory_windows,
+        test_mapper15_modes, test_action53_banks_and_mirroring, test_mmc5_memory_windows,
+        test_action53_game_sizes, test_action53_largest_image,
         test_mmc5_exram_and_irq, test_mmc5_chr_fetch_modes, test_mmc5_extended_rendering,
         test_mmc5_rendered_ppu_paths, test_mmc5_audio_and_pcm, test_header_and_mapper_rejection,
         test_loader_trainers_and_sizes, test_loader_rejection_preserves_cart,
