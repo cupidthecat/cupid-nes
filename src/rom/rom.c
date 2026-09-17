@@ -117,10 +117,10 @@ int rom_ram_sizes(const iNESHeader *header, RomRamSizes *sizes) {
         sizes->chr_nvram = nes20_ram_size(header->zero[0] >> 4);
     } else {
         int mapper = rom_mapper_number(header);
-        // Unknown legacy MMC5 boards expose all eight 8KB RAM banks.  Other
-        // iNES boards use the format's conventional 8KB default when byte 8 is zero.
+        // Legacy MMC5 and FME-7 boards default to eight and four 8KB RAM banks.
+        // Other iNES boards use the conventional 8KB default when byte 8 is zero.
         if (mapper != 30) {
-            size_t default_units = mapper == 5 ? 8u : 1u;
+            size_t default_units = mapper == 5 ? 8u : mapper == 69 ? 4u : 1u;
             size_t prg_ram_bytes = (size_t)(header->prg_ram_size ? header->prg_ram_size : default_units) * 0x2000;
             if (header->flags6 & 2) sizes->prg_nvram = prg_ram_bytes;
             else sizes->prg_ram = prg_ram_bytes;

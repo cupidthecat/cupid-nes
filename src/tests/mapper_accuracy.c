@@ -3422,6 +3422,242 @@ static int test_mmc6_banks_and_irq(void) {
     return 0;
 }
 
+static void sunsoft69_command(uint8_t command, uint8_t value) {
+    cart_cpu_write(0x8000, command);
+    cart_cpu_write(0xA000, value);
+}
+
+static void sunsoft5b_register(uint8_t reg, uint8_t value) {
+    cart_cpu_write(0xC000, reg);
+    cart_cpu_write(0xE000, value);
+}
+
+static void prepare_mapper_cpu_nops(void) {
+    nes_set_region(NES_REGION_NTSC);
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    cpu_power_on(&cpu);
+    for (unsigned i = 0; i < 0x200; ++i) write_mem((uint16_t)(0x0200 + i), 0xEA);
+    cpu.pc = 0x0200;
+    cpu.status = INTERRUPT_FLAG | UNUSED_FLAG;
+}
+
+static void run_mapper_nops(unsigned count) {
+    for (unsigned i = 0; i < count; ++i) (void)cpu_step(&cpu);
+}
+
+static int test_sunsoft69_banks_ram_and_startup(void) {
+    CHECK(fixture(69, 0x80000, 0x20000, false) == 69);
+    CHECK(cart != NULL && cart->clock != NULL);
+    CHECK(cart_cpu_read(0x6000) == 0);
+    CHECK(cart_cpu_read_bus(0x8000, 0x56) == 0x56);
+    CHECK(cart_cpu_read_bus(0xA000, 0x56) == 0x56);
+    CHECK(cart_cpu_read_bus(0xC000, 0x56) == 0x56);
+    CHECK(cart_cpu_read(0xE000) == 63);
+    CHECK(cart_ppu_read(0x0123) == 0x23); // CHR-ROM starts unmapped.
+
+    for (unsigned slot = 0; slot < 8; ++slot) {
+        sunsoft69_command((uint8_t)slot, (uint8_t)(24 + slot));
+        CHECK(cart_ppu_read((uint16_t)(slot * 0x400)) == (uint8_t)(24 + slot));
+    }
+    sunsoft69_command(9, 5);
+    sunsoft69_command(10, 17);
+    sunsoft69_command(11, 31);
+    CHECK(cart_cpu_read(0x8000) == 5);
+    CHECK(cart_cpu_read(0xA000) == 17);
+    CHECK(cart_cpu_read(0xC000) == 31);
+    CHECK(cart_cpu_read(0xE000) == 63);
+
+    sunsoft69_command(12, 0);
+    CHECK(cart_get_mirroring() == MIRROR_VERTICAL);
+    sunsoft69_command(12, 1);
+    CHECK(cart_get_mirroring() == MIRROR_HORIZONTAL);
+    sunsoft69_command(12, 2);
+    CHECK(cart_get_mirroring() == MIRROR_SINGLE0);
+    sunsoft69_command(12, 3);
+    CHECK(cart_get_mirroring() == MIRROR_SINGLE1);
+
+    iNESHeader h = header_for(69, 0x20000, false);
+    h.flags7 |= 0x08; // NES 2.0
+    h.flags10 = 9;    // 32 KiB volatile PRG-RAM
+    CHECK(fixture_with_header(&h, 0x20000, 0x2000) == 69);
+    CHECK(cart_cpu_read(0x6000) == 0); // Command 8 powers up as PRG-ROM bank 0.
+    sunsoft69_command(8, 0x40);
+    CHECK(cart_cpu_read_bus(0x6123, 0x56) == 0x56);
+    cart_cpu_write(0x6123, 0x11);
+    sunsoft69_command(8, 0xC3);
+    cart_cpu_write(0x6123, 0xA5);
+    CHECK(cart_cpu_read(0x6123) == 0xA5);
+    sunsoft69_command(8, 0xC0);
+    CHECK(cart_cpu_read(0x6123) == 0);
+    sunsoft69_command(8, 0x43);
+    CHECK(cart_cpu_read_bus(0x6123, 0x56) == 0x56);
+    cart_cpu_write(0x6123, 0x33);
+    sunsoft69_command(8, 0xC3);
+    CHECK(cart_cpu_read(0x6123) == 0xA5);
+    sunsoft69_command(8, 3);
+    CHECK(cart_cpu_read(0x6123) == 3);
+
+    CHECK(fixture(69, 0x20000, 0x2000, true) == 69);
+    CHECK(cart_ppu_read(0x0423) == 1); // CHR-RAM is linearly mapped at power-on.
+    sunsoft69_command(0, 7);
+    cart_ppu_write(0x0123, 0xA6);
+    CHECK(cart_ppu_read(0x0123) == 0xA6);
+    sunsoft69_command(0, 0);
+    CHECK(cart_ppu_read(0x0123) == 0);
+    sunsoft69_command(0, 7);
+    CHECK(cart_ppu_read(0x0123) == 0xA6);
+    return 0;
+}
+
+static int test_sunsoft69_legacy_ram_defaults(void) {
+    for (unsigned battery = 0; battery < 2; ++battery) {
+        iNESHeader h = header_for(69, 0x20000, false);
+        h.flags6 |= (uint8_t)(battery << 1);
+        h.prg_ram_size = 0;
+        RomRamSizes sizes;
+        CHECK(rom_ram_sizes(&h, &sizes) == 0);
+        CHECK(sizes.prg_ram == (battery ? 0u : 0x8000u));
+        CHECK(sizes.prg_nvram == (battery ? 0x8000u : 0u));
+        CHECK(fixture_with_header(&h, 0x20000, 0x2000) == 69);
+        for (unsigned bank = 0; bank < 4; ++bank) {
+            sunsoft69_command(8, (uint8_t)(0xC0u | bank));
+            cart_cpu_write(0x6123, (uint8_t)(0xA0u + bank));
+        }
+        for (unsigned bank = 0; bank < 4; ++bank) {
+            sunsoft69_command(8, (uint8_t)(0xC0u | bank));
+            CHECK(cart_cpu_read(0x6123) == (uint8_t)(0xA0u + bank));
+        }
+        h.prg_ram_size = 1;
+        CHECK(rom_ram_sizes(&h, &sizes) == 0);
+        CHECK(sizes.prg_ram + sizes.prg_nvram == 0x2000);
+    }
+    return 0;
+}
+
+static int test_sunsoft69_irq_cpu_clock(void) {
+    CHECK(fixture(69, 0x20000, 0x2000, false) == 69);
+    prepare_mapper_cpu_nops();
+
+    sunsoft69_command(14, 1);
+    sunsoft69_command(15, 0);
+    sunsoft69_command(13, 0x81);
+    CHECK(!cart_irq_pending());
+    CHECK(cpu_step(&cpu) == 2);
+    CHECK(cart_irq_pending()); // 0001 -> 0000 -> FFFF on the two NOP cycles.
+
+    sunsoft69_command(13, 0x80);
+    CHECK(!cart_irq_pending());
+    sunsoft69_command(14, 0);
+    sunsoft69_command(15, 0);
+    CHECK(cpu_step(&cpu) == 2);
+    CHECK(!cart_irq_pending()); // Counter runs, IRQ output is disabled.
+    sunsoft69_command(13, 0x01);
+    CHECK(!cart_irq_pending()); // Enabling output later does not replay the old edge.
+
+    sunsoft69_command(14, 0);
+    sunsoft69_command(15, 0);
+    sunsoft69_command(13, 0x81);
+    CHECK(cpu_step(&cpu) == 2 && cart_irq_pending());
+    sunsoft69_command(13, 0x00);
+    CHECK(!cart_irq_pending());
+    run_mapper_nops(4);
+    CHECK(!cart_irq_pending());
+    return 0;
+}
+
+static int test_sunsoft5b_tone_noise_envelope(void) {
+    CHECK(fixture(69, 0x20000, 0x2000, false) == 69);
+    sunsoft5b_register(0, 1);
+    sunsoft5b_register(1, 0);
+    sunsoft5b_register(7, 0x3E); // A tone enabled, all noise and B/C tone disabled.
+    sunsoft5b_register(8, 15);
+    prepare_mapper_cpu_nops();
+    // CPU power-on contributed seven mapper clocks. Eight more leave the
+    // shared divide-by-16 phase one clock short of its first PSG tick.
+    run_mapper_nops(4);
+    CHECK(cart_expansion_audio() == 0.0f);
+    run_mapper_nops(1); // Cross clock 16 and toggle tone A high.
+    float full_level = cart_expansion_audio();
+    CHECK(full_level < -0.125f && full_level > -0.127f);
+    cart_cpu_write(0xC000, 0x18); // Nonzero selector high nibble blocks data writes.
+    cart_cpu_write(0xE000, 0);
+    CHECK(cart_expansion_audio() == full_level);
+    run_mapper_nops(7);
+    CHECK(cart_expansion_audio() == full_level);
+    run_mapper_nops(1); // Cross clock 32 and toggle tone A low.
+    CHECK(cart_expansion_audio() == 0.0f);
+
+    CHECK(fixture(69, 0x20000, 0x2000, false) == 69);
+    sunsoft5b_register(6, 1);
+    sunsoft5b_register(7, 0x37); // Constant tone gate, A noise enabled; B/C muted.
+    sunsoft5b_register(8, 15);
+    prepare_mapper_cpu_nops();
+    float noise_high = cart_expansion_audio();
+    CHECK(noise_high < -0.125f && noise_high > -0.127f);
+    run_mapper_nops(12); // Global clock 31: only one half of the noise period elapsed.
+    CHECK(cart_expansion_audio() == noise_high);
+    run_mapper_nops(1); // Cross global clock 32 and advance the 17-bit LFSR once.
+    CHECK(cart_expansion_audio() == 0.0f);
+
+    CHECK(fixture(69, 0x20000, 0x2000, false) == 69);
+    sunsoft5b_register(7, 0x3F); // Disabled generators are high mixer inputs.
+    sunsoft5b_register(8, 0x10); // Channel A uses the shared envelope.
+    sunsoft5b_register(0x0B, 1);
+    sunsoft5b_register(0x0C, 0);
+    sunsoft5b_register(0x0D, 0x0C); // Repeating rising saw envelope.
+    prepare_mapper_cpu_nops();
+    CHECK(cart_expansion_audio() == 0.0f);
+    run_mapper_nops(4);
+    CHECK(cart_expansion_audio() == 0.0f);
+    run_mapper_nops(1); // Cross clock 16: level 1 still aliases silence.
+    CHECK(cart_expansion_audio() == 0.0f);
+    run_mapper_nops(8); // Level 2 is the first nonzero 1.5 dB step.
+    float first_envelope_level = cart_expansion_audio();
+    CHECK(first_envelope_level < -0.0008f && first_envelope_level > -0.0009f);
+    run_mapper_nops(29 * 8); // Reach level 31 without reading private PSG state.
+    CHECK(cart_expansion_audio() < -0.125f && cart_expansion_audio() > -0.127f);
+    run_mapper_nops(8); // The next envelope period restarts the saw at zero.
+    CHECK(cart_expansion_audio() == 0.0f);
+    return 0;
+}
+
+static int test_sunsoft69_persistence_and_loader(void) {
+    SaveFixture paths;
+    CHECK(save_fixture_begin(&paths) == 0);
+    iNESHeader h = header_for(69, 0x20000, false);
+    h.flags7 |= 0x08;
+    h.flags6 |= 0x02;
+    h.flags10 = 0x90; // 32 KiB PRG-NVRAM
+    CHECK(fixture_with_header(&h, 0x20000, 0x2000) == 69);
+    cart_battery_configure(paths.rom, true);
+    sunsoft69_command(8, 0xC2);
+    cart_cpu_write(0x6123, 0xA5);
+    sunsoft69_command(8, 0xC3);
+    cart_cpu_write(0x6123, 0x5A);
+    cart_battery_flush();
+    CHECK(saved_file_size(paths.prg_save) == 0x8000);
+    CHECK(saved_byte(paths.prg_save, 0x4000 + 0x123) == 0xA5);
+    CHECK(saved_byte(paths.prg_save, 0x6000 + 0x123) == 0x5A);
+
+    CHECK(fixture_with_header(&h, 0x20000, 0x2000) == 69);
+    cart_battery_configure(paths.rom, true);
+    sunsoft69_command(8, 0xC2);
+    CHECK(cart_cpu_read(0x6123) == 0xA5);
+    sunsoft69_command(8, 0xC3);
+    CHECK(cart_cpu_read(0x6123) == 0x5A);
+
+    Mapper *previous = cart;
+    sunsoft69_command(9, 3);
+    CHECK(cart_cpu_read(0x8000) == 3);
+    CHECK(mapper_init_from_header(&h, fixture_prg, 0x80001, fixture_chr, 0x2000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 3);
+    h.flags10 = 0xE0; // 1 MiB NVRAM exceeds the six-bit 8 KiB bank selector.
+    CHECK(mapper_init_from_header(&h, fixture_prg, 0x20000, fixture_chr, 0x2000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 3);
+    return save_fixture_end(&paths);
+}
+
 static void jaleco18_write_bank(uint16_t reg, uint8_t value) {
     uint16_t alias = (uint16_t)(reg | 0x0FFCu);
     cart_cpu_write(alias, value & 0x0F);
@@ -4154,6 +4390,9 @@ int test_mapper_accuracy(void) {
         test_mmc5_persistence,
         test_chr_nvram_persistence, test_chr_nvram_writers,
         test_mmc6_ram_mirroring, test_mmc6_protection, test_mmc6_banks_and_irq,
+        test_sunsoft69_banks_ram_and_startup, test_sunsoft69_legacy_ram_defaults,
+        test_sunsoft69_irq_cpu_clock,
+        test_sunsoft5b_tone_noise_envelope, test_sunsoft69_persistence_and_loader,
         test_jaleco18_banks_ram_and_mirroring, test_jaleco18_irq_and_cpu_clock,
         test_jaleco18_irq_width_transitions,
         test_jaleco18_loader_validation,
