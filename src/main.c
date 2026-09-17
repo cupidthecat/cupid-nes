@@ -109,6 +109,19 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "Console must be nes-001, nes-101, famicom, or av-famicom\n");
                 return 1;
             }
+        } else if (strcmp(argv[i], "--cpu-revision") == 0) {
+            if (++i == argc) {
+                fprintf(stderr, "CPU revision must be early-2a03 or late-2a03\n");
+                return 1;
+            }
+            if (strcmp(argv[i], "early-2a03") == 0)
+                apu_set_cpu_revision(APU_CPU_REVISION_EARLY_2A03);
+            else if (strcmp(argv[i], "late-2a03") == 0)
+                apu_set_cpu_revision(APU_CPU_REVISION_LATE_2A03);
+            else {
+                fprintf(stderr, "CPU revision must be early-2a03 or late-2a03\n");
+                return 1;
+            }
         } else if (strcmp(argv[i], "--adapter") == 0) {
             if (++i == argc || !joypad_set_adapter_name(argv[i])) {
                 fprintf(stderr, "Adapter must be none, four-score, famicom-2, or famicom-4\n");
@@ -133,7 +146,9 @@ int main(int argc, char *argv[]) {
         }
     }
     if (!rom_path) {
-        printf("Usage: %s [--console MODEL] [--adapter TYPE] [--port1 DEVICE] [--port2 DEVICE] [--expansion DEVICE] <rom-file>\n", argv[0]);
+        printf("Usage: %s [--console MODEL] [--cpu-revision REVISION] "
+               "[--adapter TYPE] [--port1 DEVICE] [--port2 DEVICE] "
+               "[--expansion DEVICE] <rom-file>\n", argv[0]);
         return 1;
     }
     if (!joypad_configuration_valid()) {
@@ -142,6 +157,8 @@ int main(int argc, char *argv[]) {
     }
     
     printf("Console: %s\n", nes_console_model_name());
+    printf("CPU revision: %s\n", apu_get_cpu_revision() == APU_CPU_REVISION_EARLY_2A03
+           ? "early-2a03" : "late-2a03");
     printf("Input adapter: %s\n", joypad_adapter_name());
     printf("Loading ROM: %s\n", rom_path);
     if(load_rom(rom_path) != 0) {

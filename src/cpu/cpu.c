@@ -2270,7 +2270,9 @@ static void process_pending_dma(uint16_t read_addr, bool opcode_fetch) {
             dmc_need_halt = false;
             dmc_need_dummy = false;
         } else if (!dmc && apu_dmc_dma_pending(&apu)) {
-            // An OAM transfer already in progress supplies the DMC halt and dummy cycles.
+            // Pick up requests raised by a just-completed DMC transfer as well as
+            // requests raised while OAM DMA is running. OAM cycles can supply the
+            // new transfer's halt and dummy cycles.
             dmc = true;
             dmc_need_halt = true;
             dmc_need_dummy = true;

@@ -33,6 +33,7 @@
 extern uint64_t cpu_total_cycles;
 
 APU apu;
+static ApuCpuRevision cpu_revision = APU_CPU_REVISION_EARLY_2A03;
 
 // Duty sequences
 static const uint8_t DUTY_SEQ[4][8] = {
@@ -336,6 +337,19 @@ void apu_audio_init(int sample_rate) {
     apu_init_filter_coeffs(&apu);
 }
 
+bool apu_set_cpu_revision(ApuCpuRevision revision) {
+    if (revision != APU_CPU_REVISION_EARLY_2A03 &&
+        revision != APU_CPU_REVISION_LATE_2A03) {
+        return false;
+    }
+    cpu_revision = revision;
+    return true;
+}
+
+ApuCpuRevision apu_get_cpu_revision(void) {
+    return cpu_revision;
+}
+
 // APU register access.
 static inline void apu_write_4017(APU *a, uint8_t v) {
     a->regs[0x17] = v;
@@ -409,10 +423,19 @@ void apu_dmc_dma_complete(APU *a, uint8_t value) {
         }
     }
 
+    // Later CPU revisions can start a new transfer immediately when DMA
+    // completion coincides with the output unit reloading its bit counter.
+    if (cpu_revision == APU_CPU_REVISION_LATE_2A03 &&
+        d->bits_remaining == 8 && d->timer == d->timer_reload) {
+        d->shift_reg = d->sample_buffer;
+        d->silence = false;
+        d->sample_buffer_empty = true;
+        if (d->sample_len == 1) dmc_restart_sample(d);
+        dmc_request_buffer(a);
     // A one-byte non-looping sample fetched immediately before the output
     // shifter reloads can schedule a reload DMA that is stopped one CPU cycle
     // after it begins. This is the early-CPU one-cycle DMA behavior.
-    if (d->sample_len == 1 && !d->loop && d->bits_remaining == 1 && d->timer < 2) {
+    } else if (d->sample_len == 1 && !d->loop && d->bits_remaining == 1 && d->timer < 2) {
         d->shift_reg = d->sample_buffer;
         d->sample_buffer_empty = false;
         dmc_restart_sample(d);

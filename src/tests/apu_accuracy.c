@@ -84,6 +84,18 @@ static void step_sample_reader(int cycles) {
 int test_apu_accuracy(void) {
     checks = failures = 0;
 
+    CHECK("DMC CPU revision defaults to early 2A03 behavior", apu_get_cpu_revision() == APU_CPU_REVISION_EARLY_2A03);
+    CHECK("later DMC CPU revision is accepted", apu_set_cpu_revision(APU_CPU_REVISION_LATE_2A03));
+    apu_power_on(&apu);
+    CHECK("DMC CPU revision survives power-on", apu_get_cpu_revision() == APU_CPU_REVISION_LATE_2A03);
+    apu_soft_reset(&apu);
+    CHECK("DMC CPU revision survives soft reset", apu_get_cpu_revision() == APU_CPU_REVISION_LATE_2A03);
+    apu_reset(&apu);
+    CHECK("DMC CPU revision survives reset", apu_get_cpu_revision() == APU_CPU_REVISION_LATE_2A03);
+    CHECK("invalid DMC CPU revision is rejected", !apu_set_cpu_revision((ApuCpuRevision)99));
+    CHECK("invalid DMC CPU revision leaves selection unchanged", apu_get_cpu_revision() == APU_CPU_REVISION_LATE_2A03);
+    CHECK("early DMC CPU revision is accepted", apu_set_cpu_revision(APU_CPU_REVISION_EARLY_2A03));
+
     nes_set_region(NES_REGION_NTSC);
     cpu_total_cycles = 0;
     apu_power_on(&apu);
@@ -484,6 +496,35 @@ int test_apu_accuracy(void) {
     apu_dmc_dma_complete(&apu, 0x55);
     CHECK("aborted DMC completion cannot refill its buffer", apu.dmc.sample_buffer_empty);
 
+    for (unsigned later = 0; later < 2; ++later) {
+        CHECK("DMC CPU revision selection succeeds for reload collision", apu_set_cpu_revision(
+            later ? APU_CPU_REVISION_LATE_2A03 : APU_CPU_REVISION_EARLY_2A03));
+        reset_audio();
+        apu.dmc.sample_addr = 0xC000;
+        apu.dmc.sample_len = 1;
+        apu.dmc.current_addr = 0xC000;
+        apu.dmc.bytes_remaining = 1;
+        apu.dmc.sample_buffer_empty = true;
+        apu.dmc.bits_remaining = 1;
+        apu.dmc.timer = 0;
+        apu.dmc.dma_pending = true;
+        apu_step(&apu, 1);
+        CHECK("DMC reload collision reaches a fresh bit counter", apu.dmc.bits_remaining == 8 && apu.dmc.timer == apu.dmc.timer_reload);
+        apu_dmc_dma_complete(&apu, 0xA5);
+        if (later) {
+            CHECK("later DMC reload collision loads the completed byte directly into the shifter", apu.dmc.shift_reg == 0xA5 && !apu.dmc.silence);
+            CHECK("later DMC reload collision consumes the buffer immediately", apu.dmc.sample_buffer_empty);
+            CHECK("later one-byte collision restarts the reader at the programmed address", apu.dmc.current_addr == 0xC000 && apu.dmc.bytes_remaining == 1);
+            CHECK("later one-byte collision immediately requests a full follow-up DMA", apu_dmc_dma_pending(&apu));
+        } else {
+            CHECK("early DMC reload collision leaves the completed byte in the sample buffer", apu.dmc.sample_buffer == 0xA5 && !apu.dmc.sample_buffer_empty);
+            CHECK("early DMC reload collision does not force the silent shifter active", apu.dmc.silence);
+            CHECK("early DMC reload collision completes the one-byte reader normally", apu.dmc.current_addr == 0xC001 && apu.dmc.bytes_remaining == 0);
+            CHECK("early DMC reload collision does not request a duplicate full DMA", !apu_dmc_dma_pending(&apu));
+        }
+    }
+
+    CHECK("early DMC CPU revision restored for aborted-reload coverage", apu_set_cpu_revision(APU_CPU_REVISION_EARLY_2A03));
     reset_audio();
     apu.dmc.sample_len = 1;
     apu.dmc.current_addr = 0xC000;

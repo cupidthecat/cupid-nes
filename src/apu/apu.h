@@ -32,6 +32,11 @@
 #define APU_4STEP_PERIOD 29830u
 #define APU_5STEP_PERIOD 37282u
 
+typedef enum {
+    APU_CPU_REVISION_EARLY_2A03 = 0,
+    APU_CPU_REVISION_LATE_2A03
+} ApuCpuRevision;
+
 typedef struct {
     // Envelope (for pulse/noise)
     bool    loop_envelope;    // also "halt length"
@@ -186,6 +191,9 @@ void apu_power_on(APU *a);
 void apu_soft_reset(APU *a);
 void apu_reset(APU *a);
 void apu_audio_init(int sample_rate);
+// Select the DMC CPU timing model. The selection persists across APU resets.
+bool apu_set_cpu_revision(ApuCpuRevision revision);
+ApuCpuRevision apu_get_cpu_revision(void);
 
 // memory-mapped access
 void    apu_write(uint16_t addr, uint8_t val);
