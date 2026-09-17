@@ -43,7 +43,7 @@
 extern uint64_t cpu_total_cycles;
 
 static uint8_t fixture_prg[0x200000];
-static uint8_t fixture_chr[0x20000];
+static uint8_t fixture_chr[0x80000];
 static uint8_t *image_for(const iNESHeader *h, size_t prg_bytes, size_t chr_bytes, size_t *size);
 
 #define CHECK(condition) do { \
@@ -3903,6 +3903,202 @@ static int test_mmc6_persistence(void) {
     return result | save_fixture_end(&paths);
 }
 
+typedef struct {
+    unsigned mapper;
+    uint8_t submapper;
+    uint16_t reg1_offset;
+    uint16_t reg2_offset;
+    uint16_t reg3_offset;
+    bool has_irq;
+    bool vrc2;
+    bool vrc2a;
+} Vrc24Case;
+
+static const Vrc24Case vrc24_cases[] = {
+    {21, 0, 0x0002, 0x0004, 0x0006, true,  false, false},
+    {21, 1, 0x0002, 0x0004, 0x0006, true,  false, false},
+    {21, 2, 0x0040, 0x0080, 0x00C0, true,  false, false},
+    {22, 0, 0x0002, 0x0001, 0x0003, false, true,  true },
+    {23, 0, 0x0001, 0x0002, 0x0003, true,  false, false},
+    {23, 1, 0x0001, 0x0002, 0x0003, true,  false, false},
+    {23, 2, 0x0004, 0x0008, 0x000C, true,  false, false},
+    {23, 3, 0x0001, 0x0002, 0x0003, false, true,  false},
+    {25, 0, 0x0002, 0x0001, 0x0003, true,  false, false},
+    {25, 1, 0x0002, 0x0001, 0x0003, true,  false, false},
+    {25, 2, 0x0008, 0x0004, 0x000C, true,  false, false},
+    {25, 3, 0x0002, 0x0001, 0x0003, false, true,  false},
+    {27, 0, 0x0001, 0x0002, 0x0003, true,  false, false},
+    {183,0, 0x0004, 0x0008, 0x000C, true,  false, false},
+};
+
+static iNESHeader vrc24_header(unsigned mapper, uint8_t submapper, bool ram) {
+    iNESHeader h = header_for(mapper, 0x40000, false);
+    h.flags7 |= 0x08;
+    h.prg_ram_size = (uint8_t)(submapper << 4);
+    h.flags10 = ram ? 7 : 0;
+    return h;
+}
+
+static int test_vrc24_variant_register_wiring(void) {
+    for (size_t i = 0; i < sizeof(vrc24_cases) / sizeof(vrc24_cases[0]); ++i) {
+        const Vrc24Case *tc = &vrc24_cases[i];
+        iNESHeader h = vrc24_header(tc->mapper, tc->submapper, true);
+        CHECK(fixture_with_header(&h, 0x40000, 0x40000) == (int)tc->mapper);
+        CHECK(cart_cpu_read(0x8000) == 0 && cart_cpu_read(0xA000) == 0);
+        CHECK(cart_cpu_read(0xC000) == 30 && cart_cpu_read(0xE000) == 31);
+
+        cart_cpu_write(0x8000, 3);
+        cart_cpu_write(0xA000, 5);
+        CHECK(cart_cpu_read(0x8000) == 3 && cart_cpu_read(0xA000) == 5);
+        CHECK(cart_cpu_read(0xC000) == 30 && cart_cpu_read(0xE000) == 31);
+
+        cart_cpu_write(0x9000, tc->vrc2 ? 1 : 2);
+        CHECK(cart_get_mirroring() == (tc->vrc2 ? MIRROR_HORIZONTAL : MIRROR_SINGLE0));
+        cart_cpu_write(0x9000, 0);
+        CHECK(cart_get_mirroring() == MIRROR_VERTICAL);
+
+        cart_cpu_write(0xB000, 2);
+        cart_cpu_write((uint16_t)(0xB000u + tc->reg1_offset), 1);
+        uint8_t expected_chr = tc->vrc2a ? 9 : 0x12;
+        CHECK(cart_ppu_read(0x0000) == expected_chr);
+
+        if (!tc->vrc2 && !(tc->mapper == 23 && tc->submapper == 0)) {
+            cart_cpu_write((uint16_t)(0x9000u + tc->reg2_offset), 2);
+            CHECK(cart_cpu_read(0x8000) == 30 && cart_cpu_read(0xA000) == 5);
+            CHECK(cart_cpu_read(0xC000) == 3 && cart_cpu_read(0xE000) == 31);
+        }
+        CHECK((cart->clock != NULL) == tc->has_irq);
+    }
+
+    // Legacy submapper-zero boards accept both known address-line aliases.
+    CHECK(fixture(21, 0x40000, 0x40000, false) == 21);
+    cart_cpu_write(0xB000, 2);
+    cart_cpu_write(0xB002, 1);
+    CHECK(cart_ppu_read(0) == 0x12);
+    cart_cpu_write(0xB040, 2);
+    CHECK(cart_ppu_read(0) == 0x22);
+
+    CHECK(fixture(23, 0x40000, 0x40000, false) == 23);
+    cart_cpu_write(0xB000, 2);
+    cart_cpu_write(0xB001, 1);
+    CHECK(cart_ppu_read(0) == 0x12);
+    cart_cpu_write(0xB004, 2);
+    CHECK(cart_ppu_read(0) == 0x22);
+
+    CHECK(fixture(25, 0x40000, 0x40000, false) == 25);
+    cart_cpu_write(0xB000, 2);
+    cart_cpu_write(0xB002, 1);
+    CHECK(cart_ppu_read(0) == 0x12);
+    cart_cpu_write(0xB008, 2);
+    CHECK(cart_ppu_read(0) == 0x22);
+    return 0;
+}
+
+static int test_vrc24_ram_latch_and_mapper183_window(void) {
+    iNESHeader h = vrc24_header(22, 0, false);
+    CHECK(fixture_with_header(&h, 0x40000, 0x40000) == 22);
+    CHECK(cart_cpu_read_bus(0x6000, 0xA6) == 0xA6);
+    cart_cpu_write(0x6000, 1);
+    CHECK(cart_cpu_read_bus(0x6000, 0xA6) == 0xA7);
+    cart_cpu_write(0x6FFF, 0);
+    CHECK(cart_cpu_read_bus(0x6123, 0x5B) == 0x5A);
+    CHECK(cart_cpu_read_bus(0x7000, 0x5B) == 0x5B);
+
+    h = vrc24_header(23, 3, true);
+    CHECK(fixture_with_header(&h, 0x40000, 0x40000) == 23);
+    cart_cpu_write(0x6123, 0xA5);
+    CHECK(cart_cpu_read(0x6123) == 0xA5);
+
+    h = vrc24_header(183, 0, false);
+    CHECK(fixture_with_header(&h, 0x40000, 0x40000) == 183);
+    CHECK(cart_cpu_read(0x6000) == 0);
+    cart_cpu_write(0x6005, 0xFF);
+    CHECK(cart_cpu_read(0x6000) == 5 && cart_cpu_read(0x7FFF) == 5);
+    cart_cpu_write(0x7FFE, 0);
+    CHECK(cart_cpu_read(0x6000) == 14);
+    return 0;
+}
+
+static int test_vrc24_irq_variants_and_phase(void) {
+    for (size_t i = 0; i < sizeof(vrc24_cases) / sizeof(vrc24_cases[0]); ++i) {
+        const Vrc24Case *tc = &vrc24_cases[i];
+        iNESHeader h = vrc24_header(tc->mapper, tc->submapper, true);
+        CHECK(fixture_with_header(&h, 0x40000, 0x40000) == (int)tc->mapper);
+        if (!tc->has_irq) {
+            CHECK(cart->clock == NULL);
+            cart_cpu_write(0xF000, 0x0E);
+            cart_cpu_write((uint16_t)(0xF000u + tc->reg1_offset), 0x0F);
+            CHECK(!cart_irq_pending());
+            continue;
+        }
+
+        cart_cpu_write(0xF000, 0x0E);
+        cart_cpu_write((uint16_t)(0xF000u + tc->reg1_offset), 0x0F);
+        cart_cpu_write((uint16_t)(0xF000u + tc->reg2_offset), 0x07);
+        cart->clock(1);
+        CHECK(!cart_irq_pending());
+        cart->clock(1);
+        CHECK(cart_irq_pending());
+        cart_cpu_write((uint16_t)(0xF000u + tc->reg3_offset), 0);
+        CHECK(!cart_irq_pending());
+        cart->clock(1);
+        CHECK(!cart_irq_pending());
+        cart->clock(1);
+        CHECK(cart_irq_pending());
+    }
+
+    iNESHeader h = vrc24_header(21, 1, true);
+    CHECK(fixture_with_header(&h, 0x40000, 0x40000) == 21);
+    cart_cpu_write(0xF000, 0x0F);
+    cart_cpu_write(0xF002, 0x0F);
+    cart_cpu_write(0xF004, 0x02);
+    cart->clock(113);
+    CHECK(!cart_irq_pending());
+    cart->clock(1);
+    CHECK(cart_irq_pending());
+    cart_cpu_write(0xF006, 0);
+    CHECK(!cart_irq_pending());
+    cart->clock(228);
+    CHECK(!cart_irq_pending());
+
+    fixture_prg[0] = 0xEA;
+    nes_set_region(NES_REGION_NTSC);
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    cpu_power_on(&cpu);
+    cpu.pc = 0x8000;
+    cpu.status = INTERRUPT_FLAG | UNUSED_FLAG;
+    cart_cpu_write(0xF000, 0x0E);
+    cart_cpu_write(0xF002, 0x0F);
+    cart_cpu_write(0xF004, 0x06);
+    CHECK(cpu_step(&cpu) == 2 && cart_irq_pending());
+    return 0;
+}
+
+static int test_vrc24_loader_rejection_preserves_cart(void) {
+    iNESHeader active = vrc24_header(21, 1, true);
+    CHECK(fixture_with_header(&active, 0x40000, 0x40000) == 21);
+    cart_cpu_write(0x8000, 3);
+    cart_cpu_write(0x6123, 0xA7);
+    Mapper *previous = cart;
+
+    iNESHeader invalid = vrc24_header(21, 3, true);
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x40000, fixture_chr, 0x40000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 3 && cart_cpu_read(0x6123) == 0xA7);
+
+    invalid = vrc24_header(22, 0, true);
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x42000, fixture_chr, 0x40000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 3 && cart_cpu_read(0x6123) == 0xA7);
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x40000, fixture_chr, 0x80000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 3 && cart_cpu_read(0x6123) == 0xA7);
+
+    invalid = vrc24_header(23, 3, false);
+    invalid.flags10 = 8; // 16KB RAM exceeds the single $6000-$7FFF chip window.
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x40000, fixture_chr, 0x40000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 3 && cart_cpu_read(0x6123) == 0xA7);
+    return 0;
+}
+
 static int test_cartridge_unload(void) {
     iNESHeader h = header_for(0, 0x4000, true);
     size_t image_size;
@@ -3964,6 +4160,8 @@ int test_mapper_accuracy(void) {
         test_irem32_banks_variants_and_ram, test_irem65_banks_decode_and_ram,
         test_irem65_irq_and_loader_validation,
         test_irem_ram_and_irq_boundaries,
+        test_vrc24_variant_register_wiring, test_vrc24_ram_latch_and_mapper183_window,
+        test_vrc24_irq_variants_and_phase, test_vrc24_loader_rejection_preserves_cart,
         test_cartridge_bus_reads, test_mmc6_persistence, test_cartridge_unload
     };
     int failures = 0;

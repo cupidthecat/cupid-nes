@@ -52,6 +52,7 @@ typedef struct {
     uint8_t *prg; size_t prg_sz;
     uint8_t *chr; size_t chr_sz;
     bool chr_is_ram;
+    uint16_t mapper_no;
     uint8_t submapper;
     bool mmc1a;
     bool bus_conflicts;
@@ -66,6 +67,7 @@ static Mapper mapper_mmc5, mapper_aorom, mapper_mmc2, mapper_mmc4, mapper_colord
 static Mapper mapper_cprom, mapper_100in1, mapper_bandai, mapper_action53, mapper_unrom512;
 static Mapper mapper_taito33, mapper_taito48, mapper_jaleco18, mapper_irem32, mapper_irem65;
 static Mapper mapper_rambo1, mapper_rambo158;
+static Mapper mapper_vrc24;
 Mapper *cart = NULL;
 static bool mapper_irq_line = false;
 static uint8_t cart_cpu_bus_input = 0xFF;
@@ -3114,7 +3116,256 @@ static void irem65_reset(void) {
     mapper_irq_line = false;
 }
 
+typedef enum {
+    VRC2A, VRC2B, VRC2C, VRC4A, VRC4B, VRC4C, VRC4D, VRC4E, VRC4F,
+    VRC4_27, VRC4_183
+} Vrc24Variant;
+
+typedef struct {
+    uint8_t reload;
+    uint8_t counter;
+    int16_t prescaler;
+    bool enabled;
+    bool enabled_after_ack;
+    bool cycle_mode;
+} VrcIrq;
+
+static struct {
+    Vrc24Variant variant;
+    bool heuristics;
+    uint8_t prg[2];
+    uint16_t chr[8];
+    uint8_t prg_mode;
+    uint8_t latch;
+    uint8_t expansion_prg_bank;
+    Mirroring mirr;
+    VrcIrq irq;
+} vrc24;
+
+static void vrc_irq_reset(VrcIrq *irq) {
+    memset(irq, 0, sizeof(*irq));
+}
+
+static void vrc_irq_clock(VrcIrq *irq) {
+    if (!irq->enabled) return;
+    irq->prescaler -= 3;
+    if (!irq->cycle_mode && irq->prescaler > 0) return;
+    if (irq->counter == 0xFF) {
+        irq->counter = irq->reload;
+        mapper_irq_line = true;
+    } else {
+        irq->counter++;
+    }
+    irq->prescaler += 341;
+}
+
+static void vrc_irq_control(VrcIrq *irq, uint8_t value) {
+    irq->enabled_after_ack = (value & 0x01u) != 0;
+    irq->enabled = (value & 0x02u) != 0;
+    irq->cycle_mode = (value & 0x04u) != 0;
+    if (irq->enabled) {
+        irq->counter = irq->reload;
+        irq->prescaler = 341;
+    }
+    mapper_irq_line = false;
+}
+
+static void vrc_irq_ack(VrcIrq *irq) {
+    irq->enabled = irq->enabled_after_ack;
+    mapper_irq_line = false;
+}
+
+static bool vrc24_select_variant(void) {
+    vrc24.heuristics = C.submapper == 0 && C.mapper_no != 22
+                    && C.mapper_no != 27 && C.mapper_no != 183;
+    switch (C.mapper_no) {
+        case 21:
+            vrc24.variant = C.submapper == 2 ? VRC4C : VRC4A;
+            return C.submapper <= 2;
+        case 22:
+            vrc24.variant = VRC2A;
+            return C.submapper == 0;
+        case 23:
+            if (C.submapper == 1) vrc24.variant = VRC4F;
+            else if (C.submapper == 2) vrc24.variant = VRC4E;
+            else vrc24.variant = VRC2B;
+            return C.submapper <= 3;
+        case 25:
+            if (C.submapper == 2) vrc24.variant = VRC4D;
+            else if (C.submapper == 3) vrc24.variant = VRC2C;
+            else vrc24.variant = VRC4B;
+            return C.submapper <= 3;
+        case 27:
+            vrc24.variant = VRC4_27;
+            return C.submapper == 0;
+        case 183:
+            vrc24.variant = VRC4_183;
+            return C.submapper == 0;
+        default:
+            return false;
+    }
+}
+
+static bool vrc24_explicit_vrc2(void) {
+    return !vrc24.heuristics && vrc24.variant <= VRC2C;
+}
+
+static bool vrc24_has_irq(void) {
+    return (vrc24.heuristics && C.mapper_no != 22) || vrc24.variant >= VRC4A;
+}
+
+static uint16_t vrc24_translate(uint16_t addr) {
+    unsigned a0 = 0, a1 = 0;
+    if (vrc24.heuristics) {
+        switch (C.mapper_no) {
+            case 21:
+                a0 = ((addr >> 1) & 1u) | ((addr >> 6) & 1u);
+                a1 = ((addr >> 2) & 1u) | ((addr >> 7) & 1u);
+                break;
+            case 23:
+                a0 = (addr & 1u) | ((addr >> 2) & 1u);
+                a1 = ((addr >> 1) & 1u) | ((addr >> 3) & 1u);
+                break;
+            case 25:
+                a0 = ((addr >> 1) & 1u) | ((addr >> 3) & 1u);
+                a1 = (addr & 1u) | ((addr >> 2) & 1u);
+                break;
+        }
+    } else {
+        switch (vrc24.variant) {
+            case VRC2A: case VRC2C: case VRC4B:
+                a0 = (addr >> 1) & 1u; a1 = addr & 1u; break;
+            case VRC2B: case VRC4F: case VRC4_27:
+                a0 = addr & 1u; a1 = (addr >> 1) & 1u; break;
+            case VRC4A:
+                a0 = (addr >> 1) & 1u; a1 = (addr >> 2) & 1u; break;
+            case VRC4C:
+                a0 = (addr >> 6) & 1u; a1 = (addr >> 7) & 1u; break;
+            case VRC4D:
+                a0 = (addr >> 3) & 1u; a1 = (addr >> 2) & 1u; break;
+            case VRC4E: case VRC4_183:
+                a0 = (addr >> 2) & 1u; a1 = (addr >> 3) & 1u; break;
+        }
+    }
+    return (uint16_t)((addr & 0xFF00u) | (a1 << 1) | a0);
+}
+
+static size_t vrc24_chr_bank(unsigned slot) {
+    size_t bank = vrc24.chr[slot];
+    if (vrc24.variant == VRC2A) bank >>= 1;
+    return bank % (C.chr_sz / CHR_BANK_1K);
+}
+
+static uint8_t vrc24_cpu_read(uint16_t a) {
+    if (a >= 0x6000 && a < 0x8000) {
+        if (vrc24.variant == VRC4_183) {
+            size_t banks = C.prg_sz / PRG_BANK_8K;
+            size_t bank = vrc24.expansion_prg_bank % banks;
+            return C.prg[bank * PRG_BANK_8K + (a & 0x1FFFu)];
+        }
+        if (vrc24_explicit_vrc2() && !prg_work_ram.size && !prg_save_ram.size) {
+            if (a <= 0x6FFF) return (uint8_t)((cart_cpu_bus_input & 0xFEu) | vrc24.latch);
+            return cart_cpu_bus_input;
+        }
+        return prg_ram_read(a);
+    }
+    if (a >= 0x8000) {
+        size_t banks = C.prg_sz / PRG_BANK_8K;
+        unsigned slot = (a - 0x8000u) >> 13;
+        size_t bank;
+        if (slot == 3) bank = banks - 1;
+        else if (slot == 1) bank = vrc24.prg[1] % banks;
+        else if ((slot == 0 && vrc24.prg_mode) || (slot == 2 && !vrc24.prg_mode)) bank = banks - 2;
+        else bank = vrc24.prg[0] % banks;
+        return C.prg[bank * PRG_BANK_8K + (a & 0x1FFFu)];
+    }
+    return cart_cpu_bus_input;
+}
+
+static void vrc24_cpu_write(uint16_t a, uint8_t value) {
+    if (a < 0x8000) {
+        if (a < 0x6000) return;
+        if (vrc24.variant == VRC4_183) {
+            vrc24.expansion_prg_bank = (uint8_t)(a & 0x0Fu);
+        } else if (vrc24_explicit_vrc2() && !prg_work_ram.size && !prg_save_ram.size) {
+            if (a <= 0x6FFF) vrc24.latch = value & 1u;
+        } else {
+            prg_ram_write(a, value);
+        }
+        return;
+    }
+    uint16_t reg = vrc24_translate(a) & 0xF00Fu;
+    if (reg >= 0x8000 && reg <= 0x8006) {
+        vrc24.prg[0] = value & 0x1Fu;
+    } else if ((vrc24.variant <= VRC2C && reg >= 0x9000 && reg <= 0x9003)
+            || (vrc24.variant >= VRC4A && reg >= 0x9000 && reg <= 0x9001)) {
+        uint8_t mask = vrc24_explicit_vrc2() ? 1u : 3u;
+        switch (value & mask) {
+            case 0: vrc24.mirr = MIRROR_VERTICAL; break;
+            case 1: vrc24.mirr = MIRROR_HORIZONTAL; break;
+            case 2: vrc24.mirr = MIRROR_SINGLE0; break;
+            case 3: vrc24.mirr = MIRROR_SINGLE1; break;
+        }
+    } else if (vrc24.variant >= VRC4A && reg >= 0x9002 && reg <= 0x9003) {
+        vrc24.prg_mode = (value >> 1) & 1u;
+    } else if (reg >= 0xA000 && reg <= 0xA006) {
+        vrc24.prg[1] = value & 0x1Fu;
+    } else if (reg >= 0xB000 && reg <= 0xE006) {
+        unsigned bank = (unsigned)((((reg >> 12) & 7u) - 3u) * 2u + ((reg >> 1) & 1u));
+        if (reg & 1u) vrc24.chr[bank] = (uint16_t)((vrc24.chr[bank] & 0x00Fu) | ((value & 0x1Fu) << 4));
+        else vrc24.chr[bank] = (uint16_t)((vrc24.chr[bank] & 0x1F0u) | (value & 0x0Fu));
+    } else if (reg == 0xF000) {
+        vrc24.irq.reload = (uint8_t)((vrc24.irq.reload & 0xF0u) | (value & 0x0Fu));
+    } else if (reg == 0xF001) {
+        vrc24.irq.reload = (uint8_t)((vrc24.irq.reload & 0x0Fu) | ((value & 0x0Fu) << 4));
+    } else if (reg == 0xF002) {
+        vrc_irq_control(&vrc24.irq, value);
+    } else if (reg == 0xF003) {
+        vrc_irq_ack(&vrc24.irq);
+    }
+}
+
+static uint8_t vrc24_ppu_read(uint16_t a) {
+    a &= 0x1FFF;
+    size_t bank = vrc24_chr_bank(a >> 10);
+    return C.chr[bank * CHR_BANK_1K + (a & 0x03FFu)];
+}
+
+static void vrc24_ppu_write(uint16_t a, uint8_t value) {
+    if (!C.chr_is_ram) return;
+    a &= 0x1FFF;
+    size_t bank = vrc24_chr_bank(a >> 10);
+    chr_ram_write(bank * CHR_BANK_1K + (a & 0x03FFu), value);
+}
+
+static void vrc24_clock(int cpu_cycles) {
+    while (cpu_cycles-- > 0) vrc_irq_clock(&vrc24.irq);
+}
+
+static Mirroring vrc24_mirr(void) { return vrc24.mirr; }
+
+static void vrc24_reset(void) {
+    Vrc24Variant variant = vrc24.variant;
+    bool heuristics = vrc24.heuristics;
+    memset(&vrc24, 0, sizeof(vrc24));
+    vrc24.variant = variant;
+    vrc24.heuristics = heuristics;
+    vrc24.mirr = C.mirr_base;
+    vrc_irq_reset(&vrc24.irq);
+    mapper_irq_line = false;
+}
+
 // Mapper selection and initialization.
+static bool vrc24_submapper_supported(int mapper_no, uint8_t submapper) {
+    switch (mapper_no) {
+        case 21: return submapper <= 2;
+        case 22: return submapper == 0;
+        case 23: case 25: return submapper <= 3;
+        case 27: case 183: return submapper == 0;
+        default: return false;
+    }
+}
+
 static bool bandai_layout(int mapper, uint8_t submapper, bool nes2,
                           size_t prg_bytes, size_t chr_bytes, bool chr_is_ram,
                           RomRamSizes *ram, unsigned eeprom_sizes[2]) {
@@ -3189,6 +3440,8 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         case 13: chr_limit = 0x4000; break;
         case 28: case 30: chr_limit = 0x8000; break;
         case 18: case 32: case 65: chr_limit = 0x40000; break;
+        case 21: case 23: case 25: case 27: case 183: chr_limit = 0x80000; break;
+        case 22: chr_limit = 0x40000; break;
         case 119: chr_limit = sizeof(tqrom_chr_ram); break;
         default: chr_limit = 0x2000; break;
     }
@@ -3219,12 +3472,14 @@ int mapper_init_from_header(const iNESHeader *h,
         case 7: case 9: case 10: case 11: case 13: case 15: case 28: case 30: case 118: case 119: case 155:
         case 16: case 153: case 157: case 159:
         case 18: case 32: case 33: case 48: case 64: case 65: case 158:
+        case 21: case 22: case 23: case 25: case 27: case 183:
             break;
         default:
             fprintf(stderr, "Unsupported mapper: %d\n", mapper_no);
             return -1;
     }
     if (submapper && !((mapper_no == 1 && submapper == 5)
+        || vrc24_submapper_supported(mapper_no, submapper)
         || (mapper_no == 4 && (submapper == 1 || submapper == 3))
         || (mapper_no == 16 && (submapper == 4 || submapper == 5))
         || (mapper_no == 48 && submapper == 1)
@@ -3296,6 +3551,13 @@ int mapper_init_from_header(const iNESHeader *h,
         fprintf(stderr, "Unsupported ROM size for mapper %d\n", mapper_no);
         return -1;
     }
+    if (vrc24_submapper_supported(mapper_no, submapper)
+        && (prg_sz > 0x40000 || (prg_sz % PRG_BANK_8K) != 0
+            || chr_sz > (mapper_no == 22 ? 0x40000u : 0x80000u)
+            || (chr_sz % CHR_BANK_1K) != 0)) {
+        fprintf(stderr, "Unsupported ROM size for mapper %d\n", mapper_no);
+        return -1;
+    }
     if (!ram_geometry_supported(mapper_no, nes2, &ram, chr_is_ram, chr_sz)
         || (mapper_no == 4 && submapper == 1 && ram.prg_ram + ram.prg_nvram != 0x400)) {
         fprintf(stderr, "Unsupported RAM layout for mapper %d (PRG %zu+%zu, CHR %zu+%zu)\n",
@@ -3320,6 +3582,7 @@ int mapper_init_from_header(const iNESHeader *h,
     C.prg = prg; C.prg_sz = prg_sz;
     C.chr = chr; C.chr_sz = chr_sz;
     C.chr_is_ram = chr_is_ram;
+    C.mapper_no = (uint16_t)mapper_no;
     C.ram = ram;
     C.nes2 = nes2;
     C.submapper = submapper;
@@ -3400,6 +3663,14 @@ int mapper_init_from_header(const iNESHeader *h,
             build_mapper(&mapper_100in1, m15_cpu_read, m15_cpu_write,
                         m15_ppu_read, m15_ppu_write, m15_reset, m15_mirr);
             cart = &mapper_100in1;
+            break;
+        case 21: case 22: case 23: case 25: case 27: case 183:
+            memset(&vrc24, 0, sizeof(vrc24));
+            if (!vrc24_select_variant()) return -1;
+            build_mapper(&mapper_vrc24, vrc24_cpu_read, vrc24_cpu_write,
+                        vrc24_ppu_read, vrc24_ppu_write, vrc24_reset, vrc24_mirr);
+            if (vrc24_has_irq()) mapper_vrc24.clock = vrc24_clock;
+            cart = &mapper_vrc24;
             break;
         case 28:
             build_mapper(&mapper_action53, m28_cpu_read, m28_cpu_write,
