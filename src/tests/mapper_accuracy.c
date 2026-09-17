@@ -364,6 +364,7 @@ static int test_simple_mapper_registers(void) {
     cart_cpu_write(0x8000, 0x18);
     CHECK(cart_cpu_read(0x8000) == 32 && cart_get_mirroring() == MIRROR_SINGLE1);
     CHECK(fixture(11, 0x20000, 0x20000, false) == 11);
+    fixture_prg[0] = 0xFF;
     cart_cpu_write(0x8000, 0x52);
     CHECK(cart_cpu_read(0x8000) == 8 && cart_ppu_read(0) == 40);
     CHECK(fixture(13, 0x8000, 0x4000, true) == 13);
@@ -376,6 +377,33 @@ static int test_simple_mapper_registers(void) {
         cart_cpu_write(0x8000, (uint8_t)bank);
         CHECK(cart_ppu_read(0x1000) == 0xA0 + bank);
     }
+    return 0;
+}
+
+static int test_colordreams_bus_conflicts(void) {
+    const uint16_t write_addr = 0x8123;
+    const size_t bank_offset = write_addr - 0x8000;
+
+    CHECK(fixture(11, 0x20000, 0x20000, false) == 11);
+
+    // The first write must be masked by the byte in the bank mapped before the write.
+    fixture_prg[bank_offset] = 0x52;
+    fixture_prg[3 * 0x8000 + bank_offset] = 0x01;
+    cart_cpu_write(write_addr, 0xF3);
+    CHECK(cart_cpu_read(0x8000) == 8);
+    CHECK(cart_ppu_read(0) == 40);
+
+    // A ROM byte with every bit set leaves the CPU value unchanged.
+    fixture_prg[2 * 0x8000 + bank_offset] = 0xFF;
+    cart_cpu_write(write_addr, 0x31);
+    CHECK(cart_cpu_read(0x8000) == 4);
+    CHECK(cart_ppu_read(0) == 24);
+
+    // Once bank 1 is mapped, the next conflict must use bank 1 at the write address.
+    fixture_prg[1 * 0x8000 + bank_offset] = 0xA2;
+    cart_cpu_write(write_addr, 0xF3);
+    CHECK(cart_cpu_read(0x8000) == 8);
+    CHECK(cart_ppu_read(0) == 80);
     return 0;
 }
 
@@ -1806,7 +1834,8 @@ int test_mapper_accuracy(void) {
         test_mmc1_outer_and_fixed_banks, test_mmc2_banks_and_latches,
         test_mmc4_latches_and_chr_ram, test_mmc3_banks_and_protection,
         test_mmc3_irq_edges, test_mmc3_render_trace, test_simple_mapper_registers,
-        test_bus_conflict_submappers, test_mapper15_modes, test_mmc5_memory_windows,
+        test_colordreams_bus_conflicts, test_bus_conflict_submappers,
+        test_mapper15_modes, test_mmc5_memory_windows,
         test_mmc5_exram_and_irq, test_mmc5_chr_fetch_modes, test_mmc5_extended_rendering,
         test_mmc5_rendered_ppu_paths, test_mmc5_audio_and_pcm, test_header_and_mapper_rejection,
         test_loader_trainers_and_sizes, test_loader_rejection_preserves_cart,

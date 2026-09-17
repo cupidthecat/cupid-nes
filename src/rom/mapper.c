@@ -1897,7 +1897,8 @@ int mapper_init_from_header(const iNESHeader *h,
     C.ram = ram;
     C.nes2 = nes2;
     C.submapper = submapper;
-    C.bus_conflicts = submapper == 2 && (mapper_no == 2 || mapper_no == 3 || mapper_no == 7);
+    C.bus_conflicts = mapper_no == 11
+        || (submapper == 2 && (mapper_no == 2 || mapper_no == 3 || mapper_no == 7));
     
     // iNES flags6:
     // bit 0 = 1 -> VERTICAL mirroring, 0 -> HORIZONTAL mirroring
