@@ -1,6 +1,6 @@
 # NES accuracy checks
 
-The hardware targets use NTSC, PAL, or Dendy timing with standard controllers. The tests below exercise the production core. They do not establish compatibility with every cartridge or hardware revision.
+The hardware targets use NTSC, PAL, or Dendy timing with the cartridge and input devices listed in the README. Disk-system operation uses NTSC timing. The tests below exercise the production core. They do not establish compatibility with every cartridge or hardware revision.
 
 ## Timing model
 
@@ -54,7 +54,10 @@ The regression cases scan distinct simultaneous key patterns through all ten row
 | DMA and controllers | OAM transfer parity and wrapping, DMC requests and cancellation, regional DMA start rules, overlapping transfers, strobe/shift behavior, and controller bus interactions |
 | APU | Regional noise/DMC periods and frame events, LFSR taps, sweep targets/reloads, held triangle DAC, delayed writes, length-counter collisions, DMC wrap/loop/IRQ behavior, and reset state |
 | PPU | Palette mirrors, register-transfer delays and collisions, open bus, OAM access/refresh, sprite overflow/priority/shifter timing, sprite-zero hit, scrolling, regional frame timing, reset preservation and A12 events |
-| Cartridge | Supported banking/mirroring modes, MMC1 serial writes, MMC2/MMC4 latches, MMC3/MMC6 IRQs/protection, MMC5 rendering/audio/IRQs, declared RAM sizes, malformed images, regional headers, failed-load preservation and save round trips |
+| Cartridge | Supported bank and nametable wiring, bus conflicts, startup mapping, RAM permissions, IRQ boundaries and CPU delivery, declared memory sizes, malformed images, failed-load preservation, EEPROM transactions, flash commands, and save round trips |
+| Expansion audio | MMC5 pulse/PCM, VRC6 pulse/saw, VRC7 FM, N163 wavetable, and Sunsoft 5B tone/noise/envelope output, including register access, reset, mute, and timing cases |
+| Disk system | BIOS/RAM mapping, timer and transfer IRQs, media insertion and side changes, transfer/CRC timing, disk persistence, failed-save preservation, reset, and wavetable/modulation audio |
+| Input devices | Console wiring, multiplayer adapters, Arkanoid serial reports, Power Pad and Family Trainer matrices, beam-aware Zapper reads, Family BASIC keyboard/tape signals, and Datach barcode timing |
 
 The canonical `nestest` comparison checks 8,991 PC/register/status/stack/cycle states and the diagnostic's result bytes. Its trace contains 225 distinct opcode values. The unit cases execute the remaining opcode values separately; neither number means that every possible operand or interrupt alignment has been exhausted. XAA/ANE and other unstable opcodes use a fixed silicon model.
 
@@ -81,7 +84,7 @@ The script runs 91 diagnostic ROMs and fails if expected files are missing. The 
 
 The separate `--accuracycoin` mode runs the 144-test cartridge at commit `9bc42d1e3acbeeaea215b1011d58f4ce72a8a49e`. Its ROM has SHA-256 `7e25ac08d2e7ed14c9b1f16bd853148fef09a824452164f8e0d69fd2bd96176c`. The runner reads the cartridge's test descriptors, presses Start through the controller, and waits for the complete result screen. It checks every stored result against the cartridge's final pass tally and requires all 144 tests to pass. Success codes for documented hardware variants count as passes; skipped tests do not. The optional PPM output contains the rendered framebuffer.
 
-The current core passes all 144 AccuracyCoin tests with zero skipped or unfinished results, along with the 91-ROM collection and canonical CPU trace. The internal suite passes 18 CPU/controller groups, 228 APU checks, 497 PPU checks, and 37 mapper groups. `img/coin.png` is the rendered result from the production core.
+The current core passes all 144 AccuracyCoin tests with zero skipped or unfinished results, along with the 91-ROM collection and canonical CPU trace. The internal suite prints its group and assertion counts for each hardware area. These focused checks cover the newly added devices that AccuracyCoin does not exercise. [Per-issue checkpoints](accuracy-checkpoints.md) record the tested commits. `img/coin.png` is the rendered result from the production core.
 
 ## Reproducing checks
 
@@ -123,6 +126,6 @@ The old test labeled `6-MMC6` expects an alternative MMC3 IRQ-counter revision; 
 
 ## Remaining limits
 
-The supported mapper list is explicit in the README. Unsupported console types, mapper numbers, submappers, and RAM geometries are rejected. VS hardware, disk-system hardware, expansion peripherals, other expansion-audio chips, and additional cartridge families remain outside the implemented system. MMC5 coverage does not include its auxiliary I/O or `$5209/$520A` timer registers, every undocumented behavior, or every board revision.
+The supported hardware list is explicit in the README. Unsupported console types, mapper numbers, submappers, and RAM geometries are rejected. VS hardware, unlisted peripherals and audio chips, and additional cartridge families remain outside the implemented system. MMC5 coverage does not include its auxiliary I/O or `$5209/$520A` timer registers, every undocumented behavior, or every board revision.
 
 OAM row corruption and decay are deterministic approximations when their opt-in profiles are selected. The `$2003` corruption path uses a worst-case CPU-bus alignment approximation. The 4500-cycle decay threshold and replacement values provide repeatable behavior for testing, but physical OAM charge loss varies with chip, temperature, and refresh history. The startup restriction uses Cupid's fixed power-on alignment and the next pre-render boundary; it does not simulate random power/reset phase variation between physical consoles. The current checks do not cover analog output effects or every DMA/register interleaving. Register-delay tests cover defined collision cases, not every possible interleaving. A new failure should be reduced to its bus operations and timing, then added as a regression. Avoid per-ROM behavior switches or expected-output substitutions in the core.

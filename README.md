@@ -61,6 +61,7 @@ The loader reads iNES and NES 2.0 headers, checks payload lengths and size overf
 | 2 | UxROM | Switchable 16 KiB PRG bank and fixed upper bank |
 | 3 | CNROM | CHR bank selection |
 | 4 | MMC3 / MMC6 | PRG/CHR banking, filtered PPU A12 IRQ clocks, and RAM protection; NES 2.0 submapper 1 selects MMC6 |
+| 4, submapper 3 | MC-ACC | Falling-edge A12 filtering and IRQ timing |
 | 5 | MMC5, partial | PRG/CHR banking, banked RAM, ExRAM/fill nametables, extended attributes, vertical split, multiplication, PPU-read-driven scanline IRQs, and pulse/PCM audio |
 | 7 | AxROM | 32 KiB PRG banking and single-screen mirroring |
 | 9 | MMC2 | PRG banking and pattern-fetch CHR latches |
@@ -68,8 +69,63 @@ The loader reads iNES and NES 2.0 headers, checks payload lengths and size overf
 | 11 | Color Dreams | PRG and CHR bank selection |
 | 13 | CPROM | Banked CHR RAM |
 | 15 | 100-in-1 | Address-selected PRG banking and mirroring |
+| 16, 153, 157, 159 | Bandai FCG / LZ93D50 / Datach | Bank wiring, IRQs, serial EEPROM, outer PRG selection, and barcode signals |
+| 18 | Jaleco SS88006 | Nibble-based bank registers and selectable IRQ counter widths |
+| 19, 210 | Namco 163 / 175 / 340 | PRG/CHR banks, cartridge-backed nametables, RAM permissions, IRQs, and N163 wavetable audio |
+| 21, 22, 23, 25, 27, 183 | VRC2 / VRC4 | Board-specific register wiring, bank selection, mirroring, and VRC4 IRQs |
+| 24, 26 | VRC6 | PRG/CHR and nametable banking, IRQs, two pulse channels, and sawtooth audio |
+| 28 | Action 53 | Outer and inner PRG selection, CHR RAM, mirroring, and startup mapping |
+| 30 | UNROM 512 | PRG/CHR banking, cartridge nametable memory, and flash programming and erase commands |
+| 32, 65 | Irem G-101 / H-3001 | PRG/CHR banking, board mirroring, and H-3001 IRQ timing |
+| 33, 48 | Taito | PRG/CHR banking, mirroring, and mapper 48 IRQ timing |
+| 34 | BNROM / NINA-001 | 32 KiB PRG banks, board-specific CHR and RAM access, and bus conflicts |
+| 64, 158 | RAMBO-1 | PRG/CHR banks, CPU- or PPU-clocked IRQs, and mapper 158 nametable wiring |
+| 66 | GxROM | Combined PRG/CHR bank selection and bus conflicts |
+| 69 | FME-7 / Sunsoft 5B | ROM/RAM bank selection, IRQ counter, and three-channel tone/noise/envelope audio |
+| 71 | Codemasters | PRG banking and the single-screen board variant |
+| 85 | VRC7 | PRG/CHR banking, IRQs, RAM control, and six-channel FM audio |
+| 118 | TKSROM / TLSROM | MMC3 banking and IRQs with CHR-register-controlled nametable routing |
+| 119 | TQROM | MMC3 banking and IRQs with mixed CHR ROM and RAM |
+| 155 | MMC1A | MMC1 banking with the earlier revision's RAM-enable behavior |
+| 206 | Namco 108 | Register-selected PRG/CHR banks and board-specific nametable wiring |
 
-Explicit NES 2.0 board variants include MMC1 submapper 5, MMC6 submapper 1, and UxROM/CNROM/AxROM submappers 1 and 2. Submapper 2 on those discrete boards enables ROM bus conflicts. An unspecified board variant does not identify every physical cartridge revision.
+NES 2.0 submappers select the implemented board wiring and revision. Examples include MMC1 submapper 5, MMC6 submapper 1, MC-ACC submapper 3, and the VRC register-wiring variants. UxROM, CNROM, and AxROM submapper 2 enable ROM bus conflicts. The loader rejects unsupported submappers and memory geometries. An unspecified board variant does not identify every physical cartridge revision.
+
+### Famicom Disk System
+
+The disk loader accepts headered and raw disk images with an explicitly supplied 8 KiB BIOS:
+
+```sh
+./cupid-nes --fds-bios disksys.rom game.fds
+```
+
+The device provides 32 KiB work RAM, 8 KiB CHR RAM, BIOS mapping, timer and transfer interrupts, disk transport and block timing, CRC handling, and wavetable/modulation audio. `--fds-side N` selects a side starting at 1. `--fds-eject` starts without media inserted, and `--fds-write-protect` blocks disk writes. During execution, F8 inserts or ejects the selected side, F9 changes sides, and F10 changes write protection.
+
+Modified disk data is saved separately from the original image. A failed save keeps the modified media loaded and reports the error. Changing cartridges or closing the application must not discard those writes.
+
+### Console wiring and input devices
+
+`--console nes-001|nes-101|famicom|av-famicom` selects controller-port wiring independently from the ROM's timing region. Standard controllers retain their serial data and open-bus behavior. The input layer also implements these devices:
+
+| Hardware | Selection |
+| --- | --- |
+| Four Score | `--adapter four-score` |
+| Famicom multiplayer adapters | `--console famicom --adapter famicom-2` or `famicom-4` |
+| NES Arkanoid paddle | `--port1 arkanoid` or `--port2 arkanoid` |
+| Famicom Arkanoid paddle | `--console famicom --expansion arkanoid` |
+| Power Pad | `--port2 power-pad-a` or `power-pad-b` |
+| Family Trainer | `--console famicom --expansion family-trainer-a` or `family-trainer-b` |
+| NES Zapper | `--port2 zapper` |
+| Famicom light gun | `--console famicom --expansion zapper` |
+| Family BASIC keyboard and tape | `--console famicom --expansion family-basic` |
+
+Zapper light detection follows the rendered beam and sensor persistence. Keyboard scanning and tape transitions use emulated CPU time. Family BASIC tape files use `--tape-play FILE` or `--tape-record FILE`; F10 starts playback or recording and F11 stops it. Datach cartridges accept an 8- or 13-digit `--barcode` value, which F8 sends through the cartridge's serial reader. Conflicting devices on one connector are rejected.
+
+### Hardware revision profiles
+
+`--cpu-revision early-2a03|late-2a03` selects the DMC reload-collision behavior. The default is the earlier CPU model. `--ppu-revision 2c02-pre-e|2c02e-plus` selects the PPU revision used by the OAM model.
+
+The optional `--ppu-oam-row-corruption`, `--ppu-oam-decay`, and `--ppu-startup-restriction` profiles model alignment-dependent row copies, row refresh/decay, and the initial protected-register interval. They are disabled by default. The OAM profiles use deterministic approximations; their limits and reset behavior are described in [the accuracy notes](docs/accuracy.md).
 
 ### Persistent memory
 
@@ -79,6 +135,8 @@ A battery-backed cartridge uses files beside its ROM:
 | --- | --- |
 | PRG NVRAM | `game.sav` |
 | CHR NVRAM | `game.chr.sav` |
+| UNROM 512 flash | `game.flash.sav` |
+| Bandai serial EEPROM | `game.eeprom128` or `game.eeprom256` |
 
 Only declared nonvolatile memory is persisted. Save sizes follow the supported cartridge layout; the previous 8 KiB PRG save format remains usable for 8 KiB cartridges. Saves load when a cartridge opens and flush when it is replaced or the emulator exits normally.
 
@@ -143,9 +201,9 @@ GitHub Actions builds the emulator and tests with GCC and with Clang sanitizers,
 
 ## Scope
 
-The implemented systems use NTSC, PAL, or Dendy timing with standard controllers and the cartridge families listed above. VS hardware, the Famicom Disk System, expansion controllers, other expansion-audio chips, and additional mapper families remain unsupported. MMC5 PCM status models the MMC5A revision. Its auxiliary I/O and `$5209/$520A` timer registers remain unimplemented; earlier revision differences and undocumented behavior are not fully covered.
+The implemented systems use NTSC, PAL, or Dendy timing with the cartridge families and input devices listed above. Disk-system operation uses NTSC timing. VS hardware, unlisted input devices, and additional mapper families remain unsupported. MMC5 PCM status models the MMC5A revision. Its auxiliary I/O and `$5209/$520A` timer registers remain unimplemented; earlier revision differences and undocumented behavior are not fully covered.
 
-Passing the listed tests does not establish complete hardware equivalence. OAM decay/corruption, silicon-dependent startup behavior, analog effects, and uncommon DMA/mapper alignments still need coverage. Unstable undocumented opcodes use a fixed silicon model.
+Passing the listed tests does not establish complete hardware equivalence. OAM charge loss, arbitrary startup alignment, analog output, and every possible DMA/register interaction are outside the tested model. Unstable undocumented opcodes use a fixed silicon model. [Per-issue checkpoints](docs/accuracy-checkpoints.md) record the commits that passed the required baseline during this hardware work.
 
 ## License and hardware documentation
 
