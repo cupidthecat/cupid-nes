@@ -4539,6 +4539,7 @@ static int test_vrc24_irq_variants_and_phase(void) {
     ppu_power_on(&ppu);
     apu_power_on(&apu);
     cpu_power_on(&cpu);
+    cart_cpu_write(0x8000, 0);
     cpu.pc = 0x8000;
     cpu.status = INTERRUPT_FLAG | UNUSED_FLAG;
     cart_cpu_write(0xF000, 0x0E);
@@ -4568,6 +4569,260 @@ static int test_vrc24_loader_rejection_preserves_cart(void) {
     invalid = vrc24_header(23, 3, false);
     invalid.flags10 = 8; // 16KB RAM exceeds the single $6000-$7FFF chip window.
     CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x40000, fixture_chr, 0x40000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 3 && cart_cpu_read(0x6123) == 0xA7);
+    return 0;
+}
+
+static iNESHeader vrc7_header(uint8_t submapper, bool chr_ram, bool ram) {
+    iNESHeader h = header_for(85, 0x80000, chr_ram);
+    h.flags7 |= 0x08;
+    h.prg_ram_size = (uint8_t)(submapper << 4);
+    h.flags10 = ram ? 7 : 0;
+    if (chr_ram) h.zero[0] = 7;
+    else h.chr_rom_chunks = 0x20;
+    return h;
+}
+
+static void vrc7_audio_write(uint8_t reg, uint8_t value) {
+    cart_cpu_write(0x9010, reg);
+    cart_cpu_write(0x9030, value);
+}
+
+static int test_vrc7_banks_wiring_and_ram(void) {
+    for (unsigned submapper = 0; submapper <= 2; ++submapper) {
+        iNESHeader h = vrc7_header((uint8_t)submapper, false, true);
+        CHECK(fixture_with_header(&h, 0x80000, 0x40000) == 85);
+        CHECK(cart != NULL && cart->clock != NULL);
+        CHECK(cart_cpu_read_bus(0x8000, 0x56) == 0x56);
+        CHECK(cart_cpu_read_bus(0xA000, 0xA6) == 0xA6);
+        CHECK(cart_cpu_read_bus(0xC000, 0x3C) == 0x3C);
+        CHECK(cart_cpu_read(0xE000) == 63);
+        CHECK(cart_ppu_read(0x0400) == 0); // CHR-ROM pages start unmapped.
+
+        cart_cpu_write(0x8000, 3);
+        cart_cpu_write(0x9000, 9);
+        CHECK(cart_cpu_read(0x8000) == 3 && cart_cpu_read(0xC000) == 9);
+        if (submapper == 0) {
+            cart_cpu_write(0x8008, 4);
+            CHECK(cart_cpu_read(0xA000) == 4);
+            cart_cpu_write(0x8010, 6);
+            CHECK(cart_cpu_read(0xA000) == 6);
+            cart_cpu_write(0xA008, 5);
+            CHECK(cart_ppu_read(0x0400) == 5);
+            cart_cpu_write(0xA010, 7);
+            CHECK(cart_ppu_read(0x0400) == 7);
+        } else if (submapper == 1) {
+            cart_cpu_write(0x8008, 5);
+            CHECK(cart_cpu_read(0xA000) == 5);
+            cart_cpu_write(0x8010, 7); // A4 is not connected on VRC7b.
+            CHECK(cart_cpu_read(0x8000) == 7 && cart_cpu_read(0xA000) == 5);
+            cart_cpu_write(0xA008, 6);
+            CHECK(cart_ppu_read(0x0400) == 6);
+            cart_cpu_write(0xA010, 8);
+            CHECK(cart_ppu_read(0x0000) == 8 && cart_ppu_read(0x0400) == 6);
+        } else {
+            cart_cpu_write(0x8008, 5); // A3 is not connected on VRC7a.
+            CHECK(cart_cpu_read(0x8000) == 5);
+            cart_cpu_write(0x8010, 7);
+            CHECK(cart_cpu_read(0xA000) == 7);
+            cart_cpu_write(0xA008, 6);
+            CHECK(cart_ppu_read(0x0000) == 6);
+            cart_cpu_write(0xA010, 8);
+            CHECK(cart_ppu_read(0x0400) == 8);
+        }
+
+        CHECK(cart_cpu_read_bus(0x6000, 0x56) == 0x56);
+        cart_cpu_write(0x6000, 0xA5);
+        CHECK(cart_cpu_read_bus(0x6000, 0x56) == 0x56);
+        cart_cpu_write(0xE000, 0x82);
+        CHECK(cart_get_mirroring() == MIRROR_SINGLE0);
+        cart_cpu_write(0x6123, 0xA5);
+        CHECK(cart_cpu_read(0x6123) == 0xA5);
+        cart_cpu_write(0xE000, 0x81);
+        CHECK(cart_get_mirroring() == MIRROR_HORIZONTAL && cart_cpu_read(0x6123) == 0xA5);
+        cart_cpu_write(0xE000, 0x00);
+        CHECK(cart_get_mirroring() == MIRROR_VERTICAL);
+        CHECK(cart_cpu_read_bus(0x6123, 0x56) == 0x56);
+    }
+
+    // CHR-RAM is linearly available before bank registers are written.
+    iNESHeader ram_header = vrc7_header(2, true, true);
+    CHECK(fixture_with_header(&ram_header, 0x80000, 0x2000) == 85);
+    cart_ppu_write(0x0400, 0xA7);
+    CHECK(cart_ppu_read(0x0400) == 0xA7);
+    cart_cpu_write(0xA010, 3);
+    cart_ppu_write(0x0400, 0x53);
+    CHECK(cart_ppu_read(0x0C00) == 0x53);
+    ram_header.zero[0] = 6; // A declared 4KB RAM aliases across the 8KB pattern window.
+    CHECK(fixture_with_header(&ram_header, 0x80000, 0x1000) == 85);
+    cart_ppu_write(0x1C23, 0xB6);
+    CHECK(cart_ppu_read(0x0C23) == 0xB6);
+    cart_cpu_write(0xA010, 7);
+    CHECK(cart_ppu_read(0x0423) == 0xB6);
+    return 0;
+}
+
+static int test_vrc7_irq_timing(void) {
+    for (unsigned submapper = 0; submapper <= 2; ++submapper) {
+        iNESHeader h = vrc7_header((uint8_t)submapper, false, true);
+        CHECK(fixture_with_header(&h, 0x80000, 0x40000) == 85);
+        uint16_t secondary = submapper == 2 ? 0x10u : 0x08u;
+        cart_cpu_write((uint16_t)(0xE000u + secondary), 0xFE);
+        cart_cpu_write(0xF000, 0x07);
+        cart->clock(1);
+        CHECK(!cart_irq_pending());
+        cart->clock(1);
+        CHECK(cart_irq_pending());
+        cart_cpu_write((uint16_t)(0xF000u + secondary), 0);
+        CHECK(!cart_irq_pending());
+        cart->clock(2);
+        CHECK(cart_irq_pending());
+    }
+
+    iNESHeader h = vrc7_header(1, false, true);
+    CHECK(fixture_with_header(&h, 0x80000, 0x40000) == 85);
+    cart_cpu_write(0xE008, 0xFF);
+    cart_cpu_write(0xF000, 0x02);
+    cart->clock(113);
+    CHECK(!cart_irq_pending());
+    cart->clock(1);
+    CHECK(cart_irq_pending());
+    cart_cpu_write(0xF008, 0);
+    CHECK(!cart_irq_pending());
+
+    fixture_prg[0] = 0xEA;
+    nes_set_region(NES_REGION_NTSC);
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    cpu_power_on(&cpu);
+    cart_cpu_write(0x8000, 0);
+    cpu.pc = 0x8000;
+    cpu.status = INTERRUPT_FLAG | UNUSED_FLAG;
+    cart_cpu_write(0xE008, 0xFE);
+    cart_cpu_write(0xF000, 0x06);
+    CHECK(cpu_step(&cpu) == 2 && cart_irq_pending());
+    return 0;
+}
+
+static void vrc7_program_custom_patch(void) {
+    static const uint8_t patch[8] = {0x01,0x01,0x10,0x00,0xF5,0xF5,0x4F,0x4F};
+    for (unsigned reg = 0; reg < 8; ++reg) vrc7_audio_write((uint8_t)reg, patch[reg]);
+}
+
+static void vrc7_key_channel0(uint8_t instrument, bool key_on) {
+    vrc7_audio_write(0x30, (uint8_t)(instrument << 4));
+    vrc7_audio_write(0x10, 0x80);
+    vrc7_audio_write(0x20, (uint8_t)(0x08 | (key_on ? 0x10 : 0)));
+}
+
+static int test_vrc7_fm_audio(void) {
+    iNESHeader h = vrc7_header(2, false, true);
+    CHECK(fixture_with_header(&h, 0x80000, 0x40000) == 85);
+    nes_set_region(NES_REGION_NTSC);
+    CHECK(cart_expansion_audio() == 0.0f);
+
+    vrc7_program_custom_patch();
+    vrc7_key_channel0(0, true);
+    cart->clock(35);
+    CHECK(cart_expansion_audio() == 0.0f);
+    cart->clock(1);
+    CHECK(cart_expansion_audio() == 0.0f); // First chip tick starts the envelope at zero output.
+
+    static const int16_t expected_trace[16] = {
+        -693, -453, -787, -1120, -1394, -1645, -1828, -1956,
+        -2031, -2037, -1988, -1873, -1708, -1492, -1231, -934
+    };
+    float custom_trace[16];
+    float custom_energy = 0.0f;
+    for (unsigned i = 0; i < 16; ++i) {
+        cart->clock(36);
+        custom_trace[i] = cart_expansion_audio();
+        CHECK(custom_trace[i] == (float)expected_trace[i] * (1.0f / 5000.0f));
+        custom_energy += custom_trace[i] < 0.0f ? -custom_trace[i] : custom_trace[i];
+    }
+    CHECK(custom_energy > 0.001f);
+
+    cart->reset();
+    nes_set_region(NES_REGION_PAL);
+    vrc7_program_custom_patch();
+    vrc7_key_channel0(0, true);
+    cart->clock(34);
+    for (unsigned i = 0; i < 16; ++i) {
+        float previous = cart_expansion_audio();
+        cart->clock(33);
+        CHECK(cart_expansion_audio() == previous);
+        cart->clock(1);
+        CHECK(cart_expansion_audio() == custom_trace[i]);
+    }
+
+    cart->reset();
+    nes_set_region(NES_REGION_NTSC);
+    vrc7_program_custom_patch();
+    vrc7_key_channel0(0, true);
+    cart->clock(36);
+    for (unsigned i = 0; i < 16; ++i) {
+        cart->clock(36);
+        CHECK(cart_expansion_audio() == custom_trace[i]);
+    }
+
+    cart->reset();
+    nes_set_region(NES_REGION_NTSC);
+    vrc7_key_channel0(1, true);
+    float preset_energy = 0.0f;
+    bool differs = false;
+    cart->clock(36 * 32);
+    for (unsigned i = 0; i < 16; ++i) {
+        cart->clock(36);
+        float sample = cart_expansion_audio();
+        preset_energy += sample < 0.0f ? -sample : sample;
+        if (sample != custom_trace[i]) differs = true;
+    }
+    CHECK(preset_energy > 0.0f && differs);
+
+    cart->reset();
+    nes_set_region(NES_REGION_NTSC);
+    vrc7_program_custom_patch();
+    vrc7_key_channel0(0, true);
+    cart->clock(36 * 32);
+    CHECK(cart_expansion_audio() != 0.0f);
+    vrc7_audio_write(0x20, 0x08); // Key off enters release on both operators.
+    cart->clock(36 * 16384);
+    CHECK(cart_expansion_audio() == 0.0f);
+
+    vrc7_key_channel0(0, true);
+    cart->clock(36 * 8);
+    CHECK(cart_expansion_audio() != 0.0f);
+    cart_cpu_write(0xE000, 0x40);
+    CHECK(cart_expansion_audio() == 0.0f);
+    vrc7_audio_write(0x20, 0x08); // Ignored while audio is muted.
+    cart->clock(36 * 8);
+    CHECK(cart_expansion_audio() == 0.0f);
+    cart_cpu_write(0xE000, 0x00);
+    cart->clock(36);
+    CHECK(cart_expansion_audio() != 0.0f);
+    return 0;
+}
+
+static int test_vrc7_loader_rejection_preserves_cart(void) {
+    iNESHeader active = vrc7_header(1, false, true);
+    CHECK(fixture_with_header(&active, 0x80000, 0x40000) == 85);
+    cart_cpu_write(0x8000, 3);
+    cart_cpu_write(0xE000, 0x80);
+    cart_cpu_write(0x6123, 0xA7);
+    Mapper *previous = cart;
+
+    iNESHeader invalid = vrc7_header(3, false, true);
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x80000, fixture_chr, 0x40000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 3 && cart_cpu_read(0x6123) == 0xA7);
+
+    invalid = vrc7_header(1, false, true);
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x82000, fixture_chr, 0x40000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 3 && cart_cpu_read(0x6123) == 0xA7);
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x80000, fixture_chr, 0x42000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 3 && cart_cpu_read(0x6123) == 0xA7);
+
+    invalid.flags10 = 8;
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x80000, fixture_chr, 0x40000) == -1);
     CHECK(cart == previous && cart_cpu_read(0x8000) == 3 && cart_cpu_read(0x6123) == 0xA7);
     return 0;
 }
@@ -4640,6 +4895,8 @@ int test_mapper_accuracy(void) {
         test_irem_ram_and_irq_boundaries,
         test_vrc24_variant_register_wiring, test_vrc24_ram_latch_and_mapper183_window,
         test_vrc24_irq_variants_and_phase, test_vrc24_loader_rejection_preserves_cart,
+        test_vrc7_banks_wiring_and_ram, test_vrc7_irq_timing, test_vrc7_fm_audio,
+        test_vrc7_loader_rejection_preserves_cart,
         test_cartridge_bus_reads, test_mmc6_persistence, test_cartridge_unload
     };
     int failures = 0;

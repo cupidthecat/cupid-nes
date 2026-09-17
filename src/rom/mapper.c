@@ -37,6 +37,7 @@
 #include "namco163.h"
 #include "sunsoft5b.h"
 #include "../ppu/ppu.h"
+#include "vrc7_audio.h"
 #include "../system/timing.h"
 
 extern uint64_t cpu_total_cycles;
@@ -70,7 +71,7 @@ static Mapper mapper_mmc5, mapper_aorom, mapper_mmc2, mapper_mmc4, mapper_colord
 static Mapper mapper_cprom, mapper_100in1, mapper_bandai, mapper_action53, mapper_unrom512;
 static Mapper mapper_taito33, mapper_taito48, mapper_jaleco18, mapper_irem32, mapper_irem65;
 static Mapper mapper_rambo1, mapper_rambo158;
-static Mapper mapper_vrc24;
+static Mapper mapper_vrc24, mapper_vrc7;
 static Mapper mapper_sunsoft69, mapper_namco;
 Mapper *cart = NULL;
 static bool mapper_irq_line = false;
@@ -78,6 +79,8 @@ static uint8_t cart_cpu_bus_input = 0xFF;
 static CartPpuFetchSource cart_ppu_fetch_source = CART_PPU_FETCH_CPU;
 static void mmc3_irq_clock(void);
 static size_t namco_chr_bank(uint8_t bank);
+static float vrc7_expansion_output(void);
+static void vrc7_shutdown(void);
 
 #ifdef PPU_DEBUG_LOG
 static uint32_t mmc3_log_count = 0;
@@ -455,6 +458,7 @@ void cart_battery_configure(const char *rom_path, bool has_battery) {
 
 void mapper_shutdown(void) {
     cart_battery_shutdown();
+    if (cart == &mapper_vrc7) vrc7_shutdown();
     free(prg_work_ram.data);
     free(prg_save_ram.data);
     prg_work_ram = (RamBlock){0};
@@ -1449,6 +1453,7 @@ static uint8_t mmc5_pulse_volume(const Mmc5Pulse *pulse) {
 }
 
 float cart_expansion_audio(void) {
+    if (cart == &mapper_vrc7) return vrc7_expansion_output();
     if (cart == &mapper_mmc5) {
         unsigned pulse = (unsigned)mmc5.pulse[0].output + (unsigned)mmc5.pulse[1].output;
         unsigned raw = pulse * 3u + mmc5.pcm_output;
@@ -3836,6 +3841,153 @@ static void vrc24_reset(void) {
     mapper_irq_line = false;
 }
 
+// Mapper 85: Konami VRC7.
+static struct {
+    uint8_t prg[3];
+    uint8_t chr[8];
+    bool prg_selected[3];
+    bool chr_selected[8];
+    uint8_t control;
+    Mirroring mirr;
+    VrcIrq irq;
+    Vrc7Fm fm;
+} vrc7;
+
+static uint16_t vrc7_decode_register(uint16_t addr) {
+    uint16_t audio = addr & 0xF038u;
+    if (audio == 0x9010u || audio == 0x9030u) return audio;
+    if ((addr & 0x20u) != 0) return 0xFFFFu;
+
+    bool secondary;
+    if (C.submapper == 1) secondary = (addr & 0x08u) != 0;
+    else if (C.submapper == 2) secondary = (addr & 0x10u) != 0;
+    else secondary = (addr & 0x18u) != 0;
+    return (uint16_t)((addr & 0xF000u) | (secondary ? 0x0008u : 0u));
+}
+
+static void vrc7_update_control(uint8_t value) {
+    vrc7.control = value;
+    switch (value & 3u) {
+        case 0: vrc7.mirr = MIRROR_VERTICAL; break;
+        case 1: vrc7.mirr = MIRROR_HORIZONTAL; break;
+        case 2: vrc7.mirr = MIRROR_SINGLE0; break;
+        case 3: vrc7.mirr = MIRROR_SINGLE1; break;
+    }
+    vrc7_fm_set_muted(&vrc7.fm, (value & 0x40u) != 0);
+}
+
+static uint8_t vrc7_cpu_read(uint16_t addr) {
+    if (addr >= 0x6000 && addr < 0x8000) {
+        if (!(vrc7.control & 0x80u)) return cart_cpu_bus_input;
+        return prg_ram_read(addr);
+    }
+    if (addr >= 0x8000) {
+        size_t banks = C.prg_sz / PRG_BANK_8K;
+        unsigned slot = (addr - 0x8000u) >> 13;
+        if (slot == 3) {
+            return C.prg[(banks - 1) * PRG_BANK_8K + (addr & 0x1FFFu)];
+        }
+        if (!vrc7.prg_selected[slot]) return cart_cpu_bus_input;
+        size_t bank = vrc7.prg[slot] % banks;
+        return C.prg[bank * PRG_BANK_8K + (addr & 0x1FFFu)];
+    }
+    return cart_cpu_bus_input;
+}
+
+static void vrc7_cpu_write(uint16_t addr, uint8_t value) {
+    if (addr >= 0x6000 && addr < 0x8000) {
+        if (vrc7.control & 0x80u) prg_ram_write(addr, value);
+        return;
+    }
+    if (addr < 0x8000) return;
+
+    switch (vrc7_decode_register(addr)) {
+        case 0x8000:
+            vrc7.prg[0] = value & 0x3Fu;
+            vrc7.prg_selected[0] = true;
+            break;
+        case 0x8008:
+            vrc7.prg[1] = value & 0x3Fu;
+            vrc7.prg_selected[1] = true;
+            break;
+        case 0x9000:
+            vrc7.prg[2] = value & 0x3Fu;
+            vrc7.prg_selected[2] = true;
+            break;
+        case 0x9010:
+            vrc7_fm_write_address(&vrc7.fm, value);
+            break;
+        case 0x9030:
+            vrc7_fm_write_data(&vrc7.fm, value);
+            break;
+        case 0xA000: vrc7.chr[0] = value; vrc7.chr_selected[0] = true; break;
+        case 0xA008: vrc7.chr[1] = value; vrc7.chr_selected[1] = true; break;
+        case 0xB000: vrc7.chr[2] = value; vrc7.chr_selected[2] = true; break;
+        case 0xB008: vrc7.chr[3] = value; vrc7.chr_selected[3] = true; break;
+        case 0xC000: vrc7.chr[4] = value; vrc7.chr_selected[4] = true; break;
+        case 0xC008: vrc7.chr[5] = value; vrc7.chr_selected[5] = true; break;
+        case 0xD000: vrc7.chr[6] = value; vrc7.chr_selected[6] = true; break;
+        case 0xD008: vrc7.chr[7] = value; vrc7.chr_selected[7] = true; break;
+        case 0xE000:
+            vrc7_update_control(value);
+            break;
+        case 0xE008:
+            vrc7.irq.reload = value;
+            break;
+        case 0xF000:
+            vrc_irq_control(&vrc7.irq, value);
+            break;
+        case 0xF008:
+            vrc_irq_ack(&vrc7.irq);
+            break;
+        default:
+            break;
+    }
+}
+
+static size_t vrc7_chr_bank(unsigned slot) {
+    if (!vrc7.chr_selected[slot])
+        return C.chr_is_ram ? slot % (C.chr_sz / CHR_BANK_1K) : SIZE_MAX;
+    return vrc7.chr[slot] % (C.chr_sz / CHR_BANK_1K);
+}
+
+static uint8_t vrc7_ppu_read(uint16_t addr) {
+    addr &= 0x1FFF;
+    unsigned slot = addr >> 10;
+    size_t bank = vrc7_chr_bank(slot);
+    if (bank == SIZE_MAX) return (uint8_t)addr;
+    return C.chr[bank * CHR_BANK_1K + (addr & 0x03FFu)];
+}
+
+static void vrc7_ppu_write(uint16_t addr, uint8_t value) {
+    if (!C.chr_is_ram) return;
+    addr &= 0x1FFF;
+    size_t bank = vrc7_chr_bank(addr >> 10);
+    if (bank == SIZE_MAX) return;
+    chr_ram_write(bank * CHR_BANK_1K + (addr & 0x03FFu), value);
+}
+
+static void vrc7_clock(int cpu_cycles) {
+    for (int cycle = 0; cycle < cpu_cycles; ++cycle) vrc_irq_clock(&vrc7.irq);
+    vrc7_fm_clock(&vrc7.fm, cpu_cycles, nes_timing()->cpu_hz);
+}
+
+static Mirroring vrc7_mirr(void) { return vrc7.mirr; }
+
+static float vrc7_expansion_output(void) { return vrc7_fm_output(&vrc7.fm); }
+
+static void vrc7_shutdown(void) { vrc7_fm_destroy(&vrc7.fm); }
+
+static void vrc7_reset(void) {
+    Vrc7Fm fm = vrc7.fm;
+    memset(&vrc7, 0, sizeof(vrc7));
+    vrc7.fm = fm;
+    vrc7.mirr = MIRROR_VERTICAL;
+    vrc_irq_reset(&vrc7.irq);
+    vrc7_fm_reset(&vrc7.fm);
+    mapper_irq_line = false;
+}
+
 // Mapper selection and initialization.
 static bool vrc24_submapper_supported(int mapper_no, uint8_t submapper) {
     switch (mapper_no) {
@@ -3928,6 +4080,7 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         case 21: case 23: case 25: case 27: case 183: chr_limit = 0x80000; break;
         case 22: chr_limit = 0x40000; break;
         case 19: case 69: case 210: chr_limit = 0x40000; break;
+        case 85: chr_limit = 0x40000; break;
         case 119: chr_limit = sizeof(tqrom_chr_ram); break;
         default: chr_limit = 0x2000; break;
     }
@@ -3959,7 +4112,7 @@ int mapper_init_from_header(const iNESHeader *h,
         case 16: case 153: case 157: case 159:
         case 18: case 32: case 33: case 48: case 64: case 65: case 158:
         case 21: case 22: case 23: case 25: case 27: case 183:
-        case 19: case 69: case 210:
+        case 19: case 69: case 85: case 210:
             break;
         default:
             fprintf(stderr, "Unsupported mapper: %d\n", mapper_no);
@@ -3967,6 +4120,7 @@ int mapper_init_from_header(const iNESHeader *h,
     }
     if (submapper && !((mapper_no == 1 && submapper == 5)
         || vrc24_submapper_supported(mapper_no, submapper)
+        || (mapper_no == 85 && submapper <= 2)
         || (mapper_no == 4 && (submapper == 1 || submapper == 3))
         || (mapper_no == 16 && (submapper == 4 || submapper == 5))
         || (mapper_no == 48 && submapper == 1)
@@ -4057,6 +4211,11 @@ int mapper_init_from_header(const iNESHeader *h,
         fprintf(stderr, "Unsupported ROM size for mapper %d\n", mapper_no);
         return -1;
     }
+    if (mapper_no == 85 && (prg_sz > 0x80000 || (prg_sz % PRG_BANK_8K) != 0
+        || chr_sz > 0x40000 || (chr_sz % CHR_BANK_1K) != 0)) {
+        fprintf(stderr, "Unsupported ROM size for mapper 85\n");
+        return -1;
+    }
     if (!ram_geometry_supported(mapper_no, nes2, &ram, chr_is_ram, chr_sz)
         || (mapper_no == 4 && submapper == 1 && ram.prg_ram + ram.prg_nvram != 0x400)) {
         fprintf(stderr, "Unsupported RAM layout for mapper %d (PRG %zu+%zu, CHR %zu+%zu)\n",
@@ -4071,6 +4230,14 @@ int mapper_init_from_header(const iNESHeader *h,
         free(new_work.data);
         free(new_save.data);
         fprintf(stderr, "Cartridge RAM allocation failed\n");
+        return -1;
+    }
+
+    Vrc7Fm new_fm = {0};
+    if (mapper_no == 85 && !vrc7_fm_init(&new_fm)) {
+        free(new_work.data);
+        free(new_save.data);
+        fprintf(stderr, "VRC7 audio allocation failed\n");
         return -1;
     }
 
@@ -4239,6 +4406,13 @@ int mapper_init_from_header(const iNESHeader *h,
                          namco_ppu_read, namco_ppu_write, namco_reset, namco_mirr);
             mapper_namco.clock = namco_clock;
             cart = &mapper_namco;
+            break;
+        case 85:
+            vrc7.fm = new_fm;
+            build_mapper(&mapper_vrc7, vrc7_cpu_read, vrc7_cpu_write,
+                        vrc7_ppu_read, vrc7_ppu_write, vrc7_reset, vrc7_mirr);
+            mapper_vrc7.clock = vrc7_clock;
+            cart = &mapper_vrc7;
             break;
         case 119:
             build_mapper(&mapper_tqrom, mmc3_cpu_read, mmc3_cpu_write,
