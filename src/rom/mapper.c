@@ -64,7 +64,7 @@ static CartCommon C;
 static Mapper mapper_nrom, mapper_mmc1, mapper_uxrom, mapper_cnrom, mapper_mmc3, mapper_tqrom;
 static Mapper mapper_mmc5, mapper_aorom, mapper_mmc2, mapper_mmc4, mapper_colordreams;
 static Mapper mapper_cprom, mapper_100in1, mapper_bandai, mapper_action53, mapper_unrom512;
-static Mapper mapper_taito33, mapper_taito48, mapper_jaleco18;
+static Mapper mapper_taito33, mapper_taito48, mapper_jaleco18, mapper_irem32, mapper_irem65;
 Mapper *cart = NULL;
 static bool mapper_irq_line = false;
 static uint8_t cart_cpu_bus_input = 0xFF;
@@ -2696,6 +2696,180 @@ static void jaleco18_reset(void) {
     mapper_irq_line = false;
 }
 
+// Mapper 32: Irem G-101.
+static struct {
+    uint8_t prg_banks[2];
+    uint8_t chr_banks[8];
+    uint8_t prg_mapped, chr_mapped;
+    uint8_t prg_mode;
+    Mirroring mirr;
+} irem32;
+
+static uint8_t irem32_cpu_read(uint16_t a) {
+    if (a >= 0x6000 && a <= 0x7FFF) return prg_ram_read(a);
+    if (a >= 0x8000) {
+        size_t banks = C.prg_sz / PRG_BANK_8K;
+        unsigned slot = (a - 0x8000u) >> 13;
+        size_t bank;
+        if (slot == 3) bank = banks - 1;
+        else if (slot == 2 && irem32.prg_mode == 0) bank = banks - 2;
+        else if (slot == 0 && irem32.prg_mode != 0) bank = banks - 2;
+        else {
+            unsigned reg = slot == 1 ? 1 : 0;
+            if (!(irem32.prg_mapped & (1u << reg))) return cart_cpu_bus_input;
+            bank = irem32.prg_banks[reg] % banks;
+        }
+        return C.prg[bank * PRG_BANK_8K + (a & 0x1FFFu)];
+    }
+    return cart_cpu_bus_input;
+}
+
+static void irem32_cpu_write(uint16_t a, uint8_t v) {
+    if (a >= 0x6000 && a <= 0x7FFF) { prg_ram_write(a, v); return; }
+    if (a < 0x8000) return;
+    switch (a & 0xF000u) {
+        case 0x8000:
+            irem32.prg_banks[0] = v & 0x1F;
+            irem32.prg_mapped |= 1;
+            break;
+        case 0x9000:
+            irem32.prg_mode = (C.submapper == 1) ? 0 : (uint8_t)((v >> 1) & 1u);
+            irem32.prg_mapped = 3;
+            irem32.mirr = (v & 1u) ? MIRROR_HORIZONTAL : MIRROR_VERTICAL;
+            break;
+        case 0xA000:
+            irem32.prg_banks[1] = v & 0x1F;
+            irem32.prg_mapped |= 2;
+            break;
+        case 0xB000:
+            irem32.chr_banks[a & 7u] = v;
+            irem32.chr_mapped |= (uint8_t)(1u << (a & 7u));
+            break;
+    }
+}
+
+static uint8_t irem32_ppu_read(uint16_t a) {
+    a &= 0x1FFF;
+    if (!(irem32.chr_mapped & (1u << (a >> 10))))
+        return C.chr_is_ram ? C.chr[a % C.chr_sz] : (uint8_t)a;
+    size_t banks = C.chr_sz / CHR_BANK_1K;
+    size_t bank = irem32.chr_banks[a >> 10] % banks;
+    return C.chr[bank * CHR_BANK_1K + (a & 0x03FFu)];
+}
+
+static void irem32_ppu_write(uint16_t a, uint8_t v) {
+    if (!C.chr_is_ram) return;
+    a &= 0x1FFF;
+    if (!(irem32.chr_mapped & (1u << (a >> 10)))) {
+        chr_ram_write(a % C.chr_sz, v);
+        return;
+    }
+    size_t banks = C.chr_sz / CHR_BANK_1K;
+    size_t bank = irem32.chr_banks[a >> 10] % banks;
+    chr_ram_write(bank * CHR_BANK_1K + (a & 0x03FFu), v);
+}
+
+static Mirroring irem32_mirr(void) { return irem32.mirr; }
+
+static void irem32_reset(void) {
+    memset(&irem32, 0, sizeof(irem32));
+    irem32.mirr = C.submapper == 1 ? MIRROR_SINGLE0 : C.mirr_base;
+    mapper_irq_line = false;
+}
+
+// Mapper 65: Irem H-3001.
+static struct {
+    uint8_t prg_banks[3];
+    uint8_t chr_banks[8];
+    uint8_t chr_mapped;
+    uint16_t irq_counter;
+    uint16_t irq_reload;
+    bool irq_enabled;
+    Mirroring mirr;
+} irem65;
+
+static uint8_t irem65_cpu_read(uint16_t a) {
+    if (a >= 0x6000 && a <= 0x7FFF) return prg_ram_read(a);
+    if (a >= 0x8000) {
+        size_t banks = C.prg_sz / PRG_BANK_8K;
+        unsigned slot = (a - 0x8000u) >> 13;
+        size_t bank = slot == 3 ? banks - 1 : irem65.prg_banks[slot] % banks;
+        return C.prg[bank * PRG_BANK_8K + (a & 0x1FFFu)];
+    }
+    return cart_cpu_bus_input;
+}
+
+static void irem65_cpu_write(uint16_t a, uint8_t v) {
+    if (a >= 0x6000 && a <= 0x7FFF) { prg_ram_write(a, v); return; }
+    switch (a) {
+        case 0x8000: irem65.prg_banks[0] = v; break;
+        case 0x9001: irem65.mirr = (v & 0x80u) ? MIRROR_HORIZONTAL : MIRROR_VERTICAL; break;
+        case 0x9003:
+            irem65.irq_enabled = (v & 0x80u) != 0;
+            mapper_irq_line = false;
+            break;
+        case 0x9004:
+            irem65.irq_counter = irem65.irq_reload;
+            mapper_irq_line = false;
+            break;
+        case 0x9005:
+            irem65.irq_reload = (uint16_t)((irem65.irq_reload & 0x00FFu) | ((uint16_t)v << 8));
+            break;
+        case 0x9006:
+            irem65.irq_reload = (uint16_t)((irem65.irq_reload & 0xFF00u) | v);
+            break;
+        case 0xA000: irem65.prg_banks[1] = v; break;
+        case 0xB000: case 0xB001: case 0xB002: case 0xB003:
+        case 0xB004: case 0xB005: case 0xB006: case 0xB007:
+            irem65.chr_banks[a & 7u] = v;
+            irem65.chr_mapped |= (uint8_t)(1u << (a & 7u));
+            break;
+        case 0xC000: irem65.prg_banks[2] = v; break;
+    }
+}
+
+static uint8_t irem65_ppu_read(uint16_t a) {
+    a &= 0x1FFF;
+    if (!(irem65.chr_mapped & (1u << (a >> 10))))
+        return C.chr_is_ram ? C.chr[a % C.chr_sz] : (uint8_t)a;
+    size_t banks = C.chr_sz / CHR_BANK_1K;
+    size_t bank = irem65.chr_banks[a >> 10] % banks;
+    return C.chr[bank * CHR_BANK_1K + (a & 0x03FFu)];
+}
+
+static void irem65_ppu_write(uint16_t a, uint8_t v) {
+    if (!C.chr_is_ram) return;
+    a &= 0x1FFF;
+    if (!(irem65.chr_mapped & (1u << (a >> 10)))) {
+        chr_ram_write(a % C.chr_sz, v);
+        return;
+    }
+    size_t banks = C.chr_sz / CHR_BANK_1K;
+    size_t bank = irem65.chr_banks[a >> 10] % banks;
+    chr_ram_write(bank * CHR_BANK_1K + (a & 0x03FFu), v);
+}
+
+static void irem65_clock(int cpu_cycles) {
+    while (cpu_cycles-- > 0 && irem65.irq_enabled) {
+        irem65.irq_counter--;
+        if (irem65.irq_counter == 0) {
+            irem65.irq_enabled = false;
+            mapper_irq_line = true;
+        }
+    }
+}
+
+static Mirroring irem65_mirr(void) { return irem65.mirr; }
+
+static void irem65_reset(void) {
+    memset(&irem65, 0, sizeof(irem65));
+    irem65.prg_banks[0] = 0;
+    irem65.prg_banks[1] = 1;
+    irem65.prg_banks[2] = 0xFE;
+    irem65.mirr = C.mirr_base;
+    mapper_irq_line = false;
+}
+
 // Mapper selection and initialization.
 static bool bandai_layout(int mapper, uint8_t submapper, bool nes2,
                           size_t prg_bytes, size_t chr_bytes, bool chr_is_ram,
@@ -2769,7 +2943,7 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         case 5: chr_limit = 0x100000; break;
         case 13: chr_limit = 0x4000; break;
         case 28: case 30: chr_limit = 0x8000; break;
-        case 18: chr_limit = 0x40000; break;
+        case 18: case 32: case 65: chr_limit = 0x40000; break;
         case 119: chr_limit = sizeof(tqrom_chr_ram); break;
         default: chr_limit = 0x2000; break;
     }
@@ -2799,7 +2973,7 @@ int mapper_init_from_header(const iNESHeader *h,
         case 0: case 1: case 2: case 3: case 4: case 5:
         case 7: case 9: case 10: case 11: case 13: case 15: case 28: case 30: case 119: case 155:
         case 16: case 153: case 157: case 159:
-        case 18: case 33: case 48:
+        case 18: case 32: case 33: case 48: case 65:
             break;
         default:
             fprintf(stderr, "Unsupported mapper: %d\n", mapper_no);
@@ -2809,6 +2983,7 @@ int mapper_init_from_header(const iNESHeader *h,
         || (mapper_no == 4 && (submapper == 1 || submapper == 3))
         || (mapper_no == 16 && (submapper == 4 || submapper == 5))
         || (mapper_no == 48 && submapper == 1)
+        || (mapper_no == 32 && submapper == 1)
         || ((mapper_no == 2 || mapper_no == 3 || mapper_no == 7) && submapper <= 2)
         || (mapper_no == 30 && submapper <= 4))) {
         fprintf(stderr, "Unsupported mapper/submapper: %d/%u\n", mapper_no, submapper);
@@ -2856,6 +3031,13 @@ int mapper_init_from_header(const iNESHeader *h,
     if (mapper_no == 18 && (prg_sz > 0x200000 || (prg_sz % PRG_BANK_8K) != 0
         || chr_sz > 0x40000 || (chr_sz % CHR_BANK_1K) != 0)) {
         fprintf(stderr, "Unsupported ROM size for mapper 18\n");
+        return -1;
+    }
+    if ((mapper_no == 32 || mapper_no == 65)
+        && (prg_sz > (mapper_no == 32 ? 0x40000u : 0x200000u)
+            || (prg_sz % PRG_BANK_8K) != 0
+            || chr_sz > 0x40000 || (chr_sz % CHR_BANK_1K) != 0)) {
+        fprintf(stderr, "Unsupported ROM size for mapper %d\n", mapper_no);
         return -1;
     }
     if (!ram_geometry_supported(mapper_no, nes2, &ram, chr_is_ram, chr_sz)
@@ -2991,6 +3173,17 @@ int mapper_init_from_header(const iNESHeader *h,
                         jaleco18_ppu_read, jaleco18_ppu_write, jaleco18_reset, jaleco18_mirr);
             mapper_jaleco18.clock = jaleco18_clock;
             cart = &mapper_jaleco18;
+            break;
+        case 32:
+            build_mapper(&mapper_irem32, irem32_cpu_read, irem32_cpu_write,
+                        irem32_ppu_read, irem32_ppu_write, irem32_reset, irem32_mirr);
+            cart = &mapper_irem32;
+            break;
+        case 65:
+            build_mapper(&mapper_irem65, irem65_cpu_read, irem65_cpu_write,
+                        irem65_ppu_read, irem65_ppu_write, irem65_reset, irem65_mirr);
+            mapper_irem65.clock = irem65_clock;
+            cart = &mapper_irem65;
             break;
         case 119:
             build_mapper(&mapper_tqrom, mmc3_cpu_read, mmc3_cpu_write,

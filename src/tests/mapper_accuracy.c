@@ -3083,6 +3083,218 @@ static int test_jaleco18_loader_validation(void) {
     return 0;
 }
 
+static int test_irem32_banks_variants_and_ram(void) {
+    CHECK(fixture(32, 0x40000, 0x20000, false) == 32);
+    CHECK(cart != NULL && cart->clock == NULL);
+    CHECK(cart_cpu_read_bus(0x8000, 0x56) == 0x56 && cart_cpu_read_bus(0xA000, 0x96) == 0x96);
+    CHECK(cart_cpu_read(0xC000) == 30 && cart_cpu_read(0xE000) == 31);
+    CHECK(cart_ppu_read(0x0123) == 0x23 && cart_ppu_read(0x1C12) == 0x12);
+
+    cart_cpu_write(0x8ABC, 0x3F);
+    CHECK(cart_cpu_read_bus(0xA000, 0x56) == 0x56);
+    cart_cpu_write(0xA7FF, 0x22);
+    CHECK(cart_cpu_read(0x8000) == 31 && cart_cpu_read(0xA000) == 2);
+    cart_cpu_write(0x9ACE, 0x02);
+    CHECK(cart_cpu_read(0x8000) == 30 && cart_cpu_read(0xC000) == 31);
+    CHECK(cart_cpu_read(0xA000) == 2 && cart_cpu_read(0xE000) == 31);
+    cart_cpu_write(0x9FFF, 0x01);
+    CHECK(cart_get_mirroring() == MIRROR_HORIZONTAL && cart_cpu_read(0x8000) == 31);
+    CHECK(cart_cpu_read(0xC000) == 30);
+    cart_cpu_write(0x9000, 0);
+    CHECK(cart_get_mirroring() == MIRROR_VERTICAL);
+
+    for (unsigned slot = 0; slot < 8; ++slot) {
+        uint8_t bank = (uint8_t)(0x30 + slot);
+        cart_cpu_write((uint16_t)(0xBFF8u + slot), bank);
+        CHECK(cart_ppu_read((uint16_t)(slot * 0x400)) == bank);
+    }
+    cart_cpu_write(0x6000, 0xA6);
+    CHECK(cart_cpu_read(0x6000) == 0xA6 && !cart_irq_pending());
+
+    cart->reset();
+    CHECK(cart_cpu_read_bus(0x8000, 0x56) == 0x56 && cart_cpu_read_bus(0xA000, 0x96) == 0x96);
+    CHECK(cart_cpu_read(0xC000) == 30 && cart_cpu_read(0xE000) == 31);
+    CHECK(cart_get_mirroring() == MIRROR_HORIZONTAL && cart_cpu_read(0x6000) == 0xA6);
+    cart_cpu_write(0x9000, 2);
+    CHECK(cart_cpu_read(0x8000) == 30 && cart_cpu_read(0xA000) == 0);
+    CHECK(cart_cpu_read(0xC000) == 0);
+
+    iNESHeader h = header_for(32, 0x40000, false);
+    h.flags7 |= 8;
+    h.prg_ram_size = 0x10; // Submapper 1: fixed 8+8+16F PRG layout.
+    h.flags10 = 7;
+    CHECK(fixture_with_header(&h, 0x40000, 0x20000) == 32);
+    CHECK(cart_get_mirroring() == MIRROR_SINGLE0);
+    cart_cpu_write(0x8000, 5);
+    cart_cpu_write(0xA000, 7);
+    cart_cpu_write(0x9000, 2);
+    CHECK(cart_cpu_read(0x8000) == 5 && cart_cpu_read(0xA000) == 7);
+    CHECK(cart_cpu_read(0xC000) == 30 && cart_cpu_read(0xE000) == 31);
+
+    Mapper *previous = cart;
+    uint8_t previous_bank = cart_cpu_read(0x8000);
+    h.prg_ram_size = 0x20;
+    CHECK(mapper_init_from_header(&h, fixture_prg, 0x40000, fixture_chr, 0x20000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == previous_bank);
+    return 0;
+}
+
+static int test_irem65_banks_decode_and_ram(void) {
+    CHECK(fixture(65, 0x40000, 0x20000, false) == 65);
+    CHECK(cart != NULL && cart->clock != NULL);
+    CHECK(cart_cpu_read(0x8000) == 0 && cart_cpu_read(0xA000) == 1);
+    CHECK(cart_cpu_read(0xC000) == 30 && cart_cpu_read(0xE000) == 31);
+    CHECK(cart_ppu_read(0x0123) == 0x23 && cart_ppu_read(0x1C12) == 0x12);
+
+    cart_cpu_write(0x8000, 9);
+    cart_cpu_write(0xA000, 11);
+    cart_cpu_write(0xC000, 13);
+    CHECK(cart_cpu_read(0x8000) == 9 && cart_cpu_read(0xA000) == 11);
+    CHECK(cart_cpu_read(0xC000) == 13 && cart_cpu_read(0xE000) == 31);
+    cart_cpu_write(0x8FFF, 4);
+    cart_cpu_write(0xA001, 5);
+    cart_cpu_write(0xC001, 6);
+    CHECK(cart_cpu_read(0x8000) == 9 && cart_cpu_read(0xA000) == 11 && cart_cpu_read(0xC000) == 13);
+
+    cart_cpu_write(0x9001, 0x80);
+    CHECK(cart_get_mirroring() == MIRROR_HORIZONTAL);
+    cart_cpu_write(0x9001, 0);
+    CHECK(cart_get_mirroring() == MIRROR_VERTICAL);
+    cart_cpu_write(0x9000, 0x80);
+    CHECK(cart_get_mirroring() == MIRROR_VERTICAL);
+
+    for (unsigned slot = 0; slot < 8; ++slot) {
+        uint8_t bank = (uint8_t)(0x40 + slot);
+        cart_cpu_write((uint16_t)(0xB000u + slot), bank);
+        CHECK(cart_ppu_read((uint16_t)(slot * 0x400)) == bank);
+    }
+    cart_cpu_write(0xB008, 0x22);
+    CHECK(cart_ppu_read(0) == 0x40);
+    cart_cpu_write(0x6123, 0x5A);
+    CHECK(cart_cpu_read(0x6123) == 0x5A);
+    cart->reset();
+    CHECK(cart_cpu_read(0x8000) == 0 && cart_cpu_read(0xA000) == 1);
+    CHECK(cart_cpu_read(0xC000) == 30 && cart_cpu_read(0xE000) == 31);
+    CHECK(cart_cpu_read(0x6123) == 0x5A && !cart_irq_pending());
+    CHECK(fixture(65, 0x6000, 0x2000, false) == 65);
+    CHECK(cart_cpu_read(0xC000) == 2 && cart_cpu_read(0xE000) == 2);
+    return 0;
+}
+
+static int test_irem65_irq_and_loader_validation(void) {
+    CHECK(fixture(65, 0x4000, 0x2000, false) == 65);
+    cart_cpu_write(0x9005, 0x01);
+    cart_cpu_write(0x9006, 0x02);
+    cart_cpu_write(0x9004, 0);
+    cart_cpu_write(0x9003, 0x80);
+    cart->clock(0x101);
+    CHECK(!cart_irq_pending());
+    cart->clock(1);
+    CHECK(cart_irq_pending());
+    cart->clock(8);
+    CHECK(cart_irq_pending()); // Expiration disables the one-shot counter.
+    cart_cpu_write(0x9003, 0);
+    CHECK(!cart_irq_pending());
+
+    cart_cpu_write(0x9005, 0);
+    cart_cpu_write(0x9006, 3);
+    cart_cpu_write(0x9004, 0);
+    cart_cpu_write(0x9003, 0x80);
+    cart->clock(1);
+    cart_cpu_write(0x9004, 0);
+    CHECK(!cart_irq_pending());
+    cart->clock(2);
+    CHECK(!cart_irq_pending());
+    cart->clock(1);
+    CHECK(cart_irq_pending());
+
+    cart_cpu_write(0x9003, 0);
+    fixture_prg[0] = 0xEA;
+    nes_set_region(NES_REGION_NTSC);
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    cpu_power_on(&cpu);
+    cpu.pc = 0x8000;
+    cpu.status = INTERRUPT_FLAG | UNUSED_FLAG;
+    cart_cpu_write(0x9005, 0);
+    cart_cpu_write(0x9006, 2);
+    cart_cpu_write(0x9004, 0);
+    cart_cpu_write(0x9003, 0x80);
+    CHECK(cpu_step(&cpu) == 2 && cart_irq_pending());
+
+    fixture_prg[0x3FFE] = 0;
+    fixture_prg[0x3FFF] = 3;
+    for (unsigned i = 0; i < 8; ++i) write_mem((uint16_t)(0x0200 + i), 0xEA);
+    cpu.pc = 0x0200;
+    cpu.status &= (uint8_t)~INTERRUPT_FLAG;
+    for (unsigned step = 0; step < 3 && cpu.pc != 0x0300; ++step) (void)cpu_step(&cpu);
+    CHECK(cpu.pc == 0x0300 && (cpu.status & INTERRUPT_FLAG) && cart_irq_pending());
+    write_mem(0x9007, 0);
+    CHECK(cart_irq_pending());
+
+    cart_cpu_write(0x9003, 0);
+    cart_cpu_write(0x6000, 0xA7);
+    Mapper *previous = cart;
+    iNESHeader h = header_for(65, 0x4000, false);
+    h.flags7 |= 8;
+    h.flags10 = 8; // The board exposes one unbanked 8KB PRG-RAM window.
+    size_t size;
+    uint8_t *image = image_for(&h, 0x4000, 0x2000, &size);
+    CHECK(image != NULL);
+    int loaded = load_rom_memory(image, size);
+    free(image);
+    CHECK(loaded == -1 && cart == previous && cart_cpu_read(0x6000) == 0xA7);
+    CHECK(mapper_init_from_header(&h, fixture_prg, 0x200001, fixture_chr, 0x2000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x6000) == 0xA7);
+    return 0;
+}
+
+static int test_irem_ram_and_irq_boundaries(void) {
+    const unsigned mappers[] = {32, 65};
+    for (unsigned i = 0; i < 2; ++i) {
+        CHECK(fixture(mappers[i], 0x20000, 0x2000, true) == (int)mappers[i]);
+        cart_ppu_write(0x0123, 0xA6);
+        cart_ppu_write(0x0523, 0x69);
+        CHECK(cart_ppu_read(0x0123) == 0xA6 && cart_ppu_read(0x0523) == 0x69);
+        cart_cpu_write(0xB001, 0);
+        CHECK(cart_ppu_read(0x0523) == 0xA6);
+        cart_ppu_write(0x0523, 0x35);
+        CHECK(cart_ppu_read(0x0123) == 0x35);
+    }
+    cart_cpu_write(0x9003, 0x80);
+    cart->clock(65535);
+    CHECK(!cart_irq_pending());
+    cart->clock(1);
+    CHECK(cart_irq_pending());
+    cart_cpu_write(0x9004, 0);
+    cart->clock(65536);
+    CHECK(!cart_irq_pending()); // Reload acknowledges but does not re-enable an expired counter.
+    cart_cpu_write(0x9003, 0x80);
+    cart->clock(65536);
+    CHECK(cart_irq_pending());
+    cart_cpu_write(0x9006, 3);
+    cart_cpu_write(0x9004, 0);
+    cart_cpu_write(0x9003, 0x80);
+    cart->clock(1);
+    cart_cpu_write(0x9003, 0);
+    cart->clock(100);
+    cart_cpu_write(0x9003, 0x80);
+    cart->clock(1);
+    CHECK(!cart_irq_pending());
+    cart->clock(1);
+    CHECK(cart_irq_pending());
+    cart_cpu_write(0x9004, 0);
+    cart_cpu_write(0x9003, 0x80);
+    cart->clock(1);
+    cart_cpu_write(0x9005, 0xFF);
+    cart_cpu_write(0x9006, 0xFF);
+    cart->clock(1);
+    CHECK(!cart_irq_pending());
+    cart->clock(1);
+    CHECK(cart_irq_pending()); // Reload-latch writes leave the running counter unchanged.
+    return 0;
+}
+
 static int test_cartridge_bus_reads(void) {
     mapper_shutdown();
     CHECK(cart_cpu_read_bus(0x8000, 0x56) == 0x56);
@@ -3233,6 +3445,9 @@ int test_mapper_accuracy(void) {
         test_jaleco18_banks_ram_and_mirroring, test_jaleco18_irq_and_cpu_clock,
         test_jaleco18_irq_width_transitions,
         test_jaleco18_loader_validation,
+        test_irem32_banks_variants_and_ram, test_irem65_banks_decode_and_ram,
+        test_irem65_irq_and_loader_validation,
+        test_irem_ram_and_irq_boundaries,
         test_cartridge_bus_reads, test_mmc6_persistence, test_cartridge_unload
     };
     int failures = 0;
