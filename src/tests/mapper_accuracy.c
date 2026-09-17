@@ -765,6 +765,283 @@ static int test_action53_largest_image(void) {
     return 0;
 }
 
+static iNESHeader unrom512_header(uint8_t submapper, bool battery, uint8_t chr_ram_shift) {
+    iNESHeader h = header_for(30, 0x40000, true);
+    h.flags7 |= 0x08;
+    h.prg_ram_size = (uint8_t)(submapper << 4);
+    h.flags10 = 0;
+    h.zero[0] = chr_ram_shift;
+    if (battery) h.flags6 |= 0x02;
+    return h;
+}
+
+static void unrom512_flash_command(uint8_t command) {
+    cart_cpu_write(0xC000, 0x01);
+    cart_cpu_write(0x9555, 0xAA);
+    cart_cpu_write(0xC000, 0x00);
+    cart_cpu_write(0xAAAA, 0x55);
+    cart_cpu_write(0xC000, 0x01);
+    cart_cpu_write(0x9555, command);
+}
+
+static void unrom512_flash_erase_prefix(void) {
+    unrom512_flash_command(0x80);
+    cart_cpu_write(0xC000, 0x01);
+    cart_cpu_write(0x9555, 0xAA);
+    cart_cpu_write(0xC000, 0x00);
+    cart_cpu_write(0xAAAA, 0x55);
+}
+
+static int test_unrom512_banks_flash_and_mirroring(void) {
+    iNESHeader legacy = header_for(30, 0x40000, true);
+    RomRamSizes ram;
+    CHECK(rom_ram_sizes(&legacy, &ram) == 0);
+    CHECK(ram.prg_ram == 0 && ram.prg_nvram == 0 && ram.chr_ram == 0x8000 && ram.chr_nvram == 0);
+    CHECK(fixture_with_header(&legacy, 0x40000, 0x8000) == 30);
+
+    iNESHeader h = unrom512_header(1, true, 9);
+    CHECK(fixture_with_header(&h, 0x40000, 0x8000) == 30);
+    CHECK(cart_cpu_read(0x8000) == 0 && cart_cpu_read(0xC000) == 30);
+
+    cart_cpu_write(0xC000, 0x03);
+    CHECK(cart_cpu_read(0x8000) == 6 && cart_cpu_read(0xC000) == 30);
+    cart_cpu_write(0xC000, 0x63);
+    cart_ppu_write(0x0123, 0xD3);
+    cart_cpu_write(0xC000, 0x23);
+    cart_ppu_write(0x0123, 0xB1);
+    cart_cpu_write(0xC000, 0x63);
+    CHECK(cart_ppu_read(0x0123) == 0xD3);
+    CHECK(cart_get_mirroring() == MIRROR_HORIZONTAL); // Submapper 1 ignores bit 7.
+
+    // A valid byte-program command can only clear flash bits.
+    unrom512_flash_command(0xA0);
+    cart_cpu_write(0xC000, 0x03);
+    CHECK(cart_cpu_read(0x8123) == 6);
+    cart_cpu_write(0x8123, 0x04);
+    CHECK(cart_cpu_read(0x8123) == 0x04);
+    unrom512_flash_command(0xA0);
+    cart_cpu_write(0xC000, 0x03);
+    cart_cpu_write(0x8123, 0xFF);
+    CHECK(cart_cpu_read(0x8123) == 0x04);
+
+    // Invalid and interrupted unlock sequences do not alter program storage.
+    cart_cpu_write(0xC000, 0x05);
+    uint8_t untouched = cart_cpu_read(0x8234);
+    cart_cpu_write(0xC000, 0x01);
+    cart_cpu_write(0x9555, 0xAA);
+    cart_cpu_write(0xC000, 0x00);
+    cart_cpu_write(0xAAAA, 0x54);
+    cart_cpu_write(0xC000, 0x05);
+    cart_cpu_write(0x8234, 0x00);
+    CHECK(cart_cpu_read(0x8234) == untouched);
+    cart_cpu_write(0xC000, 0x05);
+    untouched = cart_cpu_read(0x8234);
+    cart_cpu_write(0xC000, 0x01);
+    cart_cpu_write(0x9554, 0xAA); // Unlock data at the wrong physical address.
+    cart_cpu_write(0xC000, 0x00);
+    cart_cpu_write(0xAAAA, 0x55);
+    cart_cpu_write(0xC000, 0x01);
+    cart_cpu_write(0x9555, 0xA0);
+    cart_cpu_write(0xC000, 0x05);
+    cart_cpu_write(0x8234, 0x00);
+    CHECK(cart_cpu_read(0x8234) == untouched);
+
+    // Software ID mode responds through the currently selected physical bank.
+    unrom512_flash_command(0x90);
+    cart_cpu_write(0xC000, 0x00);
+    CHECK(cart_cpu_read(0x8000) == 0xBF && cart_cpu_read(0x8001) == 0xB7);
+    cart_cpu_write(0x8000, 0xF0);
+    CHECK(cart_cpu_read(0x8000) == 0);
+
+    // Sector erase uses the selected physical bank and restores the whole 4KB sector.
+    unrom512_flash_command(0xA0);
+    cart_cpu_write(0xC000, 0x04);
+    cart_cpu_write(0x8123, 0x00);
+    CHECK(cart_cpu_read(0x8123) == 0x00);
+    unrom512_flash_erase_prefix();
+    cart_cpu_write(0xC000, 0x04);
+    cart_cpu_write(0x8123, 0x30);
+    CHECK(cart_cpu_read(0x8123) == 0xFF && cart_cpu_read(0x8FFF) == 0xFF);
+
+    // Chip erase follows the six-write sequence as well.
+    unrom512_flash_erase_prefix();
+    cart_cpu_write(0xC000, 0x01);
+    cart_cpu_write(0x9555, 0x10);
+    CHECK(cart_cpu_read(0x8000) == 0xFF && cart_cpu_read(0xC000) == 0xFF);
+
+    // Read-only boards treat the same addresses as bank writes and keep PRG immutable.
+    h = unrom512_header(1, false, 9);
+    CHECK(fixture_with_header(&h, 0x40000, 0x8000) == 30);
+    cart_cpu_write(0x8000, 0x03);
+    CHECK(cart_cpu_read(0x8000) == 6);
+    uint8_t readonly = fixture_prg[3 * 0x4000 + 0x123];
+    unrom512_flash_command(0xA0);
+    cart_cpu_write(0x8000, 0x03);
+    cart_cpu_write(0x8123, 0x00);
+    CHECK(fixture_prg[3 * 0x4000 + 0x123] == readonly);
+
+    // Switchable one-screen and submapper 3 H/V mirroring use latch bit 7.
+    h = unrom512_header(1, false, 9);
+    h.flags6 |= 0x08;
+    CHECK(fixture_with_header(&h, 0x40000, 0x8000) == 30);
+    CHECK(cart_get_mirroring() == MIRROR_SINGLE0);
+    cart_cpu_write(0x8000, 0x80);
+    CHECK(cart_get_mirroring() == MIRROR_SINGLE1);
+    h = unrom512_header(3, false, 9);
+    CHECK(fixture_with_header(&h, 0x40000, 0x8000) == 30);
+    CHECK(cart_get_mirroring() == MIRROR_VERTICAL);
+    cart_cpu_write(0x8000, 0x00);
+    CHECK(cart_get_mirroring() == MIRROR_HORIZONTAL);
+    cart_cpu_write(0x8000, 0x80);
+    CHECK(cart_get_mirroring() == MIRROR_VERTICAL);
+
+    // Submapper 4 reserves $8000-$BFFF for its LED register.
+    h = unrom512_header(4, false, 9);
+    CHECK(fixture_with_header(&h, 0x40000, 0x8000) == 30);
+    cart_cpu_write(0xC000, 0x03);
+    CHECK(cart_cpu_read(0x8000) == 6);
+    cart_cpu_write(0x8000, 0x07);
+    CHECK(cart_cpu_read(0x8000) == 6);
+
+    // Four-screen boards use the top CHR-RAM page as cartridge nametable RAM.
+    h = unrom512_header(1, false, 9);
+    h.flags6 |= 0x09;
+    CHECK(fixture_with_header(&h, 0x40000, 0x8000) == 30);
+    uint8_t nt[0x1000] = {0};
+    cart_nt_write(0x2000, 0x20, nt);
+    cart_nt_write(0x2C00, 0x2C, nt);
+    CHECK(cart_nt_read(0x2000, nt) == 0x20 && cart_nt_read(0x2C00, nt) == 0x2C);
+    CHECK(fixture_chr[0x6000] == 0x20 && fixture_chr[0x6C00] == 0x2C);
+    cart_nt_write(0x3000, 0x30, nt);
+    cart_nt_write(0x3E00, 0x3E, nt);
+    CHECK(cart_nt_read(0x3000, nt) == 0x30 && cart_nt_read(0x3E00, nt) == 0x3E);
+    CHECK(cart_nt_read(0x2000, nt) == 0x20 && fixture_chr[0x7000] == 0x30);
+    ppu_power_on(&ppu);
+    ppu_write(0x2E12, 0xA6);
+    ppu_write(0x3E12, 0x69);
+    CHECK(ppu_read(0x2E12) == 0xA6 && ppu_read(0x3E12) == 0x69);
+    CHECK(fixture_chr[0x6E12] == 0xA6 && fixture_chr[0x7E12] == 0x69);
+    cart_cpu_write(0x8000, 0x60);
+    CHECK(cart_ppu_read(0x0E12) == 0xA6 && cart_ppu_read(0x1E12) == 0x69);
+    ppu_write(0x3F00, 0x2A);
+    CHECK(ppu_read(0x3F00) == 0x2A && fixture_chr[0x7F00] != 0x2A);
+
+    // Malformed flash metadata and undersized four-screen CHR fail transactionally.
+    iNESHeader valid = unrom512_header(1, false, 9);
+    size_t image_size;
+    uint8_t *image = image_for(&valid, 0x40000, 0, &image_size);
+    CHECK(image != NULL && load_rom_memory(image, image_size) == 0);
+    free(image);
+    uint8_t *previous_prg = prg_rom;
+    uint8_t *previous_chr = chr_rom;
+    iNESHeader previous_header = ines_header;
+    iNESHeader invalid = unrom512_header(5, true, 9);
+    image = image_for(&invalid, 0x40000, 0, &image_size);
+    CHECK(image != NULL && load_rom_memory(image, image_size) == -1);
+    free(image);
+    invalid = unrom512_header(1, false, 8);
+    invalid.flags6 |= 0x09;
+    image = image_for(&invalid, 0x40000, 0, &image_size);
+    CHECK(image != NULL && load_rom_memory(image, image_size) == -1);
+    free(image);
+    CHECK(prg_rom == previous_prg && chr_rom == previous_chr);
+    CHECK(memcmp(&ines_header, &previous_header, sizeof(ines_header)) == 0);
+    unload_rom();
+    return 0;
+}
+
+static int test_unrom512_physical_flash_address(void) {
+    iNESHeader h = unrom512_header(1, true, 9);
+    CHECK(fixture_with_header(&h, 0x40000, 0x8000) == 30);
+    cart_cpu_write(0xC000, 0x13);
+    CHECK(cart_cpu_read(0x8123) == 6);
+    unrom512_flash_command(0xA0);
+    cart_cpu_write(0xC000, 0x13);
+    cart_cpu_write(0x8123, 0);
+    CHECK(cart_cpu_read(0x8123) == 6); // Unpopulated flash addresses do not wrap for writes.
+    unrom512_flash_erase_prefix();
+    cart_cpu_write(0xC000, 0x13);
+    cart_cpu_write(0x8123, 0x30);
+    CHECK(cart_cpu_read(0x8123) == 6);
+    cart_cpu_write(0xC000, 3);
+    CHECK(cart_cpu_read(0x8123) == 6);
+
+    // The same physical address exists on a 512KB flash chip.
+    h.prg_rom_chunks = 32;
+    CHECK(fixture_with_header(&h, 0x80000, 0x8000) == 30);
+    unrom512_flash_command(0xA0);
+    cart_cpu_write(0xC000, 0x13);
+    cart_cpu_write(0x8123, 0);
+    CHECK(cart_cpu_read(0x8123) == 0);
+    cart_cpu_write(0xC000, 3);
+    CHECK(cart_cpu_read(0x8123) == 6);
+    unrom512_flash_erase_prefix();
+    cart_cpu_write(0xC000, 0x13);
+    cart_cpu_write(0x8123, 0x30);
+    CHECK(cart_cpu_read(0x8123) == 0xFF && cart_cpu_read(0x9000) == 38);
+
+    // Undefined commands consume their third command cycle without changing ID mode.
+    unrom512_flash_command(0x90);
+    unrom512_flash_command(0x00);
+    cart_cpu_write(0x8000, 0xF0);
+    CHECK(cart_cpu_read(0x8000) == 0xBF);
+    cart_cpu_write(0x8000, 0xF0);
+    CHECK(cart_cpu_read(0x8000) == 2);
+    unrom512_flash_command(0xA0);
+    cart_cpu_write(0xC000, 3);
+    cart_cpu_write(0x8123, 0xF0); // Program data $F0 is not an ID-exit command.
+    CHECK(cart_cpu_read(0x8123) == 0);
+
+    for (size_t prg_bytes = 0x4000; prg_bytes <= 0x80000; prg_bytes *= 2) {
+        h.prg_rom_chunks = (uint8_t)(prg_bytes / 0x4000);
+        h.flags6 &= (uint8_t)~2u;
+        CHECK(fixture_with_header(&h, prg_bytes, 0x8000) == 30);
+        cart_cpu_write(0x8000, 31);
+        CHECK(cart_cpu_read(0x8000) == (prg_bytes / 0x4000 - 1) * 2);
+        CHECK(cart_cpu_read(0xC000) == (prg_bytes / 0x4000 - 1) * 2);
+    }
+    h = unrom512_header(2, true, 9);
+    CHECK(fixture_with_header(&h, 0x40000, 0x8000) == 30);
+    memset(fixture_prg, 0xFF, 0x40000);
+    unrom512_flash_command(0xA0);
+    cart_cpu_write(0xC000, 3);
+    cart_cpu_write(0x8123, 0x96);
+    CHECK(cart_cpu_read(0x8123) == 0x96);
+    return 0;
+}
+
+static int test_unrom512_cpu_flash(void) {
+    iNESHeader h = unrom512_header(1, true, 9);
+    CHECK(fixture_with_header(&h, 0x40000, 0x8000) == 30);
+    nes_set_region(NES_REGION_NTSC);
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    cpu_power_on(&cpu);
+    const uint8_t program[] = {
+        0xA9, 1, 0x8D, 0, 0xC0,
+        0xA9, 0xAA, 0x8D, 0x55, 0x95,
+        0xA9, 0, 0x8D, 0, 0xC0,
+        0xA9, 0x55, 0x8D, 0xAA, 0xAA,
+        0xA9, 1, 0x8D, 0, 0xC0,
+        0xA9, 0xA0, 0x8D, 0x55, 0x95,
+        0xA9, 3, 0x8D, 0, 0xC0,
+        0xA9, 4, 0x8D, 0x23, 0x81,
+        0xAD, 0x23, 0x81
+    };
+    for (size_t i = 0; i < sizeof(program); ++i)
+        write_mem((uint16_t)(0x0200 + i), program[i]);
+    cpu.pc = 0x0200;
+    for (unsigned i = 0; i < 8; ++i) {
+        CHECK(cpu_step(&cpu) == 2);
+        CHECK(cpu_step(&cpu) == 4);
+    }
+    CHECK(cpu_step(&cpu) == 4 && cpu.a == 4);
+    CHECK(cart_cpu_read(0xC000) == 30);
+    cpu_soft_reset(&cpu);
+    CHECK(cart_cpu_read(0x8123) == 4);
+    return 0;
+}
+
 static void mmc5_enter_frame(uint8_t *nt) {
     (void)cart_nt_read(0x2000, nt);
     (void)cart_nt_read(0x2000, nt);
@@ -2203,7 +2480,7 @@ static int test_loader_ram_layouts(void) {
 
 typedef struct {
     char directory[96];
-    char rom[128], prg_save[128], chr_save[128];
+    char rom[128], prg_save[128], chr_save[128], flash_save[128];
 } SaveFixture;
 
 static int save_fixture_begin(SaveFixture *paths) {
@@ -2219,6 +2496,7 @@ static int save_fixture_begin(SaveFixture *paths) {
             snprintf(paths->rom, sizeof(paths->rom), "%s/cart.nes", paths->directory);
             snprintf(paths->prg_save, sizeof(paths->prg_save), "%s/cart.sav", paths->directory);
             snprintf(paths->chr_save, sizeof(paths->chr_save), "%s/cart.chr.sav", paths->directory);
+            snprintf(paths->flash_save, sizeof(paths->flash_save), "%s/cart.flash.sav", paths->directory);
             return 0;
         }
         if (errno != EEXIST) return -1;
@@ -2231,6 +2509,7 @@ static int save_fixture_end(const SaveFixture *paths) {
     int result = 0;
     if (remove(paths->prg_save) != 0 && errno != ENOENT) result = 1;
     if (remove(paths->chr_save) != 0 && errno != ENOENT) result = 1;
+    if (remove(paths->flash_save) != 0 && errno != ENOENT) result = 1;
 #ifdef _WIN32
     if (_rmdir(paths->directory) != 0) result = 1;
 #else
@@ -2315,6 +2594,63 @@ static int test_prg_nvram_persistence(void) {
     CHECK(save_fixture_begin(&paths) == 0);
     int result = prg_persistence_cases(&paths);
     return result | save_fixture_end(&paths);
+}
+
+static int test_unrom512_flash_persistence(void) {
+    SaveFixture paths;
+    CHECK(save_fixture_begin(&paths) == 0);
+    iNESHeader h = unrom512_header(1, true, 9);
+    CHECK(fixture_with_header(&h, 0x40000, 0x8000) == 30);
+    cart_battery_configure(paths.rom, true);
+
+    // Latching banks alone must not create or dirty a flash save.
+    cart_cpu_write(0xC000, 0x07);
+    cart_cpu_write(0xC000, 0x02);
+    cart_battery_flush();
+    CHECK(saved_file_size(paths.flash_save) == -1);
+
+    // A failed replacement keeps the flash dirty so a later flush can retry.
+#ifdef _WIN32
+    CHECK(_mkdir(paths.flash_save) == 0);
+#else
+    CHECK(mkdir(paths.flash_save, 0700) == 0);
+#endif
+
+    unrom512_flash_command(0xA0);
+    cart_cpu_write(0xC000, 0x03);
+    cart_cpu_write(0x8123, 0x04);
+    CHECK(cart_cpu_read(0x8123) == 0x04);
+    cart_battery_flush();
+#ifdef _WIN32
+    CHECK(_rmdir(paths.flash_save) == 0);
+#else
+    CHECK(rmdir(paths.flash_save) == 0);
+#endif
+    cart_battery_flush();
+    CHECK(saved_file_size(paths.flash_save) == 0x40000);
+    CHECK(saved_byte(paths.flash_save, 3 * 0x4000 + 0x123) == 0x04);
+    CHECK(saved_file_size(paths.prg_save) == -1);
+
+    // Reinitialization restores pristine fixture bytes before the flash save is loaded.
+    CHECK(fixture_with_header(&h, 0x40000, 0x8000) == 30);
+    CHECK(cart_cpu_read(0x8123) == 0);
+    cart_battery_configure(paths.rom, true);
+    cart_cpu_write(0xC000, 0x03);
+    CHECK(cart_cpu_read(0x8123) == 0x04);
+
+    // An erased sector is also persisted and restored.
+    unrom512_flash_erase_prefix();
+    cart_cpu_write(0xC000, 0x03);
+    cart_cpu_write(0x8123, 0x30);
+    CHECK(cart_cpu_read(0x8123) == 0xFF);
+    cart_battery_flush();
+    CHECK(saved_byte(paths.flash_save, 3 * 0x4000 + 0x123) == 0xFF);
+    CHECK(fixture_with_header(&h, 0x40000, 0x8000) == 30);
+    cart_battery_configure(paths.rom, true);
+    cart_cpu_write(0xC000, 0x03);
+    CHECK(cart_cpu_read(0x8123) == 0xFF);
+
+    return save_fixture_end(&paths);
 }
 
 static int mmc5_persistence_cases(const SaveFixture *paths) {
@@ -2707,14 +3043,17 @@ int test_mapper_accuracy(void) {
         test_taito48_cpu_irq,
         test_simple_mapper_registers,
         test_colordreams_bus_conflicts, test_bus_conflict_submappers,
-        test_mapper15_modes, test_action53_banks_and_mirroring, test_mmc5_memory_windows,
+        test_mapper15_modes, test_action53_banks_and_mirroring,
         test_action53_game_sizes, test_action53_largest_image,
+        test_unrom512_banks_flash_and_mirroring, test_mmc5_memory_windows,
+        test_unrom512_physical_flash_address, test_unrom512_cpu_flash,
         test_mmc5_exram_and_irq, test_mmc5_chr_fetch_modes, test_mmc5_extended_rendering,
         test_mmc5_rendered_ppu_paths, test_mmc5_audio_and_pcm, test_header_and_mapper_rejection,
         test_loader_trainers_and_sizes, test_loader_rejection_preserves_cart,
         test_loader_region_and_console_type,
         test_ram_header_sizes, test_prg_ram_capacity, test_mmc1_banked_ram,
         test_mmc5_banked_ram, test_loader_ram_layouts, test_prg_nvram_persistence,
+        test_unrom512_flash_persistence,
         test_mmc5_persistence,
         test_chr_nvram_persistence, test_chr_nvram_writers,
         test_mmc6_ram_mirroring, test_mmc6_protection, test_mmc6_banks_and_irq,

@@ -26,6 +26,12 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <errno.h>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
 #include "mapper.h"
 #include "eeprom.h"
 #include "../system/timing.h"
@@ -57,7 +63,7 @@ typedef struct {
 static CartCommon C;
 static Mapper mapper_nrom, mapper_mmc1, mapper_uxrom, mapper_cnrom, mapper_mmc3, mapper_tqrom;
 static Mapper mapper_mmc5, mapper_aorom, mapper_mmc2, mapper_mmc4, mapper_colordreams;
-static Mapper mapper_cprom, mapper_100in1, mapper_bandai, mapper_action53;
+static Mapper mapper_cprom, mapper_100in1, mapper_bandai, mapper_action53, mapper_unrom512;
 static Mapper mapper_taito33, mapper_taito48;
 Mapper *cart = NULL;
 static bool mapper_irq_line = false;
@@ -95,6 +101,9 @@ static char *battery_save_path = NULL;
 static char *chr_save_path = NULL;
 static Eeprom24 bandai_eeprom[2];
 static char *eeprom_save_path[2];
+static char *flash_save_path = NULL;
+static bool flash_dirty = false;
+static bool unrom512_four_screen_chr = false;
 static RamBlock *mmc5_ram_location(uint16_t a, size_t *offset);
 
 void cart_apply_trainer(const uint8_t trainer[512]) {
@@ -219,8 +228,47 @@ static void flush_mmc5_battery(void) {
     mmc5_exram_dirty = false;
 }
 
+static void flush_flash_battery(void) {
+    if (!battery_enabled || !flash_save_path || !flash_dirty) return;
+    size_t path_size = strlen(flash_save_path);
+    if (path_size > SIZE_MAX - 32) return;
+    char *temporary = malloc(path_size + 32);
+    if (!temporary) return;
+    static unsigned serial;
+    FILE *file = NULL;
+    for (unsigned attempt = 0; attempt < 100; ++attempt) {
+        snprintf(temporary, path_size + 32, "%s.tmp-%u", flash_save_path, serial++);
+        file = fopen(temporary, "wbx");
+        if (file || errno != EEXIST) break;
+    }
+    if (!file) {
+        fprintf(stderr, "Cannot create temporary flash save for '%s'\n", flash_save_path);
+        free(temporary);
+        return;
+    }
+    size_t written = fwrite(C.prg, 1, C.prg_sz, file);
+    int closed = fclose(file);
+    bool replaced = false;
+    if (written == C.prg_sz && closed == 0) {
+#ifdef _WIN32
+        replaced = MoveFileExA(temporary, flash_save_path,
+                              MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+#else
+        replaced = rename(temporary, flash_save_path) == 0;
+#endif
+    }
+    if (replaced) flash_dirty = false;
+    else {
+        fprintf(stderr, "Cannot replace flash save '%s'; changes remain unsaved\n", flash_save_path);
+        remove(temporary);
+    }
+    free(temporary);
+}
+
 void cart_battery_flush(void) {
-    if (cart == &mapper_mmc5) flush_mmc5_battery();
+    if (cart == &mapper_unrom512)
+        flush_flash_battery();
+    else if (cart == &mapper_mmc5) flush_mmc5_battery();
     else flush_battery(battery_save_path, prg_save_ram.data, prg_save_ram.size, &prg_ram_dirty);
     flush_battery(chr_save_path, C.chr, C.ram.chr_nvram, &chr_ram_dirty);
     for (unsigned i = 0; i < 2; ++i)
@@ -232,6 +280,7 @@ void cart_battery_shutdown(void) {
     cart_battery_flush();
     free(battery_save_path);
     free(chr_save_path);
+    free(flash_save_path);
     battery_save_path = NULL;
     chr_save_path = NULL;
     for (unsigned i = 0; i < 2; ++i) {
@@ -239,10 +288,12 @@ void cart_battery_shutdown(void) {
         eeprom_save_path[i] = NULL;
         bandai_eeprom[i].dirty = false;
     }
+    flash_save_path = NULL;
     battery_enabled = false;
     prg_ram_dirty = false;
     chr_ram_dirty = false;
     mmc5_exram_dirty = false;
+    flash_dirty = false;
 }
 
 static void load_battery(const char *path, uint8_t *data, size_t size) {
@@ -272,14 +323,28 @@ static void load_mmc5_battery(const char *path) {
     fclose(fp);
 }
 
+static void load_flash_battery(const char *path) {
+    if (!path || !C.prg || !C.prg_sz) return;
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return;
+    size_t bytes_read = fread(C.prg, 1, C.prg_sz, fp);
+    if (bytes_read < C.prg_sz && ferror(fp))
+        fprintf(stderr, "Failed to read flash save '%s' (%zu/%zu bytes)\n",
+                path, bytes_read, C.prg_sz);
+    fclose(fp);
+}
+
 void cart_battery_configure(const char *rom_path, bool has_battery) {
     cart_battery_shutdown();
     bool serial_storage = bandai_eeprom[0].capacity || bandai_eeprom[1].capacity;
     if (!rom_path || (!has_battery && !serial_storage)) return;
+    if (has_battery && cart == &mapper_unrom512)
+        flash_save_path = build_save_path(rom_path, ".flash.sav");
     if (has_battery && prg_save_ram.size) battery_save_path = build_save_path(rom_path, ".sav");
     if (has_battery && C.ram.chr_nvram) chr_save_path = build_save_path(rom_path, ".chr.sav");
     bool paths_valid = (!has_battery || !prg_save_ram.size || battery_save_path)
-                    && (!has_battery || !C.ram.chr_nvram || chr_save_path);
+                    && (!has_battery || !C.ram.chr_nvram || chr_save_path)
+                    && (!has_battery || cart != &mapper_unrom512 || flash_save_path);
     for (unsigned i = 0; i < 2; ++i) {
         if (!bandai_eeprom[i].capacity) continue;
         eeprom_save_path[i] = build_save_path(rom_path,
@@ -291,8 +356,10 @@ void cart_battery_configure(const char *rom_path, bool has_battery) {
         cart_battery_shutdown();
         return;
     }
-    battery_enabled = battery_save_path || chr_save_path || eeprom_save_path[0] || eeprom_save_path[1];
-    if (cart == &mapper_mmc5) load_mmc5_battery(battery_save_path);
+    battery_enabled = battery_save_path || chr_save_path || flash_save_path
+                    || eeprom_save_path[0] || eeprom_save_path[1];
+    if (cart == &mapper_unrom512) load_flash_battery(flash_save_path);
+    else if (cart == &mapper_mmc5) load_mmc5_battery(battery_save_path);
     else load_battery(battery_save_path, prg_save_ram.data, prg_save_ram.size);
     load_battery(chr_save_path, C.chr, C.ram.chr_nvram);
     for (unsigned i = 0; i < 2; ++i)
@@ -313,6 +380,7 @@ void mapper_shutdown(void) {
     memset(tqrom_chr_ram, 0, sizeof(tqrom_chr_ram));
     memset(bandai_eeprom, 0, sizeof(bandai_eeprom));
     mmc5_exram_dirty = false;
+    unrom512_four_screen_chr = false;
 }
 
 // Helpers
@@ -1670,6 +1738,10 @@ static void mmc5_reset(void) {
 }
 
 uint8_t cart_nt_read(uint16_t addr, uint8_t *nt_ram) {
+    if (cart == &mapper_unrom512 && unrom512_four_screen_chr) {
+        size_t offset = 0x6000u + ((addr - 0x2000u) & 0x1FFFu);
+        return C.chr[offset];
+    }
     if (cart == &mapper_mmc5) {
         mmc5_begin_ppu_read(addr);
         uint8_t value;
@@ -1697,6 +1769,11 @@ uint8_t cart_nt_read(uint16_t addr, uint8_t *nt_ram) {
 }
 
 void cart_nt_write(uint16_t addr, uint8_t v, uint8_t *nt_ram) {
+    if (cart == &mapper_unrom512 && unrom512_four_screen_chr) {
+        size_t offset = 0x6000u + ((addr - 0x2000u) & 0x1FFFu);
+        chr_ram_write(offset, v);
+        return;
+    }
     if (cart == &mapper_mmc5) {
         uint16_t off = (uint16_t)((addr - 0x2000u) & 0x0FFFu);
         uint16_t in  = (uint16_t)(off & 0x03FFu);
@@ -2299,6 +2376,205 @@ static void m28_power_on(void) {
     m28.prg_bank[1] = C.prg_sz / PRG_BANK_16K - 1;
 }
 
+// Mapper 30: UNROM 512.
+typedef enum {
+    FLASH_WAITING = 0,
+    FLASH_PROGRAM,
+    FLASH_ERASE
+} FlashMode;
+
+static struct {
+    uint8_t prg_bank;
+    uint8_t chr_bank;
+    uint8_t flash_cycle;
+    FlashMode flash_mode;
+    bool software_id;
+    bool flash_writable;
+    bool mirroring_bit_enabled;
+    bool led_variant;
+    Mirroring mirr;
+} m30;
+
+static void m30_flash_reset_command(void) {
+    m30.flash_mode = FLASH_WAITING;
+    m30.flash_cycle = 0;
+}
+
+static int m30_flash_read(size_t physical) {
+    if (!m30.software_id) return -1;
+    switch (physical & 0x1FF) {
+        case 0: return 0xBF;
+        case 1: return 0xB7;
+        default: return 0xFF;
+    }
+}
+
+static void m30_flash_program(size_t physical, uint8_t value) {
+    if (physical >= C.prg_sz) return;
+    uint8_t programmed = C.prg[physical] & value;
+    if (programmed != C.prg[physical]) {
+        C.prg[physical] = programmed;
+        flash_dirty = true;
+    }
+}
+
+static void m30_flash_erase_sector(size_t physical) {
+    size_t offset = physical & 0x7F000u;
+    if (offset + 0x1000 > C.prg_sz) return;
+    for (size_t i = 0; i < 0x1000; ++i) {
+        if (C.prg[offset + i] != 0xFF) {
+            memset(C.prg + offset, 0xFF, 0x1000);
+            flash_dirty = true;
+            break;
+        }
+    }
+}
+
+static void m30_flash_chip_erase(void) {
+    for (size_t i = 0; i < C.prg_sz; ++i) {
+        if (C.prg[i] != 0xFF) {
+            memset(C.prg, 0xFF, C.prg_sz);
+            flash_dirty = true;
+            return;
+        }
+    }
+}
+
+static void m30_flash_write(size_t physical, uint8_t value) {
+    unsigned command_addr = (unsigned)(physical & 0x7FFFu);
+    if (m30.flash_mode == FLASH_PROGRAM) {
+        m30_flash_program(physical, value);
+        m30_flash_reset_command();
+        return;
+    }
+    if (m30.flash_mode == FLASH_ERASE) {
+        if (m30.flash_cycle == 3 && command_addr == 0x5555 && value == 0xAA) {
+            m30.flash_cycle = 4;
+            return;
+        }
+        if (m30.flash_cycle == 4 && command_addr == 0x2AAA && value == 0x55) {
+            m30.flash_cycle = 5;
+            return;
+        }
+        if (m30.flash_cycle == 5) {
+            if (command_addr == 0x5555 && value == 0x10) m30_flash_chip_erase();
+            else if (value == 0x30) m30_flash_erase_sector(physical);
+        }
+        m30_flash_reset_command();
+        return;
+    }
+
+    if (m30.flash_cycle == 0) {
+        if (command_addr == 0x5555 && value == 0xAA) m30.flash_cycle = 1;
+        else if (value == 0xF0) {
+            m30_flash_reset_command();
+            m30.software_id = false;
+        }
+        return;
+    }
+    if (m30.flash_cycle == 1 && command_addr == 0x2AAA && value == 0x55) {
+        m30.flash_cycle = 2;
+        return;
+    }
+    if (m30.flash_cycle == 2 && command_addr == 0x5555) {
+        m30.flash_cycle = 3;
+        switch (value) {
+            case 0x80:
+                m30.flash_mode = FLASH_ERASE;
+                m30.flash_cycle = 3;
+                return;
+            case 0x90:
+                m30_flash_reset_command();
+                m30.software_id = true;
+                return;
+            case 0xA0:
+                m30.flash_mode = FLASH_PROGRAM;
+                m30.flash_cycle = 3;
+                return;
+            case 0xF0:
+                m30_flash_reset_command();
+                m30.software_id = false;
+                return;
+            default:
+                return;
+        }
+    }
+    m30.flash_cycle = 0;
+}
+
+static void m30_latch(uint8_t value) {
+    size_t chr_banks = C.chr_sz / CHR_BANK_8K;
+    m30.prg_bank = value & 0x1F;
+    m30.chr_bank = (uint8_t)(((value >> 5) & 0x03) % chr_banks);
+    if (m30.mirroring_bit_enabled) {
+        if (C.submapper == 3)
+            m30.mirr = (value & 0x80) ? MIRROR_VERTICAL : MIRROR_HORIZONTAL;
+        else
+            m30.mirr = (value & 0x80) ? MIRROR_SINGLE1 : MIRROR_SINGLE0;
+    }
+}
+
+static uint8_t m30_cpu_read(uint16_t a) {
+    if (a < 0x8000) return cart_cpu_bus_input;
+    size_t bank = a < 0xC000 ? m30.prg_bank : C.prg_sz / PRG_BANK_16K - 1;
+    size_t physical = bank * PRG_BANK_16K + (a & 0x3FFF);
+    if (m30.flash_writable) {
+        int flash_value = m30_flash_read(physical);
+        if (flash_value >= 0) return (uint8_t)flash_value;
+    }
+    return C.prg[physical % C.prg_sz];
+}
+
+static void m30_cpu_write(uint16_t a, uint8_t value) {
+    if (a < 0x8000) return;
+    if (m30.led_variant && a < 0xC000) return;
+    if (!m30.flash_writable || a >= 0xC000) {
+        m30_latch(value);
+        return;
+    }
+    size_t physical = (size_t)m30.prg_bank * PRG_BANK_16K + (a & 0x3FFF);
+    m30_flash_write(physical, value);
+}
+
+static uint8_t m30_ppu_read(uint16_t a) {
+    a &= 0x1FFF;
+    return C.chr[(size_t)m30.chr_bank * CHR_BANK_8K + a];
+}
+
+static void m30_ppu_write(uint16_t a, uint8_t value) {
+    a &= 0x1FFF;
+    chr_ram_write((size_t)m30.chr_bank * CHR_BANK_8K + a, value);
+}
+
+static Mirroring m30_mirr(void) { return m30.mirr; }
+
+static void m30_power_on(const iNESHeader *h) {
+    memset(&m30, 0, sizeof(m30));
+    m30.flash_writable = (h->flags6 & 0x02) != 0;
+    m30.led_variant = C.submapper == 4;
+    m30.mirr = C.mirr_base;
+    m30.mirroring_bit_enabled = false;
+    unrom512_four_screen_chr = false;
+
+    if (C.submapper == 3) {
+        m30.mirroring_bit_enabled = true;
+        m30.mirr = MIRROR_VERTICAL;
+    } else {
+        switch (h->flags6 & 0x09) {
+            case 0x00: m30.mirr = MIRROR_HORIZONTAL; break;
+            case 0x01: m30.mirr = MIRROR_VERTICAL; break;
+            case 0x08:
+                m30.mirr = MIRROR_SINGLE0;
+                m30.mirroring_bit_enabled = true;
+                break;
+            case 0x09:
+                m30.mirr = MIRROR_FOUR;
+                unrom512_four_screen_chr = C.chr_sz >= 0x8000;
+                break;
+        }
+    }
+}
+
 // Mapper selection and initialization.
 static bool bandai_layout(int mapper, uint8_t submapper, bool nes2,
                           size_t prg_bytes, size_t chr_bytes, bool chr_is_ram,
@@ -2349,6 +2625,8 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         } else if (prg_total > 0x10000) {
             return false; // Legacy bank registers address at most eight 8KB pages.
         }
+    } else if (mapper_no == 30) {
+        if (prg_total != 0) return false;
     } else if (prg_total > 0x2000) {
         return false;
     }
@@ -2369,7 +2647,7 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         case 33: case 48: chr_limit = 0x80000; break;
         case 5: chr_limit = 0x100000; break;
         case 13: chr_limit = 0x4000; break;
-        case 28: chr_limit = 0x8000; break;
+        case 28: case 30: chr_limit = 0x8000; break;
         case 119: chr_limit = sizeof(tqrom_chr_ram); break;
         default: chr_limit = 0x2000; break;
     }
@@ -2397,7 +2675,7 @@ int mapper_init_from_header(const iNESHeader *h,
     uint8_t submapper = nes2 ? h->prg_ram_size >> 4 : 0;
     switch (mapper_no) {
         case 0: case 1: case 2: case 3: case 4: case 5:
-        case 7: case 9: case 10: case 11: case 13: case 15: case 28: case 119: case 155:
+        case 7: case 9: case 10: case 11: case 13: case 15: case 28: case 30: case 119: case 155:
         case 16: case 153: case 157: case 159:
         case 33: case 48:
             break;
@@ -2409,7 +2687,8 @@ int mapper_init_from_header(const iNESHeader *h,
         || (mapper_no == 4 && (submapper == 1 || submapper == 3))
         || (mapper_no == 16 && (submapper == 4 || submapper == 5))
         || (mapper_no == 48 && submapper == 1)
-        || ((mapper_no == 2 || mapper_no == 3 || mapper_no == 7) && submapper <= 2))) {
+        || ((mapper_no == 2 || mapper_no == 3 || mapper_no == 7) && submapper <= 2)
+        || (mapper_no == 30 && submapper <= 4))) {
         fprintf(stderr, "Unsupported mapper/submapper: %d/%u\n", mapper_no, submapper);
         return -1;
     }
@@ -2446,6 +2725,12 @@ int mapper_init_from_header(const iNESHeader *h,
         fprintf(stderr, "Unsupported ROM/RAM size for mapper 28\n");
         return -1;
     }
+    if (mapper_no == 30 && (prg_sz > 0x80000 || (prg_sz & (prg_sz - 1)) != 0
+        || !chr_is_ram || (chr_sz != 0x2000 && chr_sz != 0x4000 && chr_sz != 0x8000)
+        || ((h->flags6 & 0x09) == 0x09 && submapper != 3 && chr_sz != 0x8000))) {
+        fprintf(stderr, "Unsupported ROM/RAM size for mapper 30\n");
+        return -1;
+    }
     if (!ram_geometry_supported(mapper_no, nes2, &ram, chr_is_ram, chr_sz)
         || (mapper_no == 4 && submapper == 1 && ram.prg_ram + ram.prg_nvram != 0x400)) {
         fprintf(stderr, "Unsupported RAM layout for mapper %d (PRG %zu+%zu, CHR %zu+%zu)\n",
@@ -2475,7 +2760,8 @@ int mapper_init_from_header(const iNESHeader *h,
     C.submapper = submapper;
     C.mmc1a = mapper_no == 155;
     C.bus_conflicts = mapper_no == 11
-        || (submapper == 2 && (mapper_no == 2 || mapper_no == 3 || mapper_no == 7));
+        || (submapper == 2 && (mapper_no == 2 || mapper_no == 3 || mapper_no == 7 || mapper_no == 30))
+        || (mapper_no == 30 && submapper == 0 && !(h->flags6 & 2));
     
     // iNES flags6:
     // bit 0 = 1 -> VERTICAL mirroring, 0 -> HORIZONTAL mirroring
@@ -2566,6 +2852,12 @@ int mapper_init_from_header(const iNESHeader *h,
                         taito48_ppu_read, taito48_ppu_write, taito48_reset, taito48_mirr);
             mapper_taito48.clock = taito48_clock;
             cart = &mapper_taito48;
+            break;
+        case 30:
+            build_mapper(&mapper_unrom512, m30_cpu_read, m30_cpu_write,
+                        m30_ppu_read, m30_ppu_write, NULL, m30_mirr);
+            cart = &mapper_unrom512;
+            m30_power_on(h);
             break;
         case 119:
             build_mapper(&mapper_tqrom, mmc3_cpu_read, mmc3_cpu_write,
