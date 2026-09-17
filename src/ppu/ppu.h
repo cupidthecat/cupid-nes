@@ -129,6 +129,7 @@ typedef struct {
     int      dot;            // 0..340
     bool     odd_frame;
     bool     frame_complete; // set true at end of pre-render to signal frame done
+    uint64_t frame_count;    // Monotonic completed-frame count for synchronized consoles
     uint64_t total_cycles;   // Monotonic PPU clock for cartridge bus events
     unsigned cpu_clock_phase; // Remainder for standalone CPU-clock stepping
     
@@ -148,6 +149,14 @@ typedef struct {
     uint8_t  at_latch_hi;    // Attribute latch for next tile
     uint8_t  pixel_indices[256 * 240]; // Beam output before the frontend's RGB palette.
 } PPU;
+
+typedef struct {
+    PPU state;
+    uint8_t vram[NT_RAM_SIZE];
+    uint8_t palette[PPU_PALETTE_SIZE];
+    uint8_t bg_opaque[256 * 240];
+    uint64_t open_bus_expire[8];
+} PpuMachineContext;
 
 // PPU Memory
 extern uint8_t ppu_vram[NT_RAM_SIZE];        // Nametable RAM only
@@ -173,6 +182,8 @@ void ppu_write(uint16_t addr, uint8_t value);
 void ppu_reset(PPU* ppu);
 void ppu_power_on(PPU* ppu);
 void ppu_soft_reset(PPU* ppu);
+// Select an independent PPU/VRAM context and render target. NULL selects the ordinary console.
+void ppu_select_machine(PpuMachineContext *context, uint32_t *framebuffer_target);
 uint32_t get_color(uint8_t pixel);
 uint16_t ppu_pixel_brightness(unsigned x, unsigned y);
 void start_frame();

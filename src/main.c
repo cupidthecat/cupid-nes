@@ -42,6 +42,7 @@
 #include "ui/palette_tool.h"
 #include "system/timing.h"
 #include "system/hardware.h"
+#include "system/vs_system.h"
 
 #define AUDIO_SAMPLE_RATE 44100
 #define AUDIO_BUFFER_SAMPLES 1024
@@ -201,6 +202,8 @@ int main(int argc, char *argv[]) {
     bool fds_side_set = false;
     bool fds_start_ejected = false;
     bool fds_start_write_protected = false;
+    bool vs_dip_set = false;
+    uint16_t vs_dips = 0;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--console") == 0) {
             if (++i == argc || !nes_set_console_model_name(argv[i])) {
@@ -259,6 +262,19 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "Zapper radius must be an integer from 0 to 255\n");
                 return 1;
             }
+        } else if (strcmp(argv[i], "--vs-dip") == 0) {
+            if (++i == argc) {
+                fprintf(stderr, "VS DIP value must be an integer from 0 to 65535\n");
+                return 1;
+            }
+            char *end;
+            unsigned long value = strtoul(argv[i], &end, 0);
+            if (end == argv[i] || *end || value > 0xFFFFu) {
+                fprintf(stderr, "VS DIP value must be an integer from 0 to 65535\n");
+                return 1;
+            }
+            vs_dips = (uint16_t)value;
+            vs_dip_set = true;
         } else if (strcmp(argv[i], "--barcode") == 0) {
             if (++i == argc) {
                 fprintf(stderr, "Barcode requires 8 or 13 decimal digits\n");
@@ -309,7 +325,7 @@ int main(int argc, char *argv[]) {
                "[--ppu-startup-restriction] [--ppu-oam-decay] "
                "[--adapter TYPE] [--port1 DEVICE] [--port2 DEVICE] "
                "[--expansion DEVICE] [--barcode DIGITS] "
-               "[--zapper-radius PIXELS] [--tape-play FILE | --tape-record FILE] "
+               "[--zapper-radius PIXELS] [--vs-dip VALUE] [--tape-play FILE | --tape-record FILE] "
                "[--fds-bios BIOS] [--fds-side N] "
                "[--fds-eject] [--fds-write-protect] <rom-file>\n", argv[0]);
         return 1;
@@ -343,6 +359,11 @@ int main(int argc, char *argv[]) {
         : load_rom(rom_path);
     if(load_result != 0) {
         fprintf(stderr, "Failed to load ROM\n");
+        return 1;
+    }
+    if (vs_dip_set && !vs_set_dip_switches(vs_dips)) {
+        fprintf(stderr, "--vs-dip requires a VS System image\n");
+        unload_rom();
         return 1;
     }
     if (barcode && !cart_set_barcode(barcode)) {
@@ -389,6 +410,13 @@ int main(int argc, char *argv[]) {
 
     printf("Resetting CPU...\n");
     cpu_power_on(&cpu);
+    vs_power_on_secondary();
+    if (vs_enabled()) {
+        printf("VS System: %s, PPU model %u, DIP $%04X\n",
+               vs_dual_system() ? "dual" : "single", (unsigned)vs_ppu_model(),
+               (unsigned)vs_dip_switches());
+        printf("VS controls: 5-8 coin slots, F1/F2 service buttons\n");
+    }
     if (tape_play_path && !family_basic_tape_load_file(tape_play_path)) {
         fprintf(stderr, "Could not load tape: %s\n", tape_play_path);
         unload_rom();
@@ -529,9 +557,16 @@ int main(int argc, char *argv[]) {
                             ppu_soft_reset(&ppu);
                             apu_soft_reset(&apu);
                             cpu_soft_reset(&cpu);
+                            vs_soft_reset_secondary();
                             if (audio_dev) SDL_UnlockAudioDevice(audio_dev);
                         }
                         break;
+                    case SDLK_5: if (vs_enabled()) vs_set_coin(0, down != 0); break;
+                    case SDLK_6: if (vs_enabled()) vs_set_coin(1, down != 0); break;
+                    case SDLK_7: if (vs_dual_system()) vs_set_coin(2, down != 0); break;
+                    case SDLK_8: if (vs_dual_system()) vs_set_coin(3, down != 0); break;
+                    case SDLK_F1: if (vs_enabled()) vs_set_service(0, down != 0); break;
+                    case SDLK_F2: if (vs_dual_system()) vs_set_service(1, down != 0); break;
                     case SDLK_z:        joypad_set(&pad1, BTN_A,      down); break;
                     case SDLK_x:        joypad_set(&pad1, BTN_B,      down); break;
                     case SDLK_RSHIFT:   joypad_set(&pad1, BTN_SELECT, down); break;
@@ -584,9 +619,9 @@ int main(int argc, char *argv[]) {
         if (!running) break;
     
         // Run CPU steps until the PPU completes the current frame.
-        start_frame();
+        vs_start_frame();
         while (!ppu.frame_complete) {
-            cpu_step(&cpu);
+            vs_cpu_step();
         }
 
         // Present the frame, then draw the palette UI on top.

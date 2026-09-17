@@ -32,14 +32,39 @@
 #include "../rom/mapper.h"
 #include "../joypad/joypad.h"
 #include "../system/timing.h"
+#include "../system/vs_system.h"
 
 uint8_t ram[0x0800];        // 2KB internal RAM
 #define APU_IO_SIZE 0x20              // cover $4000-$401F
 uint8_t apu_io[APU_IO_SIZE];          // 32 bytes
 #define APU_IDX(a) ((uint16_t)((a) - 0x4000))
+uint64_t cpu_total_cycles = 0;
+static CpuRuntimeState main_runtime = {.ppu_master_phase = 3};
+static CpuRuntimeState *cpu_runtime = &main_runtime;
+static uint8_t *cpu_ram = ram;
+static uint64_t *cpu_cycles = &cpu_total_cycles;
+
+#define cpu_external_bus (cpu_runtime->external_bus)
+#define cpu_internal_bus (cpu_runtime->internal_bus)
+#define cpu_nmi_pending (cpu_runtime->nmi_pending)
+#define cpu_nmi_line (cpu_runtime->nmi_line)
+#define cpu_nmi_previous_line (cpu_runtime->nmi_previous_line)
+#define cpu_nmi_ready (cpu_runtime->nmi_ready)
+#define cpu_nmi_injected (cpu_runtime->nmi_injected)
+#define cpu_irq_polled (cpu_runtime->irq_polled)
+#define cpu_irq_ready (cpu_runtime->irq_ready)
+#define cpu_oam_dma_pending (cpu_runtime->oam_dma_pending)
+#define cpu_oam_dma_page (cpu_runtime->oam_dma_page)
+#define ppu_master_phase (cpu_runtime->ppu_master_phase)
+#define joypad_read_valid (cpu_runtime->joypad_read_valid)
+#define joypad_read_addr (cpu_runtime->joypad_read_addr)
+#define joypad_read_cycle (cpu_runtime->joypad_read_cycle)
+#define joypad_read_value (cpu_runtime->joypad_read_value)
+#define joypad_write_pending (cpu_runtime->joypad_write_pending)
+#define joypad_write_value (cpu_runtime->joypad_write_value)
+#define active_cpu_cycles (*cpu_cycles)
+
 // CPU-side data-bus latches (distinct from the PPU's $200x open-bus).
-static uint8_t cpu_external_bus = 0;
-static uint8_t cpu_internal_bus = 0;
 static inline uint8_t bus_get(void) { return cpu_external_bus; }
 static inline uint8_t bus_get_internal(void) { return cpu_internal_bus; }
 static inline void bus_set(uint8_t v) {
@@ -50,24 +75,8 @@ static inline void bus_set_external(uint8_t v) { cpu_external_bus = v; }
 static inline void bus_set_internal(uint8_t v) { cpu_internal_bus = v; }
 CPU cpu;
 extern Joypad pad1, pad2;
-static bool cpu_nmi_pending = false;
-static bool cpu_nmi_line = false;
-static bool cpu_nmi_previous_line = false;
-static bool cpu_nmi_ready = false;
-static bool cpu_nmi_injected = false;
-static bool cpu_irq_polled = false;
-static bool cpu_irq_ready = false;
-static bool cpu_oam_dma_pending = false;
-static uint8_t cpu_oam_dma_page;
 static CPU *running_cpu = NULL;
 static bool in_bus_cycle = false;
-static uint8_t ppu_master_phase = 3;
-static bool joypad_read_valid = false;
-static uint16_t joypad_read_addr;
-static uint64_t joypad_read_cycle;
-static uint8_t joypad_read_value;
-static uint8_t joypad_write_pending;
-static uint8_t joypad_write_value;
 
 typedef enum {
     BUS_LATCH_BOTH,
@@ -81,7 +90,21 @@ static uint8_t finish_bus_read_target(uint16_t addr, BusLatchTarget target, uint
 static void process_pending_dma(uint16_t read_addr, bool opcode_fetch);
 
 uint64_t cpu_get_bus_cycle(void) {
-    return cpu_total_cycles;
+    return active_cpu_cycles;
+}
+
+void cpu_select_machine(CpuMachineContext *context) {
+    running_cpu = NULL;
+    in_bus_cycle = false;
+    if (context) {
+        cpu_runtime = &context->runtime;
+        cpu_ram = context->ram;
+        cpu_cycles = &context->total_cycles;
+    } else {
+        cpu_runtime = &main_runtime;
+        cpu_ram = ram;
+        cpu_cycles = &cpu_total_cycles;
+    }
 }
 
 static void clock_ppu_master(unsigned clocks) {
@@ -96,9 +119,9 @@ static void begin_cpu_cycle(bool read) {
     unsigned start_clocks = timing->cpu_divider / 2;
     in_bus_cycle = true;
     clock_ppu_master(read ? start_clocks - 1 : start_clocks + 1);
-    cpu_total_cycles++;
+    active_cpu_cycles++;
     if (cart && cart->clock) cart->clock(1);
-    apu_step(&apu, 1);
+    apu_step(apu_active_state(), 1);
     if (joypad_write_pending && --joypad_write_pending == 0) {
         joypad_write_ports(joypad_write_value);
     }
@@ -113,7 +136,8 @@ static void end_cpu_cycle(bool read) {
     if (cpu_nmi_line && !cpu_nmi_previous_line) cpu_nmi_pending = true;
     cpu_nmi_previous_line = cpu_nmi_line;
     cpu_irq_ready = cpu_irq_polled;
-    cpu_irq_polled = (apu_irq_pending(&apu) || cart_irq_pending()) &&
+    cpu_irq_polled = (apu_irq_pending(apu_active_state()) || cart_irq_pending()
+                      || vs_external_irq_pending()) &&
                      !(running_cpu->status & INTERRUPT_FLAG);
     in_bus_cycle = false;
 }
@@ -168,9 +192,6 @@ static const uint32_t nmi_brk_log_limit = 12000;
 #define NMI_BRK_LOG(...) do {} while (0)
 #endif
 
-// Global CPU cycle counter
-uint64_t cpu_total_cycles = 0;
-
 static uint8_t reset_bus_read(uint16_t addr) {
     begin_cpu_cycle(true);
     uint8_t value = read_bus(addr);
@@ -210,7 +231,7 @@ static void cpu_reset_sequence(CPU* cpu) {
 void cpu_power_on(CPU* cpu) {
     running_cpu = NULL;
     in_bus_cycle = false;
-    cpu_total_cycles = 0;
+    active_cpu_cycles = 0;
     ppu_master_phase = (uint8_t)(nes_timing()->ppu_divider - 1);
     cpu_external_bus = 0;
     cpu_internal_bus = 0;
@@ -245,7 +266,7 @@ static inline void bus_latch(BusLatchTarget target, uint8_t value) {
 
 static uint8_t read_bus_target(uint16_t addr, BusLatchTarget target) {
     if (addr <= 0x1FFF) {
-        uint8_t v = ram[addr & 0x07FF];
+        uint8_t v = cpu_ram[addr & 0x07FF];
         bus_latch(target, v);
         return v;
     }
@@ -259,12 +280,22 @@ static uint8_t read_bus_target(uint16_t addr, BusLatchTarget target) {
     // APU + I/O $4000-$4017
     if (addr >= 0x4000 && addr <= 0x4017) {
         if (addr == 0x4016) {
+            if (vs_enabled()) {
+                uint8_t v = vs_read_controller_port(0);
+                bus_latch(target, v);
+                return v;
+            }
             uint8_t mask = joypad_open_bus_mask(0);
             uint8_t v = (uint8_t)((bus_get() & mask) | (read_joypad_port(&pad1, addr) & ~mask));
             bus_latch(target, v);
             return v;
         }
         if (addr == 0x4017) {
+            if (vs_enabled()) {
+                uint8_t v = vs_read_controller_port(1);
+                bus_latch(target, v);
+                return v;
+            }
             uint8_t mask = joypad_open_bus_mask(1);
             uint8_t v = (uint8_t)((bus_get() & mask) | (read_joypad_port(&pad2, addr) & ~mask));
             bus_latch(target, v);
@@ -284,6 +315,11 @@ static uint8_t read_bus_target(uint16_t addr, BusLatchTarget target) {
 
     // The cartridge decides which expansion registers, ROM and RAM drive the bus.
     if (addr >= 0x4020) {
+        uint8_t protected_value;
+        if (vs_protection_read(addr, &protected_value)) {
+            bus_latch(target, protected_value);
+            return protected_value;
+        }
         uint8_t v = cart_cpu_read_bus(addr, bus_get());
         bus_latch(target, v);
         return v;
@@ -310,11 +346,11 @@ static void write_bus(uint16_t addr, uint8_t value) {
     uint8_t previous_bus = bus_get();
     bus_set(value); // writes still put value on the CPU bus latch
 
-    if (addr <= 0x1FFF) { ram[addr & 0x07FF] = value; return; }
+    if (addr <= 0x1FFF) { cpu_ram[addr & 0x07FF] = value; return; }
 
     if (addr >= 0x2000 && addr <= 0x3FFF) {
         // Cartridge address decoding sees the CPU address before PPU mirroring.
-        if (addr == 0x2000) cart_notify_ppu_ctrl_write(value);
+        if (addr == 0x2000 && !vs_ppu_is_2c05()) cart_notify_ppu_ctrl_write(value);
         ppu_reg_write_cpu(0x2000 | (addr & 7), value, previous_bus);
         return;
     }
@@ -326,6 +362,10 @@ static void write_bus(uint16_t addr, uint8_t value) {
             return;
         }
         if (addr == 0x4016) {
+            if (vs_enabled()) {
+                vs_write_4016(value);
+                return;
+            }
             if (!running_cpu || !in_bus_cycle) {
                 joypad_write_ports(value);
                 joypad_write_pending = 0;
@@ -333,7 +373,7 @@ static void write_bus(uint16_t addr, uint8_t value) {
                 joypad_write_value = value;
                 // OUT pins update at the next PUT boundary. A write on GET remains
                 // pending long enough for an immediately following PUT write to replace it.
-                joypad_write_pending = (cpu_total_cycles & 1u) ? 1 : 2;
+                joypad_write_pending = (active_cpu_cycles & 1u) ? 1 : 2;
             }
             return;
         }
@@ -600,9 +640,9 @@ static uint16_t get_absx_read(CPU* cpu) {
 
 static void masked_indexed_store(uint16_t base, uint8_t index, uint8_t reg) {
     uint16_t addr = (uint16_t)(base + index);
-    uint64_t before_dummy = cpu_total_cycles;
+    uint64_t before_dummy = active_cpu_cycles;
     (void)read_mem((base & 0xFF00u) | (addr & 0x00FFu));
-    bool dma_interrupted_dummy = cpu_total_cycles - before_dummy > 1;
+    bool dma_interrupted_dummy = active_cpu_cycles - before_dummy > 1;
     uint8_t value = dma_interrupted_dummy ? reg : (uint8_t)(reg & (uint8_t)((base >> 8) + 1));
     if ((base & 0xFF00u) != (addr & 0xFF00u)) {
         addr = (uint16_t)((addr & 0x00FFu) | ((uint16_t)((addr >> 8) & reg) << 8));
@@ -2215,20 +2255,22 @@ static uint8_t finish_dma_bus_read(uint16_t address, uint16_t halted_address, ui
 }
 
 static void cancel_active_dmc_dma(bool *dmc, bool *need_halt, bool *need_dummy) {
+    APU *active = apu_active_state();
     *dmc = false;
     *need_halt = false;
     *need_dummy = false;
-    apu.dmc.dma_pending = false;
-    apu.dmc.dma_halt_started = false;
-    apu.dmc.dma_abort_requested = false;
+    active->dmc.dma_pending = false;
+    active->dmc.dma_halt_started = false;
+    active->dmc.dma_abort_requested = false;
 }
 
 static void begin_dma_transfer_cycle(bool *dmc, bool *need_halt, bool *need_dummy) {
-    if (*dmc && apu.dmc.dma_abort_requested) {
+    APU *active = apu_active_state();
+    if (*dmc && active->dmc.dma_abort_requested) {
         cancel_active_dmc_dma(dmc, need_halt, need_dummy);
     } else if (*dmc && *need_halt) {
         *need_halt = false;
-        apu.dmc.dma_halt_started = true;
+        active->dmc.dma_halt_started = true;
     } else if (*dmc && *need_dummy) {
         *need_dummy = false;
     }
@@ -2236,8 +2278,9 @@ static void begin_dma_transfer_cycle(bool *dmc, bool *need_halt, bool *need_dumm
 }
 
 static void process_pending_dma(uint16_t read_addr, bool opcode_fetch) {
+    APU *active = apu_active_state();
     bool oam = cpu_oam_dma_pending;
-    bool dmc = apu_dmc_dma_pending(&apu);
+    bool dmc = apu_dmc_dma_pending(active);
     if (!oam && !dmc) return;
     if (nes_timing()->region == NES_REGION_PAL && !opcode_fetch) return;
     uint16_t oam_base = (uint16_t)cpu_oam_dma_page << 8;
@@ -2251,7 +2294,7 @@ static void process_pending_dma(uint16_t read_addr, bool opcode_fetch) {
     // Halt can succeed only on a CPU read; all earlier writes have already completed.
     if (dmc) {
         dmc_need_halt = false;
-        apu.dmc.dma_halt_started = true;
+        active->dmc.dma_halt_started = true;
     }
     begin_cpu_cycle(true);
     uint8_t halt_value = read_bus(read_addr);
@@ -2259,17 +2302,17 @@ static void process_pending_dma(uint16_t read_addr, bool opcode_fetch) {
     (void)finish_bus_read_target(read_addr, BUS_LATCH_BOTH, halt_value);
 
     // A disable that matures during the halt cycle aborts before the dummy cycle.
-    if (dmc && apu.dmc.dma_abort_requested) {
+    if (dmc && active->dmc.dma_abort_requested) {
         cancel_active_dmc_dma(&dmc, &dmc_need_halt, &dmc_need_dummy);
         if (!oam) return;
     }
 
-    while (oam || dmc || apu_dmc_dma_pending(&apu)) {
-        if (dmc && !apu_dmc_dma_pending(&apu) && !apu.dmc.dma_abort_requested) {
+    while (oam || dmc || apu_dmc_dma_pending(active)) {
+        if (dmc && !apu_dmc_dma_pending(active) && !active->dmc.dma_abort_requested) {
             dmc = false;
             dmc_need_halt = false;
             dmc_need_dummy = false;
-        } else if (!dmc && apu_dmc_dma_pending(&apu)) {
+        } else if (!dmc && apu_dmc_dma_pending(active)) {
             // Pick up requests raised by a just-completed DMC transfer as well as
             // requests raised while OAM DMA is running. OAM cycles can supply the
             // new transfer's halt and dummy cycles.
@@ -2278,17 +2321,17 @@ static void process_pending_dma(uint16_t read_addr, bool opcode_fetch) {
             dmc_need_dummy = true;
         }
         if (!oam && !dmc) break;
-        bool get = (cpu_total_cycles & 1u) == 0;
+        bool get = (active_cpu_cycles & 1u) == 0;
         bool dmc_get = get && dmc && !dmc_need_halt && !dmc_need_dummy;
         bool oam_get = get && oam && !dmc_get;
         bool oam_put = !get && oam && oam_has_byte;
 
         if (dmc_get) {
             begin_dma_transfer_cycle(&dmc, &dmc_need_halt, &dmc_need_dummy);
-            uint8_t value = read_dma_bus(apu_dmc_dma_address(&apu), read_addr);
+            uint8_t value = read_dma_bus(apu_dmc_dma_address(active), read_addr);
             end_cpu_cycle(true);
-            value = finish_dma_bus_read(apu_dmc_dma_address(&apu), read_addr, value);
-            apu_dmc_dma_complete(&apu, value);
+            value = finish_dma_bus_read(apu_dmc_dma_address(active), read_addr, value);
+            apu_dmc_dma_complete(active, value);
             dmc = false;
             dmc_need_halt = false;
             dmc_need_dummy = false;
@@ -2315,7 +2358,7 @@ static void process_pending_dma(uint16_t read_addr, bool opcode_fetch) {
 }
 
 int cpu_step(CPU* cpu) {
-    uint64_t start = cpu_total_cycles;
+    uint64_t start = active_cpu_cycles;
     running_cpu = cpu;
     if (cpu->halted) {
         (void)read_mem_cycle(cpu->pc, true);
@@ -2328,5 +2371,5 @@ int cpu_step(CPU* cpu) {
         if (!cpu->halted && (cpu_irq_ready || cpu_nmi_ready)) cpu_irq(cpu);
     }
     running_cpu = NULL;
-    return (int)(cpu_total_cycles - start);
+    return (int)(active_cpu_cycles - start);
 }

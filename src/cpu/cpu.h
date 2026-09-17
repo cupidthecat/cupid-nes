@@ -40,6 +40,34 @@ typedef struct {
     bool halted;       // JAM stops instruction execution until reset
 } CPU;
 
+typedef struct {
+    uint8_t external_bus;
+    uint8_t internal_bus;
+    bool nmi_pending;
+    bool nmi_line;
+    bool nmi_previous_line;
+    bool nmi_ready;
+    bool nmi_injected;
+    bool irq_polled;
+    bool irq_ready;
+    bool oam_dma_pending;
+    uint8_t oam_dma_page;
+    uint8_t ppu_master_phase;
+    bool joypad_read_valid;
+    uint16_t joypad_read_addr;
+    uint64_t joypad_read_cycle;
+    uint8_t joypad_read_value;
+    uint8_t joypad_write_pending;
+    uint8_t joypad_write_value;
+} CpuRuntimeState;
+
+typedef struct {
+    CPU cpu;
+    uint8_t ram[0x0800];
+    uint64_t total_cycles;
+    CpuRuntimeState runtime;
+} CpuMachineContext;
+
 typedef enum {
     CARRY_FLAG     = 0x01,
     ZERO_FLAG      = 0x02,
@@ -62,6 +90,8 @@ extern uint64_t cpu_total_cycles;
 void cpu_power_on(CPU* cpu);
 void cpu_soft_reset(CPU* cpu);
 void cpu_reset(CPU* cpu);
+// Select an independent CPU bus/RAM context. NULL selects the ordinary console.
+void cpu_select_machine(CpuMachineContext *context);
 uint8_t read_mem(uint16_t addr);
 void write_mem(uint16_t addr, uint8_t value);
 // Timestamp of the current CPU bus cycle.

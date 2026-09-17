@@ -190,6 +190,9 @@ extern APU apu;
 void apu_power_on(APU *a);
 void apu_soft_reset(APU *a);
 void apu_reset(APU *a);
+// Select the APU instance used by memory-mapped CPU accesses. NULL selects the ordinary console.
+void apu_select_machine(APU *state);
+APU *apu_active_state(void);
 void apu_audio_init(int sample_rate);
 // Select the DMC CPU timing model. The selection persists across APU resets.
 bool apu_set_cpu_revision(ApuCpuRevision revision);

@@ -40,6 +40,7 @@
 #include "vrc7_audio.h"
 #include "fds.h"
 #include "../system/timing.h"
+#include "../system/vs_system.h"
 
 extern uint64_t cpu_total_cycles;
 extern uint64_t cpu_get_bus_cycle(void);
@@ -74,6 +75,7 @@ static Mapper mapper_taito33, mapper_taito48, mapper_jaleco18, mapper_irem32, ma
 static Mapper mapper_rambo1, mapper_rambo158;
 static Mapper mapper_vrc6, mapper_vrc24, mapper_vrc7;
 static Mapper mapper_sunsoft69, mapper_namco, mapper_m34, mapper_gxrom, mapper_m71, mapper_namco108;
+static Mapper mapper_vs99;
 Mapper *cart = NULL;
 static bool mapper_irq_line = false;
 static uint8_t cart_cpu_bus_input = 0xFF;
@@ -4576,6 +4578,49 @@ static void vrc7_reset(void) {
     mapper_irq_line = false;
 }
 
+// VS System mapper 99. The board uses four 8KB CPU pages and one 8KB CHR page.
+// OUT0 bit 2 selects the alternate CHR bank and, on the 40KB single-system
+// layout, the alternate $8000-$9FFF PRG page.
+static uint8_t m99_cpu_read(uint16_t addr) {
+    if (addr >= 0x6000 && addr < 0x8000)
+        return vs_shared_ram_access_allowed() ? prg_ram_read(addr) : cart_cpu_bus_input;
+    if (addr < 0x8000) return cart_cpu_bus_input;
+
+    unsigned slot = (addr - 0x8000u) >> 13;
+    size_t bank;
+    if (vs_dual_system() && C.prg_sz == 0xC000) {
+        if (slot == 0) return cart_cpu_bus_input;
+        bank = (vs_active_side() ? 3u : 0u) + slot - 1u;
+    } else if (vs_dual_system()) {
+        bank = (vs_active_side() ? 4u : 0u) + slot;
+    } else if (slot == 0 && C.prg_sz > 0x8000 && vs_system_type() == VS_TYPE_DEFAULT) {
+        bank = vs_prg_chr_select_bit() ? 4u : 0u;
+    } else {
+        bank = slot;
+    }
+    size_t offset = bank * PRG_BANK_8K + (addr & 0x1FFFu);
+    return offset < C.prg_sz ? C.prg[offset] : cart_cpu_bus_input;
+}
+
+static void m99_cpu_write(uint16_t addr, uint8_t value) {
+    if (addr >= 0x6000 && addr < 0x8000 && vs_shared_ram_access_allowed())
+        prg_ram_write(addr, value);
+}
+
+static uint8_t m99_ppu_read(uint16_t addr) {
+    addr &= 0x1FFF;
+    size_t bank = (vs_dual_system() ? vs_active_side() * 2u : 0u) + vs_prg_chr_select_bit();
+    size_t offset = bank * CHR_BANK_8K + addr;
+    return offset < C.chr_sz ? C.chr[offset] : (uint8_t)addr;
+}
+
+static void m99_ppu_write(uint16_t addr, uint8_t value) {
+    (void)addr;
+    (void)value;
+}
+
+static Mirroring m99_mirr(void) { return C.mirr_base; }
+
 // Mapper selection and initialization.
 static bool vrc24_submapper_supported(int mapper_no, uint8_t submapper) {
     switch (mapper_no) {
@@ -4719,7 +4764,7 @@ int mapper_init_from_header(const iNESHeader *h,
         case 16: case 153: case 157: case 159:
         case 18: case 32: case 33: case 34: case 48: case 64: case 65: case 158:
         case 21: case 22: case 23: case 24: case 25: case 26: case 27: case 183:
-        case 19: case 66: case 69: case 71: case 85: case 206: case 210:
+        case 19: case 66: case 69: case 71: case 85: case 99: case 206: case 210:
             break;
         default:
             fprintf(stderr, "Unsupported mapper: %d\n", mapper_no);
@@ -4743,6 +4788,10 @@ int mapper_init_from_header(const iNESHeader *h,
     }
     RomRamSizes ram;
     rom_ram_sizes(h, &ram);
+    if (mapper_no == 99) {
+        ram.prg_ram = 0x800;
+        ram.prg_nvram = 0;
+    }
     if ((ram.prg_nvram || ram.chr_nvram) && !(h->flags6 & 2)) {
         fprintf(stderr, "Nonvolatile RAM declared without the battery flag\n");
         return -1;
@@ -4861,6 +4910,12 @@ int mapper_init_from_header(const iNESHeader *h,
             || (submapper == 1 && prg_sz != PRG_BANK_32K)
             || (chr_sz % CHR_BANK_1K) != 0 || chr_sz > 0x40000)) {
         fprintf(stderr, "Unsupported ROM/RAM size for mapper 206\n");
+        return -1;
+    }
+    if (mapper_no == 99 && (chr_is_ram
+        || (prg_sz != 0x8000 && prg_sz != 0xA000 && prg_sz != 0xC000 && prg_sz != 0x10000)
+        || (chr_sz != 0x2000 && chr_sz != 0x4000 && chr_sz != 0x8000))) {
+        fprintf(stderr, "Unsupported ROM size for mapper 99\n");
         return -1;
     }
     if (!ram_geometry_supported(mapper_no, nes2, &ram, chr_is_ram, chr_sz)
@@ -5092,6 +5147,11 @@ int mapper_init_from_header(const iNESHeader *h,
                         vrc7_ppu_read, vrc7_ppu_write, vrc7_reset, vrc7_mirr);
             mapper_vrc7.clock = vrc7_clock;
             cart = &mapper_vrc7;
+            break;
+        case 99:
+            build_mapper(&mapper_vs99, m99_cpu_read, m99_cpu_write,
+                         m99_ppu_read, m99_ppu_write, NULL, m99_mirr);
+            cart = &mapper_vs99;
             break;
         case 119:
             build_mapper(&mapper_tqrom, mmc3_cpu_read, mmc3_cpu_write,

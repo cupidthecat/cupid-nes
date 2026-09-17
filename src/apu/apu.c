@@ -25,15 +25,25 @@
 
 #include "apu.h"
 #include "../rom/mapper.h"
+#include "../cpu/cpu.h"
 #include "../system/timing.h"
 #include <string.h>
 #include <math.h>
 #include <stdio.h>
 
-extern uint64_t cpu_total_cycles;
-
 APU apu;
+static APU *const main_apu = &apu;
+static APU *active_apu = &apu;
+#define apu (*active_apu)
 static ApuCpuRevision cpu_revision = APU_CPU_REVISION_EARLY_2A03;
+
+void apu_select_machine(APU *state) {
+    active_apu = state ? state : main_apu;
+}
+
+APU *apu_active_state(void) {
+    return active_apu;
+}
 
 // Duty sequences
 static const uint8_t DUTY_SEQ[4][8] = {
@@ -307,7 +317,7 @@ static void apu_reset_state(APU *a, bool soft_reset) {
     a->dmc.timer_reload = dmc_period_table()[0] - 1;
     // The DMC divider clocks on the CPU's get phase. Its even periods must
     // keep output clocks on odd completed CPU cycles across initialization.
-    a->dmc.timer = a->dmc.timer_reload - ((cpu_total_cycles & 1) ? 0 : 1);
+    a->dmc.timer = a->dmc.timer_reload - ((cpu_get_bus_cycle() & 1) ? 0 : 1);
     a->sample_rate = sample_rate;
     a->cycles_per_sample = nes_timing()->cpu_hz / sample_rate;
     if (five_step) a->regs[0x17] = 0x80;
@@ -362,7 +372,7 @@ static inline void apu_write_4017(APU *a, uint8_t v) {
     }
 
     // The mode and optional quarter/half clock take effect with the delayed reset.
-    a->frame_reset_delay = (cpu_total_cycles & 1ULL) ? 4 : 3;
+    a->frame_reset_delay = (cpu_get_bus_cycle() & 1ULL) ? 4 : 3;
     a->frame_reset_pending = true;
 }
 static inline uint8_t apu_read_4015(APU *a) {
@@ -376,7 +386,7 @@ static inline uint8_t apu_read_4015(APU *a) {
     if (a->dmc.irq_flag)     s |= 0x80;
     a->frame_irq_source = false;
     if (a->frame_irq && !a->frame_irq_clear_delay)
-        a->frame_irq_clear_delay = (cpu_total_cycles & 1u) ? 2 : 1;
+        a->frame_irq_clear_delay = (cpu_get_bus_cycle() & 1u) ? 2 : 1;
     return s;
 }
 
@@ -571,10 +581,10 @@ void apu_write(uint16_t addr, uint8_t v){
         apu.dmc.irq_flag = false;
         if (!apu.dmc.enabled) {
             if (!apu.dmc.disable_delay)
-                apu.dmc.disable_delay = (cpu_total_cycles & 1) ? 3 : 2;
+                apu.dmc.disable_delay = (cpu_get_bus_cycle() & 1) ? 3 : 2;
         } else if (apu.dmc.bytes_remaining == 0) {
             dmc_restart_sample(&apu.dmc);
-            apu.dmc.start_delay = (cpu_total_cycles & 1) ? 3 : 2;
+            apu.dmc.start_delay = (cpu_get_bus_cycle() & 1) ? 3 : 2;
         }
     } else if (addr == 0x4017) {
         apu_write_4017(&apu, v);
@@ -765,6 +775,6 @@ void apu_sdl_audio_callback(void *userdata, uint8_t *stream, int len){
     (void)userdata;
     float *out = (float*)stream;
     int frames = len / sizeof(float);
-    int got = rb_pull(&apu, out, frames);
-    for (int i=got; i<frames; ++i) out[i] = apu.last_output_sample;
+    int got = rb_pull(main_apu, out, frames);
+    for (int i=got; i<frames; ++i) out[i] = main_apu->last_output_sample;
 }

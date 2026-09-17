@@ -32,6 +32,7 @@
 #include "mapper.h"
 #include "fds.h"
 #include "../system/timing.h"
+#include "../system/vs_system.h"
 
 #define PRG_ROM_BANK_SIZE 0x4000  // 16KB
 #define CHR_ROM_BANK_SIZE 0x2000  // 8KB
@@ -63,14 +64,14 @@ int rom_mapper_number(const iNESHeader *h) {
 static int rom_console_supported(const iNESHeader *h) {
     if (is_nes20(h)) {
         unsigned console = h->flags7 & 0x03u;
-        if (console == 0) return 1;
+        if (console == 0 || console == 1) return 1;
         // Extended console type 0 still identifies a regular NES/Famicom-family machine.
         return console == 3 && (h->zero[2] & 0x0Fu) == 0;
     }
     // Archaic headers have unreliable byte 7 contents.  Only clean iNES headers
     // use its low bits as the VS/PlayChoice console selector.
     if ((h->flags7 & 0x0Cu) == 0)
-        return (h->flags7 & 0x03u) == 0;
+        return (h->flags7 & 0x03u) <= 1;
     return 1;
 }
 
@@ -196,6 +197,15 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
         }
     }
 
+    VsRomConfig vs_config;
+    char vs_reason[96];
+    int mapper_number = rom_mapper_number(&header);
+    if (!vs_decode_header(&header, mapper_number, new_prg_size, rom_chr_size,
+                          &vs_config, vs_reason, sizeof(vs_reason))) {
+        fprintf(stderr, "Unsupported VS System configuration: %s\n", vs_reason);
+        return -1;
+    }
+
     uint8_t *new_prg = (uint8_t *)malloc(new_prg_size);
     uint8_t *new_chr = (uint8_t *)calloc(1, new_chr_size);
     if (!new_prg || !new_chr) {
@@ -230,6 +240,7 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
     chr_rom = new_chr;
     prg_size = new_prg_size;
     chr_size = new_chr_size;
+    vs_commit_config(&vs_config);
     cart_battery_configure(filename, filename && (header.flags6 & 0x02));
     if (trainer) cart_apply_trainer(trainer);
     mirroring_mode = (int)cart_get_mirroring();
@@ -296,6 +307,7 @@ bool unload_rom(void) {
     memset(&ines_header, 0, sizeof(ines_header));
     mirroring_mode = 0;
     fds_loaded = 0;
+    vs_clear_config();
     nes_set_region(NES_REGION_NTSC);
     return true;
 }
