@@ -26,6 +26,7 @@
 #define JOYPAD_H
 
 #include <stdint.h>
+#include <stdbool.h>
 
 typedef struct {
     uint8_t buttons;   // bit0..bit7 = A,B,Select,Start,Up,Down,Left,Right
@@ -38,5 +39,10 @@ enum { BTN_A, BTN_B, BTN_SELECT, BTN_START, BTN_UP, BTN_DOWN, BTN_LEFT, BTN_RIGH
 void    joypad_set(Joypad* jp, int btn, int pressed);
 void    joypad_write_strobe(Joypad* jp, uint8_t value);
 uint8_t joypad_read(Joypad* jp);
+// Port zero is $4016; port one is $4017.
+uint8_t joypad_read_port(Joypad *jp, unsigned port);
+uint8_t joypad_open_bus_mask(unsigned port);
+bool    joypad_clocks_adjacent_reads(void);
+void    joypad_set_microphone(bool active);
 
 #endif // JOYPAD_H

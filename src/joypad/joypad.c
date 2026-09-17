@@ -23,6 +23,10 @@
  */
 
 #include "joypad.h"
+#include "../system/hardware.h"
+#include "../system/timing.h"
+
+static bool microphone_active;
 
 void joypad_set(Joypad* jp, int btn, int pressed){
     if (pressed) jp->buttons |=  (1u << btn);
@@ -40,4 +44,31 @@ uint8_t joypad_read(Joypad* jp){
     uint8_t ret = (jp->shift & 1u);             // LSB first; CPU bus layer supplies open-bus bits
     if (!jp->strobe) jp->shift = (jp->shift >> 1) | 0x80; // shift in 1s after 8 reads
     return ret;
+}
+
+uint8_t joypad_read_port(Joypad *jp, unsigned port) {
+    uint8_t value = joypad_read(jp);
+    // The second built-in controller's microphone reaches $4016 D2.
+    if (port == 0 && nes_console_model() == NES_CONSOLE_HVC001 && microphone_active)
+        value |= 0x04;
+    return value;
+}
+
+uint8_t joypad_open_bus_mask(unsigned port) {
+    if (port != 0) return 0xE0;
+    switch (nes_console_model()) {
+        case NES_CONSOLE_NES101: return 0xE4;
+        case NES_CONSOLE_HVC001:
+        case NES_CONSOLE_HVC101: return 0xF8;
+        default: return 0xE0;
+    }
+}
+
+bool joypad_clocks_adjacent_reads(void) {
+    return nes_console_model() == NES_CONSOLE_HVC001 &&
+           nes_timing()->region == NES_REGION_NTSC;
+}
+
+void joypad_set_microphone(bool active) {
+    microphone_active = active;
 }

@@ -38,6 +38,7 @@
 #include <math.h>
 #include "ui/palette_tool.h"
 #include "system/timing.h"
+#include "system/hardware.h"
 
 #define AUDIO_SAMPLE_RATE 44100
 #define AUDIO_BUFFER_SAMPLES 1024
@@ -52,13 +53,28 @@ int main(int argc, char *argv[]) {
     SDL_AudioSpec have;
     SDL_AudioDeviceID audio_dev = 0;
 
-    if(argc < 2) {
-        printf("Usage: %s <rom-file>\n", argv[0]);
+    const char *rom_path = NULL;
+    for (int i = 1; i < argc; ++i) {
+        if (strcmp(argv[i], "--console") == 0) {
+            if (++i == argc || !nes_set_console_model_name(argv[i])) {
+                fprintf(stderr, "Console must be nes-001, nes-101, famicom, or av-famicom\n");
+                return 1;
+            }
+        } else if (argv[i][0] == '-' || rom_path) {
+            fprintf(stderr, "Unexpected argument: %s\n", argv[i]);
+            return 1;
+        } else {
+            rom_path = argv[i];
+        }
+    }
+    if (!rom_path) {
+        printf("Usage: %s [--console MODEL] <rom-file>\n", argv[0]);
         return 1;
     }
     
-    printf("Loading ROM: %s\n", argv[1]);
-    if(load_rom(argv[1]) != 0) {
+    printf("Console: %s\n", nes_console_model_name());
+    printf("Loading ROM: %s\n", rom_path);
+    if(load_rom(rom_path) != 0) {
         fprintf(stderr, "Failed to load ROM\n");
         return 1;
     }
@@ -185,6 +201,7 @@ int main(int argc, char *argv[]) {
                     case SDLK_DOWN:     joypad_set(&pad1, BTN_DOWN,   down); break;
                     case SDLK_LEFT:     joypad_set(&pad1, BTN_LEFT,   down); break;
                     case SDLK_RIGHT:    joypad_set(&pad1, BTN_RIGHT,  down); break;
+                    case SDLK_m:        joypad_set_microphone(down != 0); break;
                     default: break;
                 }
 

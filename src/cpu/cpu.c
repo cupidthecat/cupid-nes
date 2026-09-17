@@ -121,10 +121,12 @@ static void end_cpu_cycle(bool read) {
 
 static uint8_t read_joypad_port(Joypad *pad, uint16_t addr) {
     uint64_t cycle = cpu_get_bus_cycle();
-    // Adjacent reads of the same port hold the read line low: no second shift clock.
-    bool repeat = running_cpu && joypad_read_valid && joypad_read_addr == addr &&
+    // The original NTSC Famicom clocks each read. Other models hold the
+    // controller read line low across adjacent accesses to the same port.
+    bool repeat = !joypad_clocks_adjacent_reads() && running_cpu &&
+                  joypad_read_valid && joypad_read_addr == addr &&
                   cycle == joypad_read_cycle + 1;
-    uint8_t value = repeat ? joypad_read_value : joypad_read(pad);
+    uint8_t value = repeat ? joypad_read_value : joypad_read_port(pad, addr - 0x4016u);
     joypad_read_addr = addr;
     joypad_read_cycle = cycle;
     joypad_read_value = value;
@@ -258,12 +260,14 @@ static uint8_t read_bus_target(uint16_t addr, BusLatchTarget target) {
     // APU + I/O $4000-$4017
     if (addr >= 0x4000 && addr <= 0x4017) {
         if (addr == 0x4016) {
-            uint8_t v = (uint8_t)((bus_get() & 0xE0u) | (read_joypad_port(&pad1, addr) & 0x1Fu));
+            uint8_t mask = joypad_open_bus_mask(0);
+            uint8_t v = (uint8_t)((bus_get() & mask) | (read_joypad_port(&pad1, addr) & ~mask));
             bus_latch(target, v);
             return v;
         }
         if (addr == 0x4017) {
-            uint8_t v = (uint8_t)((bus_get() & 0xE0u) | (read_joypad_port(&pad2, addr) & 0x1Fu));
+            uint8_t mask = joypad_open_bus_mask(1);
+            uint8_t v = (uint8_t)((bus_get() & mask) | (read_joypad_port(&pad2, addr) & ~mask));
             bus_latch(target, v);
             return v;
         }
@@ -2188,8 +2192,9 @@ static uint8_t read_dma_bus(uint16_t address, uint16_t halted_address) {
     if ((internal == 0x4016 || internal == 0x4017) && address != internal) {
         uint8_t controller = read_bus(internal);
         uint8_t external = read_bus_target(address, BUS_LATCH_EXTERNAL);
-        bus_set_external((uint8_t)((external & 0xE0u) | (controller & 0x1Fu)));
-        return (uint8_t)((external & 0xE0u) | (external & controller & 0x1Fu));
+        uint8_t mask = joypad_open_bus_mask(internal - 0x4016u);
+        bus_set_external((uint8_t)((external & mask) | (controller & ~mask)));
+        return (uint8_t)((external & mask) | (external & controller & ~mask));
     }
     return read_bus(address);
 }
