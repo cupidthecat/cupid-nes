@@ -4520,6 +4520,142 @@ static int test_mapper71_image_loading(void) {
     return 0;
 }
 
+static void namco108_write_bank_at(uint16_t select_address, uint16_t data_address,
+                                   uint8_t reg, uint8_t value) {
+    cart_cpu_write(select_address, (uint8_t)(0xF8u | reg));
+    cart_cpu_write(data_address, value);
+}
+
+static void namco108_write_bank(uint8_t reg, uint8_t value) {
+    namco108_write_bank_at(0x9FFEu, 0x9FFFu, reg, value);
+}
+
+static int test_namco108_banks_aliases_and_irq_absence(void) {
+    CHECK(fixture(206, 0x200000, 0x40000, false) == 206);
+    CHECK(cart != NULL && cart->clock == NULL);
+    CHECK(cart_cpu_read(0x8000) == 0 && cart_cpu_read(0xA000) == 1);
+    CHECK(cart_cpu_read(0xC000) == 254 && cart_cpu_read(0xE000) == 255);
+    CHECK(cart_ppu_read(0x0000) == 0 && cart_ppu_read(0x0400) == 1);
+    CHECK(cart_ppu_read(0x0800) == 2 && cart_ppu_read(0x0C00) == 3);
+    CHECK(cart_ppu_read(0x1000) == 4 && cart_ppu_read(0x1C00) == 7);
+
+    // Only A0 distinguishes the selector and data ports anywhere in $8000-$9FFF.
+    namco108_write_bank_at(0x8ABCu, 0x91FDu, 6, 0xC3);
+    namco108_write_bank_at(0x9000u, 0x8001u, 7, 0x85);
+    CHECK(cart_cpu_read(0x8000) == 0xC3 && cart_cpu_read(0xA000) == 0x85);
+    CHECK(cart_cpu_read(0xC000) == 254 && cart_cpu_read(0xE000) == 255);
+
+    // Only the two paired CHR registers ignore the low data bit.
+    namco108_write_bank(0, 0x49);
+    namco108_write_bank(1, 0x4D);
+    namco108_write_bank(2, 0x85);
+    namco108_write_bank(3, 0xA2);
+    namco108_write_bank(4, 0xC7);
+    namco108_write_bank(5, 0xF8);
+    CHECK(cart_ppu_read(0x0000) == 0x48 && cart_ppu_read(0x0400) == 0x49);
+    CHECK(cart_ppu_read(0x0800) == 0x4C && cart_ppu_read(0x0C00) == 0x4D);
+    CHECK(cart_ppu_read(0x1000) == 0x85 && cart_ppu_read(0x1400) == 0xA2);
+    CHECK(cart_ppu_read(0x1800) == 0xC7 && cart_ppu_read(0x1C00) == 0xF8);
+
+    Mirroring mirr = cart_get_mirroring();
+    cart_cpu_write(0xA000, 1);
+    cart_cpu_write(0xA001, 0);
+    cart_cpu_write(0xC000, 0);
+    cart_cpu_write(0xC001, 0);
+    cart_cpu_write(0xE000, 0);
+    cart_cpu_write(0xE001, 0);
+    for (unsigned i = 0; i < 8; ++i) {
+        cart_notify_ppu_address(0x0000, i * 12);
+        cart_notify_ppu_address(0x1000, i * 12 + 9);
+    }
+    CHECK(cart_get_mirroring() == mirr && !cart_irq_pending());
+
+    cart_cpu_write(0x6123, 0xA5);
+    CHECK(cart_cpu_read(0x6123) == 0xA5);
+    cart->reset();
+    CHECK(cart_cpu_read(0x8000) == 0 && cart_cpu_read(0xA000) == 1);
+    CHECK(cart_cpu_read(0xC000) == 254 && cart_cpu_read(0xE000) == 255);
+    CHECK(cart_ppu_read(0x0000) == 0 && cart_ppu_read(0x1000) == 4);
+    CHECK(cart_cpu_read(0x6123) == 0xA5 && cart_get_mirroring() == mirr);
+    CHECK(!cart_irq_pending());
+    return 0;
+}
+
+static int test_namco108_submapper_loader_and_chr_ram(void) {
+    iNESHeader h = header_for(206, 0x8000, false);
+    h.flags7 |= 0x08;
+    h.prg_ram_size = 0x10;
+    h.flags6 |= 1;
+    CHECK(fixture_with_header(&h, 0x8000, 0x40000) == 206);
+    CHECK(cart_get_mirroring() == MIRROR_VERTICAL);
+    CHECK(cart_cpu_read(0x8000) == 0 && cart_cpu_read(0xA000) == 1);
+    CHECK(cart_cpu_read(0xC000) == 2 && cart_cpu_read(0xE000) == 3);
+    namco108_write_bank(6, 3);
+    namco108_write_bank(7, 2);
+    CHECK(cart_cpu_read(0x8000) == 0 && cart_cpu_read(0xA000) == 1);
+    CHECK(cart_cpu_read(0xC000) == 2 && cart_cpu_read(0xE000) == 3);
+    cart_cpu_write(0xA000, 0);
+    CHECK(cart_get_mirroring() == MIRROR_VERTICAL);
+    cart->reset();
+    CHECK(cart_cpu_read(0x8000) == 0 && cart_cpu_read(0xE000) == 3);
+
+    iNESHeader ram_h = header_for(206, 0x8000, true);
+    ram_h.flags7 |= 0x08;
+    ram_h.flags10 = 0;
+    ram_h.zero[0] = 12;
+    CHECK(fixture_with_header(&ram_h, 0x8000, 0x40000) == 206);
+    namco108_write_bank(2, 0x85);
+    cart_ppu_write(0x1000, 0xA6);
+    CHECK(cart_ppu_read(0x1000) == 0xA6);
+    namco108_write_bank(2, 5);
+    CHECK(cart_ppu_read(0x1000) == 5);
+    namco108_write_bank(2, 0x85);
+    CHECK(cart_ppu_read(0x1000) == 0xA6);
+
+    iNESHeader load_h = header_for(206, 0x200000, false);
+    load_h.chr_rom_chunks = 32;
+    size_t size;
+    uint8_t *image = image_for(&load_h, 0x200000, 0x40000, &size);
+    CHECK(image != NULL);
+    for (size_t i = 0; i < 0x200000; ++i)
+        image[sizeof(load_h) + i] = (uint8_t)(i / 0x2000);
+    for (size_t i = 0; i < 0x40000; ++i)
+        image[sizeof(load_h) + 0x200000 + i] = (uint8_t)(i / 0x400);
+    CHECK(load_rom_memory(image, size) == 0);
+    free(image);
+    CHECK(rom_mapper_number(&ines_header) == 206);
+    CHECK(cart_cpu_read(0x8000) == 0 && cart_cpu_read(0xE000) == 255);
+    namco108_write_bank(6, 0xC3);
+    namco108_write_bank(2, 0x85);
+    cart_cpu_write(0x6123, 0xA6);
+    CHECK(cart_cpu_read(0x8000) == 0xC3 && cart_ppu_read(0x1000) == 0x85);
+
+    Mapper *previous = cart;
+    iNESHeader active = ines_header;
+    iNESHeader invalid = load_h;
+    invalid.flags7 |= 0x08;
+    invalid.prg_ram_size = 0x20;
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x200000, fixture_chr, 0x40000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 0xC3);
+
+    invalid = h;
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x10000, fixture_chr, 0x40000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 0xC3);
+    CHECK(mapper_init_from_header(&load_h, fixture_prg, 0x202000, fixture_chr, 0x40000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 0xC3);
+    CHECK(mapper_init_from_header(&load_h, fixture_prg, 0x200000, fixture_chr, 0x40400) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 0xC3);
+
+    image = image_for(&load_h, 0x200000, 0x40000, &size);
+    CHECK(image != NULL);
+    CHECK(load_rom_memory(image, size - 1) == -1);
+    free(image);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 0xC3);
+    CHECK(memcmp(&ines_header, &active, sizeof(active)) == 0);
+    CHECK(cart_ppu_read(0x1000) == 0x85 && cart_cpu_read(0x6123) == 0xA6);
+    return 0;
+}
+
 static void jaleco18_write_bank(uint16_t reg, uint8_t value) {
     uint16_t alias = (uint16_t)(reg | 0x0FFCu);
     cart_cpu_write(alias, value & 0x0F);
@@ -5552,6 +5688,7 @@ int test_mapper_accuracy(void) {
         test_gxrom_banks_reset_and_ram, test_gxrom_chr_ram_and_loader,
         test_mapper71_variants_and_mirroring, test_mapper71_loader_and_chr_rom,
         test_mapper71_image_loading,
+        test_namco108_banks_aliases_and_irq_absence, test_namco108_submapper_loader_and_chr_ram,
         test_sunsoft69_banks_ram_and_startup, test_sunsoft69_legacy_ram_defaults,
         test_sunsoft69_irq_cpu_clock,
         test_sunsoft5b_tone_noise_envelope, test_sunsoft69_persistence_and_loader,

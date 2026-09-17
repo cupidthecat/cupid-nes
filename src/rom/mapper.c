@@ -73,7 +73,7 @@ static Mapper mapper_cprom, mapper_100in1, mapper_bandai, mapper_action53, mappe
 static Mapper mapper_taito33, mapper_taito48, mapper_jaleco18, mapper_irem32, mapper_irem65;
 static Mapper mapper_rambo1, mapper_rambo158;
 static Mapper mapper_vrc6, mapper_vrc24, mapper_vrc7;
-static Mapper mapper_sunsoft69, mapper_namco, mapper_m34, mapper_gxrom, mapper_m71;
+static Mapper mapper_sunsoft69, mapper_namco, mapper_m34, mapper_gxrom, mapper_m71, mapper_namco108;
 Mapper *cart = NULL;
 static bool mapper_irq_line = false;
 static uint8_t cart_cpu_bus_input = 0xFF;
@@ -209,6 +209,12 @@ static struct {
     bool force_bf9097;
     Mirroring mirr;
 } m71;
+
+static struct {
+    uint8_t select;
+    uint8_t banks[8];
+    bool fixed_prg;
+} namco108;
 
 void cart_apply_trainer(const uint8_t trainer[512]) {
     if (!trainer) return;
@@ -3088,6 +3094,84 @@ static void m71_reset(void) {
     m71.mirr = C.mirr_base;
 }
 
+// Mapper 206: Namco 108.
+static size_t namco108_prg_bank(uint16_t address) {
+    size_t banks = C.prg_sz / PRG_BANK_8K;
+    if (!banks) return 0;
+    unsigned slot = (unsigned)((address - 0x8000u) / PRG_BANK_8K);
+    if (namco108.fixed_prg) return slot % banks;
+    if (slot == 0) return (size_t)namco108.banks[6] % banks;
+    if (slot == 1) return (size_t)namco108.banks[7] % banks;
+    if (slot == 2) return banks > 1 ? banks - 2 : 0;
+    return banks - 1;
+}
+
+static uint8_t namco108_cpu_read(uint16_t address) {
+    if (address >= 0x6000u && address < 0x8000u) return prg_ram_read(address);
+    if (address >= 0x8000u) {
+        size_t bank = namco108_prg_bank(address);
+        return C.prg[bank * PRG_BANK_8K + (address & 0x1FFFu)];
+    }
+    return cart_cpu_bus_input;
+}
+
+static void namco108_cpu_write(uint16_t address, uint8_t value) {
+    if (address >= 0x6000u && address < 0x8000u) {
+        prg_ram_write(address, value);
+        return;
+    }
+    if (address < 0x8000u || address >= 0xA000u) return;
+    if ((address & 1u) == 0) {
+        namco108.select = value & 7u;
+        return;
+    }
+
+    unsigned reg = namco108.select;
+    if (reg < 2) value &= 0xFEu;
+    namco108.banks[reg] = value;
+}
+
+static size_t namco108_chr_bank(uint16_t address) {
+    unsigned slot = (unsigned)((address & 0x1FFFu) >> 10);
+    if (slot < 4) {
+        unsigned reg = slot >> 1;
+        return (size_t)(namco108.banks[reg] + (slot & 1u));
+    }
+    return namco108.banks[slot - 2u];
+}
+
+static uint8_t namco108_ppu_read(uint16_t address) {
+    address &= 0x1FFFu;
+    size_t banks = C.chr_sz / CHR_BANK_1K;
+    size_t bank = banks ? namco108_chr_bank(address) % banks : 0;
+    return C.chr[bank * CHR_BANK_1K + (address & 0x03FFu)];
+}
+
+static void namco108_ppu_write(uint16_t address, uint8_t value) {
+    if (!C.chr_is_ram) return;
+    address &= 0x1FFFu;
+    size_t banks = C.chr_sz / CHR_BANK_1K;
+    size_t bank = banks ? namco108_chr_bank(address) % banks : 0;
+    chr_ram_write(bank * CHR_BANK_1K + (address & 0x03FFu), value);
+}
+
+static Mirroring namco108_mirr(void) { return C.mirr_base; }
+
+static void namco108_reset(void) {
+    bool fixed_prg = namco108.fixed_prg;
+    memset(&namco108, 0, sizeof(namco108));
+    namco108.fixed_prg = fixed_prg;
+    namco108.banks[0] = 0;
+    namco108.banks[1] = 2;
+    namco108.banks[2] = 4;
+    namco108.banks[3] = 5;
+    namco108.banks[4] = 6;
+    namco108.banks[5] = 7;
+    namco108.banks[6] = 0;
+    namco108.banks[7] = 1;
+    mapper_irq_line = false;
+}
+
 // Mapper 69: Sunsoft FME-7 / 5B.
 static struct {
     uint8_t command;
@@ -4583,7 +4667,7 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         case 18: case 32: case 65: chr_limit = 0x40000; break;
         case 21: case 23: case 25: case 27: case 183: chr_limit = 0x80000; break;
         case 22: chr_limit = 0x40000; break;
-        case 19: case 69: case 210: chr_limit = 0x40000; break;
+        case 19: case 69: case 206: case 210: chr_limit = 0x40000; break;
         case 85: chr_limit = 0x40000; break;
         case 119: chr_limit = sizeof(tqrom_chr_ram); break;
         default: chr_limit = 0x2000; break;
@@ -4635,7 +4719,7 @@ int mapper_init_from_header(const iNESHeader *h,
         case 16: case 153: case 157: case 159:
         case 18: case 32: case 33: case 34: case 48: case 64: case 65: case 158:
         case 21: case 22: case 23: case 24: case 25: case 26: case 27: case 183:
-        case 19: case 66: case 69: case 71: case 85: case 210:
+        case 19: case 66: case 69: case 71: case 85: case 206: case 210:
             break;
         default:
             fprintf(stderr, "Unsupported mapper: %d\n", mapper_no);
@@ -4650,6 +4734,7 @@ int mapper_init_from_header(const iNESHeader *h,
         || (mapper_no == 48 && submapper == 1)
         || (mapper_no == 32 && submapper == 1)
         || (mapper_no == 71 && submapper == 1)
+        || (mapper_no == 206 && submapper == 1)
         || (mapper_no == 210 && submapper <= 2)
         || ((mapper_no == 2 || mapper_no == 3 || mapper_no == 7) && submapper <= 2)
         || (mapper_no == 30 && submapper <= 4))) {
@@ -4769,6 +4854,13 @@ int mapper_init_from_header(const iNESHeader *h,
         && ((prg_sz % PRG_BANK_16K) != 0 || prg_sz > 0x400000
             || chr_sz != CHR_BANK_8K)) {
         fprintf(stderr, "Unsupported ROM/RAM size for mapper 71\n");
+        return -1;
+    }
+    if (mapper_no == 206
+        && ((prg_sz % PRG_BANK_8K) != 0 || prg_sz > 0x200000
+            || (submapper == 1 && prg_sz != PRG_BANK_32K)
+            || (chr_sz % CHR_BANK_1K) != 0 || chr_sz > 0x40000)) {
+        fprintf(stderr, "Unsupported ROM/RAM size for mapper 206\n");
         return -1;
     }
     if (!ram_geometry_supported(mapper_no, nes2, &ram, chr_is_ram, chr_sz)
@@ -4929,6 +5021,12 @@ int mapper_init_from_header(const iNESHeader *h,
             build_mapper(&mapper_m71, m71_cpu_read, m71_cpu_write,
                          m71_ppu_read, m71_ppu_write, m71_reset, m71_mirr);
             cart = &mapper_m71;
+            break;
+        case 206:
+            namco108.fixed_prg = submapper == 1;
+            build_mapper(&mapper_namco108, namco108_cpu_read, namco108_cpu_write,
+                         namco108_ppu_read, namco108_ppu_write, namco108_reset, namco108_mirr);
+            cart = &mapper_namco108;
             break;
         case 48:
             build_mapper(&mapper_taito48, taito48_cpu_read, taito48_cpu_write,
