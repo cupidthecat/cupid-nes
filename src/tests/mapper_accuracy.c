@@ -5428,6 +5428,40 @@ static int test_vrc7_fm_audio(void) {
     return 0;
 }
 
+static int test_vrc7_register_boundaries(void) {
+    iNESHeader h = vrc7_header(2, false, true);
+    CHECK(fixture_with_header(&h, 0x80000, 0x40000) == 85);
+    nes_set_region(NES_REGION_NTSC);
+    vrc7_program_custom_patch();
+    vrc7_key_channel0(0, true);
+    float trace[128];
+    for (unsigned i = 0; i < 128; ++i) {
+        cart->clock(36);
+        trace[i] = cart_expansion_audio();
+    }
+    cart->reset();
+    vrc7_program_custom_patch();
+    vrc7_key_channel0(0, true);
+    for (unsigned i = 0; i < 128; ++i) {
+        for (unsigned reg = 0x40; reg <= 0xFF; ++reg)
+            vrc7_audio_write((uint8_t)reg, (uint8_t)(i ^ reg));
+        cart->clock(36);
+        CHECK(cart_expansion_audio() == trace[i]);
+    }
+
+    // High aliases inside the 64-register window still reach channel zero.
+    cart->reset();
+    vrc7_program_custom_patch();
+    vrc7_audio_write(0x39, 0);
+    vrc7_audio_write(0x19, 0x80);
+    vrc7_audio_write(0x29, 0x18);
+    for (unsigned i = 0; i < 128; ++i) {
+        cart->clock(36);
+        CHECK(cart_expansion_audio() == trace[i]);
+    }
+    return 0;
+}
+
 static int test_vrc7_loader_rejection_preserves_cart(void) {
     iNESHeader active = vrc7_header(1, false, true);
     CHECK(fixture_with_header(&active, 0x80000, 0x40000) == 85);
@@ -5530,6 +5564,7 @@ int test_mapper_accuracy(void) {
         test_vrc24_variant_register_wiring, test_vrc24_ram_latch_and_mapper183_window,
         test_vrc24_irq_variants_and_phase, test_vrc24_loader_rejection_preserves_cart,
         test_vrc7_banks_wiring_and_ram, test_vrc7_irq_timing, test_vrc7_fm_audio,
+        test_vrc7_register_boundaries,
         test_vrc7_loader_rejection_preserves_cart,
         test_cartridge_bus_reads, test_mmc6_persistence, test_cartridge_unload
     };

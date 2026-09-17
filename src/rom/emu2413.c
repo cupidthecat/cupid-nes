@@ -909,7 +909,7 @@ static INLINE int16_t lookup_exp_table(uint16_t i) {
   /* from andete's expression */
   int16_t t = (exp_table[(i & 0xff) ^ 0xff] + 1024);
   int16_t res = t >> ((i & 0x7f00) >> 8);
-  return ((i & 0x8000) ? ~res : res) << 1;
+  return (int16_t)(((i & 0x8000) ? ~res : res) * 2);
 }
 
 static INLINE int16_t to_linear(uint16_t h, OPLL_SLOT *slot, int16_t am) {
@@ -1231,7 +1231,7 @@ void OPLL_writeReg(OPLL *opll, uint32_t reg, uint8_t data) {
     reg -= 9;
   }
 
-  opll->reg[reg] = (uint8_t)data;
+  opll->reg[reg & 0x3fu] = data;
 
   switch (reg) {
   case 0x00:
