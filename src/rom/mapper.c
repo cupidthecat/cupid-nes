@@ -72,7 +72,7 @@ static Mapper mapper_cprom, mapper_100in1, mapper_bandai, mapper_action53, mappe
 static Mapper mapper_taito33, mapper_taito48, mapper_jaleco18, mapper_irem32, mapper_irem65;
 static Mapper mapper_rambo1, mapper_rambo158;
 static Mapper mapper_vrc24, mapper_vrc7;
-static Mapper mapper_sunsoft69, mapper_namco;
+static Mapper mapper_sunsoft69, mapper_namco, mapper_m34;
 Mapper *cart = NULL;
 static bool mapper_irq_line = false;
 static uint8_t cart_cpu_bus_input = 0xFF;
@@ -147,6 +147,13 @@ static struct {
     uint8_t nt_ciram_page[4];
     Mirroring mirr;
 } namco;
+
+static struct {
+    bool nina;
+    uint8_t prg_bank;
+    uint8_t chr_bank[2];
+    bool chr_mapped[2];
+} m34;
 
 void cart_apply_trainer(const uint8_t trainer[512]) {
     if (!trainer) return;
@@ -2542,6 +2549,67 @@ static void namco_reset(void) {
     mapper_irq_line = false;
 }
 
+// Mapper 34: BNROM and NINA-001.
+static size_t m34_prg_bank(void) {
+    size_t banks = C.prg_sz / PRG_BANK_32K;
+    return banks ? (size_t)m34.prg_bank % banks : 0;
+}
+
+static uint8_t m34_cpu_read(uint16_t address) {
+    if (address >= 0x6000u && address < 0x8000u)
+        return prg_ram_read(address);
+    if (address >= 0x8000u) {
+        size_t bank = m34_prg_bank();
+        return C.prg[bank * PRG_BANK_32K + (address & 0x7FFFu)];
+    }
+    return cart_cpu_bus_input;
+}
+
+static void m34_cpu_write(uint16_t address, uint8_t value) {
+    if (address >= 0x6000u && address < 0x8000u) {
+        prg_ram_write(address, value);
+        if (!m34.nina) return;
+        switch (address) {
+            case 0x7FFD:
+                m34.prg_bank = value;
+                break;
+            case 0x7FFE:
+                m34.chr_bank[0] = value;
+                m34.chr_mapped[0] = true;
+                break;
+            case 0x7FFF:
+                m34.chr_bank[1] = value;
+                m34.chr_mapped[1] = true;
+                break;
+        }
+        return;
+    }
+    if (!m34.nina && address >= 0x8000u) m34.prg_bank = value;
+}
+
+static uint8_t m34_ppu_read(uint16_t address) {
+    address &= 0x1FFFu;
+    if (!m34.nina) return C.chr[address % C.chr_sz];
+    unsigned slot = address >> 12;
+    if (!m34.chr_mapped[slot]) return (uint8_t)address;
+    size_t banks = C.chr_sz / CHR_BANK_4K;
+    size_t bank = banks ? (size_t)m34.chr_bank[slot] % banks : 0;
+    return C.chr[bank * CHR_BANK_4K + (address & 0x0FFFu)];
+}
+
+static void m34_ppu_write(uint16_t address, uint8_t value) {
+    if (m34.nina || !C.chr_is_ram) return;
+    chr_ram_write(address & 0x1FFFu, value);
+}
+
+static Mirroring m34_mirr(void) { return C.mirr_base; }
+
+static void m34_reset(void) {
+    bool nina = m34.nina;
+    memset(&m34, 0, sizeof(m34));
+    m34.nina = nina;
+}
+
 // Mapper 69: Sunsoft FME-7 / 5B.
 static struct {
     uint8_t command;
@@ -4110,7 +4178,7 @@ int mapper_init_from_header(const iNESHeader *h,
         case 0: case 1: case 2: case 3: case 4: case 5:
         case 7: case 9: case 10: case 11: case 13: case 15: case 28: case 30: case 118: case 119: case 155:
         case 16: case 153: case 157: case 159:
-        case 18: case 32: case 33: case 48: case 64: case 65: case 158:
+        case 18: case 32: case 33: case 34: case 48: case 64: case 65: case 158:
         case 21: case 22: case 23: case 25: case 27: case 183:
         case 19: case 69: case 85: case 210:
             break;
@@ -4123,6 +4191,7 @@ int mapper_init_from_header(const iNESHeader *h,
         || (mapper_no == 85 && submapper <= 2)
         || (mapper_no == 4 && (submapper == 1 || submapper == 3))
         || (mapper_no == 16 && (submapper == 4 || submapper == 5))
+        || (mapper_no == 34 && submapper <= 2)
         || (mapper_no == 48 && submapper == 1)
         || (mapper_no == 32 && submapper == 1)
         || (mapper_no == 210 && submapper <= 2)
@@ -4138,6 +4207,8 @@ int mapper_init_from_header(const iNESHeader *h,
         return -1;
     }
     bool chr_is_ram = h->chr_rom_chunks == 0 && (!nes2 || (h->flags9 & 0xF0) == 0);
+    bool mapper34_nina = mapper_no == 34
+        && (submapper == 1 || (submapper == 0 && !chr_is_ram));
     unsigned eeprom_sizes[2] = {0, 0};
     bool is_bandai = mapper_no == 16 || mapper_no == 153 || mapper_no == 157 || mapper_no == 159;
     if (is_bandai && !bandai_layout(mapper_no, submapper, nes2, prg_sz, chr_sz,
@@ -4216,6 +4287,16 @@ int mapper_init_from_header(const iNESHeader *h,
         fprintf(stderr, "Unsupported ROM size for mapper 85\n");
         return -1;
     }
+    if (mapper_no == 34) {
+        bool bnrom = !mapper34_nina;
+        if ((prg_sz % PRG_BANK_32K) != 0 || prg_sz > 0x800000
+            || (bnrom && (!chr_is_ram || chr_sz != CHR_BANK_8K))
+            || (mapper34_nina && (chr_is_ram || (chr_sz % CHR_BANK_4K) != 0
+                                  || chr_sz > 0x100000))) {
+            fprintf(stderr, "Unsupported ROM/RAM size for mapper 34\n");
+            return -1;
+        }
+    }
     if (!ram_geometry_supported(mapper_no, nes2, &ram, chr_is_ram, chr_sz)
         || (mapper_no == 4 && submapper == 1 && ram.prg_ram + ram.prg_nvram != 0x400)) {
         fprintf(stderr, "Unsupported RAM layout for mapper %d (PRG %zu+%zu, CHR %zu+%zu)\n",
@@ -4254,6 +4335,7 @@ int mapper_init_from_header(const iNESHeader *h,
     C.submapper = submapper;
     C.mmc1a = mapper_no == 155;
     C.bus_conflicts = mapper_no == 11
+        || (mapper_no == 34 && !mapper34_nina)
         || (submapper == 2 && (mapper_no == 2 || mapper_no == 3 || mapper_no == 7 || mapper_no == 30))
         || (mapper_no == 30 && submapper == 0 && !(h->flags6 & 2));
     
@@ -4348,6 +4430,12 @@ int mapper_init_from_header(const iNESHeader *h,
             build_mapper(&mapper_taito33, taito33_cpu_read, taito33_cpu_write,
                         taito33_ppu_read, taito33_ppu_write, taito33_reset, taito33_mirr);
             cart = &mapper_taito33;
+            break;
+        case 34:
+            m34.nina = mapper34_nina;
+            build_mapper(&mapper_m34, m34_cpu_read, m34_cpu_write,
+                         m34_ppu_read, m34_ppu_write, m34_reset, m34_mirr);
+            cart = &mapper_m34;
             break;
         case 48:
             build_mapper(&mapper_taito48, taito48_cpu_read, taito48_cpu_write,

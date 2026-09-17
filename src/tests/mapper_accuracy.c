@@ -3895,6 +3895,143 @@ static int test_namco163_persistence_and_loader(void) {
     return save_fixture_end(&paths);
 }
 
+static iNESHeader mapper34_header(unsigned submapper, bool chr_ram, bool nes2) {
+    iNESHeader h = header_for(34, 0x40000, chr_ram);
+    if (nes2) {
+        h.flags7 |= 0x08;
+        h.prg_ram_size = (uint8_t)(submapper << 4);
+        h.flags10 = 7;
+        if (chr_ram) h.zero[0] = 7;
+    }
+    return h;
+}
+
+static int test_mapper34_bnrom_banking_and_ram(void) {
+    iNESHeader h = mapper34_header(2, true, true);
+    CHECK(fixture_with_header(&h, 0x40000, 0x2000) == 34);
+    CHECK(cart_cpu_read(0x8000) == 0 && cart_cpu_read(0xE000) == 3);
+    CHECK(cart_ppu_read(0x0123) == 0);
+    cart_ppu_write(0x0123, 0xA5);
+    CHECK(cart_ppu_read(0x0123) == 0xA5);
+    cart_cpu_write(0x6123, 0x5A);
+    CHECK(cart_cpu_read(0x6123) == 0x5A);
+
+    cart_cpu_write(0xE000, 3); // Bank-0 ROM drives 3 here, so the bus-conflicted write keeps 3.
+    CHECK(cart_cpu_read(0x8000) == 12 && cart_cpu_read(0xE000) == 15);
+    cart_cpu_write(0x8000, 7); // Current ROM drives 12; 7 & 12 selects bank 4.
+    CHECK(cart_cpu_read(0x8000) == 16);
+    cart_cpu_write(0xE000, 0xFF); // Current ROM drives 19; wrapped bank value selects bank 3.
+    CHECK(cart_cpu_read(0x8000) == 12);
+
+    cart->reset();
+    CHECK(cart_cpu_read(0x8000) == 0 && cart_cpu_read(0x6123) == 0x5A);
+    CHECK(cart_get_mirroring() == MIRROR_HORIZONTAL);
+    return 0;
+}
+
+static int test_mapper34_nina_banks_and_selection(void) {
+    iNESHeader h = mapper34_header(1, false, true);
+    CHECK(fixture_with_header(&h, 0x40000, 0x20000) == 34);
+    CHECK(cart_cpu_read(0x8000) == 0);
+    CHECK(cart_ppu_read(0x0000) == 0x00 && cart_ppu_read(0x1001) == 0x01);
+
+    cart_cpu_write(0x7FFD, 5);
+    cart_cpu_write(0x7FFE, 9);
+    cart_cpu_write(0x7FFF, 17);
+    CHECK(cart_cpu_read(0x8000) == 20);
+    CHECK(cart_ppu_read(0x0000) == 36 && cart_ppu_read(0x1000) == 68);
+    CHECK(cart_cpu_read(0x7FFD) == 5 && cart_cpu_read(0x7FFE) == 9 && cart_cpu_read(0x7FFF) == 17);
+
+    cart_cpu_write(0x7FFC, 0xA5);
+    CHECK(cart_cpu_read(0x7FFC) == 0xA5 && cart_cpu_read(0x8000) == 20);
+    cart_cpu_write(0x8000, 2); // NINA does not decode the BNROM register range.
+    CHECK(cart_cpu_read(0x8000) == 20);
+    cart_cpu_write(0x7FFE, 0xFF);
+    CHECK(cart_ppu_read(0x0000) == 124); // 255 wraps across 32 4 KiB CHR banks.
+
+    cart->reset();
+    CHECK(cart_cpu_read(0x8000) == 0);
+    CHECK(cart_ppu_read(0x0000) == 0x00 && cart_ppu_read(0x1001) == 0x01);
+    CHECK(cart_cpu_read(0x7FFC) == 0xA5);
+
+    iNESHeader legacy_nina = header_for(34, 0x40000, false);
+    CHECK(fixture_with_header(&legacy_nina, 0x40000, 0x2000) == 34);
+    cart_cpu_write(0x7FFD, 2);
+    CHECK(cart_cpu_read(0x8000) == 8);
+
+    iNESHeader legacy_bnrom = header_for(34, 0x40000, true);
+    CHECK(fixture_with_header(&legacy_bnrom, 0x40000, 0x2000) == 34);
+    cart_cpu_write(0xE000, 2);
+    CHECK(cart_cpu_read(0x8000) == 8);
+    return 0;
+}
+
+static int test_mapper34_loader_preserves_cart(void) {
+    iNESHeader good = mapper34_header(1, false, true);
+    CHECK(fixture_with_header(&good, 0x40000, 0x2000) == 34);
+    cart_cpu_write(0x7FFD, 3);
+    cart_cpu_write(0x6123, 0xA6);
+    Mapper *previous = cart;
+
+    iNESHeader invalid = mapper34_header(3, false, true);
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x40000, fixture_chr, 0x2000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 12 && cart_cpu_read(0x6123) == 0xA6);
+
+    invalid = mapper34_header(2, false, true); // Explicit BNROM cannot use CHR ROM.
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x40000, fixture_chr, 0x2000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 12);
+
+    invalid = mapper34_header(1, true, true); // Explicit NINA-001 requires CHR ROM.
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x40000, fixture_chr, 0x2000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 12);
+
+    invalid = mapper34_header(1, false, true);
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x4001, fixture_chr, 0x2000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 12);
+    return 0;
+}
+
+static int test_mapper34_image_loading(void) {
+    for (unsigned submapper = 1; submapper <= 2; ++submapper) {
+        bool chr_ram = submapper == 2;
+        size_t chr_bytes = chr_ram ? 0 : 0x10000;
+        iNESHeader h = mapper34_header(submapper, chr_ram, true);
+        h.chr_rom_chunks = (uint8_t)(chr_bytes / 0x2000);
+        size_t size;
+        uint8_t *image = image_for(&h, 0x40000, chr_bytes, &size);
+        CHECK(image != NULL);
+        for (size_t i = 0; i < 0x40000; ++i)
+            image[sizeof(h) + i] = (uint8_t)(i / 0x2000);
+        for (size_t i = 0; i < chr_bytes; ++i)
+            image[sizeof(h) + 0x40000 + i] = (uint8_t)(i / 0x0400);
+        CHECK(load_rom_memory(image, size) == 0);
+        CHECK(rom_mapper_number(&ines_header) == 34);
+        cart_cpu_write(chr_ram ? 0xE000 : 0x7FFD, 3);
+        cart_cpu_write(0x6123, 0xA6);
+        CHECK(cart_cpu_read(0x8000) == 12 && cart_cpu_read(0x6123) == 0xA6);
+        if (chr_ram) {
+            cart_ppu_write(0x0123, 0xE4);
+        } else {
+            cart_cpu_write(0x7FFE, 5);
+            cart_cpu_write(0x7FFF, 7);
+            CHECK(cart_ppu_read(0x0123) == 20 && cart_ppu_read(0x1123) == 28);
+            cart_ppu_write(0x0123, 0xE4);
+            CHECK(cart_ppu_read(0x0123) == 20);
+        }
+        Mapper *previous = cart;
+        iNESHeader active = ines_header;
+        image[8] = 0x30; // Unsupported board metadata must leave the selected banks and RAM intact.
+        CHECK(load_rom_memory(image, size) == -1);
+        memcpy(image, &h, sizeof(h));
+        CHECK(load_rom_memory(image, size - 1) == -1);
+        free(image);
+        CHECK(cart == previous && memcmp(&ines_header, &active, sizeof(active)) == 0);
+        CHECK(cart_cpu_read(0x8000) == 12 && cart_cpu_read(0x6123) == 0xA6);
+        CHECK(cart_ppu_read(0x0123) == (chr_ram ? 0xE4 : 20));
+    }
+    return 0;
+}
+
 static void jaleco18_write_bank(uint16_t reg, uint8_t value) {
     uint16_t alias = (uint16_t)(reg | 0x0FFCu);
     cart_cpu_write(alias, value & 0x0F);
@@ -4884,6 +5021,8 @@ int test_mapper_accuracy(void) {
         test_mmc6_ram_mirroring, test_mmc6_protection, test_mmc6_banks_and_irq,
         test_namco163_banks_ram_and_nametables, test_namco163_irq_and_audio,
         test_namco175_340_variants, test_namco163_persistence_and_loader,
+        test_mapper34_bnrom_banking_and_ram, test_mapper34_nina_banks_and_selection,
+        test_mapper34_loader_preserves_cart, test_mapper34_image_loading,
         test_sunsoft69_banks_ram_and_startup, test_sunsoft69_legacy_ram_defaults,
         test_sunsoft69_irq_cpu_clock,
         test_sunsoft5b_tone_noise_envelope, test_sunsoft69_persistence_and_loader,
