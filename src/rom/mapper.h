@@ -45,6 +45,8 @@ typedef struct Mapper {
     Mirroring (*get_mirroring)(void);
 } Mapper;
 
+typedef struct FdsImage FdsImage;
+
 // Global “inserted” cart
 extern Mapper *cart;
 
@@ -99,6 +101,8 @@ void cart_apply_trainer(const uint8_t trainer[512]);
 int mapper_init_from_header(const iNESHeader *h,
                             uint8_t *prg, size_t prg_sz,
                             uint8_t *chr, size_t chr_sz);
+// Activate a fully validated disk-system image. Takes ownership on success.
+int mapper_init_fds(FdsImage *image);
 // Flush saves, eject the mapper, and release mapper-owned RAM.
 // The caller retains ownership of the PRG/CHR buffers passed to initialization.
 void mapper_shutdown(void);

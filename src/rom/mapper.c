@@ -38,6 +38,7 @@
 #include "sunsoft5b.h"
 #include "../ppu/ppu.h"
 #include "vrc7_audio.h"
+#include "fds.h"
 #include "../system/timing.h"
 
 extern uint64_t cpu_total_cycles;
@@ -68,7 +69,7 @@ typedef struct {
 static CartCommon C;
 static Mapper mapper_nrom, mapper_mmc1, mapper_uxrom, mapper_cnrom, mapper_mmc3, mapper_tqrom, mapper_txsrom;
 static Mapper mapper_mmc5, mapper_aorom, mapper_mmc2, mapper_mmc4, mapper_colordreams;
-static Mapper mapper_cprom, mapper_100in1, mapper_bandai, mapper_action53, mapper_unrom512;
+static Mapper mapper_cprom, mapper_100in1, mapper_bandai, mapper_action53, mapper_unrom512, mapper_fds;
 static Mapper mapper_taito33, mapper_taito48, mapper_jaleco18, mapper_irem32, mapper_irem65;
 static Mapper mapper_rambo1, mapper_rambo158;
 static Mapper mapper_vrc6, mapper_vrc24, mapper_vrc7;
@@ -520,6 +521,7 @@ void cart_battery_configure(const char *rom_path, bool has_battery) {
 void mapper_shutdown(void) {
     cart_battery_shutdown();
     if (cart == &mapper_vrc7) vrc7_shutdown();
+    if (cart == &mapper_fds) fds_shutdown();
     free(prg_work_ram.data);
     free(prg_save_ram.data);
     prg_work_ram = (RamBlock){0};
@@ -539,9 +541,13 @@ void mapper_shutdown(void) {
 static inline Mirroring base_mirr(void) { return C.mirr_base; }
 Mirroring cart_get_mirroring(void) { return cart && cart->get_mirroring ? cart->get_mirroring() : base_mirr(); }
 void cart_set_mirroring(Mirroring m) { C.mirr_base = m; }
-uint8_t cart_cpu_read(uint16_t a) { return cart ? cart->cpu_read(a) : 0xFF; }
+uint8_t cart_cpu_read(uint16_t a) {
+    if (cart == &mapper_fds) return fds_cpu_read_bus(a, 0xFF);
+    return cart ? cart->cpu_read(a) : 0xFF;
+}
 uint8_t cart_cpu_read_bus(uint16_t a, uint8_t open_bus) {
     if (!cart) return open_bus;
+    if (cart == &mapper_fds) return fds_cpu_read_bus(a, open_bus);
     // Read paths decide which registers and RAM chips drive the data lines.
     // Scope the input so nested callbacks restore their caller's bus latch.
     uint8_t previous_bus = cart_cpu_bus_input;
@@ -559,7 +565,7 @@ void cart_cpu_write(uint16_t a, uint8_t v) {
 uint8_t cart_ppu_read(uint16_t a) { return cart ? cart->ppu_read(a) : 0x00; }
 void cart_ppu_write(uint16_t a, uint8_t v) { if (cart) cart->ppu_write(a, v); }
 void cart_set_ppu_fetch_source(CartPpuFetchSource src) { cart_ppu_fetch_source = src; }
-bool cart_irq_pending(void) { return mapper_irq_line; }
+bool cart_irq_pending(void) { return mapper_irq_line || (cart == &mapper_fds && fds_irq_pending()); }
 void cart_irq_ack(void) {
     mapper_irq_line = false;
 }
@@ -1559,6 +1565,7 @@ static uint8_t mmc5_pulse_volume(const Mmc5Pulse *pulse) {
 }
 
 float cart_expansion_audio(void) {
+    if (cart == &mapper_fds) return fds_expansion_audio();
     if (cart == &mapper_vrc7) return vrc7_expansion_output();
     if (cart == &mapper_vrc6) {
         unsigned raw = (unsigned)vrc6_pulse_volume(&vrc6.pulse[0])
@@ -4593,6 +4600,25 @@ static void build_mapper(Mapper *m,
     m->ppu_read = pr; m->ppu_write = pw;
     m->reset = rst; m->clock = NULL;
     m->get_mirroring = gm;
+}
+
+static uint8_t fds_mapper_cpu_read(uint16_t addr) { return fds_cpu_read_bus(addr, 0xFF); }
+static void fds_mapper_cpu_write(uint16_t addr, uint8_t value) { fds_cpu_write(addr, value); }
+static uint8_t fds_mapper_ppu_read(uint16_t addr) { return fds_ppu_read(addr); }
+static void fds_mapper_ppu_write(uint16_t addr, uint8_t value) { fds_ppu_write(addr, value); }
+static Mirroring fds_mapper_mirroring(void) { return fds_mirroring(); }
+
+int mapper_init_fds(FdsImage *image) {
+    if (!image) return -1;
+    mapper_shutdown();
+    memset(&C, 0, sizeof(C));
+    build_mapper(&mapper_fds, fds_mapper_cpu_read, fds_mapper_cpu_write,
+                 fds_mapper_ppu_read, fds_mapper_ppu_write, fds_reset, fds_mapper_mirroring);
+    mapper_fds.clock = fds_clock_cpu;
+    cart = &mapper_fds;
+    fds_activate(image);
+    fds_reset();
+    return 0;
 }
 
 int mapper_init_from_header(const iNESHeader *h,

@@ -40,12 +40,14 @@ if ($Sanitize) {
 }
 
 $coreSources = @('src/system/timing.c', 'src/system/hardware.c', 'src/cpu/cpu.c', 'src/ppu/ppu.c', 'src/rom/rom.c', 'src/rom/mapper.c',
+                 'src/rom/fds.c',
                  'src/rom/vrc7_audio.c', 'src/rom/emu2413.c',
                  'src/rom/eeprom.c', 'src/rom/namco163.c', 'src/rom/sunsoft5b.c',
                  'src/joypad/joypad.c', 'src/joypad/family_basic.c',
                  'src/apu/apu.c', 'src/ui/palette_tool.c')
 $testSources = @('src/tests/accuracy_test.c', 'src/tests/cpu_accuracy.c', 'src/tests/cpu_trace.c',
                  'src/tests/apu_accuracy.c', 'src/tests/ppu_accuracy.c', 'src/tests/mapper_accuracy.c',
+                 'src/tests/fds_accuracy.c',
                  'src/tests/rom_runner.c', 'src/tests/input_accuracy.c', 'src/tests/bandai_accuracy.c')
 $application = Join-Path $outputDirectory 'cupid-nes.exe'
 $testProgram = Join-Path $outputDirectory 'accuracy-tests.exe'

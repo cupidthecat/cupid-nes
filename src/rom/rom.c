@@ -30,6 +30,7 @@
 #include <limits.h>
 #include "rom.h"
 #include "mapper.h"
+#include "fds.h"
 #include "../system/timing.h"
 
 #define PRG_ROM_BANK_SIZE 0x4000  // 16KB
@@ -43,6 +44,7 @@ size_t prg_size = 0;
 size_t chr_size = 0;
 
 int mirroring_mode = 0;
+static int fds_loaded = 0;
 
 static int is_nes20(const iNESHeader *h) {
     // NES 2.0 if (flags7 & 0x0C) == 0x08
@@ -223,6 +225,7 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
     if (trainer) cart_apply_trainer(trainer);
     mirroring_mode = (int)cart_get_mirroring();
     nes_set_region(rom_region(&header));
+    fds_loaded = 0;
 
     printf("Mapper: %d  (CHR %s)\n", mapper_no, rom_chr_size ? "ROM" : "RAM");
     return 0;
@@ -232,6 +235,39 @@ int load_rom_memory(const uint8_t *data, size_t size) {
     return load_rom_data(data, size, NULL);
 }
 
+int load_fds_memory(const uint8_t *disk, size_t disk_size,
+                    const uint8_t *bios, size_t bios_size,
+                    const char *disk_path, bool write_protected) {
+    FdsImage *image = fds_image_create(disk, disk_size, bios, bios_size,
+                                       disk_path, write_protected);
+    if (!image) {
+        fprintf(stderr, "Invalid FDS disk image or BIOS\n");
+        return -1;
+    }
+
+    // The prepared image owns all allocations needed by the new machine, so activation
+    // cannot strand the current cartridge after a validation or allocation failure.
+    if (mapper_init_fds(image) != 0) {
+        fds_image_destroy(image);
+        return -1;
+    }
+
+    free(prg_rom);
+    free(chr_rom);
+    prg_rom = NULL;
+    chr_rom = NULL;
+    prg_size = 0;
+    chr_size = 0;
+    memset(&ines_header, 0, sizeof(ines_header));
+    mirroring_mode = (int)cart_get_mirroring();
+    nes_set_region(NES_REGION_NTSC);
+    fds_loaded = 1;
+    printf("Famicom Disk System: %zu side%s\n", fds_side_count(), fds_side_count() == 1 ? "" : "s");
+    return 0;
+}
+
+bool rom_is_fds(void) { return fds_loaded != 0; }
+
 void unload_rom(void) {
     mapper_shutdown();
     free(prg_rom);
@@ -240,7 +276,48 @@ void unload_rom(void) {
     prg_size = chr_size = 0;
     memset(&ines_header, 0, sizeof(ines_header));
     mirroring_mode = 0;
+    fds_loaded = 0;
     nes_set_region(NES_REGION_NTSC);
+}
+
+static int read_file(const char *path, uint8_t **data, size_t *size) {
+    *data = NULL;
+    *size = 0;
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return -1;
+    if (fseek(fp, 0, SEEK_END) != 0) { fclose(fp); return -1; }
+    long length = ftell(fp);
+    if (length < 0 || fseek(fp, 0, SEEK_SET) != 0) { fclose(fp); return -1; }
+    size_t bytes = (size_t)length;
+    uint8_t *buffer = (uint8_t *)malloc(bytes ? bytes : 1);
+    if (!buffer) { fclose(fp); return -1; }
+    size_t bytes_read = fread(buffer, 1, bytes, fp);
+    int close_result = fclose(fp);
+    if (bytes_read != bytes || close_result != 0) {
+        free(buffer);
+        return -1;
+    }
+    *data = buffer;
+    *size = bytes;
+    return 0;
+}
+
+int load_fds(const char *disk_path, const char *bios_path, bool write_protected) {
+    if (!disk_path || !bios_path) return -1;
+    uint8_t *disk = NULL, *bios = NULL;
+    size_t disk_size = 0, bios_size = 0;
+    if (read_file(disk_path, &disk, &disk_size) != 0
+        || read_file(bios_path, &bios, &bios_size) != 0) {
+        fprintf(stderr, "Failed to read FDS disk or BIOS file\n");
+        free(disk);
+        free(bios);
+        return -1;
+    }
+    int result = load_fds_memory(disk, disk_size, bios, bios_size,
+                                 disk_path, write_protected);
+    free(disk);
+    free(bios);
+    return result;
 }
 
 int load_rom(const char *filename) {

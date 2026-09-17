@@ -25,9 +25,11 @@
 
 #include <SDL2/SDL.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
 #include "rom/rom.h"
+#include "rom/fds.h"
 #include "cpu/cpu.h"
 #include "ppu/ppu.h"
 #include "joypad/joypad.h"
@@ -194,6 +196,11 @@ int main(int argc, char *argv[]) {
     const char *barcode = NULL;
     const char *tape_play_path = NULL;
     const char *tape_record_path = NULL;
+    const char *fds_bios_path = NULL;
+    size_t fds_frontend_side = 0;
+    bool fds_side_set = false;
+    bool fds_start_ejected = false;
+    bool fds_start_write_protected = false;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--console") == 0) {
             if (++i == argc || !nes_set_console_model_name(argv[i])) {
@@ -266,6 +273,29 @@ int main(int argc, char *argv[]) {
             }
             if (record) tape_record_path = argv[i];
             else tape_play_path = argv[i];
+        } else if (strcmp(argv[i], "--fds-bios") == 0) {
+            if (++i == argc) {
+                fprintf(stderr, "--fds-bios requires an 8KB BIOS file\n");
+                return 1;
+            }
+            fds_bios_path = argv[i];
+        } else if (strcmp(argv[i], "--fds-side") == 0) {
+            if (++i == argc) {
+                fprintf(stderr, "--fds-side requires a side number starting at 1\n");
+                return 1;
+            }
+            char *end = NULL;
+            unsigned long side = strtoul(argv[i], &end, 10);
+            if (!side || *end) {
+                fprintf(stderr, "FDS side must be a positive number\n");
+                return 1;
+            }
+            fds_frontend_side = (size_t)(side - 1);
+            fds_side_set = true;
+        } else if (strcmp(argv[i], "--fds-eject") == 0) {
+            fds_start_ejected = true;
+        } else if (strcmp(argv[i], "--fds-write-protect") == 0) {
+            fds_start_write_protected = true;
         } else if (argv[i][0] == '-' || rom_path) {
             fprintf(stderr, "Unexpected argument: %s\n", argv[i]);
             return 1;
@@ -279,7 +309,13 @@ int main(int argc, char *argv[]) {
                "[--ppu-startup-restriction] [--ppu-oam-decay] "
                "[--adapter TYPE] [--port1 DEVICE] [--port2 DEVICE] "
                "[--expansion DEVICE] [--barcode DIGITS] "
-               "[--zapper-radius PIXELS] [--tape-play FILE | --tape-record FILE] <rom-file>\n", argv[0]);
+               "[--zapper-radius PIXELS] [--tape-play FILE | --tape-record FILE] "
+               "[--fds-bios BIOS] [--fds-side N] "
+               "[--fds-eject] [--fds-write-protect] <rom-file>\n", argv[0]);
+        return 1;
+    }
+    if (!fds_bios_path && (fds_side_set || fds_start_ejected || fds_start_write_protected)) {
+        fprintf(stderr, "FDS media options require --fds-bios\n");
         return 1;
     }
     if (!joypad_configuration_valid()) {
@@ -302,7 +338,10 @@ int main(int argc, char *argv[]) {
     printf("PPU OAM decay: %s\n", ppu_oam_decay_enabled() ? "enabled" : "compatibility");
     printf("Input adapter: %s\n", joypad_adapter_name());
     printf("Loading ROM: %s\n", rom_path);
-    if(load_rom(rom_path) != 0) {
+    int load_result = fds_bios_path
+        ? load_fds(rom_path, fds_bios_path, fds_start_write_protected)
+        : load_rom(rom_path);
+    if(load_result != 0) {
         fprintf(stderr, "Failed to load ROM\n");
         return 1;
     }
@@ -312,29 +351,40 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     if (barcode) printf("Press F8 to scan the configured barcode\n");
+    if (rom_is_fds()) {
+        if (fds_side_set && !fds_insert_disk(fds_frontend_side)) {
+            fprintf(stderr, "FDS side is outside the loaded disk image\n");
+            unload_rom();
+            return 1;
+        }
+        if (fds_start_ejected) fds_eject_disk();
+    }
     cpu_total_cycles = 0;
     ppu_power_on(&ppu);
     apu_power_on(&apu);
     // Print ROM metadata at startup so mapper selection can be checked from the log.
-    printf("=== ROM Header Info ===\n");
-    printf("Signature: %c%c%c 0x%02X\n", 
-           ines_header.signature[0], 
-           ines_header.signature[1], 
-           ines_header.signature[2],
-           ines_header.signature[3]);
-    printf("PRG-ROM Chunks: %d\n", ines_header.prg_rom_chunks);
-    printf("CHR-ROM Chunks: %d\n", ines_header.chr_rom_chunks);
-    printf("Flags6: 0x%02X\n", ines_header.flags6);
-    printf("Flags7: 0x%02X\n", ines_header.flags7);
-    printf("Mirroring: %s\n", (mirroring_mode == 0 ? "Horizontal" : "Vertical"));
-    printf("=======================\n");
+    if (!rom_is_fds()) {
+        printf("=== ROM Header Info ===\n");
+        printf("Signature: %c%c%c 0x%02X\n",
+               ines_header.signature[0],
+               ines_header.signature[1],
+               ines_header.signature[2],
+               ines_header.signature[3]);
+        printf("PRG-ROM Chunks: %d\n", ines_header.prg_rom_chunks);
+        printf("CHR-ROM Chunks: %d\n", ines_header.chr_rom_chunks);
+        printf("Flags6: 0x%02X\n", ines_header.flags6);
+        printf("Flags7: 0x%02X\n", ines_header.flags7);
+        printf("Mirroring: %s\n", (mirroring_mode == 0 ? "Horizontal" : "Vertical"));
+        printf("=======================\n");
+    }
     
-    if (ines_header.prg_rom_chunks > 1 || (ines_header.flags6 & 0xF0)) {
+    if (!rom_is_fds() && (ines_header.prg_rom_chunks > 1 || (ines_header.flags6 & 0xF0))) {
         printf("WARNING: This ROM likely uses a mapper (mapper number: %d).\n",
             (ines_header.flags7 & 0xF0) | ((ines_header.flags6 & 0xF0) >> 4));
     }
     
-    printf("Mapper detected: %d\n", ((ines_header.flags7 & 0xF0) | ((ines_header.flags6 & 0xF0) >> 4)));
+    if (!rom_is_fds())
+        printf("Mapper detected: %d\n", ((ines_header.flags7 & 0xF0) | ((ines_header.flags6 & 0xF0) >> 4)));
 
 
     printf("Resetting CPU...\n");
@@ -444,8 +494,21 @@ int main(int argc, char *argv[]) {
                 int down = (e.type == SDL_KEYDOWN);
     
                 switch (e.key.keysym.sym) {
+                    case SDLK_F10:
+                        if (down && rom_is_fds()) fds_set_write_protected(!fds_write_protected());
+                        break;
+                    case SDLK_F9:
+                        if (down && rom_is_fds() && fds_side_count()) {
+                            fds_frontend_side = (fds_frontend_side + 1) % fds_side_count();
+                            (void)fds_insert_disk(fds_frontend_side);
+                        }
+                        break;
                     case SDLK_F8:
                         if (down && !e.key.repeat && barcode) cart_set_barcode(barcode);
+                        if (down && !e.key.repeat && rom_is_fds()) {
+                            if (fds_disk_inserted()) fds_eject_disk();
+                            else (void)fds_insert_disk(fds_frontend_side);
+                        }
                         break;
                     case SDLK_F7:
                         if (down) { palette_tool_toggle_overlay(); }

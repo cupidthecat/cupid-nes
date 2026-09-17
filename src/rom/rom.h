@@ -24,6 +24,7 @@
 
 #ifndef ROM_H
 #define ROM_H
+#include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
 
@@ -55,11 +56,17 @@ extern uint8_t   *prg_rom;
 extern uint8_t   *chr_rom;
 
 int load_rom(const char *filename);
+int load_fds(const char *disk_path, const char *bios_path, bool write_protected);
 // Eject the cartridge and release loader-owned buffers; safe to call repeatedly.
 void unload_rom(void);
 // Load an iNES image without a disk file or battery save path; copies its bytes.
 // Failed loads preserve the currently inserted cartridge.
 int load_rom_memory(const uint8_t *data, size_t size);
+// Test and embedding entry point. Failed validation leaves the active machine untouched.
+int load_fds_memory(const uint8_t *disk, size_t disk_size,
+                    const uint8_t *bios, size_t bios_size,
+                    const char *disk_path, bool write_protected);
+bool rom_is_fds(void);
 int rom_mapper_number(const iNESHeader *header);
 
 typedef struct {
