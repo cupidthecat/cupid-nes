@@ -556,10 +556,22 @@ static struct {
     bool ram_enabled; // MMC6 global enable at $8000 bit 5.
     bool a12_low;
     uint64_t a12_low_cycle;
+    bool mcacc_a12_high;
+    uint8_t mcacc_divider;
 } mmc3;
 
 void cart_notify_ppu_address(uint16_t addr, uint64_t ppu_cycle) {
     if (cart != &mapper_mmc3 && cart != &mapper_tqrom) return;
+    if (C.submapper == 3) {
+        bool high = (addr & 0x1000) != 0;
+        if (mmc3.mcacc_a12_high && !high) {
+            // MC-ACC clocks on the first falling edge in each group of eight.
+            if (mmc3.mcacc_divider == 0) mmc3_irq_clock();
+            mmc3.mcacc_divider = (uint8_t)((mmc3.mcacc_divider + 1) & 7);
+        }
+        mmc3.mcacc_a12_high = high;
+        return;
+    }
     uint64_t cpu_cycle = ppu_cycle / 3;
     if (!(addr & 0x1000)) {
         if (!mmc3.a12_low) {
@@ -598,7 +610,8 @@ static uint8_t mmc3_cpu_read(uint16_t a) {
             if (!(mmc3.ram_protect & read_enable)) return 0;
             return ram_read(default_prg_ram(), a & 0x03FF);
         }
-        return (mmc3.ram_protect & 0x80) ? prg_ram_read(a) : cart_cpu_bus_input;
+        if (C.submapper == 3 || (mmc3.ram_protect & 0x80)) return prg_ram_read(a);
+        return cart_cpu_bus_input;
     }
     if (a >= 0x8000) {
         size_t prg_8k_banks = C.prg_sz / PRG_BANK_8K;
@@ -630,7 +643,7 @@ static void mmc3_cpu_write(uint16_t a, uint8_t v) {
             uint8_t required = (a & 0x0200) ? 0xC0 : 0x30;
             if (a >= 0x7000 && mmc3.ram_enabled && (mmc3.ram_protect & required) == required)
                 ram_write(default_prg_ram(), a & 0x03FF, v);
-        } else if ((mmc3.ram_protect & 0xC0) == 0x80) {
+        } else if (C.submapper == 3 || (mmc3.ram_protect & 0xC0) == 0x80) {
             prg_ram_write(a, v);
         }
         return;
@@ -661,6 +674,7 @@ static void mmc3_cpu_write(uint16_t a, uint8_t v) {
         } else if ((a & 0xE001) == 0xC001) {
             mmc3.irq_counter = 0;
             mmc3.irq_reload = true;
+            if (C.submapper == 3) mmc3.mcacc_divider = 0;
             MMC3_LOG("write %04X=%02X irq_reload=1", a, v);
         } else if ((a & 0xE001) == 0xE000) {
             mmc3.irq_enabled = false;
@@ -751,6 +765,7 @@ static void mmc3_reset(void) {
     const uint8_t initial_banks[8] = {0, 2, 4, 5, 6, 7, 0, 1};
     memcpy(mmc3.banks, initial_banks, sizeof(initial_banks));
     mmc3.mirr = C.mirr_base;
+    if (C.submapper == 3 && C.mirr_base != MIRROR_FOUR) mmc3.mirr = MIRROR_VERTICAL;
     mapper_irq_line = false;
 }
 
@@ -1872,7 +1887,7 @@ int mapper_init_from_header(const iNESHeader *h,
             return -1;
     }
     if (submapper && !((mapper_no == 1 && submapper == 5)
-        || (mapper_no == 4 && submapper == 1)
+        || (mapper_no == 4 && (submapper == 1 || submapper == 3))
         || ((mapper_no == 2 || mapper_no == 3 || mapper_no == 7) && submapper <= 2))) {
         fprintf(stderr, "Unsupported mapper/submapper: %d/%u\n", mapper_no, submapper);
         return -1;

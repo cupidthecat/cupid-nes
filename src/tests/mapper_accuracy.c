@@ -1077,6 +1077,206 @@ static int test_mmc1a_ram_layouts_and_loader(void) {
     return 0;
 }
 
+static iNESHeader mcacc_header(void) {
+    iNESHeader h = header_for(4, 0x20000, false);
+    h.flags7 = 8;
+    h.prg_ram_size = 0x30;
+    h.flags10 = 7;
+    h.chr_rom_chunks = 4;
+    return h;
+}
+
+static void mcacc_falling_edge(uint64_t cycle) {
+    cart_notify_ppu_address(0x1000, cycle);
+    cart_notify_ppu_address(0x2000, cycle + 1);
+}
+
+static int test_mcacc_irq_divider(void) {
+    iNESHeader h = mcacc_header();
+    CHECK(fixture_with_header(&h, 0x20000, 0x8000) == 4);
+    cart_cpu_write(0xC000, 2);
+    cart_cpu_write(0xC001, 0);
+    cart_cpu_write(0xE001, 0);
+    cart_notify_ppu_address(0x2000, 0);
+    for (unsigned pulse = 1; pulse <= 17; ++pulse) {
+        uint64_t cycle = (uint64_t)pulse * 4;
+        cart_notify_ppu_address(0x1000, cycle);
+        cart_notify_ppu_address(0x1001, cycle + 1);
+        CHECK(!cart_irq_pending());
+        cart_notify_ppu_address(0x2000, cycle + 2);
+        cart_notify_ppu_address(0x2001, cycle + 3);
+        CHECK(cart_irq_pending() == (pulse == 17));
+    }
+    cart_cpu_write(0xE000, 0);
+    CHECK(!cart_irq_pending());
+
+    cart->reset();
+    cart_cpu_write(0xC000, 0);
+    cart_cpu_write(0xE001, 0);
+    mcacc_falling_edge(100);
+    CHECK(cart_irq_pending()); // A one-dot high pulse is sufficient.
+    cart_cpu_write(0xE000, 0);
+    cart_cpu_write(0xE001, 0);
+    CHECK(!cart_irq_pending()); // Acknowledgment and enable do not reset divider phase.
+    for (unsigned pulse = 1; pulse <= 8; ++pulse) {
+        mcacc_falling_edge(100 + (uint64_t)pulse * 2);
+        CHECK(cart_irq_pending() == (pulse == 8));
+    }
+
+    // Reset clears the remembered high level and the divider as well as the IRQ.
+    cart_notify_ppu_address(0x1000, 120);
+    cart->reset();
+    cart_cpu_write(0xE001, 0);
+    cart_notify_ppu_address(0x2000, 121);
+    CHECK(!cart_irq_pending());
+    mcacc_falling_edge(122);
+    CHECK(cart_irq_pending());
+    return 0;
+}
+
+static int test_mcacc_irq_reload_and_enable(void) {
+    iNESHeader h = mcacc_header();
+    CHECK(fixture_with_header(&h, 0x20000, 0x8000) == 4);
+    cart_cpu_write(0xC000, 1);
+    for (unsigned pulse = 0; pulse < 9; ++pulse) mcacc_falling_edge((uint64_t)pulse * 2);
+    CHECK(!cart_irq_pending()); // Disabled IRQ output does not stop counting.
+    cart_cpu_write(0xE001, 0);
+    for (unsigned pulse = 1; pulse <= 16; ++pulse) {
+        mcacc_falling_edge(18 + (uint64_t)pulse * 2);
+        CHECK(cart_irq_pending() == (pulse == 16));
+    }
+    cart_cpu_write(0xE000, 0);
+
+    cart->reset();
+    cart_cpu_write(0xC000, 4);
+    cart_cpu_write(0xE001, 0);
+    for (unsigned pulse = 0; pulse < 3; ++pulse) mcacc_falling_edge(100 + (uint64_t)pulse * 2);
+    cart_cpu_write(0xC000, 0);
+    cart_notify_ppu_address(0x1000, 108);
+    cart_cpu_write(0xDFFF, 0); // $C001 mirror resets the divider without forgetting A12.
+    CHECK(!cart_irq_pending());
+    cart_notify_ppu_address(0x2000, 109);
+    CHECK(cart_irq_pending());
+    cart_cpu_write(0xC001, 0);
+    CHECK(cart_irq_pending()); // Reload requests do not acknowledge an asserted IRQ.
+    cart_cpu_write(0xFFFE, 0); // $E000 mirror acknowledges it.
+    CHECK(!cart_irq_pending());
+    cart_cpu_write(0xFFFF, 0);
+    cart_notify_ppu_address(0x2001, 110);
+    CHECK(!cart_irq_pending());
+    mcacc_falling_edge(111);
+    CHECK(cart_irq_pending());
+    return 0;
+}
+
+static int test_mcacc_banks_ram_and_loader(void) {
+    iNESHeader h = mcacc_header();
+    CHECK(fixture_with_header(&h, 0x20000, 0x8000) == 4);
+    CHECK(cart_cpu_read(0x8000) == 0 && cart_cpu_read(0xA000) == 1);
+    CHECK(cart_cpu_read(0xC000) == 14 && cart_cpu_read(0xE000) == 15);
+    CHECK(cart_get_mirroring() == MIRROR_VERTICAL);
+    cart_cpu_write(0x9FFE, 6);
+    cart_cpu_write(0x9FFF, 3);
+    CHECK(cart_cpu_read(0x8000) == 3 && cart_cpu_read(0xC000) == 14);
+    cart_cpu_write(0x8000, 0x46);
+    CHECK(cart_cpu_read(0x8000) == 14 && cart_cpu_read(0xC000) == 3);
+    cart_cpu_write(0x8000, 0);
+    cart_cpu_write(0x8001, 5);
+    CHECK(cart_ppu_read(0) == 4 && cart_ppu_read(0x0400) == 5);
+    cart_cpu_write(0x8000, 0x80);
+    CHECK(cart_ppu_read(0x1000) == 4 && cart_ppu_read(0x1400) == 5);
+    cart_ppu_write(0x1000, 0x77);
+    CHECK(cart_ppu_read(0x1000) == 4);
+    cart_cpu_write(0xA000, 1);
+    CHECK(cart_get_mirroring() == MIRROR_HORIZONTAL);
+
+    // MC-ACC leaves its populated RAM window writable across $A001 settings.
+    for (unsigned protect = 0; protect <= 0xC0; protect += 0x40) {
+        cart_cpu_write(0xA001, (uint8_t)protect);
+        cart_cpu_write(0x6000, (uint8_t)(protect | 0x35));
+        cart_cpu_write(0x7FFF, (uint8_t)(protect | 0x1A));
+        CHECK(cart_cpu_read(0x6000) == (protect | 0x35));
+        CHECK(cart_cpu_read(0x7FFF) == (protect | 0x1A));
+    }
+    cart->reset();
+    CHECK(cart_cpu_read(0x6000) == 0xF5 && !cart_irq_pending());
+
+    size_t size;
+    uint8_t *image = image_for(&h, 0x20000, 0x8000, &size);
+    CHECK(image != NULL);
+    int loaded = load_rom_memory(image, size);
+    free(image);
+    CHECK(loaded == 0 && ines_header.prg_ram_size == 0x30);
+    cart_cpu_write(0x6000, 0x96);
+    uint8_t *previous = prg_rom;
+    iNESHeader invalid[] = {h, h, h};
+    invalid[0].prg_ram_size = 0x20;
+    invalid[1].prg_ram_size = 0x40;
+    invalid[2].flags10 = 8;
+    for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
+        image = image_for(&invalid[i], 0x20000, 0x8000, &size);
+        CHECK(image != NULL);
+        loaded = load_rom_memory(image, size);
+        free(image);
+        CHECK(loaded == -1 && prg_rom == previous && cart_cpu_read(0x6000) == 0x96);
+    }
+    h.flags10 = 0;
+    h.flags6 |= 8;
+    CHECK(fixture_with_header(&h, 0x20000, 0x8000) == 4);
+    cart_cpu_write(0x6000, 0x77);
+    CHECK(cart_cpu_read_bus(0x6000, 0x56) == 0x56);
+    cart_cpu_write(0xA000, 1);
+    CHECK(cart_get_mirroring() == MIRROR_FOUR);
+    return 0;
+}
+
+static int mcacc_cpu_ppu_address(uint16_t address) {
+    const uint8_t program[] = {
+        0xA9, (uint8_t)(address >> 8), 0x8D, 0x06, 0x20,
+        0xA9, (uint8_t)address, 0x8D, 0x06, 0x20,
+        0xEA // Let the delayed PPU address assignment reach the physical bus.
+    };
+    for (size_t i = 0; i < sizeof(program); ++i)
+        write_mem((uint16_t)(0x0200 + i), program[i]);
+    cpu.pc = 0x0200;
+    const int cycles[] = {2, 4, 2, 4, 2};
+    for (size_t i = 0; i < sizeof(cycles) / sizeof(cycles[0]); ++i)
+        CHECK(cpu_step(&cpu) == cycles[i]);
+    return 0;
+}
+
+static int test_mcacc_cpu_ppu_irq_path(void) {
+    iNESHeader h = mcacc_header();
+    CHECK(fixture_with_header(&h, 0x20000, 0x8000) == 4);
+    nes_set_region(NES_REGION_NTSC);
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    cpu_power_on(&cpu);
+    ppu_step_dots(341 * 262 * 2);
+    write_mem(0x2001, 0);
+    (void)read_mem(0x2002);
+    fixture_prg[0x1FFFE] = 0x00;
+    fixture_prg[0x1FFFF] = 0x03;
+    write_mem(0xC000, 1);
+    write_mem(0xC001, 0);
+    write_mem(0xE001, 0);
+    for (unsigned pulse = 1; pulse <= 9; ++pulse) {
+        CHECK(mcacc_cpu_ppu_address(0x1000) == 0);
+        CHECK(!cart_irq_pending());
+        CHECK(mcacc_cpu_ppu_address(0x2000) == 0);
+        CHECK(cart_irq_pending() == (pulse == 9));
+    }
+    for (unsigned i = 0; i < 8; ++i) write_mem((uint16_t)(0x0200 + i), 0xEA);
+    cpu.pc = 0x0200;
+    cpu.status &= (uint8_t)~INTERRUPT_FLAG;
+    for (unsigned step = 0; step < 3 && cpu.pc != 0x0300; ++step) (void)cpu_step(&cpu);
+    CHECK(cpu.pc == 0x0300 && (cpu.status & INTERRUPT_FLAG));
+    CHECK(cart_irq_pending());
+    write_mem(0xE000, 0);
+    CHECK(!cart_irq_pending());
+    return 0;
+}
+
 static iNESHeader tqrom_header(size_t chr_bytes) {
     iNESHeader h = header_for(119, 0x20000, false);
     h.flags7 |= 0x08;
@@ -2143,6 +2343,8 @@ int test_mapper_accuracy(void) {
         test_mmc1_outer_and_fixed_banks, test_mmc2_banks_and_latches,
         test_mmc4_latches_and_chr_ram, test_mmc3_banks_and_protection,
         test_mmc3_irq_edges, test_mmc3_render_trace, test_tqrom_mixed_chr_memory,
+        test_mcacc_irq_divider, test_mcacc_irq_reload_and_enable,
+        test_mcacc_banks_ram_and_loader, test_mcacc_cpu_ppu_irq_path,
         test_simple_mapper_registers,
         test_colordreams_bus_conflicts, test_bus_conflict_submappers,
         test_mapper15_modes, test_mmc5_memory_windows,
