@@ -43,6 +43,43 @@ uint8_t ppu_palette[PPU_PALETTE_SIZE];
 uint8_t bg_opaque[256 * 240];
 PPU ppu;
 
+// Hardware-profile settings live outside PPU state so power/reset operations do
+// not silently change the selected silicon behavior.
+static PpuRevision active_ppu_revision = PPU_REVISION_2C02_E_PLUS;
+static bool oam_row_corruption_worst_case = false;
+static const char *const ppu_revision_names[] = {"2c02-pre-e", "2c02e-plus"};
+
+PpuRevision ppu_revision(void) {
+    return active_ppu_revision;
+}
+
+bool ppu_set_revision(PpuRevision revision) {
+    if ((unsigned)revision > PPU_REVISION_2C02_E_PLUS) return false;
+    active_ppu_revision = revision;
+    return true;
+}
+
+bool ppu_set_revision_name(const char *name) {
+    if (!name) return false;
+    for (unsigned i = 0; i < sizeof(ppu_revision_names) / sizeof(ppu_revision_names[0]); ++i) {
+        if (strcmp(name, ppu_revision_names[i]) == 0)
+            return ppu_set_revision((PpuRevision)i);
+    }
+    return false;
+}
+
+const char *ppu_revision_name(void) {
+    return ppu_revision_names[active_ppu_revision];
+}
+
+bool ppu_oam_row_corruption_worst_case(void) {
+    return oam_row_corruption_worst_case;
+}
+
+void ppu_set_oam_row_corruption_worst_case(bool enabled) {
+    oam_row_corruption_worst_case = enabled;
+}
+
 static bool rendering_line(void) {
     return ppu.scanline < 240 || ppu.scanline == (int)nes_timing()->scanlines - 1;
 }
@@ -150,16 +187,30 @@ static void ppu_increment_secondary_oam(void) {
     if (!ppu.secondary_index) ppu.secondary_oam_overflowed = true;
 }
 
-static void ppu_corrupt_oam_row(uint8_t row) {
-    row &= 0x1F;
-    if (row) memcpy(&ppu.oam[row << 3], ppu.oam, 8);
-    ppu.secondary_oam[row] = ppu.secondary_oam[0];
+static void ppu_corrupt_oam_row(uint8_t source_row, uint8_t dest_row) {
+    source_row &= 0x1F;
+    dest_row &= 0x1F;
+    if (source_row == dest_row || nes_timing()->region == NES_REGION_PAL) return;
+    memcpy(&ppu.oam[dest_row << 3], &ppu.oam[source_row << 3], 8);
+    ppu.secondary_oam[dest_row] = ppu.secondary_oam[source_row];
 }
 
 static uint8_t ppu_oam_corruption_row(int dot) {
     uint8_t row = ppu.secondary_index & 0x1F;
     if (dot >= 65 && dot <= 256 && (row & 3)) row = (uint8_t)((row + 3) & 0x1C);
     return row;
+}
+
+static bool ppu_oam_addr_write_corruption_active(void) {
+    if (!oam_row_corruption_worst_case || nes_timing()->region != NES_REGION_NTSC)
+        return false;
+
+    // This path intentionally models an alignment-dependent worst case. The
+    // pre-write CPU bus byte selects an intermediate row. During
+    // active display/pre-render it is only applied on the observed odd clocks
+    // before sprite fetch; blanking or disabled rendering always qualifies.
+    bool display_line = rendering_line();
+    return !ppu.fetches_enabled || !display_line || (ppu.dot < 257 && (ppu.dot & 1));
 }
 
 // Palette RAM is internal. External reads in its address range still reach
@@ -300,6 +351,13 @@ void ppu_reg_write_cpu(uint16_t reg, uint8_t value, uint8_t cpu_open_bus) {
             ppu.mask = value;
             break;
         case 3:
+            if (ppu_oam_addr_write_corruption_active()) {
+                uint8_t source_row = ppu.oam_addr >> 3;
+                uint8_t open_bus_row = cpu_open_bus >> 3;
+                uint8_t dest_row = value >> 3;
+                ppu_corrupt_oam_row(source_row, open_bus_row);
+                ppu_corrupt_oam_row(open_bus_row, dest_row);
+            }
             ppu.oam_addr = value;
             break;
         case 4:
@@ -746,11 +804,18 @@ void ppu_step_dots(int ppu_cycles) {
         }
 
         if ((visible || prerender) && rendering && ppu.oam_corruption_pending) {
-            ppu_corrupt_oam_row(ppu.oam_corruption_row);
+            ppu_corrupt_oam_row(ppu.oam_corruption_source_row,
+                                ppu.oam_corruption_dest_row);
             ppu.oam_corruption_pending = false;
         }
 
         if (dot == 0) {
+            if (prerender && oam_row_corruption_worst_case && ppu.rendering_enabled
+                && active_ppu_revision == PPU_REVISION_2C02_E_PLUS) {
+                // Later 2C02 revisions can copy the selected primary row at
+                // the start of pre-render. PAL hardware excludes row copies.
+                ppu_corrupt_oam_row(ppu.oam_addr >> 3, ppu.secondary_index & 0x1F);
+            }
             if (visible && rendering && (line > 0 || !ppu.skipped_frame_dot)) {
                 // The unused nametable fetch drives a pattern address between
                 // scanlines without reading another byte from CHR memory.
@@ -822,11 +887,29 @@ void ppu_step_dots(int ppu_cycles) {
         // PPUMASK reaches the rendering latch after one PPU clock, then
         // reaches the fetch/evaluation circuits after the following clock.
         if (ppu.fetches_enabled != ppu.rendering_enabled) {
+            bool enabling = ppu.rendering_enabled;
             ppu.fetches_enabled = ppu.rendering_enabled;
             if (rendering_line()) {
-                if (!ppu.fetches_enabled) {
-                    ppu.oam_corruption_row = ppu_oam_corruption_row(dot);
+                if (oam_row_corruption_worst_case
+                    && (dot >= 257 || !(dot & 1))) {
+                    uint8_t source_row = enabling
+                                       ? (ppu.oam_addr >> 3)
+                                       : (ppu.secondary_index & 0x1F);
+                    uint8_t dest_row = enabling
+                                     ? (ppu.secondary_index & 0x1F)
+                                     : (ppu.oam_addr >> 3);
+                    // Alignment-dependent rendering transitions use the
+                    // selected rows directly. This is the explicit worst-case
+                    // approximation, not a universal corruption claim.
+                    ppu_corrupt_oam_row(source_row, dest_row);
+                } else if (!oam_row_corruption_worst_case && !enabling) {
+                    // Preserve the established compatibility path by deferring
+                    // its row-zero copy until rendering is active again.
+                    ppu.oam_corruption_source_row = 0;
+                    ppu.oam_corruption_dest_row = ppu_oam_corruption_row(dot);
                     ppu.oam_corruption_pending = true;
+                }
+                if (!enabling) {
                     ppu_set_bus_address(ppu.v);
                     if (dot >= 65 && dot <= 256) ppu.oam_addr++;
                 }

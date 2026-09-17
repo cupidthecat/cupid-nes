@@ -148,6 +148,13 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "CPU revision must be early-2a03 or late-2a03\n");
                 return 1;
             }
+        } else if (strcmp(argv[i], "--ppu-revision") == 0) {
+            if (++i == argc || !ppu_set_revision_name(argv[i])) {
+                fprintf(stderr, "PPU revision must be 2c02-pre-e or 2c02e-plus\n");
+                return 1;
+            }
+        } else if (strcmp(argv[i], "--ppu-oam-row-corruption") == 0) {
+            ppu_set_oam_row_corruption_worst_case(true);
         } else if (strcmp(argv[i], "--adapter") == 0) {
             if (++i == argc || !joypad_set_adapter_name(argv[i])) {
                 fprintf(stderr, "Adapter must be none, four-score, famicom-2, or famicom-4\n");
@@ -191,6 +198,7 @@ int main(int argc, char *argv[]) {
     }
     if (!rom_path) {
         printf("Usage: %s [--console MODEL] [--cpu-revision REVISION] "
+               "[--ppu-revision REVISION] [--ppu-oam-row-corruption] "
                "[--adapter TYPE] [--port1 DEVICE] [--port2 DEVICE] "
                "[--expansion DEVICE] [--barcode DIGITS] "
                "[--zapper-radius PIXELS] <rom-file>\n", argv[0]);
@@ -204,6 +212,9 @@ int main(int argc, char *argv[]) {
     printf("Console: %s\n", nes_console_model_name());
     printf("CPU revision: %s\n", apu_get_cpu_revision() == APU_CPU_REVISION_EARLY_2A03
            ? "early-2a03" : "late-2a03");
+    printf("PPU revision: %s\n", ppu_revision_name());
+    printf("PPU OAM row corruption: %s\n",
+           ppu_oam_row_corruption_worst_case() ? "worst-case" : "compatibility");
     printf("Input adapter: %s\n", joypad_adapter_name());
     printf("Loading ROM: %s\n", rom_path);
     if(load_rom(rom_path) != 0) {

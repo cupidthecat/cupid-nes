@@ -87,19 +87,23 @@ typedef struct {
     uint8_t ctrl;
 } PpuWriteState;
 
+static void cpu_sta_abs(uint16_t address, uint8_t value) {
+    // STA abs fetches the high address byte immediately before its write.
+    // PPU register mirrors therefore let tests choose a distinct preceding
+    // CPU bus value without changing which PPU register receives the write.
+    test_prg[0] = 0x8D;
+    test_prg[1] = (uint8_t)address;
+    test_prg[2] = (uint8_t)(address >> 8);
+    cpu.pc = 0x8000;
+    cpu.a = value;
+    cpu_step(&cpu);
+}
+
 static PpuWriteState cpu_sta_ppu(NesRegion region, int scanline, int start_dot,
                                   uint8_t render_mask, uint16_t initial_v,
                                   uint16_t initial_t, uint8_t initial_x,
                                   uint8_t initial_w, uint16_t address, uint8_t value) {
     reset_video_region(0, region);
-    // STA abs fetches the high address byte immediately before its write.
-    // PPU register mirrors therefore let tests choose a distinct preceding
-    // CPU bus value without changing which PPU register receives the write.
-    test_prg[0] = 0x8D; // STA abs
-    test_prg[1] = (uint8_t)address;
-    test_prg[2] = (uint8_t)(address >> 8);
-    cpu.pc = 0x8000;
-    cpu.a = value;
     ppu.scanline = scanline;
     ppu.dot = start_dot;
     ppu.v = initial_v;
@@ -107,10 +111,26 @@ static PpuWriteState cpu_sta_ppu(NesRegion region, int scanline, int start_dot,
     ppu.x = initial_x;
     ppu.w = initial_w;
     set_render_mask(render_mask);
-    cpu_step(&cpu);
+    cpu_sta_abs(address, value);
 
     PpuWriteState state = {ppu.v, ppu.t, ppu.x, ppu.w, ppu.ctrl};
     return state;
+}
+
+static void seed_distinct_oam_rows(void) {
+    for (unsigned row = 0; row < 32; ++row) {
+        for (unsigned byte = 0; byte < 8; ++byte)
+            ppu.oam[row * 8 + byte] = (uint8_t)(row * 8 + byte);
+        ppu.secondary_oam[row] = (uint8_t)(0x80 | row);
+    }
+}
+
+static bool oam_row_matches_seed(unsigned dest_row, unsigned source_row) {
+    for (unsigned byte = 0; byte < 8; ++byte) {
+        if (ppu.oam[dest_row * 8 + byte] != (uint8_t)(source_row * 8 + byte))
+            return false;
+    }
+    return true;
 }
 
 static uint8_t read_data(void) {
@@ -353,6 +373,224 @@ static void test_dot257_scroll_glitches(void) {
         CHECK("regional CPU/PPU divider alignment reaches the PPUADDR dot-257 window",
               (regional_addr.v & 0x0C00) == 0x0C00);
     }
+    nes_set_region(NES_REGION_NTSC);
+}
+
+static void test_oam_row_corruption_profiles(void) {
+    PpuRevision saved_revision = ppu_revision();
+    bool saved_worst_case = ppu_oam_row_corruption_worst_case();
+
+    CHECK("late 2C02 revision name is accepted",
+          ppu_set_revision_name("2c02e-plus")
+          && ppu_revision() == PPU_REVISION_2C02_E_PLUS
+          && strcmp(ppu_revision_name(), "2c02e-plus") == 0);
+    CHECK("early 2C02 revision name is accepted",
+          ppu_set_revision_name("2c02-pre-e")
+          && ppu_revision() == PPU_REVISION_2C02_PRE_E
+          && strcmp(ppu_revision_name(), "2c02-pre-e") == 0);
+    CHECK("invalid PPU revisions are rejected",
+          !ppu_set_revision((PpuRevision)-1)
+          && !ppu_set_revision((PpuRevision)2)
+          && !ppu_set_revision_name(NULL)
+          && !ppu_set_revision_name("2c02-unknown"));
+    ppu_set_oam_row_corruption_worst_case(true);
+    ppu_reset(&ppu);
+    CHECK("PPU corruption profile survives reset",
+          ppu_revision() == PPU_REVISION_2C02_PRE_E
+          && ppu_oam_row_corruption_worst_case());
+
+    ppu_set_revision(PPU_REVISION_2C02_E_PLUS);
+    ppu_set_oam_row_corruption_worst_case(false);
+    reset_video(0);
+    seed_distinct_oam_rows();
+    ppu.scanline = 20;
+    ppu.dot = 20;
+    set_render_mask(0);
+    ppu.oam_addr = 0x10;
+    cpu_sta_abs(0x3FE3, 0x30);
+    CHECK("default profile leaves $2003 row-corruption approximation disabled",
+          oam_row_matches_seed(6, 6) && oam_row_matches_seed(7, 7)
+          && ppu.secondary_oam[6] == 0x86 && ppu.secondary_oam[7] == 0x87
+          && ppu.oam_addr == 0x30);
+
+    ppu_set_oam_row_corruption_worst_case(true);
+    reset_video(0);
+    seed_distinct_oam_rows();
+    ppu.scanline = 20;
+    ppu.dot = 20;
+    set_render_mask(0);
+    ppu.oam_addr = 0x10;
+    cpu_sta_abs(0x3FE3, 0x30);
+    CHECK("worst-case $2003 uses the previous CPU bus as its intermediate row",
+          oam_row_matches_seed(7, 2) && oam_row_matches_seed(6, 2)
+          && ppu.secondary_oam[7] == 0x82 && ppu.secondary_oam[6] == 0x82);
+    CHECK("worst-case $2003 leaves source and unrelated rows unchanged",
+          oam_row_matches_seed(2, 2) && oam_row_matches_seed(5, 5)
+          && ppu.secondary_oam[2] == 0x82 && ppu.secondary_oam[5] == 0x85
+          && ppu.oam_addr == 0x30);
+
+    reset_video(0);
+    seed_distinct_oam_rows();
+    ppu.scanline = 20;
+    ppu.dot = 20;
+    set_render_mask(0);
+    ppu.oam_addr = 0x10;
+    cpu_sta_abs(OAMADDR, 0x30);
+    CHECK("$2003 mirror choice changes the previous-bus row without changing the write",
+          oam_row_matches_seed(4, 2) && oam_row_matches_seed(6, 2)
+          && oam_row_matches_seed(7, 7)
+          && ppu.secondary_oam[4] == 0x82 && ppu.secondary_oam[6] == 0x82);
+
+    int prerender = (int)nes_timing()->scanlines - 1;
+    reset_video(0);
+    seed_distinct_oam_rows();
+    ppu.scanline = prerender;
+    ppu.dot = 90;
+    set_render_mask(8);
+    ppu.oam_addr = 0x10;
+    cpu_sta_abs(0x3FE3, 0x30);
+    CHECK("render-time odd-clock $2003 takes the opt-in corruption path",
+          oam_row_matches_seed(7, 2) && oam_row_matches_seed(6, 2));
+
+    reset_video(0);
+    seed_distinct_oam_rows();
+    ppu.scanline = prerender;
+    ppu.dot = 89;
+    set_render_mask(8);
+    ppu.oam_addr = 0x10;
+    cpu_sta_abs(0x3FE3, 0x30);
+    CHECK("render-time even-clock $2003 does not take the alignment-dependent path",
+          oam_row_matches_seed(7, 7) && oam_row_matches_seed(6, 6));
+
+    reset_video(0);
+    seed_distinct_oam_rows();
+    ppu.scanline = prerender;
+    ppu.dot = 249;
+    set_render_mask(8);
+    ppu.oam_addr = 0x10;
+    cpu_sta_abs(0x3FE3, 0x30);
+    CHECK("render-time $2003 after dot 257 does not use the worst-case address path",
+          oam_row_matches_seed(7, 7) && oam_row_matches_seed(6, 6));
+
+    reset_video_region(0, NES_REGION_PAL);
+    seed_distinct_oam_rows();
+    ppu.scanline = 20;
+    ppu.dot = 20;
+    set_render_mask(0);
+    ppu.oam_addr = 0x10;
+    cpu_sta_abs(0x3FE3, 0x30);
+    CHECK("PAL excludes $2003 row corruption even in worst-case mode",
+          oam_row_matches_seed(7, 7) && oam_row_matches_seed(6, 6));
+
+    reset_video_region(0, NES_REGION_PAL);
+    seed_distinct_oam_rows();
+    ppu.scanline = 20;
+    ppu.dot = 100;
+    ppu.mask = 8;
+    ppu.rendering_enabled = true;
+    ppu.fetches_enabled = false;
+    ppu.oam_addr = 0x10;
+    ppu.secondary_index = 5;
+    ppu_step_dots(1);
+    CHECK("PAL excludes rendering-transition row corruption",
+          oam_row_matches_seed(5, 5) && ppu.secondary_oam[5] == 0x85);
+
+    reset_video(0);
+    seed_distinct_oam_rows();
+    ppu.scanline = 20;
+    ppu.dot = 88;
+    set_render_mask(0);
+    ppu.oam_addr = 0x10;
+    ppu.secondary_index = 5;
+    cpu_sta_abs(PPUMASK, 8);
+    CHECK("real CPU mask write leaves the second rendering latch pending", ppu.dot == 100
+          && ppu.rendering_enabled && !ppu.fetches_enabled);
+    ppu_step_dots(1);
+    CHECK("evaluation-window render-enable copies the selected primary row to the secondary row",
+          oam_row_matches_seed(5, 2) && ppu.secondary_oam[5] == 0x82
+          && oam_row_matches_seed(6, 6));
+
+    reset_video(0);
+    seed_distinct_oam_rows();
+    ppu.scanline = 20;
+    ppu.dot = 89;
+    set_render_mask(0);
+    ppu.oam_addr = 0x10;
+    ppu.secondary_index = 5;
+    cpu_sta_abs(PPUMASK, 8);
+    ppu_step_dots(1);
+    CHECK("odd evaluation-window render-enable transition does not copy an OAM row",
+          oam_row_matches_seed(5, 5) && ppu.secondary_oam[5] == 0x85);
+
+    reset_video(0);
+    seed_distinct_oam_rows();
+    ppu.scanline = prerender;
+    ppu.dot = 88;
+    set_render_mask(8);
+    ppu.oam_addr = 0x10;
+    ppu.secondary_index = 5;
+    cpu_sta_abs(PPUMASK, 0);
+    ppu_step_dots(1);
+    CHECK("render-disable transition copies the selected secondary row to primary OAM",
+          oam_row_matches_seed(2, 5) && ppu.secondary_oam[2] == 0x85
+          && oam_row_matches_seed(6, 6));
+    CHECK("render-disable row copy occurs before the same-clock OAM increment",
+          ppu.oam_addr == 0x11);
+
+    reset_video(0);
+    seed_distinct_oam_rows();
+    ppu.scanline = 20;
+    ppu.dot = 248;
+    set_render_mask(8);
+    ppu.oam_addr = 0x78;
+    ppu.secondary_index = 19;
+    cpu_sta_abs(PPUMASK, 0);
+    ppu_step_dots(1);
+    CHECK("sprite-fetch transition uses the rows selected by fetch timing before corruption",
+          oam_row_matches_seed(0, 3) && ppu.secondary_oam[0] == 0x83
+          && ppu.oam_addr == 0 && ppu.secondary_index == 3);
+
+    ppu_set_revision(PPU_REVISION_2C02_E_PLUS);
+    reset_video(0);
+    seed_distinct_oam_rows();
+    prerender = (int)nes_timing()->scanlines - 1;
+    ppu.scanline = prerender;
+    ppu.dot = 0;
+    set_render_mask(8);
+    ppu.oam_addr = 0x10;
+    ppu.secondary_index = 5;
+    ppu_step_dots(1);
+    CHECK("late 2C02 profile applies the pre-render row copy",
+          oam_row_matches_seed(5, 2) && ppu.secondary_oam[5] == 0x82);
+
+    ppu_set_revision(PPU_REVISION_2C02_PRE_E);
+    reset_video(0);
+    seed_distinct_oam_rows();
+    prerender = (int)nes_timing()->scanlines - 1;
+    ppu.scanline = prerender;
+    ppu.dot = 0;
+    set_render_mask(8);
+    ppu.oam_addr = 0x10;
+    ppu.secondary_index = 5;
+    ppu_step_dots(1);
+    CHECK("pre-E 2C02 profile excludes the pre-render row copy",
+          oam_row_matches_seed(5, 5) && ppu.secondary_oam[5] == 0x85);
+
+    ppu_set_revision(PPU_REVISION_2C02_E_PLUS);
+    reset_video_region(0, NES_REGION_PAL);
+    seed_distinct_oam_rows();
+    prerender = (int)nes_timing()->scanlines - 1;
+    ppu.scanline = prerender;
+    ppu.dot = 0;
+    set_render_mask(8);
+    ppu.oam_addr = 0x10;
+    ppu.secondary_index = 5;
+    ppu_step_dots(1);
+    CHECK("PAL excludes the late-revision pre-render row copy",
+          oam_row_matches_seed(5, 5) && ppu.secondary_oam[5] == 0x85);
+
+    ppu_set_revision(saved_revision);
+    ppu_set_oam_row_corruption_worst_case(saved_worst_case);
     nes_set_region(NES_REGION_NTSC);
 }
 
@@ -863,6 +1101,7 @@ int test_ppu_accuracy(void) {
 
     test_register_pipeline();
     test_dot257_scroll_glitches();
+    test_oam_row_corruption_profiles();
     test_regional_video();
     test_video_reset();
     test_sprite_shifters();

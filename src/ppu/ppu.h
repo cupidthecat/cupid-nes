@@ -44,6 +44,11 @@
 #define PPUDATA   0x2007
 #define OAMDMA    0x4014
 
+typedef enum {
+    PPU_REVISION_2C02_PRE_E,
+    PPU_REVISION_2C02_E_PLUS
+} PpuRevision;
+
 // PPU Registers
 typedef struct {
     uint8_t ctrl;       // PPUCTRL
@@ -109,7 +114,8 @@ typedef struct {
     uint16_t sprite_fetch_addr;
     bool sprite_fetch_valid;
     bool oam_corruption_pending;
-    uint8_t oam_corruption_row;
+    uint8_t oam_corruption_source_row;
+    uint8_t oam_corruption_dest_row;
     bool suppress_vblank;
     bool rendering_enabled;
     bool fetches_enabled;
@@ -173,6 +179,12 @@ uint8_t ppu_reg_read(uint16_t reg);
 uint8_t ppu_reg_read_finish(uint16_t reg, uint8_t value);
 void ppu_reg_write(uint16_t reg, uint8_t value);
 void ppu_reg_write_cpu(uint16_t reg, uint8_t value, uint8_t cpu_open_bus);
+PpuRevision ppu_revision(void);
+bool ppu_set_revision(PpuRevision revision);
+bool ppu_set_revision_name(const char *name);
+const char *ppu_revision_name(void);
+bool ppu_oam_row_corruption_worst_case(void);
+void ppu_set_oam_row_corruption_worst_case(bool enabled);
 void ppu_oam_dma(uint8_t page);
 void ppu_begin_vblank(void);
 void ppu_end_vblank(void);
