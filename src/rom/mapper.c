@@ -64,7 +64,7 @@ static CartCommon C;
 static Mapper mapper_nrom, mapper_mmc1, mapper_uxrom, mapper_cnrom, mapper_mmc3, mapper_tqrom;
 static Mapper mapper_mmc5, mapper_aorom, mapper_mmc2, mapper_mmc4, mapper_colordreams;
 static Mapper mapper_cprom, mapper_100in1, mapper_bandai, mapper_action53, mapper_unrom512;
-static Mapper mapper_taito33, mapper_taito48;
+static Mapper mapper_taito33, mapper_taito48, mapper_jaleco18;
 Mapper *cart = NULL;
 static bool mapper_irq_line = false;
 static uint8_t cart_cpu_bus_input = 0xFF;
@@ -2336,6 +2336,38 @@ static uint8_t m28_cpu_read(uint16_t a) {
     return cart_cpu_bus_input;
 }
 
+// Mapper 18: Jaleco SS88006.
+static struct {
+    uint8_t prg_banks[3];
+    uint8_t chr_banks[8];
+    uint8_t prg_mapped, chr_mapped;
+    uint8_t irq_reload[4];
+    uint16_t irq_counter;
+    uint8_t irq_counter_size;
+    bool irq_enabled;
+    Mirroring mirr;
+} jaleco18;
+
+static const uint16_t jaleco18_irq_mask[4] = {0xFFFF, 0x0FFF, 0x00FF, 0x000F};
+
+static void jaleco18_update_nibble(uint8_t *reg, uint8_t value, bool upper) {
+    value &= 0x0F;
+    if (upper) *reg = (uint8_t)((*reg & 0x0F) | (value << 4));
+    else *reg = (uint8_t)((*reg & 0xF0) | value);
+}
+
+static uint8_t jaleco18_cpu_read(uint16_t a) {
+    if (a >= 0x6000 && a <= 0x7FFF) return prg_ram_read(a);
+    if (a >= 0x8000) {
+        size_t banks = C.prg_sz / PRG_BANK_8K;
+        unsigned slot = (a - 0x8000u) >> 13;
+        if (slot < 3 && !(jaleco18.prg_mapped & (1u << slot))) return cart_cpu_bus_input;
+        size_t bank = slot == 3 ? banks - 1 : jaleco18.prg_banks[slot] % banks;
+        return C.prg[bank * PRG_BANK_8K + (a & 0x1FFFu)];
+    }
+    return cart_cpu_bus_input;
+}
+
 static void m28_cpu_write(uint16_t a, uint8_t v) {
     if (a >= 0x5000 && a <= 0x5FFF) {
         m28.selected_reg = (uint8_t)(((v & 0x80) >> 6) | (v & 0x01));
@@ -2575,6 +2607,95 @@ static void m30_power_on(const iNESHeader *h) {
     }
 }
 
+static void jaleco18_reload_irq(void) {
+    jaleco18.irq_counter = (uint16_t)(jaleco18.irq_reload[0]
+        | ((uint16_t)jaleco18.irq_reload[1] << 4)
+        | ((uint16_t)jaleco18.irq_reload[2] << 8)
+        | ((uint16_t)jaleco18.irq_reload[3] << 12));
+}
+
+static void jaleco18_cpu_write(uint16_t a, uint8_t v) {
+    if (a >= 0x6000 && a <= 0x7FFF) { prg_ram_write(a, v); return; }
+    if (a < 0x8000) return;
+
+    uint16_t reg = a & 0xF003u;
+    bool upper = (a & 1u) != 0;
+    v &= 0x0F;
+    if (reg <= 0x8003 || reg == 0x9000 || reg == 0x9001) {
+        unsigned slot = reg >= 0x9000 ? 2 : (reg >> 1) & 1;
+        jaleco18_update_nibble(&jaleco18.prg_banks[slot], v, upper);
+        jaleco18.prg_mapped |= (uint8_t)(1u << slot);
+        return;
+    }
+    if (reg >= 0xA000 && reg <= 0xD003) {
+        unsigned slot = ((reg >> 12) - 0xA) * 2 + ((reg >> 1) & 1);
+        jaleco18_update_nibble(&jaleco18.chr_banks[slot], v, upper);
+        jaleco18.chr_mapped |= (uint8_t)(1u << slot);
+        return;
+    }
+    switch (reg) {
+        case 0xE000: case 0xE001: case 0xE002: case 0xE003:
+            jaleco18.irq_reload[reg & 3u] = v;
+            break;
+        case 0xF000:
+            mapper_irq_line = false;
+            jaleco18_reload_irq();
+            break;
+        case 0xF001:
+            mapper_irq_line = false;
+            jaleco18.irq_enabled = (v & 0x01u) != 0;
+            if (v & 0x08u) jaleco18.irq_counter_size = 3;
+            else if (v & 0x04u) jaleco18.irq_counter_size = 2;
+            else if (v & 0x02u) jaleco18.irq_counter_size = 1;
+            else jaleco18.irq_counter_size = 0;
+            break;
+        case 0xF002:
+            jaleco18.mirr = (Mirroring)(v & 3u);
+            break;
+        case 0xF003:
+            break;
+    }
+}
+
+static uint8_t jaleco18_ppu_read(uint16_t a) {
+    a &= 0x1FFF;
+    if (!(jaleco18.chr_mapped & (1u << (a >> 10))))
+        return C.chr_is_ram ? C.chr[a % C.chr_sz] : (uint8_t)a;
+    size_t banks = C.chr_sz / CHR_BANK_1K;
+    size_t bank = jaleco18.chr_banks[a >> 10] % banks;
+    return C.chr[bank * CHR_BANK_1K + (a & 0x03FFu)];
+}
+
+static void jaleco18_ppu_write(uint16_t a, uint8_t v) {
+    if (!C.chr_is_ram) return;
+    a &= 0x1FFF;
+    if (!(jaleco18.chr_mapped & (1u << (a >> 10)))) {
+        chr_ram_write(a % C.chr_sz, v);
+        return;
+    }
+    size_t banks = C.chr_sz / CHR_BANK_1K;
+    size_t bank = jaleco18.chr_banks[a >> 10] % banks;
+    chr_ram_write(bank * CHR_BANK_1K + (a & 0x03FFu), v);
+}
+
+static void jaleco18_clock(int cpu_cycles) {
+    while (cpu_cycles-- > 0 && jaleco18.irq_enabled) {
+        uint16_t mask = jaleco18_irq_mask[jaleco18.irq_counter_size];
+        uint16_t counter = (uint16_t)(jaleco18.irq_counter & mask);
+        counter--;
+        if (counter == 0) mapper_irq_line = true;
+        jaleco18.irq_counter = (uint16_t)((jaleco18.irq_counter & (uint16_t)~mask) | (counter & mask));
+    }
+}
+
+static Mirroring jaleco18_mirr(void) { return jaleco18.mirr; }
+
+static void jaleco18_reset(void) {
+    memset(&jaleco18, 0, sizeof(jaleco18));
+    jaleco18.mirr = C.mirr_base;
+    mapper_irq_line = false;
+}
+
 // Mapper selection and initialization.
 static bool bandai_layout(int mapper, uint8_t submapper, bool nes2,
                           size_t prg_bytes, size_t chr_bytes, bool chr_is_ram,
@@ -2648,6 +2769,7 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         case 5: chr_limit = 0x100000; break;
         case 13: chr_limit = 0x4000; break;
         case 28: case 30: chr_limit = 0x8000; break;
+        case 18: chr_limit = 0x40000; break;
         case 119: chr_limit = sizeof(tqrom_chr_ram); break;
         default: chr_limit = 0x2000; break;
     }
@@ -2677,7 +2799,7 @@ int mapper_init_from_header(const iNESHeader *h,
         case 0: case 1: case 2: case 3: case 4: case 5:
         case 7: case 9: case 10: case 11: case 13: case 15: case 28: case 30: case 119: case 155:
         case 16: case 153: case 157: case 159:
-        case 33: case 48:
+        case 18: case 33: case 48:
             break;
         default:
             fprintf(stderr, "Unsupported mapper: %d\n", mapper_no);
@@ -2729,6 +2851,11 @@ int mapper_init_from_header(const iNESHeader *h,
         || !chr_is_ram || (chr_sz != 0x2000 && chr_sz != 0x4000 && chr_sz != 0x8000)
         || ((h->flags6 & 0x09) == 0x09 && submapper != 3 && chr_sz != 0x8000))) {
         fprintf(stderr, "Unsupported ROM/RAM size for mapper 30\n");
+        return -1;
+    }
+    if (mapper_no == 18 && (prg_sz > 0x200000 || (prg_sz % PRG_BANK_8K) != 0
+        || chr_sz > 0x40000 || (chr_sz % CHR_BANK_1K) != 0)) {
+        fprintf(stderr, "Unsupported ROM size for mapper 18\n");
         return -1;
     }
     if (!ram_geometry_supported(mapper_no, nes2, &ram, chr_is_ram, chr_sz)
@@ -2858,6 +2985,12 @@ int mapper_init_from_header(const iNESHeader *h,
                         m30_ppu_read, m30_ppu_write, NULL, m30_mirr);
             cart = &mapper_unrom512;
             m30_power_on(h);
+            break;
+        case 18:
+            build_mapper(&mapper_jaleco18, jaleco18_cpu_read, jaleco18_cpu_write,
+                        jaleco18_ppu_read, jaleco18_ppu_write, jaleco18_reset, jaleco18_mirr);
+            mapper_jaleco18.clock = jaleco18_clock;
+            cart = &mapper_jaleco18;
             break;
         case 119:
             build_mapper(&mapper_tqrom, mmc3_cpu_read, mmc3_cpu_write,

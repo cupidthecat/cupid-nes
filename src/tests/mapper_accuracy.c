@@ -2910,6 +2910,179 @@ static int test_mmc6_banks_and_irq(void) {
     return 0;
 }
 
+static void jaleco18_write_bank(uint16_t reg, uint8_t value) {
+    uint16_t alias = (uint16_t)(reg | 0x0FFCu);
+    cart_cpu_write(alias, value & 0x0F);
+    cart_cpu_write((uint16_t)(alias | 1u), value >> 4);
+}
+
+static void jaleco18_write_irq_reload(uint16_t value) {
+    for (unsigned nibble = 0; nibble < 4; ++nibble)
+        cart_cpu_write((uint16_t)(0xE000u + nibble), (uint8_t)(value >> (nibble * 4)));
+}
+
+static int test_jaleco18_banks_ram_and_mirroring(void) {
+    CHECK(fixture(18, 0x40000, 0x20000, false) == 18);
+    CHECK(cart_cpu_read_bus(0x8000, 0x56) == 0x56 && cart_cpu_read_bus(0xA000, 0x96) == 0x96);
+    CHECK(cart_cpu_read_bus(0xC000, 0x69) == 0x69 && cart_cpu_read(0xE000) == 31);
+    CHECK(cart_ppu_read(0x0012) == 0x12 && cart_ppu_read(0x1C34) == 0x34);
+
+    jaleco18_write_bank(0x8000, 0x13);
+    jaleco18_write_bank(0x8002, 0x0B);
+    jaleco18_write_bank(0x9000, 0x1E);
+    CHECK(cart_cpu_read(0x8000) == 0x13 && cart_cpu_read(0xA000) == 0x0B);
+    CHECK(cart_cpu_read(0xC000) == 0x1E && cart_cpu_read(0xE000) == 31);
+
+    static const uint16_t chr_regs[8] = {
+        0xA000, 0xA002, 0xB000, 0xB002, 0xC000, 0xC002, 0xD000, 0xD002
+    };
+    for (unsigned slot = 0; slot < 8; ++slot) {
+        uint8_t bank = (uint8_t)(0x20 + slot * 3);
+        jaleco18_write_bank(chr_regs[slot], bank);
+        CHECK(cart_ppu_read((uint16_t)(slot * 0x400)) == bank);
+    }
+
+    cart_cpu_write(0x6123, 0xA6);
+    CHECK(cart_cpu_read(0x6123) == 0xA6);
+    for (unsigned mode = 0; mode < 4; ++mode) {
+        cart_cpu_write(0xFFFE, (uint8_t)mode);
+        CHECK(cart_get_mirroring() == (Mirroring)mode);
+    }
+
+    cart->reset();
+    CHECK(cart_cpu_read_bus(0x8000, 0x56) == 0x56 && cart_cpu_read(0xE000) == 31);
+    CHECK(cart_ppu_read(0x0012) == 0x12 && !cart_irq_pending());
+    CHECK(cart_cpu_read(0x6123) == 0xA6 && cart_get_mirroring() == MIRROR_HORIZONTAL);
+
+    iNESHeader h = header_for(18, 0x4000, false);
+    h.flags7 = 0x18;
+    h.flags10 = 0;
+    CHECK(fixture_with_header(&h, 0x4000, 0x2000) == 18);
+    CHECK(cart_cpu_read_bus(0x6000, 0x56) == 0x56);
+    cart_cpu_write(0x6000, 0xA5);
+    CHECK(cart_cpu_read_bus(0x6000, 0x56) == 0x56);
+    h = header_for(18, 0x20000, true);
+    CHECK(fixture_with_header(&h, 0x20000, 0x2000) == 18);
+    cart_ppu_write(0x0123, 0xA6);
+    cart_ppu_write(0x0523, 0x69);
+    CHECK(cart_ppu_read(0x0123) == 0xA6 && cart_ppu_read(0x0523) == 0x69);
+    cart_cpu_write(0xA003, 0); // The unwritten CHR register contains zero, regardless of initial RAM wiring.
+    CHECK(cart_ppu_read(0x0523) == 0xA6);
+    cart_ppu_write(0x0523, 0x35);
+    CHECK(cart_ppu_read(0x0123) == 0x35);
+    return 0;
+}
+
+static int test_jaleco18_irq_and_cpu_clock(void) {
+    CHECK(fixture(18, 0x4000, 0x2000, false) == 18);
+    CHECK(cart != NULL && cart->clock != NULL);
+    static const struct { uint16_t reload; uint8_t control; } modes[] = {
+        {0x1002, 0x01}, {0x0102, 0x03}, {0x0012, 0x05}, {0x0002, 0x09}
+    };
+    for (unsigned i = 0; i < sizeof(modes) / sizeof(modes[0]); ++i) {
+        jaleco18_write_irq_reload(modes[i].reload);
+        cart_cpu_write(0xF000, 0);
+        cart_cpu_write(0xF001, modes[i].control);
+        uint16_t mask = i == 0 ? 0xFFFF : i == 1 ? 0x0FFF : i == 2 ? 0x00FF : 0x000F;
+        unsigned count = modes[i].reload & mask;
+        cart->clock((int)(count - 1));
+        CHECK(!cart_irq_pending());
+        cart->clock(1);
+        CHECK(cart_irq_pending());
+        cart_cpu_write(0xFFF0, 0); // $F000 alias reloads and acknowledges.
+        CHECK(!cart_irq_pending());
+    }
+
+    jaleco18_write_irq_reload(3);
+    cart_cpu_write(0xF000, 0);
+    cart_cpu_write(0xF001, 1);
+    cart->clock(1);
+    cart_cpu_write(0xF001, 0);
+    CHECK(!cart_irq_pending());
+    cart->clock(20);
+    CHECK(!cart_irq_pending());
+    cart_cpu_write(0xF001, 1);
+    cart->clock(1);
+    CHECK(!cart_irq_pending());
+    cart->clock(1);
+    CHECK(cart_irq_pending());
+    cart_cpu_write(0xF001, 0);
+    CHECK(!cart_irq_pending());
+
+    fixture_prg[0] = 0xEA;
+    jaleco18_write_bank(0x8000, 0);
+    nes_set_region(NES_REGION_NTSC);
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    cpu_power_on(&cpu);
+    cpu.pc = 0x8000;
+    cpu.status = INTERRUPT_FLAG | UNUSED_FLAG;
+    jaleco18_write_irq_reload(2);
+    cart_cpu_write(0xF000, 0);
+    cart_cpu_write(0xF001, 1);
+    CHECK(cpu_step(&cpu) == 2 && cart_irq_pending());
+    fixture_prg[0x3FFE] = 0;
+    fixture_prg[0x3FFF] = 3;
+    for (unsigned i = 0; i < 8; ++i) write_mem((uint16_t)(0x0200 + i), 0xEA);
+    cpu.pc = 0x0200;
+    cpu.status &= (uint8_t)~INTERRUPT_FLAG;
+    for (unsigned step = 0; step < 3 && cpu.pc != 0x0300; ++step) (void)cpu_step(&cpu);
+    CHECK(cpu.pc == 0x0300 && (cpu.status & INTERRUPT_FLAG) && cart_irq_pending());
+    cart_cpu_write(0xF001, 0);
+    cpu_soft_reset(&cpu);
+    CHECK(cart_cpu_read(0x8000) == 0xEA);
+    return 0;
+}
+
+static int test_jaleco18_irq_width_transitions(void) {
+    CHECK(fixture(18, 0x20000, 0x2000, false) == 18);
+    const unsigned period[] = {65536, 4096, 256, 16, 16, 256};
+    const uint8_t control[] = {1, 3, 5, 9, 15, 7};
+    for (unsigned mode = 0; mode < sizeof(control); ++mode) {
+        jaleco18_write_irq_reload(0);
+        cart_cpu_write(0xF000, 0);
+        cart_cpu_write(0xF001, control[mode]);
+        cart->clock((int)(period[mode] - 1));
+        CHECK(!cart_irq_pending());
+        cart->clock(1);
+        CHECK(cart_irq_pending());
+    }
+    jaleco18_write_irq_reload(0x1230);
+    cart_cpu_write(0xF000, 0);
+    cart_cpu_write(0xF001, 9);
+    cart->clock(16);
+    CHECK(cart_irq_pending());
+    cart_cpu_write(0xF001, 1);
+    cart->clock(0x122F);
+    CHECK(!cart_irq_pending());
+    cart->clock(1);
+    CHECK(cart_irq_pending()); // Narrow counters leave the upper bits intact.
+    return 0;
+}
+
+static int test_jaleco18_loader_validation(void) {
+    CHECK(fixture(18, 0x4000, 0x2000, false) == 18);
+    cart_cpu_write(0x6000, 0xA7);
+    jaleco18_write_bank(0x8000, 1);
+    Mapper *previous = cart;
+    CHECK(mapper_init_from_header(&(iNESHeader){.signature={'N','E','S',0x1A}, .prg_rom_chunks=1,
+        .chr_rom_chunks=1, .flags6=0x20, .flags7=0x10}, fixture_prg, 0x200001,
+        fixture_chr, 0x2000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 1 && cart_cpu_read(0x6000) == 0xA7);
+
+    iNESHeader h = header_for(18, 0x4000, false);
+    h.flags7 = 0x18;
+    h.flags10 = 8; // 16KB PRG-RAM exceeds the board's fixed $6000-$7FFF window.
+    size_t size;
+    uint8_t *image = image_for(&h, 0x4000, 0x2000, &size);
+    CHECK(image != NULL);
+    int loaded = load_rom_memory(image, size);
+    free(image);
+    CHECK(loaded == -1 && cart == previous);
+    CHECK(cart_cpu_read(0x8000) == 1 && cart_cpu_read(0x6000) == 0xA7);
+    return 0;
+}
+
 static int test_cartridge_bus_reads(void) {
     mapper_shutdown();
     CHECK(cart_cpu_read_bus(0x8000, 0x56) == 0x56);
@@ -3057,6 +3230,9 @@ int test_mapper_accuracy(void) {
         test_mmc5_persistence,
         test_chr_nvram_persistence, test_chr_nvram_writers,
         test_mmc6_ram_mirroring, test_mmc6_protection, test_mmc6_banks_and_irq,
+        test_jaleco18_banks_ram_and_mirroring, test_jaleco18_irq_and_cpu_clock,
+        test_jaleco18_irq_width_transitions,
+        test_jaleco18_loader_validation,
         test_cartridge_bus_reads, test_mmc6_persistence, test_cartridge_unload
     };
     int failures = 0;
