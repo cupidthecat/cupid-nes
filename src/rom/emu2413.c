@@ -1228,18 +1228,22 @@ void OPLL_setChipType(OPLL *opll, uint8_t type) { opll->chip_type = type; }
 
 void OPLL_writeReg(OPLL *opll, uint32_t reg, uint8_t data) {
   int ch, i;
+  uint8_t reg_index;
 
   if (reg >= 0x40)
     return;
 
+  reg_index = (uint8_t)reg;
+
   /* mirror registers */
-  if ((0x19 <= reg && reg <= 0x1f) || (0x29 <= reg && reg <= 0x2f) || (0x39 <= reg && reg <= 0x3f)) {
-    reg -= 9;
+  if ((0x19 <= reg_index && reg_index <= 0x1f) || (0x29 <= reg_index && reg_index <= 0x2f) ||
+      (0x39 <= reg_index && reg_index <= 0x3f)) {
+    reg_index -= 9;
   }
 
-  opll->reg[reg & 0x3fu] = data;
+  opll->reg[reg_index] = data;
 
-  switch (reg) {
+  switch (reg_index) {
   case 0x00:
     opll->patch[0].AM = (data >> 7) & 1;
     opll->patch[0].PM = (data >> 6) & 1;
@@ -1349,8 +1353,8 @@ void OPLL_writeReg(OPLL *opll, uint32_t reg, uint8_t data) {
   case 0x16:
   case 0x17:
   case 0x18:
-    if(opll->chip_type == 1 && reg >= 0x16) break;
-    ch = reg - 0x10;
+    if(opll->chip_type == 1 && reg_index >= 0x16) break;
+    ch = reg_index - 0x10;
     set_fnumber(opll, ch, data + ((opll->reg[0x20 + ch] & 1) << 8));
     break;
 
@@ -1363,8 +1367,8 @@ void OPLL_writeReg(OPLL *opll, uint32_t reg, uint8_t data) {
   case 0x26:
   case 0x27:
   case 0x28:
-    if(opll->chip_type == 1 && reg >= 0x26) break;
-    ch = reg - 0x20;
+    if(opll->chip_type == 1 && reg_index >= 0x26) break;
+    ch = reg_index - 0x20;
     set_fnumber(opll, ch, ((data & 1) << 8) + opll->reg[0x10 + ch]);
     set_block(opll, ch, (data >> 1) & 7);
     set_sus_flag(opll, ch, (data >> 5) & 1);
@@ -1380,9 +1384,9 @@ void OPLL_writeReg(OPLL *opll, uint32_t reg, uint8_t data) {
   case 0x36:
   case 0x37:
   case 0x38:
-    if(opll->chip_type == 1 && reg >= 0x36) break;
-    if ((opll->reg[0x0e] & 32) && (reg >= 0x36)) {
-      switch (reg) {
+    if(opll->chip_type == 1 && reg_index >= 0x36) break;
+    if ((opll->reg[0x0e] & 32) && (reg_index >= 0x36)) {
+      switch (reg_index) {
       case 0x37:
         set_slot_volume(MOD(opll, 7), ((data >> 4) & 15) << 2);
         break;
@@ -1393,9 +1397,9 @@ void OPLL_writeReg(OPLL *opll, uint32_t reg, uint8_t data) {
         break;
       }
     } else {
-      set_patch(opll, reg - 0x30, (data >> 4) & 15);
+      set_patch(opll, reg_index - 0x30, (data >> 4) & 15);
     }
-    set_volume(opll, reg - 0x30, (data & 15) << 2);
+    set_volume(opll, reg_index - 0x30, (data & 15) << 2);
     break;
 
   default:
