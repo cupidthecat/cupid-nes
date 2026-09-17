@@ -532,6 +532,387 @@ static int test_taito48_cpu_irq(void) {
     return 0;
 }
 
+static int test_rambo1_banks_and_modes(void) {
+    CHECK(fixture(64, 0x200000, 0x20000, false) == 64);
+    CHECK(cart != NULL && cart->clock != NULL);
+    CHECK(cart_cpu_read(0x8000) == 0 && cart_cpu_read(0xA000) == 1);
+    CHECK(cart_cpu_read(0xC000) == 2 && cart_cpu_read(0xE000) == 0xFF);
+    for (unsigned slot = 0; slot < 8; ++slot)
+        CHECK(cart_ppu_read((uint16_t)(slot * 0x400)) == slot);
+
+    cart_cpu_write(0x9FFE, 6);
+    cart_cpu_write(0x9FFF, 5);
+    cart_cpu_write(0x8000, 7);
+    cart_cpu_write(0x8001, 7);
+    cart_cpu_write(0x8000, 15);
+    cart_cpu_write(0x8001, 9);
+    CHECK(cart_cpu_read(0x8000) == 5 && cart_cpu_read(0xA000) == 7);
+    CHECK(cart_cpu_read(0xC000) == 9 && cart_cpu_read(0xE000) == 0xFF);
+    cart_cpu_write(0x8000, 0x46);
+    CHECK(cart_cpu_read(0x8000) == 9 && cart_cpu_read(0xA000) == 7);
+    CHECK(cart_cpu_read(0xC000) == 5 && cart_cpu_read(0xE000) == 0xFF);
+
+    cart_cpu_write(0x8000, 0);
+    cart_cpu_write(0x8001, 10);
+    cart_cpu_write(0x8000, 1);
+    cart_cpu_write(0x8001, 20);
+    for (unsigned reg = 2; reg <= 5; ++reg) {
+        cart_cpu_write(0x8000, (uint8_t)reg);
+        cart_cpu_write(0x8001, (uint8_t)(28 + reg));
+    }
+    static const uint8_t paired_chr[] = {10, 11, 20, 21, 30, 31, 32, 33};
+    for (unsigned slot = 0; slot < 8; ++slot)
+        CHECK(cart_ppu_read((uint16_t)(slot * 0x400)) == paired_chr[slot]);
+
+    cart_cpu_write(0x8000, 0x28);
+    cart_cpu_write(0x8001, 12);
+    cart_cpu_write(0x8000, 0x29);
+    cart_cpu_write(0x8001, 22);
+    static const uint8_t one_k_chr[] = {10, 12, 20, 22, 30, 31, 32, 33};
+    for (unsigned slot = 0; slot < 8; ++slot)
+        CHECK(cart_ppu_read((uint16_t)(slot * 0x400)) == one_k_chr[slot]);
+    cart_cpu_write(0x8000, 0xA0);
+    static const uint8_t inverted_chr[] = {30, 31, 32, 33, 10, 12, 20, 22};
+    for (unsigned slot = 0; slot < 8; ++slot)
+        CHECK(cart_ppu_read((uint16_t)(slot * 0x400)) == inverted_chr[slot]);
+
+    uint8_t nt[0x1000] = {0};
+    cart_cpu_write(0xA000, 1);
+    CHECK(cart_get_mirroring() == MIRROR_HORIZONTAL);
+    cart_nt_write(0x2000, 0x64, nt);
+    CHECK(cart_nt_read(0x2400, nt) == 0x64 && cart_nt_read(0x2800, nt) == 0);
+    cart_cpu_write(0xA000, 0);
+    CHECK(cart_get_mirroring() == MIRROR_VERTICAL);
+    memset(nt, 0, sizeof(nt));
+    cart_nt_write(0x2000, 0x46, nt);
+    CHECK(cart_nt_read(0x2800, nt) == 0x46 && cart_nt_read(0x2400, nt) == 0);
+
+    cart->reset();
+    CHECK(!cart_irq_pending() && cart_get_mirroring() == MIRROR_VERTICAL);
+    CHECK(cart_cpu_read(0x8000) == 0 && cart_cpu_read(0xA000) == 1);
+    CHECK(cart_cpu_read(0xC000) == 2 && cart_cpu_read(0xE000) == 0xFF);
+    for (unsigned slot = 0; slot < 8; ++slot)
+        CHECK(cart_ppu_read((uint16_t)(slot * 0x400)) == slot);
+    return 0;
+}
+
+static int test_rambo1_irq_sources(void) {
+    CHECK(fixture(64, 0x20000, 0x2000, false) == 64);
+
+    cart_cpu_write(0xC000, 0);
+    cart_cpu_write(0xC001, 1);
+    cart_cpu_write(0xE001, 0);
+    cart->clock(3);
+    CHECK(!cart_irq_pending());
+    cart->clock(1); // Divide-by-four counter clock schedules the one-cycle IRQ delay.
+    CHECK(!cart_irq_pending());
+    cart->clock(1);
+    CHECK(cart_irq_pending());
+    cart_cpu_write(0xE000, 0);
+    CHECK(!cart_irq_pending());
+
+    cart_cpu_write(0xC001, 1);
+    cart_cpu_write(0xE001, 0);
+    cart->clock(2);
+    cart_notify_ppu_address(0x2000, 0);
+    cart_notify_ppu_address(0x1000, 60); // PPU edges are ignored in CPU-cycle mode.
+    cart_cpu_write(0xC001, 0);
+    cart->clock(1);
+    CHECK(!cart_irq_pending());
+    cart->clock(1); // The old CPU prescaler is allowed one final counter clock.
+    CHECK(!cart_irq_pending());
+    cart->clock(1);
+    CHECK(cart_irq_pending());
+    cart_cpu_write(0xE000, 0);
+
+    cart_cpu_write(0xC000, 0);
+    cart_cpu_write(0xC001, 0);
+    cart_cpu_write(0xE001, 0);
+    cart_notify_ppu_address(0x2000, 100);
+    cart_notify_ppu_address(0x1000, 129);
+    cart->clock(2);
+    CHECK(!cart_irq_pending()); // Twenty-nine PPU cycles low is too short.
+    cart_notify_ppu_address(0x2000, 140);
+    cart_notify_ppu_address(0x1000, 170);
+    cart->clock(1);
+    CHECK(!cart_irq_pending());
+    cart->clock(1);
+    CHECK(cart_irq_pending());
+    cart_cpu_write(0xE000, 0);
+
+    cart_cpu_write(0xC000, 2);
+    cart_cpu_write(0xC001, 0);
+    cart_cpu_write(0xE001, 0);
+    for (unsigned edge = 0; edge < 3; ++edge) {
+        uint64_t low = 200 + edge * 40;
+        cart_notify_ppu_address(0x2000, low);
+        cart_notify_ppu_address(0x1000, low + 30);
+        cart->clock(2);
+        CHECK(!cart_irq_pending());
+    }
+    cart_notify_ppu_address(0x2000, 320);
+    cart_notify_ppu_address(0x1000, 350);
+    cart->clock(1);
+    CHECK(!cart_irq_pending());
+    cart->clock(1);
+    CHECK(cart_irq_pending());
+    cart_cpu_write(0xE000, 0);
+
+    cart_cpu_write(0xC001, 1);
+    cart_cpu_write(0xE001, 0);
+    cart->clock(4);
+    cart->reset();
+    CHECK(!cart_irq_pending());
+    cart->clock(16);
+    CHECK(!cart_irq_pending());
+    return 0;
+}
+
+static int test_rambo158_nametables(void) {
+    CHECK(fixture(158, 0x20000, 0x20000, false) == 158);
+    uint8_t nt[0x1000] = {0};
+    nt[0] = 0x10;
+    nt[0x400] = 0x20;
+    CHECK(cart_nt_read(0x2000, nt) == 0x10 && cart_nt_read(0x2400, nt) == 0x20);
+    CHECK(cart_nt_read(0x2800, nt) == 0x10 && cart_nt_read(0x2C00, nt) == 0x20);
+
+    cart_cpu_write(0x8000, 0);
+    cart_cpu_write(0x8001, 0x80);
+    cart_cpu_write(0x8000, 1);
+    cart_cpu_write(0x8001, 0x00);
+    CHECK(cart_nt_read(0x2000, nt) == 0x20 && cart_nt_read(0x2400, nt) == 0x20);
+    CHECK(cart_nt_read(0x2800, nt) == 0x10 && cart_nt_read(0x2C00, nt) == 0x10);
+    cart_cpu_write(0xA000, 1); // Mapper 158 does not use the RAMBO-1 mirroring register.
+    CHECK(cart_nt_read(0x2000, nt) == 0x20 && cart_nt_read(0x2800, nt) == 0x10);
+
+    cart_cpu_write(0x8000, 0x82);
+    cart_cpu_write(0x8001, 0x80);
+    cart_cpu_write(0x8000, 0x83);
+    cart_cpu_write(0x8001, 0x00);
+    cart_cpu_write(0x8000, 0x84);
+    cart_cpu_write(0x8001, 0x80);
+    cart_cpu_write(0x8000, 0x85);
+    cart_cpu_write(0x8001, 0x00);
+    CHECK(cart_nt_read(0x2000, nt) == 0x20 && cart_nt_read(0x2400, nt) == 0x10);
+    CHECK(cart_nt_read(0x2800, nt) == 0x20 && cart_nt_read(0x2C00, nt) == 0x10);
+
+    cart_cpu_write(0x8000, 0x80);
+    CHECK(cart_nt_read(0x2000, nt) == 0x20 && cart_nt_read(0x2400, nt) == 0x10);
+    cart_cpu_write(0x8000, 0x28);
+    cart_cpu_write(0x8001, 0x80); // The nametable latch decodes only the lower three register bits.
+    CHECK(cart_nt_read(0x2000, nt) == 0x20 && cart_nt_read(0x2400, nt) == 0x20);
+    cart_cpu_write(0x8000, 0xA3);
+    cart_cpu_write(0x8001, 0x00);
+
+    cart_nt_write(0x2001, 0xA1, nt);
+    cart_nt_write(0x2401, 0xB1, nt);
+    CHECK(nt[0x401] == 0xA1 && nt[1] == 0xB1);
+    cart->reset();
+    CHECK(cart_nt_read(0x2000, nt) == 0x10 && cart_nt_read(0x2400, nt) == 0x20);
+    CHECK(cart_nt_read(0x2800, nt) == 0x10 && cart_nt_read(0x2C00, nt) == 0x20);
+    CHECK(!cart_irq_pending());
+    return 0;
+}
+
+static int test_rambo1_ram_and_odd_chr_banks(void) {
+    const unsigned boards[] = {64, 158};
+    for (unsigned i = 0; i < 2; ++i) {
+        CHECK(fixture(boards[i], 0x20000, 0x8000, true) == (int)boards[i]);
+        cart_cpu_write(0x8000, 0);
+        cart_cpu_write(0x8001, 5);
+        CHECK(cart_ppu_read(0) == 5 && cart_ppu_read(0x0400) == 5);
+        cart_ppu_write(0x0123, 0xA6);
+        CHECK(cart_ppu_read(0x0523) == 0xA6);
+        cart_cpu_write(0x8000, 0x28);
+        cart_cpu_write(0x8001, 6);
+        CHECK(cart_ppu_read(0x0123) == 0xA6 && cart_ppu_read(0x0523) == 6);
+        cart_ppu_write(0x0523, 0x69);
+        cart_cpu_write(0x8000, 0xA0);
+        CHECK(cart_ppu_read(0x1123) == 0xA6 && cart_ppu_read(0x1523) == 0x69);
+        cart_cpu_write(0x6000, 0x35);
+        cart_cpu_write(0x7FFF, 0x53);
+        for (unsigned protection = 0; protection <= 0xC0; protection += 0x40) {
+            cart_cpu_write(0xA001, (uint8_t)protection);
+            CHECK(cart_cpu_read(0x6000) == 0x35 && cart_cpu_read(0x7FFF) == 0x53);
+            cart_cpu_write(0x6123, (uint8_t)(protection | 0x15));
+            CHECK(cart_cpu_read(0x6123) == (protection | 0x15));
+        }
+        CHECK(cart_cpu_read_bus(0x5000, 0x96) == 0x96);
+        cart->reset();
+        CHECK(cart_cpu_read(0x6000) == 0x35 && cart_ppu_read(0x1523) == 0xA6);
+        iNESHeader h = header_for(boards[i], 0x20000, false);
+        h.flags7 |= 8;
+        CHECK(fixture_with_header(&h, 0x20000, 0x2000) == (int)boards[i]);
+        cart_cpu_write(0x6000, 0xFF);
+        CHECK(cart_cpu_read_bus(0x6000, 0x56) == 0x56);
+        cart_ppu_write(0, 0xFF);
+        CHECK(cart_ppu_read(0) == 0);
+    }
+    return 0;
+}
+
+static int test_rambo1_irq_boundaries(void) {
+    CHECK(fixture(64, 0x20000, 0x2000, false) == 64);
+    const uint8_t reloads[] = {0, 1, 2, 254, 255};
+    const unsigned first_clocks[] = {1, 2, 4, 256, 1};
+    const unsigned later_clocks[] = {1, 2, 3, 255, 256};
+    for (unsigned test = 0; test < sizeof(reloads); ++test) {
+        cart->reset();
+        cart_cpu_write(0xC000, reloads[test]);
+        cart_cpu_write(0xC001, 1);
+        cart_cpu_write(0xE001, 0);
+        cart->clock((int)(first_clocks[test] * 4));
+        CHECK(!cart_irq_pending());
+        cart->clock(1);
+        CHECK(cart_irq_pending());
+        cart_cpu_write(0xE000, 0);
+        cart_cpu_write(0xE001, 0);
+        cart->clock((int)(later_clocks[test] * 4 - 1));
+        CHECK(!cart_irq_pending());
+        cart->clock(1);
+        CHECK(cart_irq_pending());
+    }
+
+    for (unsigned phase = 0; phase < 4; ++phase) {
+        cart->reset();
+        cart_cpu_write(0xC000, 0);
+        cart_cpu_write(0xC001, 1);
+        cart_cpu_write(0xE001, 0);
+        cart->clock((int)phase);
+        cart_cpu_write(0xC001, 0);
+        cart->clock((int)(4 - phase));
+        CHECK(!cart_irq_pending());
+        cart->clock(1);
+        CHECK(cart_irq_pending());
+        cart_cpu_write(0xE000, 0);
+        cart_cpu_write(0xE001, 0);
+        cart->clock(16);
+        CHECK(!cart_irq_pending()); // Switching to PPU mode allows exactly one final CPU counter clock.
+    }
+
+    cart->reset();
+    cart_cpu_write(0xC000, 0);
+    cart_cpu_write(0xC001, 1);
+    cart_cpu_write(0xE001, 0);
+    cart->clock(3);
+    cart_cpu_write(0xC001, 1);
+    cart->clock(4);
+    CHECK(!cart_irq_pending());
+    cart_cpu_write(0xE000, 0);
+    cart->clock(1);
+    CHECK(cart_irq_pending()); // An IRQ already in the output delay survives acknowledgment.
+    cart_cpu_write(0xE000, 0);
+    cart->clock(20);
+    CHECK(!cart_irq_pending());
+
+    cart->reset();
+    cart_cpu_write(0xC001, 0);
+    cart_cpu_write(0xE001, 0);
+    cart_notify_ppu_address(0x2000, 89330);
+    cart_notify_ppu_address(0x2001, 89342);
+    cart_notify_ppu_address(0x1000, 89360);
+    cart->clock(1);
+    CHECK(!cart_irq_pending());
+    cart_cpu_write(0xE000, 0);
+    cart->clock(1);
+    CHECK(cart_irq_pending());
+    return 0;
+}
+
+static int test_rambo1_cpu_and_rendering_irq(void) {
+    const unsigned boards[] = {64, 158};
+    for (unsigned board = 0; board < 2; ++board) {
+        CHECK(fixture(boards[board], 0x20000, 0x2000, false) == (int)boards[board]);
+        fixture_prg[0x1FFFC] = 0;
+        fixture_prg[0x1FFFD] = 2;
+        fixture_prg[0x1FFFE] = 0;
+        fixture_prg[0x1FFFF] = 3;
+        nes_set_region(NES_REGION_NTSC);
+        ppu_power_on(&ppu);
+        apu_power_on(&apu);
+        cpu_power_on(&cpu);
+        for (unsigned i = 0; i < 16; ++i) write_mem((uint16_t)(0x0200 + i), 0xEA);
+        cart_cpu_write(0xC000, 0);
+        cart_cpu_write(0xC001, 1);
+        cart_cpu_write(0xE001, 0);
+        CHECK(cpu_step(&cpu) == 2 && !cart_irq_pending());
+        CHECK(cpu_step(&cpu) == 2 && !cart_irq_pending());
+        CHECK(cpu_step(&cpu) == 2 && cart_irq_pending());
+        cpu.status &= (uint8_t)~INTERRUPT_FLAG;
+        for (unsigned step = 0; step < 3 && cpu.pc != 0x0300; ++step) (void)cpu_step(&cpu);
+        CHECK(cpu.pc == 0x0300 && (cpu.status & INTERRUPT_FLAG));
+        cart_cpu_write(0xE000, 0);
+        CHECK(!cart_irq_pending());
+
+        ppu_power_on(&ppu);
+        ppu_step_dots(341 * 262 * 2);
+        write_mem(0x2000, 8);
+        write_mem(0x2001, 0x18);
+        cart->reset();
+        cpu.pc = 0x0200;
+        cpu.status = (uint8_t)(UNUSED_FLAG | INTERRUPT_FLAG);
+        write_mem(0x0200, 0x4C);
+        write_mem(0x0201, 0);
+        write_mem(0x0202, 2);
+        cart_cpu_write(0xC000, 0);
+        cart_cpu_write(0xC001, 0);
+        cart_cpu_write(0xE001, 0);
+        for (unsigned step = 0; step < 1000 && !cart_irq_pending(); ++step) (void)cpu_step(&cpu);
+        CHECK(cart_irq_pending()); // Rendering fetches reach the cartridge's physical A12 filter.
+        cart_cpu_write(0xE000, 0);
+        cart_cpu_write(0x8000, 6);
+        cart_cpu_write(0x8001, 5);
+        cpu_soft_reset(&cpu);
+        CHECK(cart_cpu_read(0x8000) == 5);
+    }
+    return 0;
+}
+
+static int test_rambo1_loader(void) {
+    const unsigned boards[] = {64, 158};
+    for (unsigned board = 0; board < 2; ++board) {
+        iNESHeader h = header_for(boards[board], 0x20000, false);
+        h.flags7 |= 8;
+        h.chr_rom_chunks = 32;
+        size_t size;
+        uint8_t *image = image_for(&h, 0x20000, 0x40000, &size);
+        CHECK(image != NULL);
+        image[sizeof(h) + 0x20000 + 0x3FC00] = 0x96;
+        int loaded = load_rom_memory(image, size);
+        free(image);
+        CHECK(loaded == 0 && rom_mapper_number(&ines_header) == (int)boards[board]);
+        cart_cpu_write(0x8000, 2);
+        cart_cpu_write(0x8001, 0xFF);
+        CHECK(cart_ppu_read(0x1000) == 0x96);
+        cart_cpu_write(0xC001, 1);
+        cart_cpu_write(0xE001, 0);
+        cart->clock(5);
+        CHECK(cart_irq_pending());
+        uint8_t *old_prg = prg_rom, *old_chr = chr_rom;
+        iNESHeader rejected[] = {h, h, h};
+        rejected[0].prg_ram_size = 0x10;
+        rejected[1].flags10 = 8;
+        rejected[2].chr_rom_chunks = 33;
+        for (unsigned i = 0; i < sizeof(rejected) / sizeof(rejected[0]); ++i) {
+            image = image_for(&rejected[i], 0x20000, (size_t)rejected[i].chr_rom_chunks * 0x2000, &size);
+            CHECK(image != NULL);
+            loaded = load_rom_memory(image, size);
+            free(image);
+            CHECK(loaded == -1 && prg_rom == old_prg && chr_rom == old_chr && cart_irq_pending());
+            CHECK(cart_ppu_read(0x1000) == 0x96);
+        }
+        CHECK(mapper_init_from_header(&h, fixture_prg, 0x20001, fixture_chr, 0x2000) == -1);
+        CHECK(mapper_init_from_header(&h, fixture_prg, 0x20000, fixture_chr, 0x2001) == -1);
+        CHECK(prg_rom == old_prg && chr_rom == old_chr && cart_irq_pending());
+        image = image_for(&h, 0x20000, 0x40000, &size);
+        CHECK(image != NULL);
+        loaded = load_rom_memory(image, size - 1);
+        free(image);
+        CHECK(loaded == -1 && prg_rom == old_prg && cart_irq_pending());
+    }
+    return 0;
+}
+
 static int test_simple_mapper_registers(void) {
     CHECK(fixture(2, 0x100000, 0x2000, true) == 2);
     cart_cpu_write(0x8000, 32);
@@ -3426,6 +3807,9 @@ int test_mapper_accuracy(void) {
         test_mcacc_banks_ram_and_loader, test_mcacc_cpu_ppu_irq_path,
         test_taito_banks_aliases_and_mirroring, test_taito48_irq, test_taito_loader_transaction,
         test_taito48_cpu_irq,
+        test_rambo1_banks_and_modes, test_rambo1_irq_sources, test_rambo158_nametables,
+        test_rambo1_ram_and_odd_chr_banks, test_rambo1_irq_boundaries,
+        test_rambo1_cpu_and_rendering_irq, test_rambo1_loader,
         test_simple_mapper_registers,
         test_colordreams_bus_conflicts, test_bus_conflict_submappers,
         test_mapper15_modes, test_action53_banks_and_mirroring,
