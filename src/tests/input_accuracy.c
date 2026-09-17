@@ -23,6 +23,8 @@
  */
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
+#include "../joypad/family_basic.h"
 #include "../cpu/cpu.h"
 #include "../apu/apu.h"
 #include "../ppu/ppu.h"
@@ -912,6 +914,156 @@ static int zapper_selection_and_disconnect(void) {
     return 0;
 }
 
+static int family_basic_matrix_scan(void) {
+    input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+    CHECK(joypad_set_expansion_device_name("family-basic"));
+    CHECK(joypad_configuration_valid());
+    static const FamilyBasicKey held[] = {
+        FB_KEY_RETURN, FB_KEY_KANA, FB_KEY_F7, FB_KEY_CARET,
+        FB_KEY_O, FB_KEY_COMMA, FB_KEY_U, FB_KEY_M,
+        FB_KEY_Y, FB_KEY_G, FB_KEY_B, FB_KEY_R, FB_KEY_F, FB_KEY_4,
+        FB_KEY_A, FB_KEY_S, FB_KEY_X, FB_KEY_E, FB_KEY_CONTROL,
+        FB_KEY_LEFT_SHIFT, FB_KEY_2, FB_KEY_CLEAR_HOME, FB_KEY_DOWN, FB_KEY_INSERT
+    };
+    static const uint8_t rows[10][2] = {
+        {0x1A, 0x1C}, {0x1C, 0x0E}, {0x1A, 0x1A}, {0x16, 0x1C},
+        {0x12, 0x1C}, {0x16, 0x0C}, {0x06, 0x14}, {0x0E, 0x0C},
+        {0x1C, 0x0C}, {0x1E, 0x1E}
+    };
+    for (unsigned i = 0; i < sizeof(held) / sizeof(held[0]); ++i)
+        CHECK(family_basic_set_key(held[i], true));
+    CHECK(!family_basic_set_key(FB_KEY_COUNT, true));
+    CHECK(!family_basic_set_key((FamilyBasicKey)-1, true));
+    write_mem(0x4016, 5);
+    for (unsigned row = 0; row < 10; ++row) {
+        CHECK((read_mem(0x4017) & 0x1E) == rows[row][0]);
+        CHECK((read_mem(0x4017) & 0x1E) == rows[row][0]);
+        write_mem(0x4016, 6);
+        CHECK((read_mem(0x4017) & 0x1E) == rows[row][1]);
+        write_mem(0x4016, 6); // Holding the high half does not advance the row.
+        CHECK((read_mem(0x4017) & 0x1E) == rows[row][1]);
+        write_mem(0x4016, 4);
+    }
+    CHECK((read_mem(0x4017) & 0x1E) == 0x1A); // Row ten wraps to zero.
+    write_mem(0x4016, 6);
+    write_mem(0x4016, 0); // Disable while advancing the physical scan row.
+    CHECK((read_mem(0x4017) & 0x1E) == 0);
+    write_mem(0x4016, 4);
+    CHECK((read_mem(0x4017) & 0x1E) == 0x1C); // F7 is in row one.
+    write_mem(0x4016, 7); // Reset has priority and may select the upper half.
+    CHECK((read_mem(0x4017) & 0x1E) == 0x1C); // Kana, row zero upper half.
+    family_basic_set_key(FB_KEY_KANA, false);
+    CHECK((read_mem(0x4017) & 0x1E) == 0x1E); // Keys are live, not latched by reads.
+    joypad_set_expansion_device(NES_EXPANSION_NONE);
+    CHECK((read_mem(0x4017) & 0x1E) == 0);
+    return 0;
+}
+
+static int family_basic_cpu_tape_and_controller(void) {
+    input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_FAMILY_BASIC));
+    static const uint8_t samples[] = {0xA5, 0x3C};
+    CHECK(family_basic_tape_load(samples, sizeof(samples)));
+    CHECK(family_basic_tape_play(0));
+    pad1.buttons = 1;
+    joypad_set_microphone(true);
+    write_mem(0x4016, 5);
+    input_program(0xAD, 0x4016); // LDA $4016: input and tape share the actual CPU bus.
+    for (unsigned sample = 0; sample < 16; ++sample) {
+        cpu_total_cycles = (uint64_t)sample * 88;
+        cpu.pc = 0x8000;
+        CHECK(cpu_step(&cpu) == 4);
+        uint8_t expected = (uint8_t)(((samples[sample / 8] >> (sample & 7u)) & 1u) << 1);
+        CHECK((cpu.a & 7u) == (uint8_t)(expected | 5u));
+        CHECK((read_mem(0x4016) & 7u) == (uint8_t)(expected | 5u));
+    }
+    cpu_total_cycles = sizeof(samples) * 8 * 88;
+    CHECK((read_mem(0x4016) & 2u) == 0);
+    CHECK(family_basic_tape_mode() == FB_TAPE_STOPPED);
+
+    uint64_t playback_start = cpu_total_cycles;
+    CHECK(family_basic_tape_play(playback_start));
+    for (unsigned instruction = 1; instruction < 176; ++instruction) {
+        cpu.pc = 0x8000;
+        CHECK(cpu_step(&cpu) == 4);
+        CHECK(cpu_total_cycles == playback_start + instruction * 4);
+        unsigned sample = instruction * 4 / 88;
+        CHECK((cpu.a & 2u) == (((0xA5u >> sample) & 1u) << 1));
+    }
+
+    CHECK(family_basic_tape_play(1000));
+    cpu_total_cycles = 1000;
+    write_mem(0x4016, 0);
+    CHECK((read_mem(0x4016) & 2u) == 0);
+    cpu_total_cycles = 1000 + 2 * 88;
+    write_mem(0x4016, 4);
+    CHECK((read_mem(0x4016) & 2u) == 2); // Time advances while the recorder input is disabled.
+    CHECK(!family_basic_tape_load(NULL, 1));
+    CHECK(family_basic_tape_mode() == FB_TAPE_PLAYING);
+    CHECK((read_mem(0x4016) & 2u) == 2);
+
+    family_basic_tape_stop();
+    pad2.buttons = 0xA5;
+    write_mem(0x4016, 5);
+    write_mem(0x4016, 4);
+    for (unsigned bit = 0; bit < 8; ++bit) {
+        uint8_t value = read_mem(0x4017);
+        CHECK((value & 0x1E) == 0x1E);
+        CHECK((value & 1u) == ((0xA5u >> bit) & 1u));
+    }
+    CHECK(family_basic_tape_load(NULL, 0));
+    CHECK(!family_basic_tape_play(cpu_total_cycles));
+    return 0;
+}
+
+static int family_basic_recording_and_media(void) {
+    input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_FAMILY_BASIC));
+    family_basic_tape_record(0);
+    cpu_total_cycles = 88;
+    write_mem(0x4016, 0); // Exactly 88 cycles does not finish a recording sample yet.
+    cpu_total_cycles = 89;
+    write_mem(0x4016, 1);
+    for (unsigned sample = 1; sample < 8; ++sample) {
+        cpu_total_cycles = (uint64_t)(sample + 1) * 88 + 1;
+        write_mem(0x4016, (uint8_t)((0xA5u >> sample) & 1u));
+    }
+    CHECK(!family_basic_tape_failed());
+    family_basic_tape_stop();
+    CHECK(family_basic_tape_play(2000));
+    for (unsigned sample = 0; sample < 8; ++sample) {
+        cpu_total_cycles = 2000 + (uint64_t)sample * 88;
+        write_mem(0x4016, 4);
+        CHECK((read_mem(0x4016) & 2u) == (((0xA5u >> sample) & 1u) << 1));
+    }
+    family_basic_tape_stop();
+    char path[128];
+    snprintf(path, sizeof(path), ".family-basic-tape-%llu-%llu.bin",
+             (unsigned long long)time(NULL), (unsigned long long)clock());
+    FILE *reservation = fopen(path, "wbx");
+    CHECK(reservation != NULL);
+    CHECK(fclose(reservation) == 0);
+    CHECK(!family_basic_tape_save_file(""));
+    CHECK(family_basic_tape_save_file(path));
+    FILE *saved = fopen(path, "rb");
+    CHECK(saved != NULL);
+    int first = fgetc(saved);
+    int next = fgetc(saved);
+    CHECK(fclose(saved) == 0);
+    CHECK(first == 0xA5 && next == EOF);
+    CHECK(family_basic_tape_load_file(path));
+    CHECK(remove(path) == 0);
+    CHECK(!family_basic_tape_load_file(path)); // Failed load preserves the current tape.
+    CHECK(family_basic_tape_play(4000));
+    cpu_total_cycles = 4000;
+    CHECK((read_mem(0x4016) & 2u) == 2);
+    joypad_set_expansion_device(NES_EXPANSION_NONE);
+    CHECK(family_basic_tape_mode() == FB_TAPE_STOPPED);
+    CHECK((read_mem(0x4016) & 2u) == 0);
+    family_basic_shutdown();
+    return 0;
+}
+
 int test_input_accuracy(void) {
     static int (*const tests[])(void) = {
         console_open_bus, console_read_clocks, console_strobe_timing,
@@ -921,7 +1073,9 @@ int test_input_accuracy(void) {
         arkanoid_cpu_clocks, device_selection, power_pad_button_order,
         power_pad_latching, family_trainer_rows, family_trainer_cpu_writes,
         mat_selection_and_disconnect, zapper_port_signals, zapper_beam_and_persistence,
-        zapper_brightness_and_area, zapper_cpu_and_dma, zapper_selection_and_disconnect
+        zapper_brightness_and_area, zapper_cpu_and_dma, zapper_selection_and_disconnect,
+        family_basic_matrix_scan, family_basic_cpu_tape_and_controller,
+        family_basic_recording_and_media
     };
     NesConsoleModel saved_model = nes_console_model();
     NesRegion saved_region = nes_timing()->region;
@@ -933,6 +1087,7 @@ int test_input_accuracy(void) {
     input_checks = 0;
     for (unsigned i = 0; i < sizeof(tests) / sizeof(tests[0]); ++i) failures += tests[i]();
     unload_rom();
+    family_basic_shutdown();
     nes_set_console_model(saved_model);
     nes_set_region(saved_region);
     joypad_set_microphone(false);

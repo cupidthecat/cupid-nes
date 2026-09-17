@@ -31,6 +31,7 @@
 #include "cpu/cpu.h"
 #include "ppu/ppu.h"
 #include "joypad/joypad.h"
+#include "joypad/family_basic.h"
 #include "../include/globals.h"
 #include "apu/apu.h"
 #include <time.h>
@@ -122,6 +123,68 @@ static bool mat_key_event(const SDL_KeyboardEvent *event) {
     return handled;
 }
 
+static bool tape_capture_pending;
+
+static bool finish_tape_capture(const char *path) {
+    family_basic_tape_stop();
+    if (!tape_capture_pending) return true;
+    if (!path || !family_basic_tape_save_file(path)) {
+        fprintf(stderr, "Could not save tape; the captured signal remains in memory\n");
+        return false;
+    }
+    tape_capture_pending = false;
+    return true;
+}
+
+static bool family_basic_key_event(const SDL_KeyboardEvent *event,
+                                   const char *play_path, const char *record_path) {
+    if (joypad_expansion_device() != NES_EXPANSION_FAMILY_BASIC) return false;
+    static const SDL_Scancode keys[] = {
+        SDL_SCANCODE_F8, SDL_SCANCODE_RETURN, SDL_SCANCODE_LEFTBRACKET, SDL_SCANCODE_RIGHTBRACKET,
+        SDL_SCANCODE_RALT, SDL_SCANCODE_RSHIFT, SDL_SCANCODE_BACKSLASH, SDL_SCANCODE_F12,
+        SDL_SCANCODE_F7, SDL_SCANCODE_GRAVE, SDL_SCANCODE_APOSTROPHE, SDL_SCANCODE_SEMICOLON,
+        SDL_SCANCODE_F9, SDL_SCANCODE_SLASH, SDL_SCANCODE_MINUS, SDL_SCANCODE_EQUALS,
+        SDL_SCANCODE_F6, SDL_SCANCODE_O, SDL_SCANCODE_L, SDL_SCANCODE_K,
+        SDL_SCANCODE_PERIOD, SDL_SCANCODE_COMMA, SDL_SCANCODE_P, SDL_SCANCODE_0,
+        SDL_SCANCODE_F5, SDL_SCANCODE_I, SDL_SCANCODE_U, SDL_SCANCODE_J,
+        SDL_SCANCODE_M, SDL_SCANCODE_N, SDL_SCANCODE_9, SDL_SCANCODE_8,
+        SDL_SCANCODE_F4, SDL_SCANCODE_Y, SDL_SCANCODE_G, SDL_SCANCODE_H,
+        SDL_SCANCODE_B, SDL_SCANCODE_V, SDL_SCANCODE_7, SDL_SCANCODE_6,
+        SDL_SCANCODE_F3, SDL_SCANCODE_T, SDL_SCANCODE_R, SDL_SCANCODE_D,
+        SDL_SCANCODE_F, SDL_SCANCODE_C, SDL_SCANCODE_5, SDL_SCANCODE_4,
+        SDL_SCANCODE_F2, SDL_SCANCODE_W, SDL_SCANCODE_S, SDL_SCANCODE_A,
+        SDL_SCANCODE_X, SDL_SCANCODE_Z, SDL_SCANCODE_E, SDL_SCANCODE_3,
+        SDL_SCANCODE_F1, SDL_SCANCODE_ESCAPE, SDL_SCANCODE_Q, SDL_SCANCODE_LCTRL,
+        SDL_SCANCODE_LSHIFT, SDL_SCANCODE_LALT, SDL_SCANCODE_1, SDL_SCANCODE_2,
+        SDL_SCANCODE_HOME, SDL_SCANCODE_UP, SDL_SCANCODE_RIGHT, SDL_SCANCODE_LEFT,
+        SDL_SCANCODE_DOWN, SDL_SCANCODE_SPACE, SDL_SCANCODE_DELETE, SDL_SCANCODE_INSERT
+    };
+    _Static_assert(sizeof(keys) / sizeof(keys[0]) == FB_KEY_COUNT, "Complete keyboard matrix");
+    bool down = event->type == SDL_KEYDOWN;
+    if (event->keysym.scancode == SDL_SCANCODE_F10 && down && !event->repeat) {
+        if (record_path) {
+            if (family_basic_tape_mode() != FB_TAPE_RECORDING && finish_tape_capture(record_path)) {
+                family_basic_tape_record(cpu_total_cycles);
+                tape_capture_pending = true;
+            }
+        } else if (play_path) {
+            family_basic_tape_play(cpu_total_cycles);
+        }
+    } else if (event->keysym.scancode == SDL_SCANCODE_F11 && down && !event->repeat) {
+        finish_tape_capture(record_path);
+    } else if (event->keysym.scancode == SDL_SCANCODE_BACKSPACE) {
+        family_basic_set_key(FB_KEY_DELETE, down);
+    } else {
+        for (unsigned key = 0; key < FB_KEY_COUNT; ++key) {
+            if (event->keysym.scancode == keys[key]) {
+                family_basic_set_key((FamilyBasicKey)key, down);
+                break;
+            }
+        }
+    }
+    return true;
+}
+
 int main(int argc, char *argv[]) {
     SDL_AudioSpec want;
     SDL_AudioSpec have;
@@ -129,6 +192,8 @@ int main(int argc, char *argv[]) {
 
     const char *rom_path = NULL;
     const char *barcode = NULL;
+    const char *tape_play_path = NULL;
+    const char *tape_record_path = NULL;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--console") == 0) {
             if (++i == argc || !nes_set_console_model_name(argv[i])) {
@@ -168,7 +233,7 @@ int main(int argc, char *argv[]) {
             }
         } else if (strcmp(argv[i], "--expansion") == 0) {
             if (++i == argc || !joypad_set_expansion_device_name(argv[i])) {
-                fprintf(stderr, "Expansion device must be none, arkanoid, family-trainer-a, family-trainer-b, or zapper\n");
+                fprintf(stderr, "Expansion device must be none, arkanoid, family-trainer-a, family-trainer-b, zapper, or family-basic\n");
                 return 1;
             }
         } else if (strcmp(argv[i], "--zapper-radius") == 0) {
@@ -189,6 +254,14 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             barcode = argv[i];
+        } else if (strcmp(argv[i], "--tape-play") == 0 || strcmp(argv[i], "--tape-record") == 0) {
+            bool record = strcmp(argv[i], "--tape-record") == 0;
+            if (++i == argc || tape_play_path || tape_record_path) {
+                fprintf(stderr, "Choose one tape file with --tape-play or --tape-record\n");
+                return 1;
+            }
+            if (record) tape_record_path = argv[i];
+            else tape_play_path = argv[i];
         } else if (argv[i][0] == '-' || rom_path) {
             fprintf(stderr, "Unexpected argument: %s\n", argv[i]);
             return 1;
@@ -201,11 +274,15 @@ int main(int argc, char *argv[]) {
                "[--ppu-revision REVISION] [--ppu-oam-row-corruption] "
                "[--adapter TYPE] [--port1 DEVICE] [--port2 DEVICE] "
                "[--expansion DEVICE] [--barcode DIGITS] "
-               "[--zapper-radius PIXELS] <rom-file>\n", argv[0]);
+               "[--zapper-radius PIXELS] [--tape-play FILE | --tape-record FILE] <rom-file>\n", argv[0]);
         return 1;
     }
     if (!joypad_configuration_valid()) {
         fprintf(stderr, "An adapter and another device cannot share the same connector\n");
+        return 1;
+    }
+    if ((tape_play_path || tape_record_path) && joypad_expansion_device() != NES_EXPANSION_FAMILY_BASIC) {
+        fprintf(stderr, "Tape input requires --expansion family-basic\n");
         return 1;
     }
     
@@ -254,6 +331,13 @@ int main(int argc, char *argv[]) {
 
     printf("Resetting CPU...\n");
     cpu_power_on(&cpu);
+    if (tape_play_path && !family_basic_tape_load_file(tape_play_path)) {
+        fprintf(stderr, "Could not load tape: %s\n", tape_play_path);
+        unload_rom();
+        return 1;
+    }
+    if (tape_play_path || tape_record_path)
+        printf("Family BASIC tape: F10 starts the tape; F11 stops and saves a recording\n");
     printf("CPU state after reset:\n");
     printf("  PC: 0x%04X\n", cpu.pc);
     printf("  SP: 0x%02X\n", cpu.sp);
@@ -342,6 +426,9 @@ int main(int argc, char *argv[]) {
             }
             if (e.type == SDL_QUIT)
                 running = false;
+            if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
+                && e.key.windowID == SDL_GetWindowID(window)
+                && family_basic_key_event(&e.key, tape_play_path, tape_record_path)) continue;
             palette_tool_handle_event(&e, renderer);
             
             if (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP) {
@@ -448,7 +535,11 @@ int main(int argc, char *argv[]) {
     if (audio_dev) SDL_CloseAudioDevice(audio_dev);
     for (unsigned player = 0; player < NES_INPUT_PLAYERS; ++player)
         if (controllers[player]) SDL_GameControllerClose(controllers[player]);
+    bool tape_saved = finish_tape_capture(tape_record_path);
+    bool tape_failed = family_basic_tape_failed();
+    if (tape_failed) fprintf(stderr, "Tape recording stopped because the capture buffer could not grow\n");
+    family_basic_shutdown();
     unload_rom();
     SDL_Quit();
-    return 0;
+    return tape_saved && !tape_failed ? 0 : 1;
 }

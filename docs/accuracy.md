@@ -34,6 +34,16 @@ MMC5 detects scanline boundaries from repeated nametable reads and leaves the fr
 
 MMC5 pulse length reloads and halt changes commit at the end of the CPU clock. A simultaneous frame-counter decrement of a nonzero length takes precedence over its pending reload. Trainer initialization uses the RAM bank mapped at CPU `$7000-$71FF`, including the battery-backed socket on a two-socket MMC5 board.
 
+## Family BASIC keyboard and tape
+
+`--console famicom --expansion family-basic` connects the 72-key matrix and data recorder. Writes to `$4016` select a row and half; `$4017` returns the four active-low key bits. The tenth scan row is empty. Controller serial data and the microphone keep their own port bits.
+
+The keyboard uses letter, number, arrow, modifier, and F1 through F8 keys. On a US keyboard, grave selects `@`, apostrophe selects `:`, equals selects `^`, backslash selects yen, and F9 selects underscore. Left Alt is GRPH, Right Alt is Kana, Home is CLEAR/HOME, and F12 is STOP. Backspace also acts as DELETE. Keyboard events go to BASIC while this device is connected, including letters and function keys otherwise used by emulator shortcuts.
+
+Choose a raw tape with `--tape-play program.tap`, or a recording destination with `--tape-record program.tap`. Press F10 when BASIC is ready to read or write the tape; F11 stops playback or saves the recording. A recording also saves when the application exits. Tape files pack samples least-significant bit first at one sample per 88 emulated CPU cycles. Recording omits a partial final byte. This is a digital signal model; it does not decode WAV audio or model analog cassette noise.
+
+The regression cases scan distinct simultaneous key patterns through all ten rows, run CPU loads across tape transitions, preserve controller and microphone signals, and round-trip a recorded byte through a file. A failed tape load leaves the current tape intact, and save replacement occurs only after the temporary file has been written and closed.
+
 ## Regression coverage
 
 | Area | Checks |

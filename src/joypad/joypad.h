@@ -58,7 +58,8 @@ typedef enum {
     NES_EXPANSION_ARKANOID,
     NES_EXPANSION_FAMILY_TRAINER_A,
     NES_EXPANSION_FAMILY_TRAINER_B,
-    NES_EXPANSION_ZAPPER
+    NES_EXPANSION_ZAPPER,
+    NES_EXPANSION_FAMILY_BASIC
 } NesExpansionDevice;
 
 void    joypad_set(Joypad* jp, int btn, int pressed);

@@ -23,6 +23,7 @@
  */
 
 #include "joypad.h"
+#include "family_basic.h"
 #include "../system/hardware.h"
 #include "../system/timing.h"
 #include "../ppu/ppu.h"
@@ -30,6 +31,7 @@
 
 static bool microphone_active;
 extern Joypad pad1, pad2;
+extern uint64_t cpu_total_cycles;
 static Joypad expansion_pads[NES_INPUT_PLAYERS - 2];
 static NesInputAdapter input_adapter;
 static uint8_t adapter_strobe;
@@ -44,7 +46,7 @@ static const char *const port_device_names[] = {
     "pad", "none", "arkanoid", "power-pad-a", "power-pad-b", "zapper"
 };
 static const char *const expansion_device_names[] = {
-    "none", "arkanoid", "family-trainer-a", "family-trainer-b", "zapper"
+    "none", "arkanoid", "family-trainer-a", "family-trainer-b", "zapper", "family-basic"
 };
 
 typedef struct {
@@ -221,6 +223,8 @@ uint8_t joypad_read_port(Joypad *jp, unsigned port) {
         value |= read_family_trainer();
     else if (port == 1 && expansion_device == NES_EXPANSION_ZAPPER)
         value |= read_zapper(2);
+    else if (expansion_device == NES_EXPANSION_FAMILY_BASIC)
+        value |= family_basic_read(port, cpu_total_cycles);
     // The second built-in controller's microphone reaches $4016 D2.
     if (port == 0 && nes_console_model() == NES_CONSOLE_HVC001 && microphone_active)
         value |= 0x04;
@@ -274,6 +278,8 @@ void joypad_write_ports(uint8_t value) {
     else if (expansion_device == NES_EXPANSION_FAMILY_TRAINER_A
              || expansion_device == NES_EXPANSION_FAMILY_TRAINER_B)
         family_trainer_rows = value & 7u;
+    else if (expansion_device == NES_EXPANSION_FAMILY_BASIC)
+        family_basic_write(value, cpu_total_cycles);
 }
 
 NesInputAdapter joypad_adapter(void) {
@@ -332,10 +338,11 @@ NesExpansionDevice joypad_expansion_device(void) {
 }
 
 bool joypad_set_expansion_device(NesExpansionDevice device) {
-    if ((unsigned)device > NES_EXPANSION_ZAPPER) return false;
+    if ((unsigned)device > NES_EXPANSION_FAMILY_BASIC) return false;
     expansion_device = device;
     paddles[2].strobe = paddles[2].shift = 0;
     family_trainer_rows = 0;
+    family_basic_reset();
     return true;
 }
 
