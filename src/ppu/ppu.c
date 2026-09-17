@@ -273,14 +273,29 @@ uint8_t ppu_reg_read_finish(uint16_t reg, uint8_t value) {
     }
 }
 
-void ppu_reg_write(uint16_t reg, uint8_t value) {
+static bool ppu_first_write_scroll_glitch_active(void) {
+    // ppu.dot is the next clock to execute, so 258 means dot 257 has just
+    // completed while the CPU write is on the bus. Current regional PPU
+    // profiles have no separate revision selector and all use this behavior.
+    return ppu.dot == 258 && ppu.scanline < 240 && ppu.rendering_enabled;
+}
+
+static void ppu_set_tmp_scroll_bits(uint16_t normal_t, uint16_t bus_bits, uint16_t mask) {
+    ppu.t = normal_t;
+    if (ppu_first_write_scroll_glitch_active())
+        ppu.v = (ppu.v & (uint16_t)~mask) | (bus_bits & mask);
+}
+
+void ppu_reg_write_cpu(uint16_t reg, uint8_t value, uint8_t cpu_open_bus) {
     set_open_bus(value);
     switch (reg & 7) {
-        case 0:
+        case 0: {
             ppu.ctrl = value;
-            ppu.t = (ppu.t & ~0x0C00) | ((value & 3) << 10);
+            uint16_t normal_t = (ppu.t & ~0x0C00) | ((uint16_t)(value & 3) << 10);
+            ppu_set_tmp_scroll_bits(normal_t, (uint16_t)cpu_open_bus << 10, 0x0400);
             ppu_eval_nmi();
             break;
+        }
         case 1:
             ppu.mask = value;
             break;
@@ -304,7 +319,8 @@ void ppu_reg_write(uint16_t reg, uint8_t value) {
         case 5:
             if (!ppu.w) {
                 ppu.x = value & 7;
-                ppu.t = (ppu.t & ~0x001F) | (value >> 3);
+                uint16_t normal_t = (ppu.t & ~0x001F) | (value >> 3);
+                ppu_set_tmp_scroll_bits(normal_t, cpu_open_bus >> 3, 0x001F);
             } else {
                 ppu.t = (ppu.t & ~0x73E0) | ((value & 7) << 12) | ((value & 0xF8) << 2);
             }
@@ -312,7 +328,8 @@ void ppu_reg_write(uint16_t reg, uint8_t value) {
             break;
         case 6:
             if (!ppu.w) {
-                ppu.t = (ppu.t & 0x00FF) | ((uint16_t)(value & 0x3F) << 8);
+                uint16_t normal_t = (ppu.t & 0x00FF) | ((uint16_t)(value & 0x3F) << 8);
+                ppu_set_tmp_scroll_bits(normal_t, (uint16_t)cpu_open_bus << 8, 0x0C00);
             } else {
                 ppu.t = (ppu.t & 0x7F00) | value;
                 ppu.address_write_value = ppu.t;
@@ -327,6 +344,12 @@ void ppu_reg_write(uint16_t reg, uint8_t value) {
         default:
             break;
     }
+}
+
+void ppu_reg_write(uint16_t reg, uint8_t value) {
+    // Direct register helpers have no preceding CPU bus cycle, so use the
+    // supplied byte for both the write and the bus value.
+    ppu_reg_write_cpu(reg, value, value);
 }
 
 static void ppu_complete_register_accesses(int dot) {

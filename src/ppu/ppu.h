@@ -170,6 +170,7 @@ void ppu_begin_frame_render(uint32_t *framebuffer);
 uint8_t ppu_reg_read(uint16_t reg);
 uint8_t ppu_reg_read_finish(uint16_t reg, uint8_t value);
 void ppu_reg_write(uint16_t reg, uint8_t value);
+void ppu_reg_write_cpu(uint16_t reg, uint8_t value, uint8_t cpu_open_bus);
 void ppu_oam_dma(uint8_t page);
 void ppu_begin_vblank(void);
 void ppu_end_vblank(void);

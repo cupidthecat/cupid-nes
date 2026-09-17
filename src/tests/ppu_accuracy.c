@@ -53,8 +53,8 @@ static void set_render_mask(uint8_t mask) {
     ppu.fetches_enabled = ppu.rendering_enabled;
 }
 
-static void reset_video(unsigned mapper) {
-    nes_set_region(NES_REGION_NTSC);
+static void reset_video_region(unsigned mapper, NesRegion region) {
+    nes_set_region(region);
     memset(test_prg, 0, sizeof(test_prg));
     memset(test_chr, 0, sizeof(test_chr));
     memset(ppu_vram, 0, sizeof(ppu_vram));
@@ -73,6 +73,44 @@ static void reset_video(unsigned mapper) {
     // Register and fetch tests choose their own PPU dot origin after the CPU
     // has completed its real reset reads with rendering disabled.
     ppu_reset(&ppu);
+}
+
+static void reset_video(unsigned mapper) {
+    reset_video_region(mapper, NES_REGION_NTSC);
+}
+
+typedef struct {
+    uint16_t v;
+    uint16_t t;
+    uint8_t x;
+    uint8_t w;
+    uint8_t ctrl;
+} PpuWriteState;
+
+static PpuWriteState cpu_sta_ppu(NesRegion region, int scanline, int start_dot,
+                                  uint8_t render_mask, uint16_t initial_v,
+                                  uint16_t initial_t, uint8_t initial_x,
+                                  uint8_t initial_w, uint16_t address, uint8_t value) {
+    reset_video_region(0, region);
+    // STA abs fetches the high address byte immediately before its write.
+    // PPU register mirrors therefore let tests choose a distinct preceding
+    // CPU bus value without changing which PPU register receives the write.
+    test_prg[0] = 0x8D; // STA abs
+    test_prg[1] = (uint8_t)address;
+    test_prg[2] = (uint8_t)(address >> 8);
+    cpu.pc = 0x8000;
+    cpu.a = value;
+    ppu.scanline = scanline;
+    ppu.dot = start_dot;
+    ppu.v = initial_v;
+    ppu.t = initial_t;
+    ppu.x = initial_x;
+    ppu.w = initial_w;
+    set_render_mask(render_mask);
+    cpu_step(&cpu);
+
+    PpuWriteState state = {ppu.v, ppu.t, ppu.x, ppu.w, ppu.ctrl};
+    return state;
 }
 
 static uint8_t read_data(void) {
@@ -185,6 +223,137 @@ static void test_register_pipeline(void) {
     CHECK("MMC3 cannot see an uncommitted PPUADDR write", !cart_irq_pending());
     ppu_step_dots(1);
     CHECK("delayed PPUADDR bus transition clocks MMC3 A12", cart_irq_pending());
+}
+
+static void test_dot257_scroll_glitches(void) {
+    const uint8_t render = 0x08;
+
+    PpuWriteState ctrl_before = cpu_sta_ppu(NES_REGION_NTSC, 20, 246, render,
+                                             0, 0x0012, 3, 0, 0x3FF8, 0x02);
+    PpuWriteState ctrl_during = cpu_sta_ppu(NES_REGION_NTSC, 20, 247, render,
+                                             0, 0x0012, 3, 0, 0x3FF8, 0x02);
+    PpuWriteState ctrl_after = cpu_sta_ppu(NES_REGION_NTSC, 20, 248, render,
+                                            0, 0x0012, 3, 0, 0x3FF8, 0x02);
+    CHECK("PPUCTRL before dot 257 feeds its normal t value into horizontal reload",
+          (ctrl_before.v & 0x041F) == 0x0012);
+    CHECK("PPUCTRL on dot 257 takes nametable bit zero from the previous CPU bus",
+          (ctrl_during.v & 0x041F) == 0x0412);
+    CHECK("PPUCTRL after dot 257 leaves the completed horizontal reload alone",
+          (ctrl_after.v & 0x041F) == 0x0012);
+    CHECK("dot-257 PPUCTRL still performs the normal control and t updates",
+          ctrl_during.ctrl == 0x02 && ctrl_during.t == 0x0812
+          && ctrl_during.x == 3 && ctrl_during.w == 0);
+
+    PpuWriteState ctrl_low_bus = cpu_sta_ppu(NES_REGION_NTSC, 20, 247, render,
+                                              0, 0x0012, 3, 0, 0x2000, 0x02);
+    CHECK("dot-257 PPUCTRL uses pre-write CPU bus data instead of the written byte",
+          (ctrl_low_bus.v & 0x041F) == 0x0012
+          && ((ctrl_during.v ^ ctrl_low_bus.v) & 0x7FFF) == 0x0400);
+
+    PpuWriteState scroll_before = cpu_sta_ppu(NES_REGION_NTSC, 20, 246, render,
+                                               0, 0x0412, 1, 0, 0x3FFD, 0xA5);
+    PpuWriteState scroll_during = cpu_sta_ppu(NES_REGION_NTSC, 20, 247, render,
+                                               0, 0x0412, 1, 0, 0x3FFD, 0xA5);
+    PpuWriteState scroll_after = cpu_sta_ppu(NES_REGION_NTSC, 20, 248, render,
+                                              0, 0x0412, 1, 0, 0x3FFD, 0xA5);
+    CHECK("first PPUSCROLL before dot 257 feeds its new coarse X into reload",
+          (scroll_before.v & 0x041F) == 0x0414);
+    CHECK("first PPUSCROLL on dot 257 takes coarse X from the previous CPU bus",
+          (scroll_during.v & 0x041F) == 0x0407);
+    CHECK("first PPUSCROLL after dot 257 leaves the old coarse X reload alone",
+          (scroll_after.v & 0x041F) == 0x0412);
+    CHECK("dot-257 first PPUSCROLL still updates t, fine X, and the write toggle",
+          scroll_during.t == 0x0414 && scroll_during.x == 5 && scroll_during.w == 1);
+
+    PpuWriteState scroll_low_bus = cpu_sta_ppu(NES_REGION_NTSC, 20, 247, render,
+                                                0, 0x0412, 1, 0, 0x2005, 0xA5);
+    CHECK("dot-257 first PPUSCROLL preserves non-coarse-X bits while using CPU bus data",
+          (scroll_low_bus.v & 0x041F) == 0x0404
+          && ((scroll_during.v ^ scroll_low_bus.v) & (uint16_t)~0x001F) == 0);
+
+    PpuWriteState addr_before = cpu_sta_ppu(NES_REGION_NTSC, 20, 246, render,
+                                             0, 0x0412, 6, 0, 0x3FFE, 0x2A);
+    PpuWriteState addr_during = cpu_sta_ppu(NES_REGION_NTSC, 20, 247, render,
+                                             0, 0x0412, 6, 0, 0x3FFE, 0x2A);
+    PpuWriteState addr_after = cpu_sta_ppu(NES_REGION_NTSC, 20, 248, render,
+                                            0, 0x0412, 6, 0, 0x3FFE, 0x2A);
+    CHECK("first PPUADDR before dot 257 changes the horizontal nametable reload normally",
+          (addr_before.v & 0x0C00) == 0);
+    CHECK("first PPUADDR on dot 257 takes both nametable bits from the previous CPU bus",
+          (addr_during.v & 0x0C00) == 0x0C00);
+    CHECK("first PPUADDR after dot 257 leaves the old horizontal nametable reload alone",
+          (addr_after.v & 0x0C00) == 0x0400);
+    CHECK("dot-257 first PPUADDR still updates t and the shared write toggle",
+          addr_during.t == 0x2A12 && addr_during.x == 6 && addr_during.w == 1);
+
+    PpuWriteState addr_low_bus = cpu_sta_ppu(NES_REGION_NTSC, 20, 247, render,
+                                              0, 0x0412, 6, 0, 0x2006, 0x2A);
+    CHECK("dot-257 first PPUADDR uses previous CPU bus nametable bits instead of write data",
+          (addr_low_bus.v & 0x0C00) == 0
+          && ((addr_during.v ^ addr_low_bus.v) & (uint16_t)~0x0C00) == 0);
+
+    PpuWriteState blank_ctrl = cpu_sta_ppu(NES_REGION_NTSC, 20, 247, 0,
+                                            0x1555, 0x0012, 3, 0, 0x3FF8, 0x02);
+    PpuWriteState blank_scroll = cpu_sta_ppu(NES_REGION_NTSC, 20, 247, 0,
+                                              0x1555, 0x0412, 1, 0, 0x3FFD, 0xA5);
+    PpuWriteState blank_addr = cpu_sta_ppu(NES_REGION_NTSC, 20, 247, 0,
+                                            0x1555, 0x0412, 6, 0, 0x3FFE, 0x2A);
+    CHECK("disabled rendering prevents all first-write dot-257 scroll corruption",
+          blank_ctrl.v == 0x1555 && blank_scroll.v == 0x1555 && blank_addr.v == 0x1555);
+    CHECK("disabled rendering keeps normal first-write register updates",
+          blank_ctrl.t == 0x0812 && blank_ctrl.ctrl == 0x02
+          && blank_scroll.t == 0x0414 && blank_scroll.x == 5 && blank_scroll.w == 1
+          && blank_addr.t == 0x2A12 && blank_addr.w == 1);
+
+    PpuWriteState last_visible_ctrl = cpu_sta_ppu(NES_REGION_NTSC, 239, 247, render,
+                                                   0, 0x0012, 3, 0, 0x3FF8, 0x02);
+    PpuWriteState last_visible_scroll = cpu_sta_ppu(NES_REGION_NTSC, 239, 247, render,
+                                                     0, 0x0412, 1, 0, 0x3FFD, 0xA5);
+    PpuWriteState last_visible_addr = cpu_sta_ppu(NES_REGION_NTSC, 239, 247, render,
+                                                   0, 0x0412, 6, 0, 0x3FFE, 0x2A);
+    CHECK("dot-257 first-write corruption remains active on visible scanline 239",
+          (last_visible_ctrl.v & 0x041F) == 0x0412
+          && (last_visible_scroll.v & 0x041F) == 0x0407
+          && (last_visible_addr.v & 0x0C00) == 0x0C00);
+
+    PpuWriteState postrender_ctrl = cpu_sta_ppu(NES_REGION_NTSC, 240, 247, render,
+                                                 0x1555, 0x0012, 3, 0, 0x3FF8, 0x02);
+    PpuWriteState postrender_scroll = cpu_sta_ppu(NES_REGION_NTSC, 240, 247, render,
+                                                   0x1555, 0x0412, 1, 0, 0x3FFD, 0xA5);
+    PpuWriteState postrender_addr = cpu_sta_ppu(NES_REGION_NTSC, 240, 247, render,
+                                                 0x1555, 0x0412, 6, 0, 0x3FFE, 0x2A);
+    CHECK("post-render scanline 240 has no dot-257 first-write corruption",
+          postrender_ctrl.v == 0x1555 && postrender_scroll.v == 0x1555
+          && postrender_addr.v == 0x1555);
+
+    int prerender = (int)nes_timing()->scanlines - 1;
+    PpuWriteState prerender_ctrl = cpu_sta_ppu(NES_REGION_NTSC, prerender, 247, render,
+                                                0, 0x0012, 3, 0, 0x3FF8, 0x02);
+    PpuWriteState prerender_scroll = cpu_sta_ppu(NES_REGION_NTSC, prerender, 247, render,
+                                                  0, 0x0412, 1, 0, 0x3FFD, 0xA5);
+    PpuWriteState prerender_addr = cpu_sta_ppu(NES_REGION_NTSC, prerender, 247, render,
+                                                0, 0x0412, 6, 0, 0x3FFE, 0x2A);
+    CHECK("pre-render horizontal reload does not use the visible-line first-write glitch",
+          (prerender_ctrl.v & 0x041F) == 0x0012
+          && (prerender_scroll.v & 0x041F) == 0x0412
+          && (prerender_addr.v & 0x0C00) == 0x0400);
+
+    const NesRegion regions[] = {NES_REGION_NTSC, NES_REGION_PAL, NES_REGION_DENDY};
+    for (size_t i = 0; i < sizeof(regions) / sizeof(regions[0]); ++i) {
+        PpuWriteState regional_ctrl = cpu_sta_ppu(regions[i], 20, 247, render,
+                                                   0, 0x0012, 3, 0, 0x3FF8, 0x02);
+        PpuWriteState regional_scroll = cpu_sta_ppu(regions[i], 20, 247, render,
+                                                     0, 0x0412, 1, 0, 0x3FFD, 0xA5);
+        PpuWriteState regional_addr = cpu_sta_ppu(regions[i], 20, 247, render,
+                                                   0, 0x0412, 6, 0, 0x3FFE, 0x2A);
+        CHECK("regional CPU/PPU divider alignment reaches the PPUCTRL dot-257 window",
+              (regional_ctrl.v & 0x041F) == 0x0412);
+        CHECK("regional CPU/PPU divider alignment reaches the PPUSCROLL dot-257 window",
+              (regional_scroll.v & 0x041F) == 0x0407);
+        CHECK("regional CPU/PPU divider alignment reaches the PPUADDR dot-257 window",
+              (regional_addr.v & 0x0C00) == 0x0C00);
+    }
+    nes_set_region(NES_REGION_NTSC);
 }
 
 static void test_regional_video(void) {
@@ -693,6 +862,7 @@ int test_ppu_accuracy(void) {
     CHECK("background-table A12 clocks once per complete scanline", cart_irq_pending());
 
     test_register_pipeline();
+    test_dot257_scroll_glitches();
     test_regional_video();
     test_video_reset();
     test_sprite_shifters();

@@ -307,6 +307,7 @@ static uint8_t finish_bus_read_target(uint16_t addr, BusLatchTarget target, uint
 }
 
 static void write_bus(uint16_t addr, uint8_t value) {
+    uint8_t previous_bus = bus_get();
     bus_set(value); // writes still put value on the CPU bus latch
 
     if (addr <= 0x1FFF) { ram[addr & 0x07FF] = value; return; }
@@ -314,7 +315,7 @@ static void write_bus(uint16_t addr, uint8_t value) {
     if (addr >= 0x2000 && addr <= 0x3FFF) {
         // Cartridge address decoding sees the CPU address before PPU mirroring.
         if (addr == 0x2000) cart_notify_ppu_ctrl_write(value);
-        ppu_reg_write(0x2000 | (addr & 7), value);
+        ppu_reg_write_cpu(0x2000 | (addr & 7), value, previous_bus);
         return;
     }
 
