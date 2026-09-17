@@ -71,7 +71,7 @@ static Mapper mapper_mmc5, mapper_aorom, mapper_mmc2, mapper_mmc4, mapper_colord
 static Mapper mapper_cprom, mapper_100in1, mapper_bandai, mapper_action53, mapper_unrom512;
 static Mapper mapper_taito33, mapper_taito48, mapper_jaleco18, mapper_irem32, mapper_irem65;
 static Mapper mapper_rambo1, mapper_rambo158;
-static Mapper mapper_vrc24, mapper_vrc7;
+static Mapper mapper_vrc6, mapper_vrc24, mapper_vrc7;
 static Mapper mapper_sunsoft69, mapper_namco, mapper_m34, mapper_gxrom, mapper_m71;
 Mapper *cart = NULL;
 static bool mapper_irq_line = false;
@@ -81,6 +81,48 @@ static void mmc3_irq_clock(void);
 static size_t namco_chr_bank(uint8_t bank);
 static float vrc7_expansion_output(void);
 static void vrc7_shutdown(void);
+
+typedef struct {
+    uint8_t reload;
+    uint8_t counter;
+    int16_t prescaler;
+    bool enabled;
+    bool enabled_after_ack;
+    bool cycle_mode;
+} VrcIrq;
+
+static void vrc_irq_reset(VrcIrq *irq) {
+    memset(irq, 0, sizeof(*irq));
+}
+
+static void vrc_irq_clock(VrcIrq *irq) {
+    if (!irq->enabled) return;
+    irq->prescaler -= 3;
+    if (!irq->cycle_mode && irq->prescaler > 0) return;
+    if (irq->counter == 0xFF) {
+        irq->counter = irq->reload;
+        mapper_irq_line = true;
+    } else {
+        irq->counter++;
+    }
+    irq->prescaler += 341;
+}
+
+static void vrc_irq_control(VrcIrq *irq, uint8_t value) {
+    irq->enabled_after_ack = (value & 0x01u) != 0;
+    irq->enabled = (value & 0x02u) != 0;
+    irq->cycle_mode = (value & 0x04u) != 0;
+    if (irq->enabled) {
+        irq->counter = irq->reload;
+        irq->prescaler = 341;
+    }
+    mapper_irq_line = false;
+}
+
+static void vrc_irq_ack(VrcIrq *irq) {
+    irq->enabled = irq->enabled_after_ack;
+    mapper_irq_line = false;
+}
 
 #ifdef PPU_DEBUG_LOG
 static uint32_t mmc3_log_count = 0;
@@ -1460,6 +1502,51 @@ static const uint8_t mmc5_length_table[32] = {
     192, 24, 72, 26, 16, 28, 32, 30
 };
 
+typedef struct {
+    uint8_t volume;
+    uint8_t duty;
+    bool ignore_duty;
+    uint16_t frequency;
+    bool enabled;
+    int32_t timer;
+    uint8_t step;
+} Vrc6Pulse;
+
+typedef struct {
+    uint8_t accumulator_rate;
+    uint8_t accumulator;
+    uint16_t frequency;
+    bool enabled;
+    int32_t timer;
+    uint8_t step;
+} Vrc6Saw;
+
+static struct {
+    uint8_t prg16_bank;
+    uint8_t prg8_bank;
+    uint8_t banking_mode;
+    uint8_t chr_regs[8];
+    bool prg16_selected;
+    bool prg8_selected;
+    bool ppu_initialized;
+    bool variant_b;
+    VrcIrq irq;
+    Vrc6Pulse pulse[2];
+    Vrc6Saw saw;
+    bool halt_audio;
+    uint8_t frequency_shift;
+} vrc6;
+
+static uint8_t vrc6_pulse_volume(const Vrc6Pulse *pulse) {
+    if (!pulse->enabled) return 0;
+    if (pulse->ignore_duty) return pulse->volume;
+    return pulse->step <= pulse->duty ? pulse->volume : 0;
+}
+
+static uint8_t vrc6_saw_volume(void) {
+    return vrc6.saw.enabled ? (uint8_t)(vrc6.saw.accumulator >> 3) : 0;
+}
+
 static void mmc5_update_irq_line(void) {
     mapper_irq_line = (mmc5.irq_enabled && mmc5.irq_pending)
                    || (mmc5.pcm_irq_enabled && mmc5.pcm_irq_pending);
@@ -1473,6 +1560,12 @@ static uint8_t mmc5_pulse_volume(const Mmc5Pulse *pulse) {
 
 float cart_expansion_audio(void) {
     if (cart == &mapper_vrc7) return vrc7_expansion_output();
+    if (cart == &mapper_vrc6) {
+        unsigned raw = (unsigned)vrc6_pulse_volume(&vrc6.pulse[0])
+                     + (unsigned)vrc6_pulse_volume(&vrc6.pulse[1])
+                     + (unsigned)vrc6_saw_volume();
+        return -(float)raw * (75.0f / 5000.0f);
+    }
     if (cart == &mapper_mmc5) {
         unsigned pulse = (unsigned)mmc5.pulse[0].output + (unsigned)mmc5.pulse[1].output;
         unsigned raw = pulse * 3u + mmc5.pcm_output;
@@ -2072,6 +2165,265 @@ static void mmc5_reset(void) {
     mmc5_update_irq_line();
 }
 
+// Mappers 24/26: Konami VRC6.
+static uint16_t vrc6_decode_register(uint16_t addr) {
+    if (!vrc6.variant_b) return addr;
+    return (uint16_t)((addr & 0xFFFCu) | ((addr & 0x0001u) << 1) | ((addr & 0x0002u) >> 1));
+}
+
+static void vrc6_pulse_write(Vrc6Pulse *pulse, uint16_t addr, uint8_t value) {
+    switch (addr & 3u) {
+        case 0:
+            pulse->volume = value & 0x0Fu;
+            pulse->duty = (value >> 4) & 7u;
+            pulse->ignore_duty = (value & 0x80u) != 0;
+            break;
+        case 1:
+            pulse->frequency = (uint16_t)((pulse->frequency & 0x0F00u) | value);
+            break;
+        case 2:
+            pulse->frequency = (uint16_t)((pulse->frequency & 0x00FFu) | ((uint16_t)(value & 0x0Fu) << 8));
+            pulse->enabled = (value & 0x80u) != 0;
+            if (!pulse->enabled) pulse->step = 0;
+            break;
+    }
+}
+
+static void vrc6_saw_write(uint16_t addr, uint8_t value) {
+    switch (addr & 3u) {
+        case 0:
+            vrc6.saw.accumulator_rate = value & 0x3Fu;
+            break;
+        case 1:
+            vrc6.saw.frequency = (uint16_t)((vrc6.saw.frequency & 0x0F00u) | value);
+            break;
+        case 2:
+            vrc6.saw.frequency = (uint16_t)((vrc6.saw.frequency & 0x00FFu) | ((uint16_t)(value & 0x0Fu) << 8));
+            vrc6.saw.enabled = (value & 0x80u) != 0;
+            if (!vrc6.saw.enabled) {
+                vrc6.saw.accumulator = 0;
+                vrc6.saw.step = 0;
+            }
+            break;
+    }
+}
+
+static void vrc6_audio_write(uint16_t addr, uint8_t value) {
+    switch (addr & 0xF003u) {
+        case 0x9000: case 0x9001: case 0x9002:
+            vrc6_pulse_write(&vrc6.pulse[0], addr, value);
+            break;
+        case 0x9003:
+            vrc6.halt_audio = (value & 0x01u) != 0;
+            vrc6.frequency_shift = (value & 0x04u) ? 8u : ((value & 0x02u) ? 4u : 0u);
+            break;
+        case 0xA000: case 0xA001: case 0xA002:
+            vrc6_pulse_write(&vrc6.pulse[1], addr, value);
+            break;
+        case 0xB000: case 0xB001: case 0xB002:
+            vrc6_saw_write(addr, value);
+            break;
+    }
+}
+
+static void vrc6_clock_pulse(Vrc6Pulse *pulse) {
+    if (!pulse->enabled) return;
+    pulse->timer--;
+    if (pulse->timer == 0) {
+        pulse->step = (uint8_t)((pulse->step + 1u) & 0x0Fu);
+        pulse->timer = (int32_t)(pulse->frequency >> vrc6.frequency_shift) + 1;
+    }
+}
+
+static void vrc6_clock_saw(void) {
+    if (!vrc6.saw.enabled) return;
+    vrc6.saw.timer--;
+    if (vrc6.saw.timer == 0) {
+        vrc6.saw.step = (uint8_t)((vrc6.saw.step + 1u) % 14u);
+        vrc6.saw.timer = (int32_t)(vrc6.saw.frequency >> vrc6.frequency_shift) + 1;
+        if (vrc6.saw.step == 0) {
+            vrc6.saw.accumulator = 0;
+        } else if ((vrc6.saw.step & 1u) == 0) {
+            vrc6.saw.accumulator = (uint8_t)(vrc6.saw.accumulator + vrc6.saw.accumulator_rate);
+        }
+    }
+}
+
+static void vrc6_clock(int cpu_cycles) {
+    for (int cycle = 0; cycle < cpu_cycles; ++cycle) {
+        vrc_irq_clock(&vrc6.irq);
+        if (!vrc6.halt_audio) {
+            vrc6_clock_pulse(&vrc6.pulse[0]);
+            vrc6_clock_pulse(&vrc6.pulse[1]);
+            vrc6_clock_saw();
+        }
+    }
+}
+
+static size_t vrc6_chr_bank(uint16_t addr) {
+    unsigned slot = (addr >> 10) & 7u;
+    if (!vrc6.ppu_initialized) return C.chr_is_ram ? slot : SIZE_MAX;
+    unsigned mode = vrc6.banking_mode & 3u;
+    uint8_t mask = (vrc6.banking_mode & 0x20u) ? 0xFEu : 0xFFu;
+    uint8_t or_mask = (vrc6.banking_mode & 0x20u) ? 1u : 0u;
+
+    if (mode == 0) return vrc6.chr_regs[slot];
+    if (mode == 1) {
+        uint8_t reg = vrc6.chr_regs[slot >> 1];
+        return (size_t)((reg & mask) | ((slot & 1u) ? or_mask : 0u));
+    }
+    if (slot < 4) return vrc6.chr_regs[slot];
+    uint8_t reg = vrc6.chr_regs[4u + ((slot - 4u) >> 1)];
+    return (size_t)((reg & mask) | ((slot & 1u) ? or_mask : 0u));
+}
+
+static uint8_t vrc6_ciram_page(unsigned nt) {
+    switch (vrc6.banking_mode & 0x2Fu) {
+        case 0x20: case 0x27: return (uint8_t)(nt & 1u);
+        case 0x23: case 0x24: return (uint8_t)(nt >> 1);
+        case 0x28: case 0x2F: return 0;
+        case 0x2B: case 0x2C: return 1;
+        default:
+            switch (vrc6.banking_mode & 7u) {
+                case 0: case 6: case 7:
+                    return (nt < 2 ? vrc6.chr_regs[6] : vrc6.chr_regs[7]) & 1u;
+                case 1: case 5:
+                    return vrc6.chr_regs[4u + nt] & 1u;
+                default:
+                    return vrc6.chr_regs[6u + (nt & 1u)] & 1u;
+            }
+    }
+}
+
+static size_t vrc6_nt_chr_bank(unsigned nt) {
+    switch (vrc6.banking_mode & 0x2Fu) {
+        case 0x20: case 0x27:
+            return (vrc6.chr_regs[6u + (nt >> 1)] & 0xFEu) | (nt & 1u);
+        case 0x23: case 0x24:
+            return (vrc6.chr_regs[6u + (nt & 1u)] & 0xFEu) | (nt >> 1);
+        case 0x28: case 0x2F:
+            return vrc6.chr_regs[6u + (nt >> 1)] & 0xFEu;
+        case 0x2B: case 0x2C:
+            return (vrc6.chr_regs[6u + (nt & 1u)] & 0xFEu) | 1u;
+        default:
+            switch (vrc6.banking_mode & 7u) {
+                case 0: case 6: case 7:
+                    return nt < 2 ? vrc6.chr_regs[6] : vrc6.chr_regs[7];
+                case 1: case 5:
+                    return vrc6.chr_regs[4u + nt];
+                default:
+                    return vrc6.chr_regs[6u + (nt & 1u)];
+            }
+    }
+}
+
+static uint8_t vrc6_cpu_read(uint16_t addr) {
+    if (addr >= 0x6000 && addr < 0x8000) {
+        return (!vrc6.ppu_initialized || (vrc6.banking_mode & 0x80u))
+            ? prg_ram_read(addr) : cart_cpu_bus_input;
+    }
+    if (addr < 0x8000) return cart_cpu_bus_input;
+
+    size_t banks8 = C.prg_sz / PRG_BANK_8K;
+    if (addr < 0xC000) {
+        if (!vrc6.prg16_selected) return cart_cpu_bus_input;
+        size_t bank = ((size_t)vrc6.prg16_bank * 2u + ((addr >> 13) & 1u)) % banks8;
+        return C.prg[bank * PRG_BANK_8K + (addr & 0x1FFFu)];
+    }
+    if (addr < 0xE000) {
+        if (!vrc6.prg8_selected) return cart_cpu_bus_input;
+        size_t bank = vrc6.prg8_bank % banks8;
+        return C.prg[bank * PRG_BANK_8K + (addr & 0x1FFFu)];
+    }
+    return C.prg[(banks8 - 1) * PRG_BANK_8K + (addr & 0x1FFFu)];
+}
+
+static void vrc6_cpu_write(uint16_t addr, uint8_t value) {
+    if (addr >= 0x6000 && addr < 0x8000) {
+        if (!vrc6.ppu_initialized || (vrc6.banking_mode & 0x80u)) prg_ram_write(addr, value);
+        return;
+    }
+    if (addr < 0x8000) return;
+
+    addr = vrc6_decode_register(addr);
+    switch (addr & 0xF003u) {
+        case 0x8000: case 0x8001: case 0x8002: case 0x8003:
+            vrc6.prg16_bank = value & 0x0Fu;
+            vrc6.prg16_selected = true;
+            break;
+        case 0x9000: case 0x9001: case 0x9002: case 0x9003:
+        case 0xA000: case 0xA001: case 0xA002:
+        case 0xB000: case 0xB001: case 0xB002:
+            vrc6_audio_write(addr, value);
+            break;
+        case 0xB003:
+            vrc6.banking_mode = value;
+            vrc6.ppu_initialized = true;
+            break;
+        case 0xC000: case 0xC001: case 0xC002: case 0xC003:
+            vrc6.prg8_bank = value & 0x1Fu;
+            vrc6.prg8_selected = true;
+            break;
+        case 0xD000: case 0xD001: case 0xD002: case 0xD003:
+            vrc6.chr_regs[addr & 3u] = value;
+            vrc6.ppu_initialized = true;
+            break;
+        case 0xE000: case 0xE001: case 0xE002: case 0xE003:
+            vrc6.chr_regs[4u + (addr & 3u)] = value;
+            vrc6.ppu_initialized = true;
+            break;
+        case 0xF000:
+            vrc6.irq.reload = value;
+            break;
+        case 0xF001:
+            vrc_irq_control(&vrc6.irq, value);
+            break;
+        case 0xF002:
+            vrc_irq_ack(&vrc6.irq);
+            break;
+    }
+}
+
+static uint8_t vrc6_ppu_read(uint16_t addr) {
+    addr &= 0x1FFFu;
+    size_t bank = vrc6_chr_bank(addr);
+    if (bank == SIZE_MAX) return (uint8_t)addr;
+    bank %= C.chr_sz / CHR_BANK_1K;
+    return C.chr[bank * CHR_BANK_1K + (addr & 0x03FFu)];
+}
+
+static void vrc6_ppu_write(uint16_t addr, uint8_t value) {
+    if (!C.chr_is_ram) return;
+    addr &= 0x1FFFu;
+    size_t bank = vrc6_chr_bank(addr);
+    if (bank == SIZE_MAX) return;
+    bank %= C.chr_sz / CHR_BANK_1K;
+    chr_ram_write(bank * CHR_BANK_1K + (addr & 0x03FFu), value);
+}
+
+static Mirroring vrc6_mirr(void) {
+    if (!vrc6.ppu_initialized) return C.mirr_base;
+    uint8_t pages[4];
+    for (unsigned nt = 0; nt < 4; ++nt) pages[nt] = vrc6_ciram_page(nt);
+    if (pages[0] == 0 && pages[1] == 1 && pages[2] == 0 && pages[3] == 1) return MIRROR_VERTICAL;
+    if (pages[0] == 0 && pages[1] == 0 && pages[2] == 1 && pages[3] == 1) return MIRROR_HORIZONTAL;
+    if (pages[0] == 0 && pages[1] == 0 && pages[2] == 0 && pages[3] == 0) return MIRROR_SINGLE0;
+    if (pages[0] == 1 && pages[1] == 1 && pages[2] == 1 && pages[3] == 1) return MIRROR_SINGLE1;
+    return C.mirr_base;
+}
+
+static void vrc6_reset(void) {
+    bool variant_b = vrc6.variant_b;
+    memset(&vrc6, 0, sizeof(vrc6));
+    vrc6.variant_b = variant_b;
+    vrc6.pulse[0].frequency = vrc6.pulse[1].frequency = 1;
+    vrc6.pulse[0].timer = vrc6.pulse[1].timer = 1;
+    vrc6.saw.frequency = 1;
+    vrc6.saw.timer = 1;
+    vrc_irq_reset(&vrc6.irq);
+    mapper_irq_line = false;
+}
+
 uint8_t cart_nt_read(uint16_t addr, uint8_t *nt_ram) {
     if (cart == &mapper_txsrom) {
         uint16_t off = (uint16_t)((addr - 0x2000u) & 0x0FFFu);
@@ -2080,6 +2432,16 @@ uint8_t cart_nt_read(uint16_t addr, uint8_t *nt_ram) {
     if (cart == &mapper_unrom512 && unrom512_four_screen_chr) {
         size_t offset = 0x6000u + ((addr - 0x2000u) & 0x1FFFu);
         return C.chr[offset];
+    }
+    if (cart == &mapper_vrc6 && vrc6.ppu_initialized) {
+        uint16_t off = (uint16_t)((addr - 0x2000u) & 0x0FFFu);
+        unsigned nt = (off >> 10) & 3u;
+        size_t in = off & 0x03FFu;
+        if (vrc6.banking_mode & 0x10u) {
+            size_t bank = vrc6_nt_chr_bank(nt) % (C.chr_sz / CHR_BANK_1K);
+            return C.chr[bank * CHR_BANK_1K + in];
+        }
+        return nt_ram[(size_t)vrc6_ciram_page(nt) * 0x400u + in];
     }
     if (cart == &mapper_mmc5) {
         mmc5_begin_ppu_read(addr);
@@ -2134,6 +2496,19 @@ void cart_nt_write(uint16_t addr, uint8_t v, uint8_t *nt_ram) {
     if (cart == &mapper_unrom512 && unrom512_four_screen_chr) {
         size_t offset = 0x6000u + ((addr - 0x2000u) & 0x1FFFu);
         chr_ram_write(offset, v);
+        return;
+    }
+    if (cart == &mapper_vrc6 && vrc6.ppu_initialized) {
+        uint16_t off = (uint16_t)((addr - 0x2000u) & 0x0FFFu);
+        unsigned nt = (off >> 10) & 3u;
+        size_t in = off & 0x03FFu;
+        if (vrc6.banking_mode & 0x10u) {
+            if (!C.chr_is_ram) return;
+            size_t bank = vrc6_nt_chr_bank(nt) % (C.chr_sz / CHR_BANK_1K);
+            chr_ram_write(bank * CHR_BANK_1K + in, v);
+            return;
+        }
+        nt_ram[(size_t)vrc6_ciram_page(nt) * 0x400u + in] = v;
         return;
     }
     if (cart == &mapper_mmc5) {
@@ -3771,15 +4146,6 @@ typedef enum {
     VRC4_27, VRC4_183
 } Vrc24Variant;
 
-typedef struct {
-    uint8_t reload;
-    uint8_t counter;
-    int16_t prescaler;
-    bool enabled;
-    bool enabled_after_ack;
-    bool cycle_mode;
-} VrcIrq;
-
 static struct {
     Vrc24Variant variant;
     bool heuristics;
@@ -3791,39 +4157,6 @@ static struct {
     Mirroring mirr;
     VrcIrq irq;
 } vrc24;
-
-static void vrc_irq_reset(VrcIrq *irq) {
-    memset(irq, 0, sizeof(*irq));
-}
-
-static void vrc_irq_clock(VrcIrq *irq) {
-    if (!irq->enabled) return;
-    irq->prescaler -= 3;
-    if (!irq->cycle_mode && irq->prescaler > 0) return;
-    if (irq->counter == 0xFF) {
-        irq->counter = irq->reload;
-        mapper_irq_line = true;
-    } else {
-        irq->counter++;
-    }
-    irq->prescaler += 341;
-}
-
-static void vrc_irq_control(VrcIrq *irq, uint8_t value) {
-    irq->enabled_after_ack = (value & 0x01u) != 0;
-    irq->enabled = (value & 0x02u) != 0;
-    irq->cycle_mode = (value & 0x04u) != 0;
-    if (irq->enabled) {
-        irq->counter = irq->reload;
-        irq->prescaler = 341;
-    }
-    mapper_irq_line = false;
-}
-
-static void vrc_irq_ack(VrcIrq *irq) {
-    irq->enabled = irq->enabled_after_ack;
-    mapper_irq_line = false;
-}
 
 static bool vrc24_select_variant(void) {
     vrc24.heuristics = C.submapper == 0 && C.mapper_no != 22
@@ -4234,7 +4567,7 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
     switch (mapper_no) {
         case 1: case 9: case 10: case 11: case 155: chr_limit = 0x20000; break;
         case 3: chr_limit = 0x200000; break;
-        case 4: case 118: chr_limit = 0x40000; break;
+        case 4: case 24: case 26: case 118: chr_limit = 0x40000; break;
         case 33: case 48: chr_limit = 0x80000; break;
         case 64: case 158: chr_limit = 0x40000; break;
         case 5: chr_limit = 0x100000; break;
@@ -4275,7 +4608,7 @@ int mapper_init_from_header(const iNESHeader *h,
         case 7: case 9: case 10: case 11: case 13: case 15: case 28: case 30: case 118: case 119: case 155:
         case 16: case 153: case 157: case 159:
         case 18: case 32: case 33: case 34: case 48: case 64: case 65: case 158:
-        case 21: case 22: case 23: case 25: case 27: case 183:
+        case 21: case 22: case 23: case 24: case 25: case 26: case 27: case 183:
         case 19: case 66: case 69: case 71: case 85: case 210:
             break;
         default:
@@ -4375,6 +4708,12 @@ int mapper_init_from_header(const iNESHeader *h,
     }
     if ((mapper_no == 19 || mapper_no == 210)
         && (prg_sz > 0x80000 || (prg_sz % PRG_BANK_8K) != 0
+            || chr_sz > 0x40000 || (chr_sz % CHR_BANK_1K) != 0)) {
+        fprintf(stderr, "Unsupported ROM size for mapper %d\n", mapper_no);
+        return -1;
+    }
+    if ((mapper_no == 24 || mapper_no == 26)
+        && (prg_sz > 0x40000 || (prg_sz % PRG_BANK_8K) != 0
             || chr_sz > 0x40000 || (chr_sz % CHR_BANK_1K) != 0)) {
         fprintf(stderr, "Unsupported ROM size for mapper %d\n", mapper_no);
         return -1;
@@ -4520,6 +4859,14 @@ int mapper_init_from_header(const iNESHeader *h,
             build_mapper(&mapper_100in1, m15_cpu_read, m15_cpu_write,
                         m15_ppu_read, m15_ppu_write, m15_reset, m15_mirr);
             cart = &mapper_100in1;
+            break;
+        case 24: case 26:
+            memset(&vrc6, 0, sizeof(vrc6));
+            vrc6.variant_b = mapper_no == 26;
+            build_mapper(&mapper_vrc6, vrc6_cpu_read, vrc6_cpu_write,
+                        vrc6_ppu_read, vrc6_ppu_write, vrc6_reset, vrc6_mirr);
+            mapper_vrc6.clock = vrc6_clock;
+            cart = &mapper_vrc6;
             break;
         case 21: case 22: case 23: case 25: case 27: case 183:
             memset(&vrc24, 0, sizeof(vrc24));
