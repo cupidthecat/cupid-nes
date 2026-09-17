@@ -119,6 +119,7 @@ typedef struct {
     bool suppress_vblank;
     bool rendering_enabled;
     bool fetches_enabled;
+    bool startup_writes_restricted;
     bool skipped_frame_dot;
     
     // Cycle-stepped timing
@@ -185,6 +186,9 @@ bool ppu_set_revision_name(const char *name);
 const char *ppu_revision_name(void);
 bool ppu_oam_row_corruption_worst_case(void);
 void ppu_set_oam_row_corruption_worst_case(bool enabled);
+bool ppu_startup_write_restriction_enabled(void);
+void ppu_set_startup_write_restriction(bool enabled);
+bool ppu_startup_writes_restricted(void);
 void ppu_oam_dma(uint8_t page);
 void ppu_begin_vblank(void);
 void ppu_end_vblank(void);

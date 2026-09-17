@@ -594,6 +594,101 @@ static void test_oam_row_corruption_profiles(void) {
     nes_set_region(NES_REGION_NTSC);
 }
 
+static void test_startup_register_restriction(void) {
+    bool saved_restriction = ppu_startup_write_restriction_enabled();
+    ppu_set_startup_write_restriction(true);
+
+    reset_video(0);
+    CHECK("startup write restriction profile survives PPU reset",
+          ppu_startup_write_restriction_enabled() && ppu_startup_writes_restricted());
+
+    ppu.ctrl = 0x14;
+    ppu.mask = 0x04;
+    ppu.t = 0x1234;
+    ppu.x = 5;
+    ppu.w = 0;
+    ppu.status = 0x80;
+    ppu.nmi_out = false;
+    ppu.address_write_delay = 0;
+    ppu_reg_write_cpu(PPUCTRL, 0x80, 0x5A);
+    CHECK("startup-restricted PPUCTRL write only charges the PPU I/O latch",
+          ppu.ctrl == 0x14 && ppu.t == 0x1234 && !ppu.nmi_out && ppu.open_bus == 0x80);
+    ppu_reg_write_cpu(PPUMASK, 0x18, 0xA5);
+    CHECK("startup-restricted PPUMASK write does not change rendering state",
+          ppu.mask == 0x04 && !ppu.rendering_enabled && !ppu.fetches_enabled
+          && ppu.open_bus == 0x18);
+    ppu_reg_write_cpu(PPUSCROLL, 0x27, 0x33);
+    ppu_reg_write_cpu(PPUSCROLL, 0xE8, 0x44);
+    CHECK("startup-restricted PPUSCROLL writes do not advance the shared write toggle",
+          ppu.t == 0x1234 && ppu.x == 5 && ppu.w == 0 && ppu.open_bus == 0xE8);
+    ppu_reg_write_cpu(PPUADDR, 0x3F, 0x55);
+    ppu_reg_write_cpu(PPUADDR, 0x20, 0x66);
+    CHECK("startup-restricted PPUADDR writes do not queue an address transfer",
+          ppu.t == 0x1234 && ppu.w == 0 && ppu.address_write_delay == 0
+          && ppu.open_bus == 0x20);
+    ppu_reg_write_cpu(OAMADDR, 0x48, 0);
+    CHECK("startup restriction leaves OAMADDR writes available", ppu.oam_addr == 0x48);
+
+    reset_video(0);
+    uint64_t frame_clocks = (uint64_t)nes_timing()->scanlines * 341u;
+    ppu_step_dots((int)(frame_clocks - 13));
+    CHECK("startup restriction remains active before the release boundary",
+          ppu_startup_writes_restricted()
+          && ppu.scanline == (int)nes_timing()->scanlines - 2 && ppu.dot == 328);
+    ppu.status = 0x80;
+    cpu_sta_abs(PPUCTRL, 0x80);
+    CHECK("last CPU write before startup release is ignored",
+          ppu_startup_writes_restricted() && ppu.ctrl == 0 && !ppu.nmi_out
+          && ppu.scanline == (int)nes_timing()->scanlines - 2 && ppu.dot == 340);
+    ppu_step_dots(1);
+    CHECK("startup access opens on entry to the next pre-render scanline",
+          !ppu_startup_writes_restricted()
+          && ppu.scanline == (int)nes_timing()->scanlines - 1 && ppu.dot == 0);
+    cpu_sta_abs(PPUCTRL, 0x80);
+    CHECK("first CPU write after startup release is accepted", ppu.ctrl == 0x80);
+    ppu_reg_write_cpu(PPUCTRL, 0, 0);
+    ppu.status = 0x80;
+    ppu.nmi_out = false;
+    ppu_reg_write_cpu(PPUCTRL, 0x80, 0);
+    CHECK("released PPUCTRL can assert NMI during a later vblank",
+          ppu.ctrl == 0x80 && ppu.nmi_out);
+
+    const NesRegion regions[] = {NES_REGION_NTSC, NES_REGION_PAL, NES_REGION_DENDY};
+    for (size_t i = 0; i < sizeof(regions) / sizeof(regions[0]); ++i) {
+        reset_video_region(0, regions[i]);
+        uint64_t clocks = (uint64_t)nes_timing()->scanlines * 341u;
+        CHECK("regional startup profile begins with protected writes",
+              ppu_startup_writes_restricted()
+              && ppu.scanline == (int)nes_timing()->scanlines - 1 && ppu.dot == 0);
+        ppu_step_dots((int)(clocks - 1));
+        CHECK("regional startup profile stays protected through the last pre-release dot",
+              ppu_startup_writes_restricted()
+              && ppu.scanline == (int)nes_timing()->scanlines - 2 && ppu.dot == 340);
+        ppu_step_dots(1);
+        CHECK("regional startup profile releases at the next pre-render boundary",
+              !ppu_startup_writes_restricted()
+              && ppu.scanline == (int)nes_timing()->scanlines - 1 && ppu.dot == 0);
+    }
+
+    nes_set_region(NES_REGION_NTSC);
+    ppu.total_cycles = 12345;
+    ppu.oam[9] = 0xA7;
+    ppu_soft_reset(&ppu);
+    CHECK("soft reset restarts the selected startup restriction",
+          ppu_startup_writes_restricted() && ppu.total_cycles == 12345
+          && ppu.oam[9] == 0xA7);
+
+    ppu_set_startup_write_restriction(false);
+    ppu_soft_reset(&ppu);
+    CHECK("compatibility profile leaves startup register writes unrestricted",
+          !ppu_startup_write_restriction_enabled() && !ppu_startup_writes_restricted());
+    ppu_reg_write_cpu(PPUCTRL, 0x91, 0);
+    CHECK("compatibility profile accepts PPUCTRL immediately", ppu.ctrl == 0x91);
+
+    ppu_set_startup_write_restriction(saved_restriction);
+    nes_set_region(NES_REGION_NTSC);
+}
+
 static void test_regional_video(void) {
     reset_video(0);
     ppu.mask = 0x20;
@@ -1102,6 +1197,7 @@ int test_ppu_accuracy(void) {
     test_register_pipeline();
     test_dot257_scroll_glitches();
     test_oam_row_corruption_profiles();
+    test_startup_register_restriction();
     test_regional_video();
     test_video_reset();
     test_sprite_shifters();

@@ -47,6 +47,7 @@ PPU ppu;
 // not silently change the selected silicon behavior.
 static PpuRevision active_ppu_revision = PPU_REVISION_2C02_E_PLUS;
 static bool oam_row_corruption_worst_case = false;
+static bool startup_write_restriction = false;
 static const char *const ppu_revision_names[] = {"2c02-pre-e", "2c02e-plus"};
 
 PpuRevision ppu_revision(void) {
@@ -78,6 +79,19 @@ bool ppu_oam_row_corruption_worst_case(void) {
 
 void ppu_set_oam_row_corruption_worst_case(bool enabled) {
     oam_row_corruption_worst_case = enabled;
+}
+
+bool ppu_startup_write_restriction_enabled(void) {
+    return startup_write_restriction;
+}
+
+void ppu_set_startup_write_restriction(bool enabled) {
+    startup_write_restriction = enabled;
+    if (!enabled) ppu.startup_writes_restricted = false;
+}
+
+bool ppu_startup_writes_restricted(void) {
+    return ppu.startup_writes_restricted;
 }
 
 static bool rendering_line(void) {
@@ -339,7 +353,11 @@ static void ppu_set_tmp_scroll_bits(uint16_t normal_t, uint16_t bus_bits, uint16
 
 void ppu_reg_write_cpu(uint16_t reg, uint8_t value, uint8_t cpu_open_bus) {
     set_open_bus(value);
-    switch (reg & 7) {
+    unsigned register_id = reg & 7;
+    if (ppu.startup_writes_restricted
+        && (register_id == 0 || register_id == 1 || register_id == 5 || register_id == 6))
+        return;
+    switch (register_id) {
         case 0: {
             ppu.ctrl = value;
             uint16_t normal_t = (ppu.t & ~0x0C00) | ((uint16_t)(value & 3) << 10);
@@ -495,6 +513,7 @@ void ppu_power_on(PPU *state) {
     state->oam_bus = 0xFF;
     state->oam_read_latch = 0xFF;
     state->scanline = (int)nes_timing()->scanlines - 1;
+    state->startup_writes_restricted = startup_write_restriction;
     memset(ppu_vram, 0, sizeof(ppu_vram));
     cpu_set_nmi_line(false);
     static const uint8_t power_up_palette[PPU_PALETTE_SIZE] = {
@@ -529,6 +548,7 @@ void ppu_soft_reset(PPU *state) {
     state->scanline = (int)nes_timing()->scanlines - 1;
     state->oam_bus = 0xFF;
     state->oam_read_latch = 0xFF;
+    state->startup_writes_restricted = startup_write_restriction;
     memset(ppu_ob_expire, 0, sizeof(ppu_ob_expire));
     cpu_set_nmi_line(false);
 }
@@ -932,6 +952,9 @@ void ppu_step_dots(int ppu_cycles) {
                 ppu.odd_frame = !ppu.odd_frame;
                 ppu.frame_complete = true;
             }
+            if (ppu.startup_writes_restricted
+                && ppu.scanline == (int)nes_timing()->scanlines - 1)
+                ppu.startup_writes_restricted = false;
         }
     }
 }
