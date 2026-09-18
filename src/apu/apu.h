@@ -32,6 +32,11 @@
 #define APU_4STEP_PERIOD 29830u
 #define APU_5STEP_PERIOD 37282u
 
+typedef enum {
+    APU_CPU_REVISION_EARLY_2A03 = 0,
+    APU_CPU_REVISION_LATE_2A03
+} ApuCpuRevision;
+
 typedef struct {
     // Envelope (for pulse/noise)
     bool    loop_envelope;    // also "halt length"
@@ -138,7 +143,8 @@ typedef struct {
     uint32_t cycle_in_seq;
     bool five_step;
     bool irq_inhibit;
-    bool frame_irq;
+    bool frame_irq;           // readable $4015 bit 6
+    bool frame_irq_source;    // CPU IRQ source, acknowledged immediately by $4015
     uint8_t frame_irq_clear_delay;
     uint8_t frame_reset_delay;
     bool frame_reset_pending;
@@ -170,6 +176,7 @@ typedef struct {
     float hp440_prev_out;
     float lp14k_prev_out;
     float last_output_sample;
+    float last_read_sample;  // Owned by the audio consumer; used during underruns.
 
     // Lockless ring buffer (very simple)
     #define APU_RING_CAP 8192
@@ -184,7 +191,15 @@ extern APU apu;
 void apu_power_on(APU *a);
 void apu_soft_reset(APU *a);
 void apu_reset(APU *a);
+// Select the APU instance used by memory-mapped CPU accesses. NULL selects the ordinary console.
+void apu_select_machine(APU *state);
+APU *apu_active_state(void);
 void apu_audio_init(int sample_rate);
+void apu_audio_init_state(APU *state, int sample_rate);
+void apu_audio_pull(APU *state, float *samples, int count);
+// Select the DMC CPU timing model. The selection persists across APU resets.
+bool apu_set_cpu_revision(ApuCpuRevision revision);
+ApuCpuRevision apu_get_cpu_revision(void);
 
 // memory-mapped access
 void    apu_write(uint16_t addr, uint8_t val);
@@ -194,9 +209,10 @@ uint8_t apu_read(uint16_t addr);
 void apu_step(APU *a, int cpu_cycles);
 
 // IRQ
-static inline bool apu_irq_pending(const APU *a) { return (a->frame_irq && !a->irq_inhibit) || a->dmc.irq_flag; }
+static inline bool apu_irq_pending(const APU *a) { return (a->frame_irq_source && !a->irq_inhibit) || a->dmc.irq_flag; }
 static inline void apu_clear_frame_irq(APU *a) {
     ((APU*)a)->frame_irq = false;
+    ((APU*)a)->frame_irq_source = false;
     ((APU*)a)->frame_irq_clear_delay = 0;
 }
 bool apu_dmc_dma_pending(const APU *a);

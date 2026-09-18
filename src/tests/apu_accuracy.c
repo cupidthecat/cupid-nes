@@ -84,6 +84,18 @@ static void step_sample_reader(int cycles) {
 int test_apu_accuracy(void) {
     checks = failures = 0;
 
+    CHECK("DMC CPU revision defaults to early 2A03 behavior", apu_get_cpu_revision() == APU_CPU_REVISION_EARLY_2A03);
+    CHECK("later DMC CPU revision is accepted", apu_set_cpu_revision(APU_CPU_REVISION_LATE_2A03));
+    apu_power_on(&apu);
+    CHECK("DMC CPU revision survives power-on", apu_get_cpu_revision() == APU_CPU_REVISION_LATE_2A03);
+    apu_soft_reset(&apu);
+    CHECK("DMC CPU revision survives soft reset", apu_get_cpu_revision() == APU_CPU_REVISION_LATE_2A03);
+    apu_reset(&apu);
+    CHECK("DMC CPU revision survives reset", apu_get_cpu_revision() == APU_CPU_REVISION_LATE_2A03);
+    CHECK("invalid DMC CPU revision is rejected", !apu_set_cpu_revision((ApuCpuRevision)99));
+    CHECK("invalid DMC CPU revision leaves selection unchanged", apu_get_cpu_revision() == APU_CPU_REVISION_LATE_2A03);
+    CHECK("early DMC CPU revision is accepted", apu_set_cpu_revision(APU_CPU_REVISION_EARLY_2A03));
+
     nes_set_region(NES_REGION_NTSC);
     cpu_total_cycles = 0;
     apu_power_on(&apu);
@@ -210,20 +222,41 @@ int test_apu_accuracy(void) {
 
     reset_audio();
     apu.frame_irq = true;
+    apu.frame_irq_source = true;
     cpu_total_cycles = 0;
     CHECK("even-aligned status read observes frame IRQ", apu_read(0x4015) & 0x40);
-    CHECK("even-aligned status read clears at the next APU clock", apu.frame_irq_clear_delay == 1);
+    CHECK("even-aligned status read acknowledges the CPU IRQ source immediately", !apu.frame_irq_source && !apu_irq_pending(&apu));
+    CHECK("even-aligned status read keeps the readable flag until the next APU clock", apu.frame_irq && apu.frame_irq_clear_delay == 1);
     apu_step(&apu, 1);
     CHECK("even-aligned status clear has matured", !apu.frame_irq);
     reset_audio();
     apu.frame_irq = true;
+    apu.frame_irq_source = true;
     cpu_total_cycles = 1;
     CHECK("odd-aligned status read observes frame IRQ", apu_read(0x4015) & 0x40);
-    CHECK("odd-aligned status read retains IRQ through one intervening clock", apu.frame_irq_clear_delay == 2);
+    CHECK("odd-aligned status read acknowledges the CPU IRQ source immediately", !apu.frame_irq_source && !apu_irq_pending(&apu));
+    CHECK("odd-aligned status read retains the readable flag through one intervening clock", apu.frame_irq && apu.frame_irq_clear_delay == 2);
     apu_step(&apu, 1);
-    CHECK("odd-aligned status read has not cleared one clock early", apu.frame_irq);
+    CHECK("odd-aligned status read has not cleared one clock early", apu.frame_irq && !apu.frame_irq_source);
+    CHECK("consecutive odd-window status read still sees bit six", apu_read(0x4015) & 0x40);
+    CHECK("consecutive status read does not extend the pending clear", apu.frame_irq_clear_delay == 1);
     apu_step(&apu, 1);
     CHECK("odd-aligned status clear matures on the following APU clock", !apu.frame_irq);
+
+    reset_audio();
+    apu.cycle_in_seq = 29827;
+    apu_step(&apu, 1);
+    CHECK("terminal frame event asserts both readable flag and CPU IRQ source", apu.frame_irq && apu.frame_irq_source && apu_irq_pending(&apu));
+    CHECK("status read acknowledges the terminal IRQ source", (apu_read(0x4015) & 0x40) && !apu.frame_irq_source);
+    apu_step(&apu, 1);
+    CHECK("next terminal frame event can reassert a new CPU IRQ", apu.frame_irq && apu.frame_irq_source && apu_irq_pending(&apu));
+
+    reset_audio();
+    apu.frame_irq = true;
+    apu.frame_irq_source = true;
+    apu.dmc.irq_flag = true;
+    CHECK("status reports frame and DMC IRQs together", (apu_read(0x4015) & 0xC0) == 0xC0);
+    CHECK("frame acknowledgment leaves the independent DMC IRQ pending", !apu.frame_irq_source && apu.dmc.irq_flag && apu_irq_pending(&apu));
 
     reset_audio();
     start_pulse();
@@ -253,10 +286,13 @@ int test_apu_accuracy(void) {
     CHECK("odd-cycle mode write applies on its fourth clock", apu.five_step);
     reset_audio();
     apu.frame_irq = true;
+    apu.frame_irq_source = true;
     apu_write(0x4017, 0x80);
-    CHECK("bit six clear preserves a pending frame IRQ", apu.frame_irq);
+    CHECK("bit six clear preserves a pending frame IRQ", apu.frame_irq && apu.frame_irq_source);
+    apu.dmc.irq_flag = true;
     apu_write(0x4017, 0x40);
-    CHECK("IRQ inhibit clears a pending frame IRQ immediately", !apu.frame_irq);
+    CHECK("IRQ inhibit clears the pending frame flag and CPU source immediately", !apu.frame_irq && !apu.frame_irq_source);
+    CHECK("IRQ inhibit does not acknowledge an independent DMC IRQ", apu.dmc.irq_flag && apu_irq_pending(&apu));
     reset_audio();
     start_pulse();
     apu.cycle_in_seq = 7455;
@@ -460,6 +496,35 @@ int test_apu_accuracy(void) {
     apu_dmc_dma_complete(&apu, 0x55);
     CHECK("aborted DMC completion cannot refill its buffer", apu.dmc.sample_buffer_empty);
 
+    for (unsigned later = 0; later < 2; ++later) {
+        CHECK("DMC CPU revision selection succeeds for reload collision", apu_set_cpu_revision(
+            later ? APU_CPU_REVISION_LATE_2A03 : APU_CPU_REVISION_EARLY_2A03));
+        reset_audio();
+        apu.dmc.sample_addr = 0xC000;
+        apu.dmc.sample_len = 1;
+        apu.dmc.current_addr = 0xC000;
+        apu.dmc.bytes_remaining = 1;
+        apu.dmc.sample_buffer_empty = true;
+        apu.dmc.bits_remaining = 1;
+        apu.dmc.timer = 0;
+        apu.dmc.dma_pending = true;
+        apu_step(&apu, 1);
+        CHECK("DMC reload collision reaches a fresh bit counter", apu.dmc.bits_remaining == 8 && apu.dmc.timer == apu.dmc.timer_reload);
+        apu_dmc_dma_complete(&apu, 0xA5);
+        if (later) {
+            CHECK("later DMC reload collision loads the completed byte directly into the shifter", apu.dmc.shift_reg == 0xA5 && !apu.dmc.silence);
+            CHECK("later DMC reload collision consumes the buffer immediately", apu.dmc.sample_buffer_empty);
+            CHECK("later one-byte collision restarts the reader at the programmed address", apu.dmc.current_addr == 0xC000 && apu.dmc.bytes_remaining == 1);
+            CHECK("later one-byte collision immediately requests a full follow-up DMA", apu_dmc_dma_pending(&apu));
+        } else {
+            CHECK("early DMC reload collision leaves the completed byte in the sample buffer", apu.dmc.sample_buffer == 0xA5 && !apu.dmc.sample_buffer_empty);
+            CHECK("early DMC reload collision does not force the silent shifter active", apu.dmc.silence);
+            CHECK("early DMC reload collision completes the one-byte reader normally", apu.dmc.current_addr == 0xC001 && apu.dmc.bytes_remaining == 0);
+            CHECK("early DMC reload collision does not request a duplicate full DMA", !apu_dmc_dma_pending(&apu));
+        }
+    }
+
+    CHECK("early DMC CPU revision restored for aborted-reload coverage", apu_set_cpu_revision(APU_CPU_REVISION_EARLY_2A03));
     reset_audio();
     apu.dmc.sample_len = 1;
     apu.dmc.current_addr = 0xC000;

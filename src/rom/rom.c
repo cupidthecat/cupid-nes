@@ -30,7 +30,9 @@
 #include <limits.h>
 #include "rom.h"
 #include "mapper.h"
+#include "fds.h"
 #include "../system/timing.h"
+#include "../system/vs_system.h"
 
 #define PRG_ROM_BANK_SIZE 0x4000  // 16KB
 #define CHR_ROM_BANK_SIZE 0x2000  // 8KB
@@ -43,6 +45,7 @@ size_t prg_size = 0;
 size_t chr_size = 0;
 
 int mirroring_mode = 0;
+static int fds_loaded = 0;
 
 static int is_nes20(const iNESHeader *h) {
     // NES 2.0 if (flags7 & 0x0C) == 0x08
@@ -61,14 +64,14 @@ int rom_mapper_number(const iNESHeader *h) {
 static int rom_console_supported(const iNESHeader *h) {
     if (is_nes20(h)) {
         unsigned console = h->flags7 & 0x03u;
-        if (console == 0) return 1;
+        if (console == 0 || console == 1) return 1;
         // Extended console type 0 still identifies a regular NES/Famicom-family machine.
         return console == 3 && (h->zero[2] & 0x0Fu) == 0;
     }
     // Archaic headers have unreliable byte 7 contents.  Only clean iNES headers
     // use its low bits as the VS/PlayChoice console selector.
     if ((h->flags7 & 0x0Cu) == 0)
-        return (h->flags7 & 0x03u) == 0;
+        return (h->flags7 & 0x03u) <= 1;
     return 1;
 }
 
@@ -116,14 +119,18 @@ int rom_ram_sizes(const iNESHeader *header, RomRamSizes *sizes) {
         sizes->chr_ram = nes20_ram_size(header->zero[0] & 0x0F);
         sizes->chr_nvram = nes20_ram_size(header->zero[0] >> 4);
     } else {
-        // Unknown legacy MMC5 boards expose all eight 8KB RAM banks.  Other
-        // iNES boards use the format's conventional 8KB default when byte 8 is zero.
-        size_t default_units = rom_mapper_number(header) == 5 ? 8u : 1u;
-        size_t prg_ram_bytes = (size_t)(header->prg_ram_size ? header->prg_ram_size : default_units) * 0x2000;
-        if (header->flags6 & 2) sizes->prg_nvram = prg_ram_bytes;
-        else sizes->prg_ram = prg_ram_bytes;
+        int mapper = rom_mapper_number(header);
+        // Legacy MMC5 and FME-7 boards default to eight and four 8KB RAM banks.
+        // Other iNES boards use the conventional 8KB default. Legacy byte 8 is
+        // not reliable enough to override the board default.
+        if (mapper != 30) {
+            size_t default_units = mapper == 5 ? 8u : mapper == 69 ? 4u : 1u;
+            size_t prg_ram_bytes = default_units * 0x2000;
+            if (header->flags6 & 2) sizes->prg_nvram = prg_ram_bytes;
+            else sizes->prg_ram = prg_ram_bytes;
+        }
         if (!header->chr_rom_chunks)
-            sizes->chr_ram = rom_mapper_number(header) == 13 ? 0x4000 : 0x2000;
+            sizes->chr_ram = mapper == 13 ? 0x4000 : mapper == 30 ? 0x8000 : 0x2000;
     }
     return 0;
 }
@@ -155,7 +162,8 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
             return -1;
         }
     } else {
-        new_prg_size = (size_t)header.prg_rom_chunks * PRG_ROM_BANK_SIZE;
+        size_t prg_units = header.prg_rom_chunks ? header.prg_rom_chunks : 256u;
+        new_prg_size = prg_units * PRG_ROM_BANK_SIZE;
         rom_chr_size = (size_t)header.chr_rom_chunks * CHR_ROM_BANK_SIZE;
     }
     if (new_prg_size < PRG_ROM_BANK_SIZE) {
@@ -189,6 +197,15 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
         }
     }
 
+    VsRomConfig vs_config;
+    char vs_reason[96];
+    int mapper_number = rom_mapper_number(&header);
+    if (!vs_decode_header(&header, mapper_number, new_prg_size, rom_chr_size,
+                          &vs_config, vs_reason, sizeof(vs_reason))) {
+        fprintf(stderr, "Unsupported VS System configuration: %s\n", vs_reason);
+        return -1;
+    }
+
     uint8_t *new_prg = (uint8_t *)malloc(new_prg_size);
     uint8_t *new_chr = (uint8_t *)calloc(1, new_chr_size);
     if (!new_prg || !new_chr) {
@@ -199,6 +216,13 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
     }
     memcpy(new_prg, data + offset, new_prg_size);
     if (rom_chr_size) memcpy(new_chr, data + offset + new_prg_size, rom_chr_size);
+
+    if (fds_active() && fds_disk_dirty() && !fds_flush()) {
+        fprintf(stderr, "Cannot replace the active FDS disk while modified media is unsaved\n");
+        free(new_prg);
+        free(new_chr);
+        return -1;
+    }
 
     int mapper_no = mapper_init_from_header(&header, new_prg, new_prg_size,
                                             new_chr, new_chr_size);
@@ -216,10 +240,12 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
     chr_rom = new_chr;
     prg_size = new_prg_size;
     chr_size = new_chr_size;
+    vs_commit_config(&vs_config);
     cart_battery_configure(filename, filename && (header.flags6 & 0x02));
     if (trainer) cart_apply_trainer(trainer);
     mirroring_mode = (int)cart_get_mirroring();
     nes_set_region(rom_region(&header));
+    fds_loaded = 0;
 
     printf("Mapper: %d  (CHR %s)\n", mapper_no, rom_chr_size ? "ROM" : "RAM");
     return 0;
@@ -229,7 +255,51 @@ int load_rom_memory(const uint8_t *data, size_t size) {
     return load_rom_data(data, size, NULL);
 }
 
-void unload_rom(void) {
+int load_fds_memory(const uint8_t *disk, size_t disk_size,
+                    const uint8_t *bios, size_t bios_size,
+                    const char *disk_path, bool write_protected) {
+    FdsImage *image = fds_image_create(disk, disk_size, bios, bios_size,
+                                       disk_path, write_protected);
+    if (!image) {
+        fprintf(stderr, "Invalid FDS disk image or BIOS\n");
+        return -1;
+    }
+
+    if (fds_active() && fds_disk_dirty() && !fds_flush()) {
+        fprintf(stderr, "Cannot replace the active FDS disk while modified media is unsaved\n");
+        fds_image_destroy(image);
+        return -1;
+    }
+
+    // The prepared image owns all allocations needed by the new machine, so activation
+    // cannot strand the current cartridge after a validation or allocation failure.
+    if (mapper_init_fds(image) != 0) {
+        fds_image_destroy(image);
+        return -1;
+    }
+
+    free(prg_rom);
+    free(chr_rom);
+    prg_rom = NULL;
+    chr_rom = NULL;
+    prg_size = 0;
+    chr_size = 0;
+    memset(&ines_header, 0, sizeof(ines_header));
+    vs_clear_config();
+    mirroring_mode = (int)cart_get_mirroring();
+    nes_set_region(NES_REGION_NTSC);
+    fds_loaded = 1;
+    printf("Famicom Disk System: %zu side%s\n", fds_side_count(), fds_side_count() == 1 ? "" : "s");
+    return 0;
+}
+
+bool rom_is_fds(void) { return fds_loaded != 0; }
+
+bool unload_rom(void) {
+    if (fds_active() && fds_disk_dirty() && !fds_flush()) {
+        fprintf(stderr, "Cannot unload FDS disk while modified media is unsaved\n");
+        return false;
+    }
     mapper_shutdown();
     free(prg_rom);
     free(chr_rom);
@@ -237,7 +307,50 @@ void unload_rom(void) {
     prg_size = chr_size = 0;
     memset(&ines_header, 0, sizeof(ines_header));
     mirroring_mode = 0;
+    fds_loaded = 0;
+    vs_clear_config();
     nes_set_region(NES_REGION_NTSC);
+    return true;
+}
+
+static int read_file(const char *path, uint8_t **data, size_t *size) {
+    *data = NULL;
+    *size = 0;
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return -1;
+    if (fseek(fp, 0, SEEK_END) != 0) { fclose(fp); return -1; }
+    long length = ftell(fp);
+    if (length < 0 || fseek(fp, 0, SEEK_SET) != 0) { fclose(fp); return -1; }
+    size_t bytes = (size_t)length;
+    uint8_t *buffer = (uint8_t *)malloc(bytes ? bytes : 1);
+    if (!buffer) { fclose(fp); return -1; }
+    size_t bytes_read = fread(buffer, 1, bytes, fp);
+    int close_result = fclose(fp);
+    if (bytes_read != bytes || close_result != 0) {
+        free(buffer);
+        return -1;
+    }
+    *data = buffer;
+    *size = bytes;
+    return 0;
+}
+
+int load_fds(const char *disk_path, const char *bios_path, bool write_protected) {
+    if (!disk_path || !bios_path) return -1;
+    uint8_t *disk = NULL, *bios = NULL;
+    size_t disk_size = 0, bios_size = 0;
+    if (read_file(disk_path, &disk, &disk_size) != 0
+        || read_file(bios_path, &bios, &bios_size) != 0) {
+        fprintf(stderr, "Failed to read FDS disk or BIOS file\n");
+        free(disk);
+        free(bios);
+        return -1;
+    }
+    int result = load_fds_memory(disk, disk_size, bios, bios_size,
+                                 disk_path, write_protected);
+    free(disk);
+    free(bios);
+    return result;
 }
 
 int load_rom(const char *filename) {

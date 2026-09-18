@@ -48,6 +48,11 @@ static uint64_t nmi_assert_cycle, nmi_clear_cycle, irq_assert_cycle, dma_request
 
 static void prepare_dmc(uint16_t address);
 
+static void raise_frame_irq(void) {
+    apu.frame_irq = true;
+    apu.frame_irq_source = true;
+}
+
 #define CHECK(condition) do { \
     if (!(condition)) { \
         fprintf(stderr, "%s:%d: %s\n", __func__, __LINE__, #condition); \
@@ -86,7 +91,7 @@ static void fixture_clock(int cycles) {
     mapper_clocks += (unsigned)cycles;
     if (cpu_total_cycles == nmi_assert_cycle) cpu_set_nmi_line(true);
     if (cpu_total_cycles == nmi_clear_cycle) cpu_set_nmi_line(false);
-    if (cpu_total_cycles == irq_assert_cycle) apu.frame_irq = true;
+    if (cpu_total_cycles == irq_assert_cycle) raise_frame_irq();
     if (cpu_total_cycles == dma_request_cycle) {
         apu.dmc.start_delay = 0;
         apu.dmc.sample_buffer_empty = true;
@@ -222,9 +227,9 @@ static int controller_latching(void) {
 static int open_bus_and_cart_decoding(void) {
     reset_fixture();
     write_mem(0x4018, 0xA5);
-    apu.frame_irq = true;
+    raise_frame_irq();
     CHECK(read_mem(0x4015) == 0x60);
-    CHECK(apu.frame_irq && apu.frame_irq_clear_delay == 1);
+    CHECK(apu.frame_irq && !apu.frame_irq_source && apu.frame_irq_clear_delay == 1);
     apu_step(&apu, 1);
     CHECK(!apu.frame_irq);
     CHECK(read_mem(0x4018) == 0xA5);
@@ -540,7 +545,7 @@ static int interrupt_entry(void) {
     reset_fixture();
     program(0xEA, 0, 0);
     cpu.status = UNUSED_FLAG | DECIMAL_FLAG | CARRY_FLAG;
-    apu.frame_irq = true;
+    raise_frame_irq();
     CHECK(cpu_step(&cpu) == 9);
     CHECK(cpu_total_cycles == 9 && apu.cycle_in_seq == 9);
     CHECK(cpu.pc == 0xA000 && cpu.sp == 0xFA);
@@ -602,7 +607,7 @@ static int interrupt_entry(void) {
 static int irq_mask_latency(void) {
     reset_fixture();
     program(0x58, 0xEA, 0); // CLI must allow the following NOP to complete.
-    apu.frame_irq = true;
+    raise_frame_irq();
     CHECK(cpu_step(&cpu) == 2 && cpu.pc == 0x8001);
     CHECK(cpu_step(&cpu) == 9 && cpu.pc == 0xA000);
     CHECK(ram[0x1FC] == 2);
@@ -610,7 +615,7 @@ static int irq_mask_latency(void) {
     reset_fixture();
     program(0x78, 0, 0);
     cpu.status &= ~INTERRUPT_FLAG;
-    apu.frame_irq = true;
+    raise_frame_irq();
     CHECK(cpu_step(&cpu) == 9 && cpu.pc == 0xA000);
     CHECK(ram[0x1FB] & INTERRUPT_FLAG);
 
@@ -619,7 +624,7 @@ static int irq_mask_latency(void) {
     cpu.status &= ~INTERRUPT_FLAG;
     cpu.sp = 0xFC;
     ram[0x1FD] = INTERRUPT_FLAG | BREAK_FLAG;
-    apu.frame_irq = true;
+    raise_frame_irq();
     CHECK(cpu_step(&cpu) == 11 && cpu.pc == 0xA000);
     CHECK(!(cpu.status & BREAK_FLAG));
 
@@ -627,7 +632,7 @@ static int irq_mask_latency(void) {
     program(0x28, 0xEA, 0);
     cpu.sp = 0xFC;
     ram[0x1FD] = BREAK_FLAG;
-    apu.frame_irq = true;
+    raise_frame_irq();
     CHECK(cpu_step(&cpu) == 4 && cpu.pc == 0x8001);
     CHECK(cpu_step(&cpu) == 9 && cpu.pc == 0xA000);
 
@@ -637,8 +642,36 @@ static int irq_mask_latency(void) {
     ram[0x1FB] = 0;
     ram[0x1FC] = 0;
     ram[0x1FD] = 0x90;
-    apu.frame_irq = true;
+    raise_frame_irq();
     CHECK(cpu_step(&cpu) == 13 && cpu.pc == 0xA000); // RTI uses the restored I immediately.
+    return 0;
+}
+
+static int frame_irq_acknowledgment(void) {
+    for (unsigned phase = 0; phase < 2; ++phase) {
+        reset_fixture();
+        cpu_total_cycles = phase;
+        program(0xAD, 0x15, 0x40); // LDA $4015
+        fixture_memory[0x8003] = 0xEA;
+        cpu.status &= ~INTERRUPT_FLAG;
+        irq_assert_cycle = phase + 4;
+
+        CHECK(cpu_step(&cpu) == 4 && cpu.pc == 0x8003);
+        CHECK(cpu.a & 0x40);
+        CHECK(apu.frame_irq);
+        CHECK(!apu.frame_irq_source && !apu_irq_pending(&apu));
+        CHECK(apu.frame_irq_clear_delay == (phase ? 2 : 1));
+        CHECK(cpu_step(&cpu) == 2 && cpu.pc == 0x8004);
+    }
+
+    reset_fixture();
+    program(0xAD, 0x15, 0x40); // The IRQ is sampled one cycle before the status read.
+    cpu.status &= ~INTERRUPT_FLAG;
+    irq_assert_cycle = 3;
+    CHECK(cpu_step(&cpu) == 11 && cpu.pc == 0xA000);
+    CHECK(cpu.a & 0x40);
+    CHECK(!apu.frame_irq_source && !apu_irq_pending(&apu));
+    CHECK(ram[0x1FC] == 3);
     return 0;
 }
 
@@ -763,7 +796,7 @@ static int halt_and_reset(void) {
         reset_fixture();
         program(ops[i], 0xE8, 0);
         cpu.status &= ~INTERRUPT_FLAG;
-        apu.frame_irq = true;
+        raise_frame_irq();
         CHECK(cpu_step(&cpu) == 2 && cpu.halted);
         CHECK(cpu.pc == 0x8000 && cpu.sp == 0xFD);
         cpu_request_nmi();
@@ -913,6 +946,20 @@ static void prepare_dmc(uint16_t address) {
     apu.dmc.timer = 1000;
 }
 
+static void prepare_dmc_reload_collision(uint16_t address) {
+    apu.dmc.sample_addr = address;
+    apu.dmc.sample_len = 1;
+    apu.dmc.current_addr = address;
+    apu.dmc.bytes_remaining = 1;
+    apu.dmc.enabled = true;
+    apu.dmc.sample_buffer_empty = true;
+    apu.dmc.bits_remaining = 1;
+    apu.dmc.timer = 2;
+    apu.dmc.dma_pending = true;
+    apu.dmc.dma_halt_started = false;
+    apu.dmc.dma_abort_requested = false;
+}
+
 static int dma_arbitration(void) {
     reset_fixture();
     program(0xEE, 0, 0x90); // A pending read DMA cannot interrupt either RMW write.
@@ -1021,6 +1068,66 @@ static int dma_arbitration(void) {
     return 0;
 }
 
+static int dmc_revision_dma(void) {
+    for (unsigned later = 0; later < 2; ++later) {
+        reset_fixture();
+        CHECK(apu_set_cpu_revision(later ? APU_CPU_REVISION_LATE_2A03 : APU_CPU_REVISION_EARLY_2A03));
+        program(0xEA, 0, 0);
+        fixture_memory[0xC000] = 0xA5;
+        prepare_dmc_reload_collision(0xC000);
+
+        CHECK(cpu_step(&cpu) == (later ? 9 : 5));
+        size_t dmc_reads = 0;
+        for (size_t i = 0; i < bus_count; ++i)
+            if (!bus_events[i].write && bus_events[i].addr == 0xC000) dmc_reads++;
+        CHECK(dmc_reads == (later ? 2u : 1u));
+        CHECK(!apu_dmc_dma_pending(&apu));
+
+        if (later) {
+            CHECK(bus_count == 9);
+            CHECK(bus_events[2].addr == 0xC000 && bus_events[2].cycle == 3);
+            CHECK(bus_events[3].addr == 0x8000 && bus_events[3].cycle == 4);
+            CHECK(bus_events[4].addr == 0x8000 && bus_events[4].cycle == 5);
+            CHECK(bus_events[5].addr == 0x8000 && bus_events[5].cycle == 6);
+            CHECK(bus_events[6].addr == 0xC000 && bus_events[6].cycle == 7);
+            CHECK(apu.dmc.shift_reg == 0xA5 && apu.dmc.sample_buffer == 0xA5);
+            CHECK(!apu.dmc.sample_buffer_empty && apu.dmc.bytes_remaining == 0);
+        }
+    }
+
+    for (unsigned later = 0; later < 2; ++later) {
+        reset_fixture();
+        CHECK(apu_set_cpu_revision(later ? APU_CPU_REVISION_LATE_2A03 : APU_CPU_REVISION_EARLY_2A03));
+        program(0xEA, 0, 0);
+        fixture_memory[0xC000] = 0x5A;
+        prepare_dmc_reload_collision(0xC000);
+        memset(ppu.oam, 0, sizeof(ppu.oam));
+        for (unsigned i = 0; i < 256; ++i) ram[0x200 + i] = (uint8_t)(i ^ 0x5A);
+        write_mem(0x4014, 2);
+
+        (void)cpu_step(&cpu);
+        size_t dmc_reads = 0;
+        uint64_t dmc_cycles[2] = {0, 0};
+        for (size_t i = 0; i < bus_count; ++i) {
+            if (!bus_events[i].write && bus_events[i].addr == 0xC000) {
+                if (dmc_reads < 2) dmc_cycles[dmc_reads] = bus_events[i].cycle;
+                dmc_reads++;
+            }
+        }
+        CHECK(dmc_reads == (later ? 2u : 1u));
+        CHECK(dmc_cycles[0] == 3);
+        if (later) CHECK(dmc_cycles[1] == 7);
+        CHECK(!apu_dmc_dma_pending(&apu));
+        for (unsigned i = 0; i < 256; ++i) {
+            uint8_t value = (uint8_t)(i ^ 0x5A);
+            CHECK(ppu.oam[i] == (i % 4 == 2 ? (value & 0xE3u) : value));
+        }
+    }
+
+    CHECK(apu_set_cpu_revision(APU_CPU_REVISION_EARLY_2A03));
+    return 0;
+}
+
 static int dma_cycle_accounting(void) {
     for (unsigned odd = 0; odd < 2; ++odd) {
         reset_fixture();
@@ -1066,9 +1173,9 @@ int test_cpu_accuracy(void) {
         controller_latching, open_bus_and_cart_decoding, nop_and_zero_page_cycles,
         xaa_immediate, unofficial_immediate_semantics, indexed_read_penalties,
         indexed_rmw_bus_order, branch_bus_order, stack_and_indirect_jump,
-        interrupt_entry, irq_mask_latency, masked_store_addresses,
+        interrupt_entry, irq_mask_latency, frame_irq_acknowledgment, masked_store_addresses,
         reset_bus_sequence, halt_and_reset, regional_bus_timing_and_pal_dma,
-        bus_cycle_interrupt_polling, dma_arbitration, dma_cycle_accounting,
+        bus_cycle_interrupt_polling, dma_arbitration, dmc_revision_dma, dma_cycle_accounting,
     };
     Mapper *saved_cart = cart;
     iNESHeader saved_header = ines_header;

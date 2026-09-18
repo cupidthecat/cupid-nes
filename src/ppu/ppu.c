@@ -29,6 +29,7 @@
 #include "../rom/mapper.h"
 #include "../cpu/cpu.h"
 #include "../system/timing.h"
+#include "../system/vs_system.h"
 #include "../ui/palette_tool.h"
 #include <stdbool.h>
 #include <stdio.h>
@@ -36,12 +37,99 @@
 #include <stdlib.h>
 
 // Each data line retains its charge independently across register reads.
-static uint64_t ppu_ob_expire[8];
+static uint64_t main_ppu_ob_expire[8];
 
 uint8_t ppu_vram[NT_RAM_SIZE];
 uint8_t ppu_palette[PPU_PALETTE_SIZE];
 uint8_t bg_opaque[256 * 240];
 PPU ppu;
+static PPU *const main_ppu = &ppu;
+static PPU *active_ppu = &ppu;
+static uint8_t *active_ppu_vram = ppu_vram;
+static uint8_t *active_ppu_palette = ppu_palette;
+static uint8_t *active_bg_opaque = bg_opaque;
+static uint64_t *active_ppu_ob_expire = main_ppu_ob_expire;
+static uint32_t *active_framebuffer = framebuffer;
+
+#define ppu (*active_ppu)
+
+void ppu_select_machine(PpuMachineContext *context, uint32_t *framebuffer_target) {
+    if (context) {
+        active_ppu = &context->state;
+        active_ppu_vram = context->vram;
+        active_ppu_palette = context->palette;
+        active_bg_opaque = context->bg_opaque;
+        active_ppu_ob_expire = context->open_bus_expire;
+        active_framebuffer = framebuffer_target ? framebuffer_target : framebuffer;
+    } else {
+        active_ppu = main_ppu;
+        active_ppu_vram = ppu_vram;
+        active_ppu_palette = ppu_palette;
+        active_bg_opaque = bg_opaque;
+        active_ppu_ob_expire = main_ppu_ob_expire;
+        active_framebuffer = framebuffer;
+    }
+}
+
+// Hardware-profile settings live outside PPU state so power/reset operations do
+// not silently change the selected silicon behavior.
+static PpuRevision active_ppu_revision = PPU_REVISION_2C02_E_PLUS;
+static bool oam_row_corruption_worst_case = false;
+static bool startup_write_restriction = false;
+static bool oam_decay = false;
+static const char *const ppu_revision_names[] = {"2c02-pre-e", "2c02e-plus"};
+
+PpuRevision ppu_revision(void) {
+    return active_ppu_revision;
+}
+
+bool ppu_set_revision(PpuRevision revision) {
+    if ((unsigned)revision > PPU_REVISION_2C02_E_PLUS) return false;
+    active_ppu_revision = revision;
+    return true;
+}
+
+bool ppu_set_revision_name(const char *name) {
+    if (!name) return false;
+    for (unsigned i = 0; i < sizeof(ppu_revision_names) / sizeof(ppu_revision_names[0]); ++i) {
+        if (strcmp(name, ppu_revision_names[i]) == 0)
+            return ppu_set_revision((PpuRevision)i);
+    }
+    return false;
+}
+
+const char *ppu_revision_name(void) {
+    return ppu_revision_names[active_ppu_revision];
+}
+
+bool ppu_oam_row_corruption_worst_case(void) {
+    return oam_row_corruption_worst_case;
+}
+
+void ppu_set_oam_row_corruption_worst_case(bool enabled) {
+    oam_row_corruption_worst_case = enabled;
+}
+
+bool ppu_startup_write_restriction_enabled(void) {
+    return startup_write_restriction;
+}
+
+void ppu_set_startup_write_restriction(bool enabled) {
+    startup_write_restriction = enabled;
+    if (!enabled) ppu.startup_writes_restricted = false;
+}
+
+bool ppu_startup_writes_restricted(void) {
+    return ppu.startup_writes_restricted;
+}
+
+bool ppu_oam_decay_enabled(void) {
+    return oam_decay;
+}
+
+void ppu_set_oam_decay(bool enabled) {
+    oam_decay = enabled;
+}
 
 static bool rendering_line(void) {
     return ppu.scanline < 240 || ppu.scanline == (int)nes_timing()->scanlines - 1;
@@ -72,7 +160,7 @@ static uint8_t ppu_bus_read_phase(uint16_t par_address, CartPpuFetchSource sourc
         cart_set_ppu_fetch_source(source);
         value = cart_ppu_read(address);
     } else {
-        value = cart_nt_read(address, ppu_vram);
+        value = cart_nt_read(address, active_ppu_vram);
     }
     ppu.vram_bus_data = value;
     ppu.bus_address = (uint16_t)((address & 0x3F00) | value);
@@ -83,7 +171,7 @@ static uint8_t ppu_bus_read_phase(uint16_t par_address, CartPpuFetchSource sourc
 static uint8_t get_open_bus(void) {
     uint8_t value = 0;
     for (int bit = 0; bit < 8; ++bit)
-        if (ppu_ob_expire[bit] > cpu_total_cycles) value |= (uint8_t)(1u << bit);
+        if (active_ppu_ob_expire[bit] > cpu_get_bus_cycle()) value |= (uint8_t)(1u << bit);
     ppu.open_bus = value;
     return value;
 }
@@ -91,8 +179,8 @@ static uint8_t get_open_bus(void) {
 static void set_open_bus_masked(uint8_t value, uint8_t mask) {
     for (int bit = 0; bit < 8; ++bit) {
         if (mask & (1u << bit))
-            ppu_ob_expire[bit] = (value & (1u << bit))
-                ? cpu_total_cycles + (uint64_t)(nes_timing()->cpu_hz * 4.0 / nes_timing()->fps) : 0;
+            active_ppu_ob_expire[bit] = (value & (1u << bit))
+                ? cpu_get_bus_cycle() + (uint64_t)(nes_timing()->cpu_hz * 4.0 / nes_timing()->fps) : 0;
     }
     get_open_bus();
 }
@@ -150,16 +238,60 @@ static void ppu_increment_secondary_oam(void) {
     if (!ppu.secondary_index) ppu.secondary_oam_overflowed = true;
 }
 
-static void ppu_corrupt_oam_row(uint8_t row) {
-    row &= 0x1F;
-    if (row) memcpy(&ppu.oam[row << 3], ppu.oam, 8);
-    ppu.secondary_oam[row] = ppu.secondary_oam[0];
+static void ppu_corrupt_oam_row(uint8_t source_row, uint8_t dest_row) {
+    source_row &= 0x1F;
+    dest_row &= 0x1F;
+    if (source_row == dest_row || nes_timing()->region == NES_REGION_PAL) return;
+    memcpy(&ppu.oam[dest_row << 3], &ppu.oam[source_row << 3], 8);
+    ppu.secondary_oam[dest_row] = ppu.secondary_oam[source_row];
+}
+
+static void ppu_refresh_oam_row(uint8_t row) {
+    if (oam_decay) ppu.oam_decay_cycles[row & 0x1F] = cpu_get_bus_cycle();
+}
+
+static uint8_t ppu_read_oam(uint8_t address) {
+    if (!oam_decay) return ppu.oam[address];
+
+    uint8_t row = address >> 3;
+    uint64_t stamp = ppu.oam_decay_cycles[row];
+    uint64_t now = cpu_get_bus_cycle();
+    uint64_t elapsed = now >= stamp ? now - stamp : 0;
+    if (elapsed <= PPU_OAM_DECAY_CPU_CYCLES) {
+        ppu_refresh_oam_row(row);
+    } else {
+        uint8_t base = address & 0xF8;
+        for (unsigned byte = 0; byte < 8; ++byte) {
+            uint8_t oam_address = (uint8_t)(base | byte);
+            ppu.oam[oam_address] = (oam_address & 3) == 2
+                                 ? (uint8_t)(oam_address & 0xE3)
+                                 : oam_address;
+        }
+    }
+    return ppu.oam[address];
+}
+
+static void ppu_write_oam(uint8_t address, uint8_t value) {
+    ppu.oam[address] = value;
+    ppu_refresh_oam_row(address >> 3);
 }
 
 static uint8_t ppu_oam_corruption_row(int dot) {
     uint8_t row = ppu.secondary_index & 0x1F;
     if (dot >= 65 && dot <= 256 && (row & 3)) row = (uint8_t)((row + 3) & 0x1C);
     return row;
+}
+
+static bool ppu_oam_addr_write_corruption_active(void) {
+    if (!oam_row_corruption_worst_case || nes_timing()->region != NES_REGION_NTSC)
+        return false;
+
+    // This path intentionally models an alignment-dependent worst case. The
+    // pre-write CPU bus byte selects an intermediate row. During
+    // active display/pre-render it is only applied on the observed odd clocks
+    // before sprite fetch; blanking or disabled rendering always qualifies.
+    bool display_line = rendering_line();
+    return !ppu.fetches_enabled || !display_line || (ppu.dot < 257 && (ppu.dot & 1));
 }
 
 // Palette RAM is internal. External reads in its address range still reach
@@ -173,7 +305,7 @@ static uint8_t ppu_bus_read(uint16_t addr, CartPpuFetchSource source) {
         ppu.vram_bus_data = cart_ppu_read(addr);
         return ppu.vram_bus_data;
     }
-    ppu.vram_bus_data = cart_nt_read(addr, ppu_vram);
+    ppu.vram_bus_data = cart_nt_read(addr, active_ppu_vram);
     return ppu.vram_bus_data;
 }
 
@@ -182,7 +314,7 @@ uint8_t ppu_read(uint16_t addr) {
     if (addr >= 0x3F00) {
         addr &= 0x1F;
         if ((addr & 3) == 0) addr &= 0x0F;
-        return ppu_palette[addr];
+        return active_ppu_palette[addr];
     }
     return ppu_bus_read(addr, CART_PPU_FETCH_CPU);
 }
@@ -194,16 +326,16 @@ void ppu_write(uint16_t addr, uint8_t value) {
         value &= 0x3F;
         if ((addr & 3) == 0) {
             addr &= 0x0F;
-            ppu_palette[addr | 0x10] = value;
+            active_ppu_palette[addr | 0x10] = value;
         }
-        ppu_palette[addr] = value;
+        active_ppu_palette[addr] = value;
     } else {
         ppu_set_bus_address(addr);
         if (addr < 0x2000) {
             cart_set_ppu_fetch_source(CART_PPU_FETCH_CPU);
             cart_ppu_write(addr, value);
         } else {
-            cart_nt_write(addr, value, ppu_vram);
+            cart_nt_write(addr, value, active_ppu_vram);
         }
     }
 }
@@ -211,8 +343,15 @@ void ppu_write(uint16_t addr, uint8_t value) {
 uint8_t ppu_reg_read(uint16_t reg) {
     switch (reg & 7) {
         case 2: {
-            uint8_t value = (ppu.status & 0xE0) | (get_open_bus() & 0x1F);
-            set_open_bus_masked(value, 0xE0);
+            uint8_t signature;
+            uint8_t value;
+            if (vs_ppu_status_signature(&signature)) {
+                value = (uint8_t)((ppu.status & 0xE0) | signature);
+                set_open_bus(value);
+            } else {
+                value = (uint8_t)((ppu.status & 0xE0) | (get_open_bus() & 0x1F));
+                set_open_bus_masked(value, 0xE0);
+            }
             // dot identifies the next clock to execute. Reading immediately
             // before the vblank-set clock suppresses that edge for this frame.
             if (ppu.scanline == (int)nes_timing()->vblank_scanline && ppu.dot == 1)
@@ -229,7 +368,7 @@ uint8_t ppu_reg_read(uint16_t reg) {
                     ppu.oam_bus = ppu.secondary_oam[ppu.secondary_index & 0x1F];
                 value = ppu.oam_bus;
             } else {
-                value = ppu.oam[ppu.oam_addr];
+                value = ppu_read_oam(ppu.oam_addr);
                 if ((ppu.oam_addr & 3) == 2) value &= 0xE3;
             }
             set_open_bus(value);
@@ -262,7 +401,15 @@ uint8_t ppu_reg_read_finish(uint16_t reg, uint8_t value) {
     switch (reg & 7) {
         case 2:
             value = (uint8_t)((value & 0x9F) | (ppu.status & 0x60));
-            set_open_bus_masked(value, 0x60);
+            {
+                uint8_t signature;
+                if (vs_ppu_status_signature(&signature)) {
+                    value = (uint8_t)((value & 0xE0) | signature);
+                    set_open_bus(value);
+                } else {
+                    set_open_bus_masked(value, 0x60);
+                }
+            }
             return value;
         case 4:
             if (rendering_active()) value = ppu.oam_read_latch;
@@ -273,18 +420,48 @@ uint8_t ppu_reg_read_finish(uint16_t reg, uint8_t value) {
     }
 }
 
-void ppu_reg_write(uint16_t reg, uint8_t value) {
+static bool ppu_first_write_scroll_glitch_active(void) {
+    // ppu.dot is the next clock to execute, so 258 means dot 257 has just
+    // completed while the CPU write is on the bus. Current regional PPU
+    // profiles have no separate revision selector and all use this behavior.
+    return ppu.dot == 258 && ppu.scanline < 240 && ppu.rendering_enabled;
+}
+
+static void ppu_set_tmp_scroll_bits(uint16_t normal_t, uint16_t bus_bits, uint16_t mask) {
+    ppu.t = normal_t;
+    if (ppu_first_write_scroll_glitch_active())
+        ppu.v = (ppu.v & (uint16_t)~mask) | (bus_bits & mask);
+}
+
+void ppu_reg_write_cpu(uint16_t reg, uint8_t value, uint8_t cpu_open_bus) {
     set_open_bus(value);
-    switch (reg & 7) {
-        case 0:
+    unsigned register_id = reg & 7;
+    if (vs_ppu_is_2c05()) {
+        if (register_id == 0) register_id = 1;
+        else if (register_id == 1) register_id = 0;
+    }
+    if (ppu.startup_writes_restricted
+        && (register_id == 0 || register_id == 1 || register_id == 5 || register_id == 6))
+        return;
+    switch (register_id) {
+        case 0: {
             ppu.ctrl = value;
-            ppu.t = (ppu.t & ~0x0C00) | ((value & 3) << 10);
+            uint16_t normal_t = (ppu.t & ~0x0C00) | ((uint16_t)(value & 3) << 10);
+            ppu_set_tmp_scroll_bits(normal_t, (uint16_t)cpu_open_bus << 10, 0x0400);
             ppu_eval_nmi();
             break;
+        }
         case 1:
             ppu.mask = value;
             break;
         case 3:
+            if (ppu_oam_addr_write_corruption_active()) {
+                uint8_t source_row = ppu.oam_addr >> 3;
+                uint8_t open_bus_row = cpu_open_bus >> 3;
+                uint8_t dest_row = value >> 3;
+                ppu_corrupt_oam_row(source_row, open_bus_row);
+                ppu_corrupt_oam_row(open_bus_row, dest_row);
+            }
             ppu.oam_addr = value;
             break;
         case 4:
@@ -292,7 +469,7 @@ void ppu_reg_write(uint16_t reg, uint8_t value) {
                 ppu.oam_addr = (ppu.oam_addr + 4) & 0xFC;
             } else {
                 if ((ppu.oam_addr & 3) == 2) value &= 0xE3;
-                ppu.oam[ppu.oam_addr] = value;
+                ppu_write_oam(ppu.oam_addr, value);
                 // PAL refresh also clocks this address latch late in vblank.
                 int previous_dot = (ppu.dot + 340) % 341;
                 bool refresh = nes_timing()->region == NES_REGION_PAL
@@ -304,7 +481,8 @@ void ppu_reg_write(uint16_t reg, uint8_t value) {
         case 5:
             if (!ppu.w) {
                 ppu.x = value & 7;
-                ppu.t = (ppu.t & ~0x001F) | (value >> 3);
+                uint16_t normal_t = (ppu.t & ~0x001F) | (value >> 3);
+                ppu_set_tmp_scroll_bits(normal_t, cpu_open_bus >> 3, 0x001F);
             } else {
                 ppu.t = (ppu.t & ~0x73E0) | ((value & 7) << 12) | ((value & 0xF8) << 2);
             }
@@ -312,7 +490,8 @@ void ppu_reg_write(uint16_t reg, uint8_t value) {
             break;
         case 6:
             if (!ppu.w) {
-                ppu.t = (ppu.t & 0x00FF) | ((uint16_t)(value & 0x3F) << 8);
+                uint16_t normal_t = (ppu.t & 0x00FF) | ((uint16_t)(value & 0x3F) << 8);
+                ppu_set_tmp_scroll_bits(normal_t, (uint16_t)cpu_open_bus << 8, 0x0C00);
             } else {
                 ppu.t = (ppu.t & 0x7F00) | value;
                 ppu.address_write_value = ppu.t;
@@ -327,6 +506,12 @@ void ppu_reg_write(uint16_t reg, uint8_t value) {
         default:
             break;
     }
+}
+
+void ppu_reg_write(uint16_t reg, uint8_t value) {
+    // Direct register helpers have no preceding CPU bus cycle, so use the
+    // supplied byte for both the write and the bus value.
+    ppu_reg_write_cpu(reg, value, value);
 }
 
 static void ppu_complete_register_accesses(int dot) {
@@ -396,9 +581,9 @@ void ppu_end_vblank(void) {
 }
 
 void ppu_begin_frame_render(uint32_t *fb) {
-    uint32_t color = get_color(ppu_palette[0]);
+    uint32_t color = get_color(active_ppu_palette[0]);
     for (int i = 0; i < 256 * 240; ++i) fb[i] = color;
-    memset(bg_opaque, 0, sizeof(bg_opaque));
+    memset(active_bg_opaque, 0, 256 * 240);
 }
 
 void start_frame(void) {
@@ -407,13 +592,16 @@ void start_frame(void) {
 
 void ppu_power_on(PPU *state) {
     memset(state, 0, sizeof(*state));
-    memset(ppu_ob_expire, 0, sizeof(ppu_ob_expire));
+    memset(state->pixel_indices, 0x0F, sizeof(state->pixel_indices));
+    memset(active_ppu_ob_expire, 0, sizeof(main_ppu_ob_expire));
     memset(state->oam, 0xFF, sizeof(state->oam));
     memset(state->secondary_oam, 0xFF, sizeof(state->secondary_oam));
+    memset(state->oam_decay_cycles, 0, sizeof(state->oam_decay_cycles));
     state->oam_bus = 0xFF;
     state->oam_read_latch = 0xFF;
     state->scanline = (int)nes_timing()->scanlines - 1;
-    memset(ppu_vram, 0, sizeof(ppu_vram));
+    state->startup_writes_restricted = startup_write_restriction;
+    memset(active_ppu_vram, 0, NT_RAM_SIZE);
     cpu_set_nmi_line(false);
     static const uint8_t power_up_palette[PPU_PALETTE_SIZE] = {
         0x09,0x01,0x00,0x01,0x00,0x02,0x02,0x0D,
@@ -421,7 +609,7 @@ void ppu_power_on(PPU *state) {
         0x09,0x01,0x34,0x03,0x00,0x04,0x00,0x14,
         0x08,0x3A,0x00,0x02,0x00,0x20,0x2C,0x08
     };
-    memcpy(ppu_palette, power_up_palette, sizeof(ppu_palette));
+    memcpy(active_ppu_palette, power_up_palette, PPU_PALETTE_SIZE);
     ppu_palette_reset_default();
 }
 
@@ -438,6 +626,7 @@ void ppu_soft_reset(PPU *state) {
     uint8_t status = state->status;
     uint64_t clocks = state->total_cycles;
     memset(state, 0, sizeof(*state));
+    memset(state->pixel_indices, 0x0F, sizeof(state->pixel_indices));
     memcpy(state->oam, oam, sizeof(oam));
     memcpy(state->secondary_oam, secondary_oam, sizeof(secondary_oam));
     state->v = v;
@@ -446,7 +635,9 @@ void ppu_soft_reset(PPU *state) {
     state->scanline = (int)nes_timing()->scanlines - 1;
     state->oam_bus = 0xFF;
     state->oam_read_latch = 0xFF;
-    memset(ppu_ob_expire, 0, sizeof(ppu_ob_expire));
+    state->startup_writes_restricted = startup_write_restriction;
+    memset(state->oam_decay_cycles, 0, sizeof(state->oam_decay_cycles));
+    memset(active_ppu_ob_expire, 0, sizeof(main_ppu_ob_expire));
     cpu_set_nmi_line(false);
 }
 
@@ -468,7 +659,7 @@ static void ppu_evaluate_sprites(void) {
         ppu.overflow_count = 0;
     }
     if (ppu.dot & 1) {
-        ppu.oam_bus = ppu.oam[ppu.oam_addr];
+        ppu.oam_bus = ppu_read_oam(ppu.oam_addr);
         if ((ppu.oam_addr & 3) == 2) ppu.oam_bus &= 0xE3;
         return;
     }
@@ -694,12 +885,13 @@ static void ppu_render_dot(int x, int y) {
             }
         }
     }
-    uint8_t color = ppu_palette[0];
+    uint8_t color = active_ppu_palette[0];
     if (!ppu.rendering_enabled && (ppu.v & 0x3F00) == 0x3F00) color = ppu_read(ppu.v);
-    if (sprite && (!sprite_behind || !background)) color = ppu_palette[0x10 + sprite_palette * 4 + sprite];
-    else if (background) color = ppu_palette[background_palette * 4 + background];
-    bg_opaque[y * 256 + x] = background != 0;
-    framebuffer[y * 256 + x] = get_color(color);
+    if (sprite && (!sprite_behind || !background)) color = active_ppu_palette[0x10 + sprite_palette * 4 + sprite];
+    else if (background) color = active_ppu_palette[background_palette * 4 + background];
+    active_bg_opaque[y * 256 + x] = background != 0;
+    ppu.pixel_indices[y * 256 + x] = color & 0x3F;
+    active_framebuffer[y * 256 + x] = get_color(color);
 }
 
 void ppu_step_dots(int ppu_cycles) {
@@ -720,11 +912,20 @@ void ppu_step_dots(int ppu_cycles) {
         }
 
         if ((visible || prerender) && rendering && ppu.oam_corruption_pending) {
-            ppu_corrupt_oam_row(ppu.oam_corruption_row);
+            ppu_corrupt_oam_row(ppu.oam_corruption_source_row,
+                                ppu.oam_corruption_dest_row);
             ppu.oam_corruption_pending = false;
         }
 
         if (dot == 0) {
+            if (oam_decay && ((!prerender && line >= 240) || !ppu.rendering_enabled))
+                ppu_refresh_oam_row(ppu.oam_addr >> 3);
+            if (prerender && oam_row_corruption_worst_case && ppu.rendering_enabled
+                && active_ppu_revision == PPU_REVISION_2C02_E_PLUS) {
+                // Later 2C02 revisions can copy the selected primary row at
+                // the start of pre-render. PAL hardware excludes row copies.
+                ppu_corrupt_oam_row(ppu.oam_addr >> 3, ppu.secondary_index & 0x1F);
+            }
             if (visible && rendering && (line > 0 || !ppu.skipped_frame_dot)) {
                 // The unused nametable fetch drives a pattern address between
                 // scanlines without reading another byte from CHR memory.
@@ -749,8 +950,10 @@ void ppu_step_dots(int ppu_cycles) {
             ppu.suppress_vblank = false;
         }
         if (nes_timing()->region == NES_REGION_PAL && line >= 265 && !prerender
-            && dot && !(dot & 1))
+            && dot && !(dot & 1)) {
             ppu.oam_addr++;
+            ppu_refresh_oam_row(ppu.oam_addr >> 3);
+        }
         if (visible && dot >= 1 && dot <= 256) {
             // X counters continue counting while rendering is disabled; the
             // pattern shifters hold their data until rendering resumes.
@@ -796,11 +999,29 @@ void ppu_step_dots(int ppu_cycles) {
         // PPUMASK reaches the rendering latch after one PPU clock, then
         // reaches the fetch/evaluation circuits after the following clock.
         if (ppu.fetches_enabled != ppu.rendering_enabled) {
+            bool enabling = ppu.rendering_enabled;
             ppu.fetches_enabled = ppu.rendering_enabled;
             if (rendering_line()) {
-                if (!ppu.fetches_enabled) {
-                    ppu.oam_corruption_row = ppu_oam_corruption_row(dot);
+                if (oam_row_corruption_worst_case
+                    && (dot >= 257 || !(dot & 1))) {
+                    uint8_t source_row = enabling
+                                       ? (ppu.oam_addr >> 3)
+                                       : (ppu.secondary_index & 0x1F);
+                    uint8_t dest_row = enabling
+                                     ? (ppu.secondary_index & 0x1F)
+                                     : (ppu.oam_addr >> 3);
+                    // Alignment-dependent rendering transitions use the
+                    // selected rows directly. This is the explicit worst-case
+                    // approximation, not a universal corruption claim.
+                    ppu_corrupt_oam_row(source_row, dest_row);
+                } else if (!oam_row_corruption_worst_case && !enabling) {
+                    // Preserve the established compatibility path by deferring
+                    // its row-zero copy until rendering is active again.
+                    ppu.oam_corruption_source_row = 0;
+                    ppu.oam_corruption_dest_row = ppu_oam_corruption_row(dot);
                     ppu.oam_corruption_pending = true;
+                }
+                if (!enabling) {
                     ppu_set_bus_address(ppu.v);
                     if (dot >= 65 && dot <= 256) ppu.oam_addr++;
                 }
@@ -822,7 +1043,11 @@ void ppu_step_dots(int ppu_cycles) {
                 ppu.scanline = 0;
                 ppu.odd_frame = !ppu.odd_frame;
                 ppu.frame_complete = true;
+                ppu.frame_count++;
             }
+            if (ppu.startup_writes_restricted
+                && ppu.scanline == (int)nes_timing()->scanlines - 1)
+                ppu.startup_writes_restricted = false;
         }
     }
 }
@@ -837,8 +1062,25 @@ void ppu_step(int cpu_cycles) {
     }
 }
 
+uint16_t ppu_pixel_brightness(unsigned x, unsigned y) {
+    // Fixed RGB-sum approximation for the light sensor. Display palette edits
+    // do not change the emulated signal, and emphasis is not resolved here.
+    static const uint16_t brightness[64] = {
+        306, 178, 205, 223, 218, 174, 114, 115, 104, 83, 82, 87, 141, 0, 0, 0,
+        519, 333, 385, 410, 390, 336, 262, 231, 216, 191, 159, 193, 265, 0, 0, 0,
+        764, 531, 545, 571, 604, 568, 495, 426, 378, 352, 368, 423, 499, 237, 0, 0,
+        764, 670, 676, 687, 700, 684, 655, 628, 605, 596, 604, 626, 658, 552, 0, 0
+    };
+    if (x >= 256 || y >= 240) return 0;
+    uint8_t color = ppu.pixel_indices[y * 256 + x] & ((ppu.mask & 1u) ? 0x30 : 0x3F);
+    return brightness[color];
+}
+
 uint32_t get_color(uint8_t idx) {
     idx &= 0x3F;
+
+    uint32_t vs_color;
+    if (vs_ppu_rgb_color(idx, ppu.mask, &vs_color)) return vs_color;
 
     // PPUMASK bit 0: grayscale
     if (ppu.mask & 0x01) idx &= 0x30;

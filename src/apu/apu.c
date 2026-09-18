@@ -25,14 +25,25 @@
 
 #include "apu.h"
 #include "../rom/mapper.h"
+#include "../cpu/cpu.h"
 #include "../system/timing.h"
 #include <string.h>
 #include <math.h>
 #include <stdio.h>
 
-extern uint64_t cpu_total_cycles;
-
 APU apu;
+static APU *const main_apu = &apu;
+static APU *active_apu = &apu;
+#define apu (*active_apu)
+static ApuCpuRevision cpu_revision = APU_CPU_REVISION_EARLY_2A03;
+
+void apu_select_machine(APU *state) {
+    active_apu = state ? state : main_apu;
+}
+
+APU *apu_active_state(void) {
+    return active_apu;
+}
 
 // Duty sequences
 static const uint8_t DUTY_SEQ[4][8] = {
@@ -306,7 +317,7 @@ static void apu_reset_state(APU *a, bool soft_reset) {
     a->dmc.timer_reload = dmc_period_table()[0] - 1;
     // The DMC divider clocks on the CPU's get phase. Its even periods must
     // keep output clocks on odd completed CPU cycles across initialization.
-    a->dmc.timer = a->dmc.timer_reload - ((cpu_total_cycles & 1) ? 0 : 1);
+    a->dmc.timer = a->dmc.timer_reload - ((cpu_get_bus_cycle() & 1) ? 0 : 1);
     a->sample_rate = sample_rate;
     a->cycles_per_sample = nes_timing()->cpu_hz / sample_rate;
     if (five_step) a->regs[0x17] = 0x80;
@@ -328,12 +339,31 @@ void apu_reset(APU *a) {
 }
 
 void apu_audio_init(int sample_rate) {
-    apu.sample_rate = (double)sample_rate;
-    apu.cycles_per_sample = nes_timing()->cpu_hz / apu.sample_rate;
-    apu.sample_accum = 0.0;
-    atomic_store_explicit(&apu.ring_w, 0, memory_order_relaxed);
-    atomic_store_explicit(&apu.ring_r, 0, memory_order_relaxed);
-    apu_init_filter_coeffs(&apu);
+    apu_audio_init_state(&apu, sample_rate);
+}
+
+void apu_audio_init_state(APU *state, int sample_rate) {
+    if (!state || sample_rate <= 0) return;
+    state->sample_rate = (double)sample_rate;
+    state->cycles_per_sample = nes_timing()->cpu_hz / state->sample_rate;
+    state->sample_accum = 0.0;
+    state->last_read_sample = 0.0f;
+    atomic_store_explicit(&state->ring_w, 0, memory_order_relaxed);
+    atomic_store_explicit(&state->ring_r, 0, memory_order_relaxed);
+    apu_init_filter_coeffs(state);
+}
+
+bool apu_set_cpu_revision(ApuCpuRevision revision) {
+    if (revision != APU_CPU_REVISION_EARLY_2A03 &&
+        revision != APU_CPU_REVISION_LATE_2A03) {
+        return false;
+    }
+    cpu_revision = revision;
+    return true;
+}
+
+ApuCpuRevision apu_get_cpu_revision(void) {
+    return cpu_revision;
 }
 
 // APU register access.
@@ -343,11 +373,12 @@ static inline void apu_write_4017(APU *a, uint8_t v) {
     a->irq_inhibit = (v & 0x40) != 0;
     if (a->irq_inhibit) {
         a->frame_irq = false;
+        a->frame_irq_source = false;
         a->frame_irq_clear_delay = 0;
     }
 
     // The mode and optional quarter/half clock take effect with the delayed reset.
-    a->frame_reset_delay = (cpu_total_cycles & 1ULL) ? 4 : 3;
+    a->frame_reset_delay = (cpu_get_bus_cycle() & 1ULL) ? 4 : 3;
     a->frame_reset_pending = true;
 }
 static inline uint8_t apu_read_4015(APU *a) {
@@ -359,8 +390,9 @@ static inline uint8_t apu_read_4015(APU *a) {
     if (a->dmc.bytes_remaining > 0) s |= 0x10;
     if (a->frame_irq)        s |= 0x40;
     if (a->dmc.irq_flag)     s |= 0x80;
+    a->frame_irq_source = false;
     if (a->frame_irq && !a->frame_irq_clear_delay)
-        a->frame_irq_clear_delay = (cpu_total_cycles & 1u) ? 2 : 1;
+        a->frame_irq_clear_delay = (cpu_get_bus_cycle() & 1u) ? 2 : 1;
     return s;
 }
 
@@ -407,10 +439,19 @@ void apu_dmc_dma_complete(APU *a, uint8_t value) {
         }
     }
 
+    // Later CPU revisions can start a new transfer immediately when DMA
+    // completion coincides with the output unit reloading its bit counter.
+    if (cpu_revision == APU_CPU_REVISION_LATE_2A03 &&
+        d->bits_remaining == 8 && d->timer == d->timer_reload) {
+        d->shift_reg = d->sample_buffer;
+        d->silence = false;
+        d->sample_buffer_empty = true;
+        if (d->sample_len == 1) dmc_restart_sample(d);
+        dmc_request_buffer(a);
     // A one-byte non-looping sample fetched immediately before the output
     // shifter reloads can schedule a reload DMA that is stopped one CPU cycle
     // after it begins. This is the early-CPU one-cycle DMA behavior.
-    if (d->sample_len == 1 && !d->loop && d->bits_remaining == 1 && d->timer < 2) {
+    } else if (d->sample_len == 1 && !d->loop && d->bits_remaining == 1 && d->timer < 2) {
         d->shift_reg = d->sample_buffer;
         d->sample_buffer_empty = false;
         dmc_restart_sample(d);
@@ -546,10 +587,10 @@ void apu_write(uint16_t addr, uint8_t v){
         apu.dmc.irq_flag = false;
         if (!apu.dmc.enabled) {
             if (!apu.dmc.disable_delay)
-                apu.dmc.disable_delay = (cpu_total_cycles & 1) ? 3 : 2;
+                apu.dmc.disable_delay = (cpu_get_bus_cycle() & 1) ? 3 : 2;
         } else if (apu.dmc.bytes_remaining == 0) {
             dmc_restart_sample(&apu.dmc);
-            apu.dmc.start_delay = (cpu_total_cycles & 1) ? 3 : 2;
+            apu.dmc.start_delay = (cpu_get_bus_cycle() & 1) ? 3 : 2;
         }
     } else if (addr == 0x4017) {
         apu_write_4017(&apu, v);
@@ -667,8 +708,11 @@ void apu_step(APU *a, int cpu_cycles){
         if (!a->five_step && a->cycle_in_seq >= frame_steps[0][3]) {
             a->frame_irq = true;
             a->frame_irq_clear_delay = 0;
-            if (a->irq_inhibit && a->cycle_in_seq >= frame_steps[0][5])
+            if (!a->irq_inhibit) a->frame_irq_source = true;
+            if (a->irq_inhibit && a->cycle_in_seq >= frame_steps[0][5]) {
                 a->frame_irq = false;
+                a->frame_irq_source = false;
+            }
         }
         if (a->cycle_in_seq >= frame_steps[frame_mode][5])
             a->cycle_in_seq = 0;
@@ -733,10 +777,16 @@ void apu_step(APU *a, int cpu_cycles){
 }
 
 // SDL audio callback.
+void apu_audio_pull(APU *state, float *samples, int count) {
+    if (!state || !samples || count <= 0) return;
+    int got = rb_pull(state, samples, count);
+    if (got) state->last_read_sample = samples[got - 1];
+    for (int i = got; i < count; ++i) samples[i] = state->last_read_sample;
+}
+
 void apu_sdl_audio_callback(void *userdata, uint8_t *stream, int len){
     (void)userdata;
     float *out = (float*)stream;
     int frames = len / sizeof(float);
-    int got = rb_pull(&apu, out, frames);
-    for (int i=got; i<frames; ++i) out[i] = apu.last_output_sample;
+    apu_audio_pull(main_apu, out, frames);
 }

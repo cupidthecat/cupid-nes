@@ -5,12 +5,18 @@ LDLIBS ?= -lSDL2 -lm
 
 TARGET = cupid-nes
 TEST_TARGET = build/accuracy-tests
-CORE_SRC = src/system/timing.c src/cpu/cpu.c src/ppu/ppu.c src/rom/rom.c src/rom/mapper.c \
-           src/joypad/joypad.c src/apu/apu.c src/ui/palette_tool.c
+CORE_SRC = src/system/timing.c src/system/hardware.c src/system/vs_system.c src/cpu/cpu.c src/ppu/ppu.c src/rom/rom.c src/rom/mapper.c \
+           src/rom/fds.c \
+           src/rom/vrc7_audio.c src/rom/emu2413.c \
+           src/rom/eeprom.c src/rom/namco163.c src/rom/sunsoft5b.c \
+           src/joypad/joypad.c src/joypad/family_basic.c \
+           src/apu/apu.c src/ui/palette_tool.c
 TEST_SRC = src/tests/accuracy_test.c src/tests/cpu_accuracy.c \
            src/tests/cpu_trace.c src/tests/apu_accuracy.c \
            src/tests/ppu_accuracy.c src/tests/mapper_accuracy.c \
-           src/tests/rom_runner.c
+           src/tests/fds_accuracy.c \
+           src/tests/rom_runner.c src/tests/input_accuracy.c src/tests/bandai_accuracy.c \
+           src/tests/vs_accuracy.c
 CORE_OBJ = $(CORE_SRC:.c=.o)
 TEST_OBJ = $(TEST_SRC:.c=.o)
 OBJ = $(CORE_OBJ) $(TEST_OBJ) src/main.o
