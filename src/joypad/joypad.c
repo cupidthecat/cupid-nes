@@ -50,7 +50,7 @@ static const char *const expansion_device_names[] = {
     "none", "arkanoid", "family-trainer-a", "family-trainer-b", "zapper", "family-basic",
     "turbo-file", "battle-box", "subor-keyboard", "hori-track", "konami-hyper-shot",
     "bandai-hyper-shot", "party-tap", "pachinko", "exciting-boxing", "jissen-mahjong",
-    "barcode-battler"
+    "barcode-battler", "oeka-kids-tablet"
 };
 
 typedef struct {
@@ -253,6 +253,8 @@ uint8_t joypad_read_port(Joypad *jp, unsigned port) {
         value |= jissen_mahjong_read(port);
     else if (expansion_device == NES_EXPANSION_BARCODE_BATTLER)
         value |= barcode_battler_read(port, cpu_total_cycles, (uint32_t)nes_timing()->cpu_hz);
+    else if (expansion_device == NES_EXPANSION_OEKA_KIDS_TABLET)
+        value |= oeka_kids_tablet_read(port);
     // The second built-in controller's microphone reaches $4016 D2.
     if (port == 0 && nes_console_model() == NES_CONSOLE_HVC001 && microphone_active)
         value |= 0x04;
@@ -330,6 +332,8 @@ void joypad_write_ports(uint8_t value) {
         exciting_boxing_write(value);
     else if (expansion_device == NES_EXPANSION_JISSEN_MAHJONG)
         jissen_mahjong_write(value);
+    else if (expansion_device == NES_EXPANSION_OEKA_KIDS_TABLET)
+        oeka_kids_tablet_write(value);
 }
 
 NesInputAdapter joypad_adapter(void) {
@@ -390,7 +394,7 @@ NesExpansionDevice joypad_expansion_device(void) {
 }
 
 bool joypad_set_expansion_device(NesExpansionDevice device) {
-    if ((unsigned)device > NES_EXPANSION_BARCODE_BATTLER) return false;
+    if ((unsigned)device > NES_EXPANSION_OEKA_KIDS_TABLET) return false;
     expansion_device = device;
     paddles[2].strobe = paddles[2].shift = 0;
     family_trainer_rows = 0;
@@ -406,6 +410,7 @@ bool joypad_set_expansion_device(NesExpansionDevice device) {
     exciting_boxing_reset();
     jissen_mahjong_reset();
     barcode_battler_reset();
+    oeka_kids_tablet_reset();
     return true;
 }
 
@@ -514,6 +519,12 @@ bool joypad_set_jissen_key(JissenKey key, bool pressed) {
 bool joypad_scan_barcode_battler(const char *digits) {
     if (expansion_device != NES_EXPANSION_BARCODE_BATTLER) return false;
     return barcode_battler_scan(digits, cpu_total_cycles);
+}
+
+bool joypad_set_oeka_kids_tablet(int x, int y, bool touch, bool click) {
+    if (expansion_device != NES_EXPANSION_OEKA_KIDS_TABLET) return false;
+    oeka_kids_tablet_set_state(x, y, touch, click);
+    return true;
 }
 
 bool joypad_persistent_configure(const char *rom_path) {

@@ -79,4 +79,9 @@ void barcode_battler_reset(void);
 bool barcode_battler_scan(const char *digits, uint64_t cpu_cycles);
 uint8_t barcode_battler_read(unsigned port, uint64_t cpu_cycles, uint32_t cpu_hz);
 
+void oeka_kids_tablet_reset(void);
+void oeka_kids_tablet_set_state(int x, int y, bool touch, bool click);
+void oeka_kids_tablet_write(uint8_t value);
+uint8_t oeka_kids_tablet_read(unsigned port);
+
 #endif

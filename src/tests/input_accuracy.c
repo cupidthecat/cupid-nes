@@ -1921,6 +1921,105 @@ static int barcode_battler_lifetime(void) {
     return 0;
 }
 
+static uint32_t oeka_kids_expected_state(int x, int y, bool touch, bool click) {
+    if (x < -1) x = -1;
+    if (x > 255) x = 255;
+    if (y < -1) y = -1;
+    if (y > 239) y = 239;
+    x += 8;
+    y -= 14;
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+    uint8_t tablet_x = (uint8_t)((unsigned)x * 240u / 256u);
+    uint8_t tablet_y = (uint8_t)((unsigned)y * 256u / 240u);
+    return ((uint32_t)tablet_x << 10) | ((uint32_t)tablet_y << 2)
+        | (touch ? 2u : 0u) | (click ? 1u : 0u);
+}
+
+static int oeka_kids_read_report(uint32_t expected) {
+    write_mem(0x4016, 1);
+    write_mem(0x4016, 0);
+    write_mem(0x4016, 1);
+    input_program(0xAD, 0x4017);
+    cpu.pc = 0x8000;
+    CHECK(cpu_step(&cpu) == 4);
+    CHECK((cpu.a & 0x0Du) == 0x05u);
+
+    for (int bit = 17; bit >= 0; --bit) {
+        write_mem(0x4016, 3);
+        cpu.pc = 0x8000;
+        CHECK(cpu_step(&cpu) == 4);
+        uint8_t tablet = (expected & (1u << bit)) ? 0 : 0x08;
+        CHECK((cpu.a & 0x0Du) == (uint8_t)(1u | tablet));
+        write_mem(0x4016, 1);
+    }
+
+    write_mem(0x4016, 3);
+    cpu.pc = 0x8000;
+    CHECK(cpu_step(&cpu) == 4);
+    CHECK((cpu.a & 0x0Du) == 0x09u);
+    write_mem(0x4016, 0);
+    cpu.pc = 0x8000;
+    CHECK(cpu_step(&cpu) == 4);
+    CHECK((cpu.a & 0x0Cu) == 0);
+    return 0;
+}
+
+static int oeka_kids_tablet_reports(void) {
+    static const struct {
+        int x;
+        int y;
+        bool touch;
+        bool click;
+    } cases[] = {
+        {0, 0, false, false},
+        {255, 239, true, true},
+        {-1, -1, false, true},
+        {999, 999, true, false},
+        {-999, -999, false, false}
+    };
+
+    input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+    CHECK(joypad_set_expansion_device_name("oeka-kids-tablet"));
+    CHECK(joypad_expansion_device() == NES_EXPANSION_OEKA_KIDS_TABLET);
+    pad2.buttons = 1;
+    for (unsigned i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+        CHECK(joypad_set_oeka_kids_tablet(cases[i].x, cases[i].y,
+                                          cases[i].touch, cases[i].click));
+        CHECK(oeka_kids_read_report(oeka_kids_expected_state(cases[i].x, cases[i].y,
+                                                              cases[i].touch, cases[i].click)) == 0);
+    }
+
+    CHECK(joypad_set_oeka_kids_tablet(40, 80, true, false));
+    uint32_t old_report = oeka_kids_expected_state(40, 80, true, false);
+    write_mem(0x4016, 0);
+    write_mem(0x4016, 1);
+    CHECK(joypad_set_oeka_kids_tablet(200, 180, false, true));
+    for (int bit = 17; bit >= 0; --bit) {
+        write_mem(0x4016, 3);
+        uint8_t tablet = (old_report & (1u << bit)) ? 0 : 0x08;
+        CHECK((read_mem(0x4017) & 0x0Cu) == tablet);
+        write_mem(0x4016, 1);
+    }
+    write_mem(0x4016, 0);
+    CHECK(oeka_kids_read_report(oeka_kids_expected_state(200, 180, false, true)) == 0);
+
+    CHECK(joypad_set_adapter(NES_ADAPTER_FAMICOM_TWO));
+    CHECK(!joypad_configuration_valid());
+    CHECK(joypad_set_adapter(NES_ADAPTER_NONE));
+    CHECK(joypad_configuration_valid());
+    CHECK(!joypad_set_expansion_device_name("oeka-tablet"));
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_NONE));
+    CHECK(!joypad_set_oeka_kids_tablet(0, 48, true, false));
+    CHECK((read_mem(0x4017) & 0x0Cu) == 0);
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_OEKA_KIDS_TABLET));
+    write_mem(0x4016, 1);
+    CHECK((read_mem(0x4017) & 0x0Cu) == 0x04);
+    write_mem(0x4016, 3);
+    CHECK((read_mem(0x4017) & 0x0Cu) == 0x08);
+    return 0;
+}
+
 int test_input_accuracy(void) {
     static int (*const tests[])(void) = {
         console_open_bus, console_read_clocks, console_strobe_timing,
@@ -1938,7 +2037,7 @@ int test_input_accuracy(void) {
         subor_mouse_packets, hori_track_reports, konami_hyper_shot_signals,
         bandai_hyper_shot_signals, party_tap_reports, pachinko_reports,
         exciting_boxing_signals, jissen_mahjong_rows, barcode_battler_stream,
-        barcode_battler_lifetime
+        barcode_battler_lifetime, oeka_kids_tablet_reports
     };
     NesConsoleModel saved_model = nes_console_model();
     NesRegion saved_region = nes_timing()->region;

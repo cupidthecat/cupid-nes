@@ -143,6 +143,18 @@ typedef struct {
 
 static BarcodeBattler barcode_battler;
 
+typedef struct {
+    int x;
+    int y;
+    bool touch;
+    bool click;
+    bool strobe;
+    bool shift;
+    uint32_t state;
+} OekaKidsTablet;
+
+static OekaKidsTablet oeka_kids_tablet;
+
 enum { SUBOR_NONE = 0xFF };
 static const uint8_t subor_matrix[104] = {
     SUBOR_KEY_4, SUBOR_KEY_G, SUBOR_KEY_F, SUBOR_KEY_C,
@@ -841,4 +853,46 @@ uint8_t barcode_battler_read(unsigned port, uint64_t cpu_cycles, uint32_t cpu_hz
     uint64_t position = (cpu_cycles - barcode_battler.insert_cycle) / cycles_per_bit;
     if (position >= sizeof(barcode_battler.stream)) return 0;
     return (uint8_t)(barcode_battler.stream[position] << 2);
+}
+
+void oeka_kids_tablet_reset(void) {
+    memset(&oeka_kids_tablet, 0, sizeof(oeka_kids_tablet));
+}
+
+void oeka_kids_tablet_set_state(int x, int y, bool touch, bool click) {
+    if (x < -1) x = -1;
+    if (x > 255) x = 255;
+    if (y < -1) y = -1;
+    if (y > 239) y = 239;
+    oeka_kids_tablet.x = x;
+    oeka_kids_tablet.y = y;
+    oeka_kids_tablet.touch = touch;
+    oeka_kids_tablet.click = click;
+}
+
+void oeka_kids_tablet_write(uint8_t value) {
+    oeka_kids_tablet.strobe = (value & 1u) != 0;
+    bool shift = (value & 2u) != 0;
+    if (oeka_kids_tablet.strobe) {
+        if (!oeka_kids_tablet.shift && shift) oeka_kids_tablet.state <<= 1;
+        oeka_kids_tablet.shift = shift;
+        return;
+    }
+
+    int x = oeka_kids_tablet.x + 8;
+    int y = oeka_kids_tablet.y - 14;
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+    uint8_t tablet_x = (uint8_t)((unsigned)x * 240u / 256u);
+    uint8_t tablet_y = (uint8_t)((unsigned)y * 256u / 240u);
+    oeka_kids_tablet.state = ((uint32_t)tablet_x << 10)
+        | ((uint32_t)tablet_y << 2)
+        | (oeka_kids_tablet.touch ? 2u : 0u)
+        | (oeka_kids_tablet.click ? 1u : 0u);
+}
+
+uint8_t oeka_kids_tablet_read(unsigned port) {
+    if (port != 1 || !oeka_kids_tablet.strobe) return 0;
+    if (!oeka_kids_tablet.shift) return 0x04;
+    return (oeka_kids_tablet.state & 0x40000u) ? 0 : 0x08;
 }

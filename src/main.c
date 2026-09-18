@@ -443,7 +443,7 @@ int main(int argc, char *argv[]) {
             }
         } else if (strcmp(argv[i], "--expansion") == 0) {
             if (++i == argc || !joypad_set_expansion_device_name(argv[i])) {
-                fprintf(stderr, "Expansion device must be none, arkanoid, family-trainer-a, family-trainer-b, zapper, family-basic, turbo-file, battle-box, subor-keyboard, hori-track, konami-hyper-shot, bandai-hyper-shot, party-tap, pachinko, exciting-boxing, jissen-mahjong, or barcode-battler\n");
+                fprintf(stderr, "Expansion device must be none, arkanoid, family-trainer-a, family-trainer-b, zapper, family-basic, turbo-file, battle-box, subor-keyboard, hori-track, konami-hyper-shot, bandai-hyper-shot, party-tap, pachinko, exciting-boxing, jissen-mahjong, barcode-battler, or oeka-kids-tablet\n");
                 return 1;
             }
         } else if (strcmp(argv[i], "--zapper-radius") == 0) {
@@ -744,10 +744,13 @@ int main(int argc, char *argv[]) {
                 uint32_t buttons = SDL_GetMouseState(&mouse_x, &mouse_y);
                 SDL_GetWindowSize(window, &window_width, &window_height);
                 int position = window_width > 0 ? 0x54 + 160 * mouse_x / window_width : 0x54;
-                bool on_screen = mouse_x >= 0 && mouse_y >= 0 && mouse_x < window_width
-                    && mouse_y < window_height && !(buttons & SDL_BUTTON_RMASK);
-                int aim_x = on_screen ? 256 * mouse_x / window_width : -1;
-                int aim_y = on_screen ? 240 * mouse_y / window_height : -1;
+                bool pointer_on_screen = mouse_x >= 0 && mouse_y >= 0 && mouse_x < window_width
+                    && mouse_y < window_height;
+                bool zapper_on_screen = pointer_on_screen && !(buttons & SDL_BUTTON_RMASK);
+                int pointer_x = pointer_on_screen ? 256 * mouse_x / window_width : -1;
+                int pointer_y = pointer_on_screen ? 240 * mouse_y / window_height : -1;
+                int aim_x = zapper_on_screen ? pointer_x : -1;
+                int aim_y = zapper_on_screen ? pointer_y : -1;
                 bool trigger = (buttons & (SDL_BUTTON_LMASK | SDL_BUTTON_RMASK)) != 0;
                 for (unsigned slot = 0; slot < 3; ++slot) {
                     joypad_set_paddle(slot, position, (buttons & SDL_BUTTON_LMASK) != 0);
@@ -765,6 +768,10 @@ int main(int argc, char *argv[]) {
                 if (joypad_expansion_device() == NES_EXPANSION_PACHINKO)
                     joypad_set_pachinko_controls((buttons & SDL_BUTTON_LMASK) != 0,
                                                  (buttons & SDL_BUTTON_RMASK) != 0);
+                if (joypad_expansion_device() == NES_EXPANSION_OEKA_KIDS_TABLET)
+                    joypad_set_oeka_kids_tablet(pointer_x, pointer_y,
+                                                pointer_on_screen && pointer_y >= 48,
+                                                (buttons & SDL_BUTTON_LMASK) != 0);
             }
             if (e.type == SDL_QUIT) {
                 if (rom_is_fds() && !fds_flush()) {

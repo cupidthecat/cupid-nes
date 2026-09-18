@@ -179,6 +179,10 @@ Changing or ejecting a side does not flush the disk image. Follow the game's dis
 
 `--console famicom --expansion barcode-battler --barcode-battler DIGITS` connects the expansion reader and starts an 8- or 13-digit scan. The device transmits its 200-bit framed character stream on `$4017 D2` at 1200 bits per second. F8 restarts the configured scan. Barcode Battler scan state is separate from Datach cartridge input.
 
+## Oeka Kids tablet
+
+`--console famicom --expansion oeka-kids-tablet` connects the drawing tablet. Move the mouse over the game window to position the pen and hold the left mouse button for the tablet click input. The lower tablet area, starting at NES Y coordinate 48, reports pen contact. Games latch the position and buttons through `$4016`, then clock the report from `$4017 D2-D3`.
+
 ## Palette controls
 
 F7 opens or closes the runtime palette overlay. Click one of the 64 swatches to open its color picker, then use the saturation/value area or hue strip to edit that color. F6 restores Cupid's built-in 64-color palette.
