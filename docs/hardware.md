@@ -46,6 +46,7 @@ PRG is the cartridge memory read by the CPU; CHR holds graphics patterns read by
 | 12, 14, 37, 44, 45, 47, 49, 52, 114, 115, 121, 123 | MMC3 variants | Board-specific outer banking, protection registers, alternate register wiring, RAM permissions, mirroring, reset state, and MMC3 IRQ behavior |
 | 126, 134, 165, 182, 187, 196, 197, 198, 199, 205, 208, 215 | MMC3 variants | Outer-bank and register permutations, protection reads, MMC2-style CHR latches, mixed CHR RAM/ROM, alternate mirroring, and board-specific PRG modes |
 | 217, 219, 224, 238, 245, 249, 250, 254, 258, 259, 260, 262 | MMC3 variants | Multicart outer banking, address/data register permutations, protection and open-bus reads, CHR-RAM modes, DIP switches, reset latches, and alternate PRG/CHR wiring |
+| 263, 268, 287, 292, 313, 325, 333, 348, 366 | MMC3 variants | Data and address register permutations, multicart outer banking, CPU RAM driven CHR latches, reset-selected outer banks, cartridge RAM controls, DIP switches, and MMC3 IRQ wiring |
 | 5 | MMC5, partial | PRG/CHR banking, banked RAM, ExRAM/fill nametables, extended attributes, vertical split, multiplication, PPU-read-driven scanline IRQs, and pulse/PCM audio |
 | 7 | AxROM | 32 KiB PRG banking and single-screen mirroring |
 | 9 | MMC2 | PRG banking and pattern-fetch CHR latches |

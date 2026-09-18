@@ -56,6 +56,7 @@ int test_board_drip_accuracy(void);
 int test_board_rainbow_accuracy(void);
 int test_board_mmc3_96_accuracy(void);
 int test_board_mmc3_97_accuracy(void);
+int test_board_mmc3_98_accuracy(void);
 int test_bandai_accuracy(void);
 int test_fds_accuracy(void);
 int test_studybox_accuracy(void);
@@ -137,6 +138,7 @@ int main(int argc, char **argv) {
     failures += test_board_rainbow_accuracy();
     failures += test_board_mmc3_96_accuracy();
     failures += test_board_mmc3_97_accuracy();
+    failures += test_board_mmc3_98_accuracy();
     failures += test_bandai_accuracy();
     failures += test_fds_accuracy();
     failures += test_studybox_accuracy();

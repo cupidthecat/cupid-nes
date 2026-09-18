@@ -19,6 +19,7 @@
 #include "mmc3_95.hpp"
 #include "mmc3_96.hpp"
 #include "mmc3_97.hpp"
+#include "mmc3_98.hpp"
 #include "ntdec.hpp"
 #include "racermate.hpp"
 #include "taito.hpp"
@@ -84,6 +85,15 @@ std::unique_ptr<Board> CreateBoard(unsigned mapper) {
         case 259: return std::make_unique<Mmc3_BmcF15>();
         case 260: return std::make_unique<BmcHpxx>();
         case 262: return std::make_unique<Mmc3_StreetHeroes>();
+        case 263: return std::make_unique<Mmc3_263>();
+        case 268: return std::make_unique<Mmc3_268>();
+        case 287: return std::make_unique<Mmc3_287>();
+        case 292: return std::make_unique<Mmc3_292>();
+        case 313: return std::make_unique<Mmc3_313>();
+        case 325: return std::make_unique<Mmc3_325>();
+        case 333: return std::make_unique<Mmc3_333>();
+        case 348: return std::make_unique<Mmc3_348>();
+        case 366: return std::make_unique<Mmc3_366>();
         case 152: return std::make_unique<Bandai74161>(true);
         case 188: return std::make_unique<BandaiKaraoke>();
         case 218: return std::make_unique<MagicFloor>();
@@ -144,6 +154,8 @@ bool board_handles_mapper(unsigned mapper) {
         case 197: case 198: case 199: case 205: case 208: case 215: return true;
         case 217: case 219: case 224: case 238: case 245: case 249:
         case 250: case 254: case 258: case 259: case 260: case 262: return true;
+        case 263: case 268: case 287: case 292: case 313: case 325:
+        case 333: case 348: case 366: return true;
         default: return false;
     }
 }

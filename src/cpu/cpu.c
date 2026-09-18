@@ -142,6 +142,10 @@ uint64_t cpu_get_bus_cycle(void) {
     return active_cpu_cycles;
 }
 
+uint8_t cpu_peek_internal_ram(uint16_t addr) {
+    return cpu_ram[addr & 0x07FF];
+}
+
 void cpu_select_machine(CpuMachineContext *context) {
     running_cpu = NULL;
     in_bus_cycle = false;

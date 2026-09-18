@@ -109,6 +109,7 @@ void cpu_reset(CPU* cpu);
 void cpu_select_machine(CpuMachineContext *context);
 uint8_t read_mem(uint16_t addr);
 void write_mem(uint16_t addr, uint8_t value);
+uint8_t cpu_peek_internal_ram(uint16_t addr);
 // Timestamp of the current CPU bus cycle.
 uint64_t cpu_get_bus_cycle(void);
 void execute(CPU* cpu, uint8_t opcode);
