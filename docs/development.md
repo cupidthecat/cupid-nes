@@ -1,6 +1,6 @@
 # Development and testing
 
-[Documentation index](README.md)
+[Documentation index](README.md) | [Hardware reference](hardware.md)
 
 The [setup guide](getting-started.md) covers compiler and SDL2 installation. This guide uses the production hardware runner and the pinned external test collections. Run commands from the repository root and record the commit being tested:
 
@@ -77,6 +77,7 @@ On Linux:
 
 ```sh
 python3 scripts/run-diagnostics.py build/accuracy-tests build/diagnostic-roms
+echo '7e25ac08d2e7ed14c9b1f16bd853148fef09a824452164f8e0d69fd2bd96176c  build/accuracycoin/AccuracyCoin.nes' | sha256sum --check --strict
 build/accuracy-tests --accuracycoin 12000 build/accuracycoin/AccuracyCoin.nes build/accuracycoin.ppm
 ```
 
@@ -85,6 +86,10 @@ On Windows:
 ```powershell
 python scripts/run-diagnostics.py build/windows/accuracy-tests.exe build/diagnostic-roms
 if ($LASTEXITCODE -ne 0) { throw 'Diagnostic collection failed' }
+$coinHash = (Get-FileHash -Algorithm SHA256 -LiteralPath '.\build\accuracycoin\AccuracyCoin.nes').Hash.ToLowerInvariant()
+if ($coinHash -ne '7e25ac08d2e7ed14c9b1f16bd853148fef09a824452164f8e0d69fd2bd96176c') {
+    throw 'AccuracyCoin ROM hash does not match the pinned image'
+}
 .\build\windows\accuracy-tests.exe --accuracycoin 12000 .\build\accuracycoin\AccuracyCoin.nes .\build\accuracycoin.ppm
 if ($LASTEXITCODE -ne 0) { throw 'AccuracyCoin failed' }
 ```
@@ -118,7 +123,7 @@ build/accuracy-tests --rom 7200 build/diagnostic-roms/ppu_read_buffer/test_ppu_r
 build/accuracy-tests --render 240 build/diagnostic-roms/oam_read/oam_read.nes build/oam.ppm
 ```
 
-The read-buffer test needs more than 1,200 frames; the diagnostic collection grants 7,200. Older ROMs can assume result RAM is already enabled or report only on screen. Preserve the explicit setup conditions when reporting results. The [accuracy notes](accuracy.md#interpreting-other-roms) explain these conventions.
+The read-buffer test needs more than 1,200 frames; the diagnostic collection grants 7,200. Older ROMs can assume result RAM is already enabled or report only on screen. Preserve the explicit setup conditions when reporting results. The [accuracy notes](accuracy.md#interpreting-other-roms) explain these conventions; [troubleshooting](troubleshooting.md#diagnostic-test-failures) covers missing data, timeouts, and CI failures.
 
 ## Sanitizers
 
@@ -148,6 +153,19 @@ The Windows script copies the Clang AddressSanitizer runtime beside the executab
 Identify the failing instruction, register access, board variant, or device interaction. Start with the relevant source and its callers in [the architecture guide](architecture.md), then reduce the failure to a fixture that can distinguish the correct behavior from the current one.
 
 For mapper and loader work, exercise the normal image loader where metadata matters. Test successful activation, rejected-load preservation, bank boundaries, open bus, and persistence as applicable. For timing changes, use real CPU reads/writes and check the surrounding bus cycles; directly assigning a register may bypass the behavior being tested.
+
+The focused suites live in `src/tests`:
+
+| File | Main coverage |
+| --- | --- |
+| [cpu_accuracy.c](../src/tests/cpu_accuracy.c) | Instruction execution, bus ordering, interrupts, reset, and DMA |
+| [ppu_accuracy.c](../src/tests/ppu_accuracy.c) | Registers, rendering timing, OAM, open bus, and fetch behavior |
+| [apu_accuracy.c](../src/tests/apu_accuracy.c) | Audio channels, frame timing, DMC, registers, and reset |
+| [mapper_accuracy.c](../src/tests/mapper_accuracy.c) | Loading, banks, IRQs, RAM, nametables, persistence, and expansion sound |
+| [bandai_accuracy.c](../src/tests/bandai_accuracy.c) | Bandai/Datach cartridges and serial devices |
+| [fds_accuracy.c](../src/tests/fds_accuracy.c) | Disk memory, controller, media, persistence, and audio |
+| [input_accuracy.c](../src/tests/input_accuracy.c) | Controller wiring, adapters, and peripherals |
+| [vs_accuracy.c](../src/tests/vs_accuracy.c) | VS metadata, machine contexts, input, DMA, shared RAM, video, and audio |
 
 Run the focused hardware regression first. After each implemented accuracy issue, run the complete pinned AccuracyCoin suite and retain the exact commit and result. Changes to the shared core also need the canonical trace, diagnostic collection, and sanitizer checks. The complete final CI result belongs to the final pushed revision.
 

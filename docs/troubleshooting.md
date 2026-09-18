@@ -2,71 +2,120 @@
 
 [Documentation index](README.md)
 
-Run Cupid from a terminal so its startup and error messages remain visible. Keep the exact command, commit, image SHA-256, operating system, and compiler version when reporting a failure. The [contribution guide](../CONTRIBUTING.md#reporting-a-bug) lists the useful report fields.
+Cupid prints loader, SDL, persistence, and option errors to the terminal that launched it. Keep that output when diagnosing a failure because the final `Failed to load ROM` line is often preceded by the more specific cause.
 
-## Build errors
+## Linux build errors
 
-| Message or symptom | Check |
+If compilation fails because `SDL2/SDL.h` or the SDL2 library cannot be found, install the development package and rebuild:
+
+```sh
+sudo apt update
+sudo apt install build-essential libsdl2-dev
+make clean
+make
+```
+
+The Makefile requires a C11 compiler and links `-lSDL2 -lm`. If you switch from GCC to Clang, clean the existing object files first and then run `make CC=clang`.
+
+## Windows build errors
+
+`scripts/test-windows.ps1` expects an x64 Clang environment with the Windows SDK/MSVC libraries available. `-SdlRoot` must point to the extracted SDL2 VC development package, not a directory containing only the runtime DLL.
+
+The script checks for these files before compiling:
+
+```text
+include/SDL.h
+lib/x64/SDL2.lib
+lib/x64/SDL2.dll
+```
+
+An error such as `Missing SDL2 VC SDK file` means the supplied root does not match that layout. A compiler or linker error about Windows runtime libraries usually means the Windows SDK/MSVC build environment is not available to the Clang invocation. See [getting started](getting-started.md) for the expected output directories.
+
+## `Unexpected argument`
+
+The application accepts one image path and startup options. Values must be separate arguments:
+
+```sh
+./cupid-nes --port2 zapper "game.nes"
+```
+
+`--port2=zapper`, an unknown switch, or a second image path reaches the `Unexpected argument` error. The full application option list is in [configuration](configuration.md). `cupid-nes` has no `--help` switch; launching it without an image prints the usage line and returns status 1.
+
+## Cartridge will not load
+
+Common loader messages describe different problems:
+
+| Message | What to check |
 | --- | --- |
-| `SDL2/SDL.h` cannot be found on Linux | Install the SDL2 development package, such as `libsdl2-dev` on Ubuntu |
-| `Missing SDL2 VC SDK file` on Windows | Pass the extracted VC development directory containing `include/SDL.h` and `lib/x64/SDL2.lib` and `SDL2.dll` |
-| `clang` cannot be found | Make the Clang executable available in the build shell, or pass its path with `-Compiler` |
-| Windows linker or SDK libraries are missing | Use the environment supplied by the installed Windows SDK/MSVC build tools |
-| `SDL2.dll` is missing when launching | Keep the copied DLL beside the executable in the script's output directory |
-| A build behaves differently after changing compiler flags | Rebuild Linux objects with `make clean` before changing compilers or `CFLAGS` |
-| Sanitized Windows executable lacks its runtime | Use `-Sanitize` with an installed Clang runtime and keep the copied runtime DLL beside the binary |
+| `open: ...` or `Failed to read ROM file` | Path, file permissions, and whether the image is still inside an archive |
+| `Truncated iNES header` | File is shorter than a complete iNES header |
+| `Invalid iNES signature` | File is not an unpacked iNES/NES 2.0 image |
+| `Truncated iNES trainer` | Header declares a trainer that is missing from the file |
+| `Truncated PRG-ROM or CHR-ROM payload` | Image is incomplete or its header sizes do not match the payload |
+| `Unsupported mapper` or `Unsupported mapper/submapper` | That board selector is not implemented |
+| `Unsupported ROM size`, `Unsupported ROM/RAM size`, or `Unsupported cartridge layout` | Mapper exists, but this image declares a layout the implementation rejects |
+| `Unsupported VS System configuration: ...` | VS metadata requests unsupported mapper, timing, PPU, controller wiring, protection type, or layout |
 
-The Windows build script uses the x64 VC SDL library, not a MinGW import library. The [setup guide](getting-started.md) gives the expected directory layout. If a strict compiler warning fails the build, include that warning in the report instead of removing `-Werror` from the acceptance checks.
+See [hardware](hardware.md) for the supported board families and [accuracy](accuracy.md) for current implementation limits. A mapper family appearing in the project does not imply every submapper and ROM/RAM size is accepted.
 
-## Image loading
+## FDS image or BIOS will not load
 
-| Error | Meaning and next check |
-| --- | --- |
-| `open` or `Failed to read ROM file` | Check the path, file access, and current directory; quote paths with spaces |
-| `Invalid iNES signature` | The file is not recognized as an unpacked iNES/NES 2.0 image; check whether it is an archive or a disk image |
-| `Truncated iNES header`, trainer, or payload | The header and actual file length do not agree |
-| `Unsupported mapper/submapper` | Compare both numbers with the supported board variants |
-| `Unsupported ROM/RAM size` or `Unsupported RAM layout` | The selected board cannot represent the declared geometry |
-| `Nonvolatile RAM declared without the battery flag` | The image metadata is inconsistent |
-| `Unsupported VS System configuration` | Check the console, PPU, wiring, timing, and mapper fields in the image header |
-| `Invalid FDS disk image or BIOS` | Check BIOS length, image layout, side size, and declared side count |
+`--fds-bios` switches the positional image to the disk-system loader. `Failed to read FDS disk or BIOS file` means one of the two paths could not be read.
 
-Do not repeatedly edit header bits until a ROM loads. Capture the original header and compare it with the board's known metadata. The [hardware guide](hardware.md) explains why a listed mapper can still reject a particular layout.
+`Invalid FDS disk image or BIOS` means the files were readable but failed format validation. The BIOS must be exactly 8 KiB. Disk images must contain one or more complete 65,500-byte FDS sides or 65,536-byte QD sides, optionally preceded by a valid 16-byte FDS header whose side count matches the file size.
 
-The positional image path selects one game at startup. Dropping a ROM onto the window invokes the palette loader and can produce a palette error. Relaunch with the image path. `--fds-bios` selects disk loading; simply naming a disk file on the ordinary cartridge command does not do so.
+`FDS side is outside the loaded disk image` means `--fds-side N` is larger than the image's side count. Side numbers on the command line start at 1.
 
-## Input does not respond
+## FDS save error keeps the window open
 
-The keyboard controls player 1. Other players need connected SDL game controllers and an appropriate multiplayer or dual-VS configuration. Controller axes are not mapped; use the D-pad. Connect controllers in the order needed for the available slots, and check whether SDL recognizes each device as a game controller.
+When a writable disk has changed, closing the window first tries to replace the launched image. If the replacement fails, Cupid displays an FDS save error and keeps the emulator open so the dirty media remains in memory.
 
-A Four Score requires ordinary pads on both ports. A Famicom adapter and another expansion device cannot occupy the same connector. Use the [configuration table](configuration.md) to check the combination.
+Check that the disk directory is writable and has free space. If you enabled write protection after the game had already modified the disk, press F10 to disable it before retrying the close. Also check for a stale sibling file ending in `.cupid-fds.tmp`; a prior interrupted process can leave one behind and Cupid will not overwrite an existing temporary file.
 
-When Family BASIC is selected, typing in the game window goes to the emulated keyboard, including R and F6/F7. With a floor mat selected, R becomes a pad position. These keys will not perform the ordinary shortcuts in those configurations.
+Do not force-close the emulator while its in-memory disk changes are the only copy you have. More detail is in [saves and media](saves.md).
 
-For paddles, use horizontal mouse position and the left button. For a light gun, aim over the game image and use left click; right click supplies an off-screen trigger. VS Zapper images remain unsupported. See [controls and peripherals](controls.md) for complete mappings.
+## Tape playback or recording fails
 
-## Sound or display problems
+`--tape-play` and `--tape-record` require `--expansion family-basic` and cannot be used together. `Could not load tape` means the playback file could not be read into memory.
 
-`Warning: audio disabled` means SDL could not open the requested audio device. The application continues without sound. Keep SDL's accompanying error text and check the host device before investigating emulated channel state.
+When F11 cannot save a recording, Cupid prints `Could not save tape; the captured signal remains in memory`. Fix the destination path or stale `.cupid-tape.tmp` problem and press F11 again. If the capture buffer itself runs out of memory, recording stops and shutdown reports that the tape capture buffer could not grow.
 
-A window or renderer creation error is reported separately. The frontend requests an accelerated SDL renderer, so a headless session is not equivalent to running the desktop application. Use `accuracy-tests` for hardware checks that do not require an interactive window.
+The tape file is raw packed signal data rather than WAV audio. See [saves and media](saves.md) for its exact layout.
 
-To distinguish a palette change from a rendering defect, restore the default palette with F6 when ordinary shortcuts are active. Palette files and pasted text have their own size and parsing requirements. VS games use their hardware-selected palettes.
+## Audio is disabled
 
-For a visual regression, record when the first wrong frame appears and include a screenshot or diagnostic PPM where available. A blank frame by itself does not identify whether the fault is CPU execution, mapper banking, PPU timing, or a display problem.
+If SDL cannot open the requested audio device, Cupid prints `Warning: audio disabled (...)` and continues with video and input. Check the host audio device and SDL environment first. The emulator requests 44.1 kHz, mono, floating-point audio with a 1024-sample buffer and prints the format SDL actually opened when audio succeeds.
 
-## Saves and disks
+## SDL window or renderer errors
 
-Cartridge save files are derived from the image basename and live beside it. Check the directory's write access and whether the image has been renamed. Some boards append extra device memory to a `.sav`, and several use a different extension.
+`SDL_Init Error`, `SDL_CreateWindow Error`, `SDL_CreateRenderer Error`, and `SDL_CreateTexture Error` come from SDL setup before emulation starts. On Linux, confirm a working graphical session and SDL2 installation. On Windows, make sure the `SDL2.dll` copied by the build script remains beside `cupid-nes.exe` and that the executable is running in a desktop session with a usable graphics driver.
 
-FDS writes replace the loaded image. A failed disk save keeps the application open so the dirty media can be retried. Check write protection, directory access, and an existing `.cupid-fds.tmp` file. Preserve a leftover temporary file and move it aside only after checking that no second instance is using that media.
+## Controller is ignored
 
-Tape recording saves can be retried with F11 while the capture remains in memory. A failed tape save at shutdown does not keep the process open. Save with F11 before closing. The [save guide](saves.md) distinguishes the guarantees and limits of each persistence path.
+The frontend opens devices SDL recognizes as GameControllers. Raw joysticks without an SDL GameController mapping are skipped. Supported host inputs are A, B, Back, Start, and the D-pad; analog-stick movement is not mapped.
 
-## A test does not report success
+Controllers fill player slots in discovery order, and a hot-plugged controller takes the first free slot. Player 3 and player 4 therefore require the third and fourth recognized controllers when a Four Score or dual VS setup needs them. [Controls](controls.md) lists the full routing.
 
-The ordinary diagnostic runner expects a known result protocol. Some older tests report only on screen or assume writable cartridge RAM without enabling it. Use the documented mode for that collection; an absent signature is not a pass.
+## Keyboard shortcut does something else
 
-Verify the test ROM revision and AccuracyCoin hash before comparing results. A screenshot of the result screen alone does not replace the runner's checks of all 144 descriptors and the final tally. A timeout or skipped result still needs investigation.
+Special peripherals get their keyboard input before the normal application shortcuts. With Family BASIC selected, R, F6, F7, function keys, letters, and punctuation belong to the BASIC keyboard. With a mat selected, `1 2 3 4`, `Q W E R`, and `A S D F` are mat positions; R therefore does not reset while that mat key is being handled.
 
-When CI fails, first identify the failing job, commit, command, and assertion. A Linux sanitizer failure can reveal a problem that a normal Windows build does not exercise. Reproduce the same compiler flags and data pins from [development and testing](development.md), and include the failure log rather than rerunning until one attempt happens to pass.
+## Palette file or paste is rejected
+
+A dropped palette file must be exactly 192 bytes for 64 RGB triplets or 1536 bytes for eight emphasis tables. Ctrl+V accepts those same byte counts as raw hexadecimal text, or exactly 64 six-digit RGB tokens.
+
+F6 restores the built-in palette if an experiment looks wrong. VS System rendering uses the emulated VS PPU palette mapping and is not replaced by the normal custom palette table.
+
+## VS DIP or barcode option is rejected
+
+`--vs-dip requires a VS System image` means the loaded cartridge metadata did not configure supported VS hardware. The option changes DIP bits only.
+
+`Barcode input requires a Datach cartridge and 8 or 13 decimal digits` means either the mapper is not the supported Datach configuration or the barcode has the wrong length/content. [Configuration](configuration.md) has examples for both options.
+
+## Diagnostic test failures
+
+The diagnostic script requires the pinned checkout and expected number of ROMs in each group. A missing file or wrong group count fails the run. Verify the checkout revision and AccuracyCoin hash using [development](development.md) before interpreting a result.
+
+The ordinary runner expects a known result protocol. Some older ROMs report only on screen, assume writable cartridge RAM without enabling it, or have incorrect timing metadata. Use the documented mode for that collection. A missing signature, timeout, or skipped result is not a pass; the [accuracy notes](accuracy.md#interpreting-other-roms) describe the supported conventions.
+
+For a CI failure, record the job, commit, command, and assertion. Reproduce its compiler flags and data pins. A Linux sanitizer failure can expose a defect that a normal Windows build does not exercise.

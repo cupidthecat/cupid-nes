@@ -1,6 +1,6 @@
 # Architecture
 
-[Documentation index](README.md)
+[Documentation index](README.md) | [Hardware reference](hardware.md)
 
 Cupid is a C11 emulator with an SDL frontend. The application and hardware test executable link the same device implementations. The production core has global cartridge and timing state; the explicit machine contexts currently support the two VS sides, not arbitrary concurrent emulator instances.
 
@@ -42,7 +42,7 @@ flowchart TD
 
 The main loop handles host events, starts a frame with `vs_start_frame()`, and calls `vs_cpu_step()` until the main PPU completes that frame. It then presents `vs_video_framebuffer()` and paces the next frame using elapsed emulated CPU time.
 
-For an ordinary machine, the VS wrappers delegate to the main CPU and framebuffer. `cpu_step()` executes an instruction and advances the other devices during its bus operations. Its return value includes elapsed CPU time and DMA stalls. A caller must not use that count to advance the PPU or APU again.
+For an ordinary machine, the VS wrappers delegate to the main CPU and framebuffer. `cpu_step()` executes an instruction and advances the other devices during its bus operations. Its return value includes elapsed CPU time and DMA stalls. A caller must not use that count to advance the PPU, APU, mapper clocks, or DMA again.
 
 CPU reads and writes occupy different master-clock phases. The scheduler carries the fractional PPU phase between accesses, which matters for PAL's 3.2:1 ratio. Interrupt lines are sampled at the CPU polling boundaries. OAM and DMC DMA share the bus scheduler rather than bypassing instruction timing.
 
@@ -90,7 +90,7 @@ Video composition copies the two completed 256-by-240 images into a 512-by-240 i
 
 ## Audio threading
 
-The emulation thread generates samples into each APU's ring. The SDL callback consumes them using atomic read/write indices. In dual mode, the callback averages samples from stable main and secondary APU storage; it never selects a CPU machine context.
+The emulation thread generates samples into each APU's ring. Mapper expansion sound enters the APU sample path through `cart_expansion_audio()` before post-filtering. The SDL callback consumes samples using atomic read/write indices. In dual mode, the callback averages samples from stable main and secondary APU storage; it never selects a CPU machine context.
 
 Both APUs are initialized to the opened audio device's sample rate. Underruns use the last sample consumed by that callback, held in consumer-owned state. This avoids reading the producer's changing filter output as a fallback.
 

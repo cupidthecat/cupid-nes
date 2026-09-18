@@ -31,7 +31,7 @@ Choose a test that would fail for the original defect and exercise the real impl
 
 After each implemented accuracy issue, require the pinned AccuracyCoin suite to pass **144/144 with zero skipped or unfinished tests**. Record the exact tested commit and command. Later integration changes must retain that result.
 
-Before an accuracy patch is ready for review, the final revision needs the production hardware suite, canonical 8,991-state trace, all 91 pinned diagnostic ROMs, full AccuracyCoin, and the GCC and Clang sanitizer CI checks. Preserve ROM revisions, hashes, pass thresholds, result protocols, and explicit setup for legacy diagnostics.
+Before an accuracy patch is ready for review, the final revision needs the production hardware suite, canonical 8,991-state trace, all 91 pinned diagnostic ROMs, full AccuracyCoin, and the strict GCC and Clang-with-sanitizers CI jobs. Preserve ROM revisions, hashes, pass thresholds, result protocols, and explicit setup for legacy diagnostics.
 
 Report a failed or unfinished check accurately. Do not reduce coverage to make CI pass. The [test guide](docs/development.md) contains commands and the [accuracy notes](docs/accuracy.md) explain what each result establishes.
 
@@ -51,4 +51,4 @@ Use the pull-request template to separate completed checks from checks that were
 
 Related changes already under review should be added to their existing pull request when that is the agreed scope. New work should have a reviewable scope. Passing CI supplies test evidence; merging remains a separate maintainer decision.
 
-The project license is [GPL-3.0-or-later](LICENSE). Retain component notices in existing source files and identify any new dependency or imported code in the review.
+The project license is [GPL-3.0-or-later](LICENSE). Retain component notices in existing source files, including the [emu2413 MIT license](src/rom/emu2413.LICENSE), and identify any new dependency or imported code in the review. The [credits page](docs/credits.md) links component and diagnostic sources.

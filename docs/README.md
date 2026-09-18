@@ -22,7 +22,12 @@ Cupid has an SDL application for running games and a separate executable for tes
 | [Accuracy notes](accuracy.md) | Detailed CPU, PPU, APU, DMA, and cartridge behavior, test conventions, and limits |
 | [Implementation checkpoints](accuracy-checkpoints.md) | Historical per-issue commits with hardware and full AccuracyCoin results |
 | [Contributing](../CONTRIBUTING.md) | Patch scope, review expectations, test evidence, and documentation changes |
+| [Credits and references](credits.md) | Component attribution, licenses, external tests, and hardware references |
 
 Command examples assume the repository root as the working directory unless stated otherwise. Game paths are examples; supply your own files. The docs describe the code in the checkout containing them. When testing a pull request, use its head branch and include its commit in any report.
 
-The [main README](../README.md) contains the mapper table and a hardware overview. Public C interfaces are in the headers beside their implementations; start with [CPU](../src/cpu/cpu.h), [PPU](../src/ppu/ppu.h), [APU](../src/apu/apu.h), and [cartridge](../src/rom/mapper.h).
+The [main README](../README.md) gives an overview; the [hardware guide](hardware.md#cartridge-mappers) contains the mapper table. [Support](../SUPPORT.md) explains where to ask a question or report a problem. Public C interfaces are in the headers beside their implementations; start with [CPU](../src/cpu/cpu.h), [PPU](../src/ppu/ppu.h), [APU](../src/apu/apu.h), and [cartridge](../src/rom/mapper.h).
+
+## Keeping the guides current
+
+Check application options against [main.c](../src/main.c), build instructions against the [Makefile](../Makefile) and [Windows script](../scripts/test-windows.ps1), and test pins against [the workflow](../.github/workflows/accuracy.yml). Update the relevant guide in the same pull request as a behavior change. Historical results remain attached to the commits that were tested.

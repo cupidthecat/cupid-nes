@@ -58,7 +58,7 @@ The complete hardware suite and AccuracyCoin also passed under Windows AddressSa
 
 ## Reproducing a checkpoint
 
-Check out the listed commit in a separate worktree, prepare SDL2 and the pinned ROM as described in the README, then run:
+Check out the listed commit in a separate worktree, prepare SDL2 and the pinned ROM as described in [development and testing](development.md), then run:
 
 ```powershell
 .\scripts\test-windows.ps1 -SdlRoot C:\path\to\SDL2-2.32.10

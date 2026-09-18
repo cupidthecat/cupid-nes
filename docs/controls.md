@@ -2,9 +2,9 @@
 
 [Documentation index](README.md)
 
-The SDL application updates host input in [src/main.c](../src/main.c). [The controller layer](../src/joypad/joypad.c) turns those states into the serial data and signal bits that the emulated machine reads. Select devices with the [command-line options](configuration.md) before opening a game.
+Select emulated input hardware with the options in [configuration](configuration.md) before launching a game. The application has fixed host mappings; it does not expose an interactive controller-remapping screen.
 
-## Standard keyboard controls
+## Keyboard controls
 
 | Key | Action |
 | --- | --- |
@@ -14,58 +14,68 @@ The SDL application updates host input in [src/main.c](../src/main.c). [The cont
 | Enter | Player 1 Start |
 | Arrow keys | Player 1 D-pad |
 | R | Soft reset |
-| M, held | Microphone signal for the original Famicom wiring |
+| M, held | Original Famicom controller 2 microphone signal |
+| F6 | Restore the built-in palette |
 | F7 | Toggle the palette editor |
-| F6 | Restore the default palette |
 | Ctrl+V | Paste palette text |
 
-Close the window to exit normally. The microphone key supplies an input signal; the frontend does not capture a host microphone. Family BASIC and mat devices consume some keyboard events before the normal shortcuts, as described below.
+Close the window for normal shutdown. The M key supplies the emulated microphone line only; Cupid does not capture a host microphone.
 
-## Game controllers and player assignment
+Family BASIC and mat devices consume their matching keyboard events before the normal shortcuts. Their exceptions are listed below.
 
-SDL-recognized game controllers fill the first available player slots as they are opened. Controllers connected at startup are opened before the main loop; later connection and removal events update the slots. Removing a controller clears its held buttons.
+## Game controllers and player slots
+
+Cupid opens devices that SDL recognizes through its GameController interface. At startup, recognized controllers fill the first free host-player slots in discovery order. Hot-plugged controllers also take the first free slot. Removing a controller clears the buttons held in that slot.
+
+The first controller is player 1, the second is player 2, the third is player 3, and the fourth is player 4. The input layer has six player slots so the Famicom four-player adapter can expose players 5 and 6 as well.
 
 | Host controller button | Emulated button |
 | --- | --- |
-| A / B | A / B |
-| Back / Start | Select / Start |
+| A | A |
+| B | B |
+| Back | Select |
+| Start | Start |
 | D-pad | Up, Down, Left, Right |
 
-The frontend handles controller buttons and the D-pad. It has no analog-stick mapping or interactive remapping screen. The keyboard drives player 1; another player needs another connected controller. Player 1's keyboard and controller both update the same button state, so avoid using them simultaneously for the same button.
+Analog sticks are not mapped by the frontend. The keyboard writes player 1's button state, so player 1 can be driven by both the keyboard and the first controller. They update the same button state; avoid using both devices for the same button at once.
 
-The input layer has six host player slots. Their visibility to software depends on the selected hardware:
+Which player slots reach the game depends on the emulated wiring:
 
-| Configuration | Routing |
+| Configuration | Player routing |
 | --- | --- |
-| Normal ports | Players 1 and 2 |
-| `--adapter four-score` | Players 1 and 3 on the first serial report, players 2 and 4 on the second |
-| `--console famicom --adapter famicom-2` | Built-in players 1/2, with players 3/4 on expansion data lines |
-| `--console famicom --adapter famicom-4` | Built-in players 1/2, with players 3 through 6 in the expansion adapter's reports |
-| Dual VS | Players 1/2 on the main cabinet and players 3/4 on the secondary cabinet |
+| Normal controller ports | Players 1 and 2 |
+| `--adapter four-score` | Port 1 reports players 1 then 3; port 2 reports players 2 then 4 |
+| `--console famicom --adapter famicom-2` | Built-in players 1/2 plus players 3/4 on expansion data lines |
+| `--console famicom --adapter famicom-4` | Built-in players 1/2 plus players 3 through 6 in the expansion adapter reports |
+| Dual VS System | Players 1/2 on the main side and players 3/4 on the secondary side |
 
-The Famicom adapter slot count describes the wiring exposed by the emulator. Each game decides which reports to use.
+Each cartridge still decides which reports it reads. More detail about the emulated adapters is in [hardware](hardware.md).
 
 ## Arkanoid paddle
 
-Use `--port1 arkanoid`, `--port2 arkanoid`, or `--console famicom --expansion arkanoid`, according to the cartridge. Horizontal mouse position controls the paddle and the left mouse button is fire. The frontend supplies the same mouse state to all paddle slots.
+Use `--port1 arkanoid`, `--port2 arkanoid`, or `--console famicom --expansion arkanoid` according to the game. Horizontal mouse position controls the paddle. The left mouse button is the paddle fire button.
 
-The paddle reports a latched position through its device protocol. Moving a gamepad stick does not move it.
+The frontend sends the same mouse position and fire state to every configured paddle slot. A gamepad analog stick does not control the paddle.
 
-## Light gun
+## Zapper
 
-For an NES light gun, start with:
+For a standard NES light gun configuration:
 
 ```sh
 ./cupid-nes --port2 zapper "game.nes"
 ```
 
-Move the mouse over the game image to aim. Left click fires at that position. Right click fires with the aim treated as off screen, which provides the off-screen trigger behavior some games use to reload.
+Move the mouse over the game window to aim. Left click fires on screen. Right click holds the trigger while treating the aim position as off screen, which supports games that use off-screen shots for reload behavior.
 
-The sensor reads recently rendered bright pixels around the aim point. Its default radius is zero; `--zapper-radius N` changes that radius. The Famicom version uses `--console famicom --expansion zapper`. VS Zapper wiring is a different protocol and remains unsupported.
+The default light-sampling radius is zero. `--zapper-radius N` expands the sampled area up to 255 pixels. The Famicom expansion version uses `--console famicom --expansion zapper`.
+
+VS Zapper controller wiring is not implemented in the current VS input path. See [accuracy](accuracy.md) for current device limits.
 
 ## Power Pad and Family Trainer
 
-Choose `--port2 power-pad-a` or `power-pad-b` for the Power Pad, or `--console famicom --expansion family-trainer-a` or `family-trainer-b` for Family Trainer. Host keys represent three rows of four positions:
+Use `--port1 power-pad-a`, `--port2 power-pad-a`, or the corresponding `power-pad-b` setting for an NES mat. Family Trainer uses `--console famicom --expansion family-trainer-a` or `family-trainer-b`.
+
+The host keys form three rows of four positions:
 
 ```text
 1  2  3  4
@@ -73,13 +83,17 @@ Q  W  E  R
 A  S  D  F
 ```
 
-These are the left-to-right positions viewed from side A. Side B reverses each row in the device mapping. The same keys update every active mat slot. While a mat is selected, R is a pad position and does not trigger the normal reset shortcut.
+Those positions are left to right for side A. Side B reverses each row in the device mapping. The same key state is supplied to every active mat slot.
+
+Mat input is handled before the normal keyboard switch. For example, R is a mat position while a selected mat uses that key, so pressing R does not soft-reset the emulator in that configuration.
 
 ## Family BASIC keyboard and tape
 
-`--console famicom --expansion family-basic` connects the keyboard matrix. Ordinary letters, digits, arrows, shifts, punctuation, and F1 through F8 map to BASIC keys. The less direct mappings on a US keyboard are:
+`--console famicom --expansion family-basic` routes keyboard events to the Family BASIC matrix. Letters, digits, arrows, modifier keys, punctuation, and F1 through F8 map to BASIC keyboard positions.
 
-| Host key | BASIC key |
+Some US keyboard mappings are less obvious:
+
+| Host key | Family BASIC key |
 | --- | --- |
 | Grave | `@` |
 | Apostrophe | `:` |
@@ -92,33 +106,43 @@ These are the left-to-right positions viewed from side A. Side B reverses each r
 | F12 | STOP |
 | Backspace or Delete | DELETE |
 
-Keyboard events in the game window go to BASIC while this device is selected. R is a letter, F6/F7 are BASIC keys, and Escape is a BASIC key rather than an exit shortcut.
+While Family BASIC is selected, keyboard events are consumed by the keyboard/tape handler. R is the BASIC letter R, F6 and F7 are BASIC function keys, and the usual palette shortcuts do not run from those keys.
 
-For a configured tape path, F10 starts playback or recording and F11 stops the tape and saves a recording. Start the corresponding operation in BASIC first. [Saves and media](saves.md) explains the raw tape format and how to retry a recording save before closing.
+With `--tape-play FILE`, F10 starts playback. With `--tape-record FILE`, F10 starts a new recording. F11 stops the tape and writes a pending recording. [Saves and media](saves.md) describes the tape file format and retry behavior.
 
-## Disk-system keys
+## FDS keys
 
-| Key | Action when a disk image is loaded |
+| Key | Disk-system action |
 | --- | --- |
-| F8 | Eject the inserted side, or insert the selected side |
-| F9 | Select and insert the next side, wrapping at the last side |
+| F8 | Eject the inserted side, or reinsert the selected side |
+| F9 | Select and insert the next side, wrapping after the last side |
 | F10 | Toggle write protection |
 
-Use the game's disk prompts to decide when to change sides. Ejection itself does not flush the image or acknowledge a pending disk IRQ. Quit normally to save modified media. The [disk guide](saves.md) explains what happens when a save fails.
+Changing or ejecting a side does not flush the disk image. Follow the game's disk prompts and close the emulator normally when the game has written data. See [saves and media](saves.md) for disk persistence.
 
-## VS cabinet keys
+## VS cabinet controls
 
-| Key | Cabinet input |
+| Key | VS input |
 | --- | --- |
-| 5 / 6 | Main cabinet coin slots 1 / 2 |
-| 7 / 8 | Secondary cabinet coin slots 3 / 4, in dual mode |
-| F1 | Main service input |
-| F2 | Secondary service input, in dual mode |
+| 5 | Main cabinet coin slot 1 |
+| 6 | Main cabinet coin slot 2 |
+| 7 | Secondary cabinet coin slot 1 in dual mode |
+| 8 | Secondary cabinet coin slot 2 in dual mode |
+| F1 | Main cabinet service input |
+| F2 | Secondary cabinet service input in dual mode |
 
-`--vs-dip` sets the cabinet switches. Each VS image selects its controller wiring and protection behavior from its header. Player 3/4 controls come from the third and fourth connected game controllers, not extra keyboard bindings.
+`--vs-dip` sets the cabinet switches. Supported VS metadata can also select controller swaps or A/B wiring changes inside the emulated cabinet. In dual mode, player 3 and player 4 input comes from the third and fourth connected game controllers.
 
-## Datach and palette input
+## Datach barcode
 
-For a Datach cartridge, `--barcode DIGITS` performs the configured scan after loading. F8 scans it again. Accepted input is 8 or 13 decimal digits.
+`--barcode DIGITS` performs the configured Datach scan after a compatible cartridge loads. F8 starts that same scan again. The value must contain exactly 8 or 13 decimal digits.
 
-Palette files contain 192 bytes for 64 RGB colors or 1536 bytes for the emphasis palettes. Drop one onto the application, or use Ctrl+V with 64 `RRGGBB` tokens or raw palette hex bytes. The palette tool is a display facility; it is not a ROM loader or a way to change a cartridge's mapper. VS rendering uses its selected hardware palette.
+## Palette controls
+
+F7 opens or closes the runtime palette overlay. Click one of the 64 swatches to open its color picker, then use the saturation/value area or hue strip to edit that color. F6 restores Cupid's built-in 64-color palette.
+
+Ctrl+V accepts either 64 six-digit RGB tokens or raw hexadecimal bytes for a 192-byte or 1536-byte palette. Token prefixes may be `#`, `0x`, or `$`. Raw input ignores non-hex separators.
+
+Dropping a file on the application tries to load it as palette data. A 192-byte file contains 64 RGB triplets. A 1536-byte file contains eight 64-color emphasis tables. Other sizes display a palette-load error.
+
+Palette edits affect the normal PPU color lookup. VS rendering uses the palette mapping selected by its emulated VS PPU model.
