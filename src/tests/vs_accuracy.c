@@ -171,6 +171,84 @@ static int test_vs_ppu_models(void) {
     return 0;
 }
 
+static int test_vs_rgb_frame_timing(void) {
+    static const uint8_t loop[] = {0x4C, 0x00, 0x80};
+    static const uint8_t models[] = {0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+    const unsigned frame_clocks = 262u * 341u;
+    for (size_t model = 0; model < sizeof(models); ++model) {
+        CHECK(load_vs_program(VS_TYPE_DEFAULT, models[model], VS_INPUT_STANDARD,
+                              loop, sizeof(loop)) == 0);
+        for (unsigned parity = 0; parity < 2; ++parity) {
+            power_main();
+            ppu_reg_write(vs_ppu_is_2c05() ? 0x2000 : 0x2001, 0x18);
+            ppu_step_dots(2);
+            CHECK(ppu.rendering_enabled && ppu.fetches_enabled);
+            ppu.scanline = 0;
+            ppu.dot = 0;
+            ppu.odd_frame = parity != 0;
+            start_frame();
+            uint64_t before = ppu.total_cycles;
+            ppu_step_dots((int)frame_clocks - 2);
+            CHECK(!ppu.frame_complete && ppu.scanline == 261 && ppu.dot == 339);
+            uint16_t sprite_starts[8];
+            memcpy(sprite_starts, ppu.sprite_start_dot, sizeof(sprite_starts));
+            ppu_step_dots(1);
+            CHECK(!ppu.frame_complete && ppu.dot == 340);
+            CHECK(ppu.bus_ale_this_dot && !ppu.bus_read_this_dot);
+            CHECK(!ppu.skipped_frame_dot && ppu.sprite_skip_clocks == 0);
+            CHECK(memcmp(sprite_starts, ppu.sprite_start_dot, sizeof(sprite_starts)) == 0);
+            ppu_step_dots(1);
+            CHECK(ppu.frame_complete && ppu.scanline == 0 && ppu.dot == 0);
+            CHECK(ppu.total_cycles - before == frame_clocks);
+            CHECK(ppu.bus_read_this_dot && !ppu.skipped_frame_dot);
+            ppu_step_dots(1);
+            CHECK(ppu.bus_ale_this_dot && ppu.sprite_skip_clocks == 0);
+        }
+        CHECK(unload_rom());
+    }
+    return 0;
+}
+
+static int test_vs_dual_rendered_frame_timing(void) {
+    iNESHeader h = nes20_vs_header(99, 4, 4, VS_TYPE_DUAL, 0, VS_INPUT_STANDARD);
+    size_t image_size;
+    uint8_t *image = build_image(&h, 0x10000, 0x8000, &image_size);
+    CHECK(image != NULL);
+    uint8_t *prg = image + sizeof(h);
+    static const uint8_t render[] = {0xA9, 0x18, 0x8D, 0x01, 0x20, 0x4C, 0x05, 0x80};
+    for (size_t side = 0; side < 2; ++side) {
+        size_t base = side * 0x8000;
+        memcpy(prg + base, render, sizeof(render));
+        set_vector(prg, base + 0x7FFA, 0x8000);
+        set_vector(prg, base + 0x7FFC, 0x8000);
+        set_vector(prg, base + 0x7FFE, 0x8000);
+    }
+    CHECK(load_rom_memory(image, image_size) == 0);
+    free(image);
+    power_main();
+    vs_power_on_secondary();
+    vs_start_frame();
+    for (unsigned i = 0; i < 40000 && !ppu.frame_complete; ++i) vs_cpu_step();
+    CHECK(ppu.frame_complete && ppu.rendering_enabled);
+    uint64_t before[2] = {vs_side_cpu_cycles(0), vs_side_cpu_cycles(1)};
+    uint64_t frames[2] = {vs_side_frame_count(0), vs_side_frame_count(1)};
+    for (unsigned frame = 0; frame < 96; ++frame) {
+        vs_start_frame();
+        for (unsigned i = 0; i < 40000 && !ppu.frame_complete; ++i) vs_cpu_step();
+        CHECK(ppu.frame_complete && !ppu.skipped_frame_dot);
+        CHECK(vs_side_frame_count(0) == frames[0] + frame + 1);
+        CHECK(vs_side_frame_count(1) == frames[1] + frame + 1);
+    }
+    for (unsigned side = 0; side < 2; ++side) {
+        uint64_t elapsed = (vs_side_cpu_cycles(side) - before[side]) * 3;
+        uint64_t expected = 96u * 262u * 341u;
+        // Instruction boundaries can straddle the beginning and end of a frame.
+        CHECK(elapsed + 18 >= expected && elapsed <= expected + 18);
+    }
+    CHECK(unload_rom());
+    return 0;
+}
+
 static int test_vs_inputs_and_protection(void) {
     static const uint8_t input_program[] = {
         0xA9,0x01, 0x8D,0x16,0x40,
@@ -493,6 +571,8 @@ int test_vs_accuracy(void) {
     static int (*const tests[])(void) = {
         test_vs_metadata_transaction,
         test_vs_ppu_models,
+        test_vs_rgb_frame_timing,
+        test_vs_dual_rendered_frame_timing,
         test_vs_inputs_and_protection,
         test_mapper99_banks,
         test_vs_dual_execution,

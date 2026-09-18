@@ -986,7 +986,8 @@ void ppu_step_dots(int ppu_cycles) {
             }
         }
 
-        bool skip_dot = nes_timing()->region == NES_REGION_NTSC && prerender && dot == 339
+        bool skip_dot = !vs_enabled() && nes_timing()->region == NES_REGION_NTSC
+                     && prerender && dot == 339
                      && ppu.odd_frame && ppu.rendering_enabled;
         if ((visible || prerender) && dot == 339) {
             if (ppu.rendering_enabled)
