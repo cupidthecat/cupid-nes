@@ -6020,6 +6020,105 @@ static int test_vrc3_cpu_irq_and_loader(void) {
     return 0;
 }
 
+static int test_sunsoft3_banks_mirroring_and_irq(void) {
+    CHECK(fixture(67, 0x40000, 0x80000, false) == 67);
+    CHECK(cart != NULL && cart->clock != NULL);
+    CHECK(cart_cpu_read_bus(0x8000, 0x56) == 0x56);
+    CHECK(cart_cpu_read(0xC000) == 30 && cart_cpu_read(0xE000) == 31);
+    CHECK(cart_ppu_read(0x0000) == 0 && cart_ppu_read(0x1800) == 0);
+
+    const uint16_t chr_regs[] = {0x8ABC, 0x9FFF, 0xA923, 0xBFFE};
+    for (unsigned slot = 0; slot < 4; ++slot) {
+        uint8_t bank = (uint8_t)(5 + slot * 3);
+        cart_cpu_write(chr_regs[slot], bank);
+        CHECK(cart_ppu_read((uint16_t)(slot * 0x800)) == (uint8_t)(bank * 2));
+        CHECK(cart_ppu_read((uint16_t)(slot * 0x800 + 0x7FF)) == (uint8_t)(bank * 2 + 1));
+    }
+    uint8_t before = cart_ppu_read(0);
+    cart_cpu_write(0x9000, 0x7F);
+    CHECK(cart_ppu_read(0) == before);
+
+    cart_cpu_write(0xFFFF, 7);
+    CHECK(cart_cpu_read(0x8000) == 14 && cart_cpu_read(0xA000) == 15);
+    CHECK(cart_cpu_read(0xC000) == 30 && cart_cpu_read(0xE000) == 31);
+
+    uint8_t nt[0x1000] = {0};
+    cart_cpu_write(0xE800, 0);
+    cart_nt_write(0x2000, 0x35, nt);
+    CHECK(cart_nt_read(0x2800, nt) == 0x35 && cart_nt_read(0x2400, nt) == 0);
+    memset(nt, 0, sizeof(nt));
+    cart_cpu_write(0xEFFF, 1);
+    cart_nt_write(0x2000, 0x53, nt);
+    CHECK(cart_nt_read(0x2400, nt) == 0x53 && cart_nt_read(0x2800, nt) == 0);
+    memset(nt, 0, sizeof(nt));
+    cart_cpu_write(0xE800, 2);
+    cart_nt_write(0x2000, 0x69, nt);
+    CHECK(cart_nt_read(0x2C00, nt) == 0x69 && cart_get_mirroring() == MIRROR_SINGLE0);
+    memset(nt, 0, sizeof(nt));
+    cart_cpu_write(0xE800, 3);
+    cart_nt_write(0x2400, 0x96, nt);
+    CHECK(cart_nt_read(0x2C00, nt) == 0x96 && cart_get_mirroring() == MIRROR_SINGLE1);
+
+    cart_cpu_write(0xC800, 0x12);
+    cart_cpu_write(0xD800, 0);
+    cart_cpu_write(0xC800, 0);
+    cart_cpu_write(0xCFFF, 1);
+    cart_cpu_write(0xD800, 0x10);
+    cart->clock(1);
+    CHECK(!cart_irq_pending());
+    cart->clock(1);
+    CHECK(cart_irq_pending());
+    cart->clock(16);
+    CHECK(cart_irq_pending());
+    cart_cpu_write(0xD800, 0);
+    CHECK(!cart_irq_pending());
+    cart->clock(16);
+    CHECK(!cart_irq_pending());
+
+    cart->reset();
+    CHECK(!cart_irq_pending() && cart_cpu_read_bus(0x8000, 0xA6) == 0xA6);
+    CHECK(cart_cpu_read(0xC000) == 30 && cart_ppu_read(0) == 0);
+    return 0;
+}
+
+static int test_sunsoft3_cpu_irq_and_loader(void) {
+    CHECK(fixture(67, 0x4000, 0x2000, false) == 67);
+    fixture_prg[0] = 0xEA;
+    fixture_prg[0x3FFE] = 0;
+    fixture_prg[0x3FFF] = 3;
+    cart_cpu_write(0xF800, 0);
+    nes_set_region(NES_REGION_NTSC);
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    cpu_power_on(&cpu);
+    cpu.pc = 0x8000;
+    cpu.status = INTERRUPT_FLAG | UNUSED_FLAG;
+    cart_cpu_write(0xC800, 0);
+    cart_cpu_write(0xC800, 1);
+    cart_cpu_write(0xD800, 0x10);
+    CHECK(cpu_step(&cpu) == 2 && cart_irq_pending());
+
+    for (unsigned i = 0; i < 8; ++i) write_mem((uint16_t)(0x0200 + i), 0xEA);
+    cpu.pc = 0x0200;
+    cpu.status &= (uint8_t)~INTERRUPT_FLAG;
+    for (unsigned step = 0; step < 3 && cpu.pc != 0x0300; ++step) (void)cpu_step(&cpu);
+    CHECK(cpu.pc == 0x0300 && (cpu.status & INTERRUPT_FLAG));
+
+    cart_cpu_write(0xD800, 0);
+    cart_cpu_write(0x6000, 0xA7);
+    Mapper *previous = cart;
+    iNESHeader invalid = header_for(67, 0x40000, false);
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x42000, fixture_chr, 0x2000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x6000) == 0xA7);
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x40000, fixture_chr, 0x80200) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x6000) == 0xA7);
+    invalid.flags7 |= 0x08;
+    invalid.prg_ram_size = 0x10;
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x40000, fixture_chr, 0x2000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x6000) == 0xA7);
+    return 0;
+}
+
 static int test_cartridge_unload(void) {
     iNESHeader h = header_for(0, 0x4000, true);
     size_t image_size;
@@ -6105,6 +6204,7 @@ int test_mapper_accuracy(void) {
         test_vrc7_loader_rejection_preserves_cart,
         test_vrc1_banks_mirroring_and_reset, test_vrc1_loader_rejection_preserves_cart,
         test_vrc3_banks_irq_and_reset, test_vrc3_cpu_irq_and_loader,
+        test_sunsoft3_banks_mirroring_and_irq, test_sunsoft3_cpu_irq_and_loader,
         test_cartridge_bus_reads, test_mmc6_persistence, test_cartridge_unload
     };
     int failures = 0;

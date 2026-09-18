@@ -74,7 +74,7 @@ static Mapper mapper_cprom, mapper_100in1, mapper_bandai, mapper_action53, mappe
 static Mapper mapper_taito33, mapper_taito48, mapper_jaleco18, mapper_irem32, mapper_irem65;
 static Mapper mapper_rambo1, mapper_rambo158;
 static Mapper mapper_vrc1, mapper_vrc3, mapper_vrc6, mapper_vrc24, mapper_vrc7;
-static Mapper mapper_sunsoft69, mapper_namco, mapper_m34, mapper_gxrom, mapper_m71, mapper_namco108;
+static Mapper mapper_sunsoft3, mapper_sunsoft69, mapper_namco, mapper_m34, mapper_gxrom, mapper_m71, mapper_namco108;
 static Mapper mapper_vs99;
 Mapper *cart = NULL;
 static bool mapper_irq_line = false;
@@ -1018,6 +1018,117 @@ static Mirroring vrc3_mirr(void) { return C.mirr_base; }
 
 static void vrc3_reset(void) {
     memset(&vrc3, 0, sizeof(vrc3));
+    mapper_irq_line = false;
+}
+
+// Mapper 67: Sunsoft 3.
+static struct {
+    uint8_t chr[4];
+    bool chr_mapped[4];
+    uint8_t prg_bank;
+    bool prg_mapped;
+    bool irq_write_low;
+    bool irq_enabled;
+    uint16_t irq_counter;
+    Mirroring mirr;
+} sunsoft3;
+
+static uint8_t sunsoft3_cpu_read(uint16_t a) {
+    if (a >= 0x6000 && a <= 0x7FFF) return prg_ram_read(a);
+    if (a < 0x8000) return cart_cpu_bus_input;
+    size_t banks = C.prg_sz / PRG_BANK_16K;
+    size_t bank;
+    if (a < 0xC000) {
+        if (!sunsoft3.prg_mapped) return cart_cpu_bus_input;
+        bank = sunsoft3.prg_bank % banks;
+    } else {
+        bank = banks - 1;
+    }
+    return C.prg[bank * PRG_BANK_16K + (a & 0x3FFFu)];
+}
+
+static void sunsoft3_cpu_write(uint16_t a, uint8_t value) {
+    if (a >= 0x6000 && a <= 0x7FFF) {
+        prg_ram_write(a, value);
+        return;
+    }
+    if (a < 0x8000) return;
+    switch (a & 0xF800u) {
+        case 0x8800: case 0x9800: case 0xA800: case 0xB800: {
+            unsigned slot = (unsigned)((a >> 12) - 8);
+            sunsoft3.chr[slot] = value;
+            sunsoft3.chr_mapped[slot] = true;
+            break;
+        }
+        case 0xC800:
+            if (sunsoft3.irq_write_low)
+                sunsoft3.irq_counter = (uint16_t)((sunsoft3.irq_counter & 0xFF00u) | value);
+            else
+                sunsoft3.irq_counter = (uint16_t)((sunsoft3.irq_counter & 0x00FFu) | ((uint16_t)value << 8));
+            sunsoft3.irq_write_low = !sunsoft3.irq_write_low;
+            break;
+        case 0xD800:
+            sunsoft3.irq_enabled = (value & 0x10u) != 0;
+            sunsoft3.irq_write_low = false;
+            mapper_irq_line = false;
+            break;
+        case 0xE800:
+            switch (value & 3u) {
+                case 0: sunsoft3.mirr = MIRROR_VERTICAL; break;
+                case 1: sunsoft3.mirr = MIRROR_HORIZONTAL; break;
+                case 2: sunsoft3.mirr = MIRROR_SINGLE0; break;
+                case 3: sunsoft3.mirr = MIRROR_SINGLE1; break;
+            }
+            break;
+        case 0xF800:
+            sunsoft3.prg_bank = value;
+            sunsoft3.prg_mapped = true;
+            break;
+        default:
+            break;
+    }
+}
+
+static size_t sunsoft3_chr_offset(uint16_t a) {
+    unsigned slot = (a >> 11) & 3u;
+    size_t banks = C.chr_sz / 0x0800u;
+    size_t bank = sunsoft3.chr[slot] % banks;
+    return bank * 0x0800u + (a & 0x07FFu);
+}
+
+static uint8_t sunsoft3_ppu_read(uint16_t a) {
+    a &= 0x1FFFu;
+    unsigned slot = a >> 11;
+    if (!sunsoft3.chr_mapped[slot]) {
+        if (!C.chr_is_ram) return 0;
+        return C.chr[a % C.chr_sz];
+    }
+    return C.chr[sunsoft3_chr_offset(a)];
+}
+
+static void sunsoft3_ppu_write(uint16_t a, uint8_t value) {
+    if (!C.chr_is_ram) return;
+    a &= 0x1FFFu;
+    unsigned slot = a >> 11;
+    size_t offset = sunsoft3.chr_mapped[slot] ? sunsoft3_chr_offset(a) : (a % C.chr_sz);
+    chr_ram_write(offset, value);
+}
+
+static void sunsoft3_clock(int cpu_cycles) {
+    while (cpu_cycles-- > 0 && sunsoft3.irq_enabled) {
+        sunsoft3.irq_counter--;
+        if (sunsoft3.irq_counter == 0xFFFFu) {
+            sunsoft3.irq_enabled = false;
+            mapper_irq_line = true;
+        }
+    }
+}
+
+static Mirroring sunsoft3_mirr(void) { return sunsoft3.mirr; }
+
+static void sunsoft3_reset(void) {
+    memset(&sunsoft3, 0, sizeof(sunsoft3));
+    sunsoft3.mirr = C.mirr_base;
     mapper_irq_line = false;
 }
 
@@ -4930,7 +5041,7 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         case 1: case 9: case 10: case 11: case 155: chr_limit = 0x20000; break;
         case 3: chr_limit = 0x200000; break;
         case 4: case 24: case 26: case 118: chr_limit = 0x40000; break;
-        case 33: case 48: chr_limit = 0x80000; break;
+        case 33: case 48: case 67: chr_limit = 0x80000; break;
         case 64: case 158: chr_limit = 0x40000; break;
         case 5: chr_limit = 0x100000; break;
         case 13: chr_limit = 0x4000; break;
@@ -4992,7 +5103,7 @@ int mapper_init_from_header(const iNESHeader *h,
         case 16: case 153: case 157: case 159:
         case 18: case 32: case 33: case 34: case 48: case 64: case 65: case 158:
         case 21: case 22: case 23: case 24: case 25: case 26: case 27: case 183:
-        case 19: case 66: case 69: case 71: case 73: case 75: case 85: case 99: case 151: case 206: case 210:
+        case 19: case 66: case 67: case 69: case 71: case 73: case 75: case 85: case 99: case 151: case 206: case 210:
             break;
         default:
             fprintf(stderr, "Unsupported mapper: %d\n", mapper_no);
@@ -5114,6 +5225,12 @@ int mapper_init_from_header(const iNESHeader *h,
     if (mapper_no == 73
         && (prg_sz > 0x20000 || (prg_sz % PRG_BANK_16K) != 0 || chr_sz > CHR_BANK_8K)) {
         fprintf(stderr, "Unsupported ROM/RAM size for mapper 73\n");
+        return -1;
+    }
+    if (mapper_no == 67
+        && (prg_sz > 0x400000 || (prg_sz % PRG_BANK_16K) != 0
+            || chr_sz > 0x80000 || (chr_sz % 0x0800u) != 0)) {
+        fprintf(stderr, "Unsupported ROM/RAM size for mapper 67\n");
         return -1;
     }
     if (mapper_no == 85 && (prg_sz > 0x80000 || (prg_sz % PRG_BANK_8K) != 0
@@ -5314,6 +5431,13 @@ int mapper_init_from_header(const iNESHeader *h,
             build_mapper(&mapper_m71, m71_cpu_read, m71_cpu_write,
                          m71_ppu_read, m71_ppu_write, m71_reset, m71_mirr);
             cart = &mapper_m71;
+            break;
+        case 67:
+            build_mapper(&mapper_sunsoft3, sunsoft3_cpu_read, sunsoft3_cpu_write,
+                         sunsoft3_ppu_read, sunsoft3_ppu_write, sunsoft3_reset, sunsoft3_mirr);
+            mapper_sunsoft3.clock = sunsoft3_clock;
+            cart = &mapper_sunsoft3;
+            sunsoft3_reset();
             break;
         case 73:
             build_mapper(&mapper_vrc3, vrc3_cpu_read, vrc3_cpu_write,
