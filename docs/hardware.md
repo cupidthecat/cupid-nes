@@ -67,6 +67,8 @@ PRG is the cartridge memory read by the CPU; CHR holds graphics patterns read by
 | 38, 39, 46, 54, 57, 58 | Discrete unlicensed boards | Address/data bank selection, board-specific reset behavior, split or mirrored PRG windows, and nametable mirroring |
 | 42, 43, 50 | Unlicensed IRQ boards | Fixed and switchable ROM windows, register aliases, CPU-clocked interrupt counters, and board-specific CHR/mirroring controls |
 | 51, 53, 59 | Multicart boards | Outer/inner PRG selection, menu EPROM layouts, CHR RAM or banking, and mapper 59 DIP-switch reads |
+| 166, 167, 170, 177, 179, 190 | Subor and discrete boards | XOR-combined PRG registers, protection-register access, independent bank/mirroring writes, and 2 KiB CHR banking |
+| 200, 201, 202, 203, 204, 212 | Address/data-selected multicarts | Mirrored or consecutive PRG windows, CHR bank selection, nametable wiring, and mapper 212 RAM read masks |
 | 64, 158 | RAMBO-1 | PRG/CHR banks, CPU- or PPU-clocked IRQs, and mapper 158 nametable wiring |
 | 66 | GxROM | Combined PRG/CHR bank selection and bus conflicts |
 | 67 | Sunsoft 3 | 2 KiB CHR banks, switchable 16 KiB PRG, mirroring, and a one-shot CPU IRQ counter |
@@ -192,6 +194,12 @@ Mapper 38 selects its PRG and CHR banks only on writes at `$7000-$7FFF`. Mapper 
 Mapper 42 keeps the final 32 KiB of PRG fixed and banks ROM at `$6000-$7FFF`. Its counter repeats every 32,768 CPU clocks and asserts IRQ during the final 8,192 clocks while enabled. Only a value of `$02` enables it. Mapper 43 uses separate register aliases, a fixed ROM window at `$5000-$5FFF`, and a 4,096-clock one-shot IRQ. Mapper 50 also has a 4,096-clock one-shot IRQ, but enabling it again preserves its counter; disabling it clears both counter and IRQ. Its `$C000-$DFFF` ROM window stays open bus until a bank write. All three counters advance through actual CPU bus cycles.
 
 Mapper 51 combines mode and bank bits to switch between a 32 KiB PRG block and split 16 KiB windows. Mapper 53 recognizes both menu-EPROM image orders and applies the corresponding bank offsets. Both use the initial CHR RAM mapping and do not select CHR ROM. Mapper 59 can return its two DIP-switch bits throughout `$8000-$FFFF` instead of ROM data. Those reads drive the complete byte. Bank selection, RAM contents, and nametable routing follow each board's reset and write decoding.
+
+Subor mappers 166 and 167 combine four masked registers through XOR to select their outer and inner PRG banks. Their 32 KiB mode reverses the two 16 KiB halves on mapper 167, and their fixed-bank modes differ. Mapper 170 captures data bit 6 on writes at `$6502` or `$7000` and returns it as bit 7 when reading `$7001` or `$7777`; the lower bits come from the address. Read and write decoding is independent, so RAM writes at `$7001` and `$7777` still reach the cartridge chip. Soft reset clears only this protection latch.
+
+Mapper 177 selects its 32 KiB PRG bank and mirroring from the same write value. Mapper 179 changes the PRG bank at `$5000-$5FFF` and mirroring at `$8000-$FFFF`, while retaining normal cartridge RAM access between them. Mapper 190 selects the lower 16 KiB PRG window through two register ranges and leaves the upper window at bank zero. Its four 2 KiB CHR banks also accept the decoded aliases at `$E000-$FFFF`.
+
+Mappers 200 through 204 use their board-specific address or data bits for PRG and CHR selection. Mapper 201 shares the mapper 54 circuit. Mapper 202 can select a consecutive pair of 16 KiB PRG banks; mapper 204 uses a consecutive pair only for banks 6 and 7. Mapper 212 independently selects a mirrored 16 KiB bank or a 32 KiB pair. Reads in its `$6000-$7FFF` window OR bit 7 into the stored byte when address bit 4 is clear, without changing the RAM byte. These boards retain their bank state through CPU soft reset. Small physical CHR chips use the same shortened slots and startup RAM aliases as other cartridge boards.
 
 The mapper 72 and 92 cartridge banking and latch behavior is implemented. Optional speech hardware on those boards is not currently emulated.
 
