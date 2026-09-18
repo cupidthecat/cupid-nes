@@ -22,7 +22,7 @@ class Mmc3_126 final : public Mmc3 {
 
     uint16_t GetChrOuterBank() const {
         uint16_t reg = _exRegs[0];
-        return static_cast<uint16_t>(((~reg << 0) & 0x0080 & _exRegs[2])
+        return static_cast<uint16_t>(((~reg) & 0x0080 & _exRegs[2])
             | ((reg << 4) & 0x0080 & reg)
             | ((reg << 3) & 0x0100)
             | ((reg << 5) & 0x0200));
@@ -315,6 +315,9 @@ class Mmc3_198 final : public Mmc3 {
         _exRegs[3] = static_cast<uint8_t>(GetPrgPageCount() - 1);
         SetCpuMemoryMapping(0x5000, 0x7FFF, 0, PrgMemoryType::WorkRam);
         Mmc3::InitMapper();
+        // With a save chip, MMC3 owns $6000-$7FFF and its protection bits.
+        // Without one, the board mirrors its forced 4 KiB work RAM through
+        // the complete $5000-$7FFF window.
         if (_saveRamSize == 0)
             SetCpuMemoryMapping(0x5000, 0x7FFF, 0, PrgMemoryType::WorkRam);
     }
@@ -562,7 +565,7 @@ class Mmc3_215 final : public Mmc3 {
                     UpdateState();
                     break;
                 case 0x5007:
-                    _exRegs[2] = value;
+                    _exRegs[2] = value & 7;
                     break;
             }
             return;

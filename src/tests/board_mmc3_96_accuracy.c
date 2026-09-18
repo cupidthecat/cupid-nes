@@ -21,6 +21,32 @@ static bool chr1_is(uint16_t address, unsigned bank) {
         && ppu_read((uint16_t)(address + 1)) == (uint8_t)(bank >> 8);
 }
 
+static bool cpu_write_abs(uint16_t address, uint8_t value) {
+    write_mem(0x0200, 0xA9);
+    write_mem(0x0201, value);
+    write_mem(0x0202, 0x8D);
+    write_mem(0x0203, (uint8_t)address);
+    write_mem(0x0204, (uint8_t)(address >> 8));
+    cpu.pc = 0x0200;
+    return cpu_step(&cpu) == 2 && cpu_step(&cpu) == 4;
+}
+
+static bool advance_three_cpu_cycles(void) {
+    write_mem(0x0200, 0x4C);
+    write_mem(0x0201, 0x00);
+    write_mem(0x0202, 0x02);
+    cpu.pc = 0x0200;
+    return cpu_step(&cpu) == 3;
+}
+
+static bool mmc3_qualified_edge(uint64_t tag) {
+    cart_notify_ppu_address(0x1000, tag);
+    cart_notify_ppu_address(0x0000, tag + 1);
+    if (!advance_three_cpu_cycles()) return false;
+    cart_notify_ppu_address(0x1000, tag + 2);
+    return true;
+}
+
 static int test_126_134(void) {
     BoardImage image;
     BOARD_CHECK(board_image_create(&image, 126, 0x200000, 0x200000, true));
@@ -53,12 +79,17 @@ static int test_165_182(void) {
     BOARD_CHECK(ppu_read(0x0000) == 0xA5 && chr1_is(0x1000, 4));
     write_mem(0x8000, 0);
     write_mem(0x8001, 8);
-    BOARD_CHECK(chr1_is(0x0000, 8));
     write_mem(0x8000, 1);
     write_mem(0x8001, 12);
+    BOARD_CHECK(chr1_is(0x0000, 8));
     cart_notify_ppu_address(0x0FE8, 1);
+    BOARD_CHECK(cart_ppu_read(0x0000) == 8);
     cart_notify_ppu_address(0x0000, 2);
-    BOARD_CHECK(chr1_is(0x0000, 12));
+    BOARD_CHECK(cart_ppu_read(0x0000) == 12);
+    cart_notify_ppu_address(0x0FD0, 3);
+    BOARD_CHECK(cart_ppu_read(0x0000) == 12);
+    cart_notify_ppu_address(0x0000, 4);
+    BOARD_CHECK(cart_ppu_read(0x0000) == 8);
     board_image_free(&image);
 
     BOARD_CHECK(board_image_create(&image, 182, 0x40000, 0x40000, true));
@@ -68,6 +99,13 @@ static int test_165_182(void) {
     write_mem(0xA000, 6);
     write_mem(0xC000, 9);
     BOARD_CHECK(chr1_is(0x1000, 9));
+    BOARD_CHECK(cpu_write_abs(0xC001, 1));
+    BOARD_CHECK(cpu_write_abs(0xE001, 0));
+    BOARD_CHECK(mmc3_qualified_edge(100));
+    BOARD_CHECK(!cart_irq_pending());
+    BOARD_CHECK(mmc3_qualified_edge(110));
+    BOARD_CHECK(cart_irq_pending());
+    BOARD_CHECK(cpu_write_abs(0xE000, 0) && !cart_irq_pending());
     board_image_free(&image);
     return 0;
 }
@@ -93,6 +131,14 @@ static int test_187_196(void) {
     write_mem(0x6000, 0x21);
     BOARD_CHECK(prg8_is(0x8000, 12) && prg8_is(0xA000, 13)
                 && prg8_is(0xC000, 14) && prg8_is(0xE000, 15));
+    BOARD_CHECK(cpu_write_abs(0xC000, 1));
+    BOARD_CHECK(cpu_write_abs(0xC004, 0));
+    BOARD_CHECK(cpu_write_abs(0xE004, 0));
+    BOARD_CHECK(mmc3_qualified_edge(200));
+    BOARD_CHECK(!cart_irq_pending());
+    BOARD_CHECK(mmc3_qualified_edge(210));
+    BOARD_CHECK(cart_irq_pending());
+    BOARD_CHECK(cpu_write_abs(0xE000, 0) && !cart_irq_pending());
     board_image_free(&image);
     return 0;
 }
@@ -169,6 +215,29 @@ static int test_208_215_and_replacement(void) {
     BOARD_CHECK(prg8_is(0x8000, 0x20) && prg8_is(0xC000, 0x20));
     write_mem(0x5000, 0xA0);
     BOARD_CHECK(prg8_is(0x8000, 0x20) && prg8_is(0xC000, 0x22));
+
+    static const uint16_t registers[8] = {
+        0x8000, 0x8001, 0xA000, 0xA001, 0xC000, 0xC001, 0xE000, 0xE001
+    };
+    for (unsigned mode = 0; mode < 256; ++mode) {
+        BOARD_CHECK(cpu_write_abs(0x5007, (uint8_t)mode));
+        for (unsigned reg = 0; reg < 8; ++reg)
+            BOARD_CHECK(cpu_write_abs(registers[reg], (uint8_t)(reg | 0x40)));
+    }
+
+    BOARD_CHECK(cpu_write_abs(0x5007, 0xF9));
+    BOARD_CHECK(cpu_write_abs(0xA000, 6));
+    BOARD_CHECK(cpu_write_abs(0xC000, 9));
+    BOARD_CHECK(chr1_is(0x1800, 9));
+
+    BOARD_CHECK(cpu_write_abs(0xA001, 1));
+    BOARD_CHECK(cpu_write_abs(0xC001, 0));
+    BOARD_CHECK(cpu_write_abs(0xE001, 0));
+    BOARD_CHECK(mmc3_qualified_edge(300));
+    BOARD_CHECK(!cart_irq_pending());
+    BOARD_CHECK(mmc3_qualified_edge(310));
+    BOARD_CHECK(cart_irq_pending());
+    BOARD_CHECK(cpu_write_abs(0xE000, 0) && !cart_irq_pending());
 
     uint8_t before = read_mem(0xC000);
     BOARD_CHECK(load_rom_memory(image.data, image.size - 1) < 0);
