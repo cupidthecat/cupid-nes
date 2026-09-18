@@ -78,7 +78,7 @@ static Mapper mapper_rambo1, mapper_rambo158;
 static Mapper mapper_vrc1, mapper_vrc3, mapper_vrc6, mapper_vrc24, mapper_vrc7;
 static Mapper mapper_sunsoft3, mapper_sunsoft4, mapper_sunsoft89, mapper_sunsoft93, mapper_sunsoft184;
 static Mapper mapper_sunsoft69, mapper_namco, mapper_m34, mapper_gxrom, mapper_m71, mapper_namco108;
-static Mapper mapper_vs99, mapper_jy;
+static Mapper mapper_vs99, mapper_jy, mapper_nina;
 Mapper *cart = NULL;
 static bool mapper_irq_line = false;
 static uint8_t cart_cpu_bus_input = 0xFF;
@@ -994,25 +994,25 @@ static void m96_ppu_write(uint16_t a, uint8_t v) {
 static Mirroring m96_mirr(void) { return C.mirr_base; }
 static void m96_reset(void) { memset(&m96, 0, sizeof(m96)); }
 
-// Mapper 2: UxROM.
+// UxROM and the mapper 94/180 register-wiring variants.
 static struct { uint8_t bank; } ux;
 static uint8_t uxrom_cpu_read(uint16_t a) {
     if (a >= 0x6000 && a <= 0x7FFF) return prg_ram_read(a);
     if (a >= 0x8000 && a <= 0xBFFF) {
         size_t banks = C.prg_sz / PRG_BANK_16K;
-        size_t b = (banks == 0) ? 0 : (ux.bank % banks);
+        size_t b = C.mapper_no == 180 || banks == 0 ? 0 : ux.bank % banks;
         return C.prg[b * PRG_BANK_16K + (a - 0x8000)];
     }
     if (a >= 0xC000) {
         size_t banks = C.prg_sz / PRG_BANK_16K;
-        size_t last = (banks ? banks : 1) - 1;
-        return C.prg[last * PRG_BANK_16K + (a - 0xC000)];
+        size_t bank = C.mapper_no == 180 ? ux.bank % banks : banks - 1;
+        return C.prg[bank * PRG_BANK_16K + (a - 0xC000)];
     }
     return cart_cpu_bus_input;
 }
 static void uxrom_cpu_write(uint16_t a, uint8_t v) {
     if (a >= 0x6000 && a <= 0x7FFF) { prg_ram_write(a, v); return; }
-    if (a >= 0x8000) ux.bank = v;
+    if (a >= 0x8000) ux.bank = C.mapper_no == 94 ? (v >> 2) & 7 : v;
 }
 static uint8_t uxrom_ppu_read(uint16_t a) { return nrom_ppu_read(a); }
 static void uxrom_ppu_write(uint16_t a, uint8_t v) { nrom_ppu_write(a, v); }
@@ -4878,7 +4878,7 @@ static void sunsoft69_reset(void) {
     sunsoft5b_reset(&sunsoft5b_audio);
 }
 
-// Mapper 11: Color Dreams.
+// Color Dreams, including mapper 144's ROM-driven D0 line.
 static struct {
     uint8_t prg_bank;
     uint8_t chr_bank;
@@ -4897,7 +4897,8 @@ static uint8_t colordreams_cpu_read(uint16_t a) {
 static void colordreams_cpu_write(uint16_t a, uint8_t v) {
     if (a >= 0x6000 && a <= 0x7FFF) { prg_ram_write(a, v); return; }
     if (a >= 0x8000) {
-        colordreams.prg_bank = v & 0x03;
+        if (C.mapper_no == 144) v |= colordreams_cpu_read(a) & 1;
+        colordreams.prg_bank = v & 0x0F;
         colordreams.chr_bank = (v >> 4) & 0x0F;
     }
 }
@@ -4923,6 +4924,53 @@ static Mirroring colordreams_mirr(void) { return C.mirr_base; }
 static void colordreams_reset(void) {
     colordreams.prg_bank = 0;
     colordreams.chr_bank = 0;
+}
+
+// NINA-03/06 and the mapper 113 multicart wiring.
+static struct {
+    uint8_t prg_bank, chr_bank;
+    Mirroring mirr;
+} nina;
+
+static uint8_t nina_cpu_read(uint16_t a) {
+    if (a >= 0x6000 && a <= 0x7FFF) return prg_ram_read(a);
+    if (a >= 0x8000) {
+        size_t offset = (size_t)nina.prg_bank * PRG_BANK_32K + (a & 0x7FFFu);
+        return C.prg[offset % C.prg_sz];
+    }
+    return cart_cpu_bus_input;
+}
+
+static void nina_cpu_write(uint16_t a, uint8_t v) {
+    if (a >= 0x6000 && a <= 0x7FFF) {
+        prg_ram_write(a, v);
+    } else if ((a & 0xE100u) == 0x4100u) {
+        if (C.mapper_no == 113) {
+            nina.prg_bank = (v >> 3) & 7;
+            nina.chr_bank = (v & 7) | ((v >> 3) & 8);
+            nina.mirr = v & 0x80 ? MIRROR_VERTICAL : MIRROR_HORIZONTAL;
+        } else {
+            nina.prg_bank = (v >> 3) & 1;
+            nina.chr_bank = v & 7;
+        }
+    }
+}
+
+static uint8_t nina_ppu_read(uint16_t a) {
+    size_t offset = (size_t)nina.chr_bank * CHR_BANK_8K + (a & 0x1FFFu);
+    return C.chr[offset % C.chr_sz];
+}
+
+static void nina_ppu_write(uint16_t a, uint8_t v) {
+    size_t offset = (size_t)nina.chr_bank * CHR_BANK_8K + (a & 0x1FFFu);
+    chr_ram_write(offset % C.chr_sz, v);
+}
+
+static Mirroring nina_mirr(void) { return nina.mirr; }
+
+static void nina_reset(void) {
+    nina.prg_bank = nina.chr_bank = 0;
+    nina.mirr = C.mirr_base;
 }
 
 // Mapper 13: CPROM.
@@ -6611,7 +6659,9 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
     if (nes2 && chr_is_ram && chr_total != chr_sz) return false;
     size_t chr_limit;
     switch (mapper_no) {
-        case 1: case 9: case 10: case 11: case 89: case 105: case 155: chr_limit = 0x20000; break;
+        case 1: case 9: case 10: case 11: case 89: case 105: case 113: case 144: case 155:
+            chr_limit = 0x20000; break;
+        case 79: case 146: chr_limit = 0x10000; break;
         case 3: chr_limit = 0x200000; break;
         case 4: case 24: case 26: case 118: chr_limit = 0x40000; break;
         case 33: case 48: case 67: case 68: chr_limit = 0x80000; break;
@@ -6692,6 +6742,7 @@ int mapper_init_from_header(const iNESHeader *h,
         case 80: case 82: case 85: case 87: case 88: case 89: case 92: case 93: case 95: case 96: case 97: case 99: case 101:
         case 140: case 151: case 154: case 184: case 185: case 206: case 207: case 210:
         case 90: case 105: case 191: case 192: case 194: case 195: case 209: case 211: case 232:
+        case 79: case 94: case 113: case 144: case 146: case 180:
             break;
         default:
             fprintf(stderr, "Unsupported mapper: %d\n", mapper_no);
@@ -6801,6 +6852,21 @@ int mapper_init_from_header(const iNESHeader *h,
             || chr_is_ram || chr_sz != CHR_BANK_8K)) {
         fprintf(stderr, "Unsupported ROM/RAM size for mapper 185\n");
         return -1;
+    }
+    if ((mapper_no == 94 || mapper_no == 180)
+        && (prg_sz > (mapper_no == 94 ? 0x20000u : 0x400000u)
+            || prg_sz % PRG_BANK_16K != 0 || chr_sz != CHR_BANK_8K)) {
+        fprintf(stderr, "Unsupported ROM/RAM size for mapper %d\n", mapper_no);
+        return -1;
+    }
+    if (mapper_no == 79 || mapper_no == 113 || mapper_no == 144 || mapper_no == 146) {
+        size_t prg_limit = mapper_no == 113 ? 0x40000u : mapper_no == 144 ? 0x80000u : 0x10000u;
+        size_t chr_limit = mapper_no == 113 || mapper_no == 144 ? 0x20000u : 0x10000u;
+        if (prg_sz > prg_limit || (prg_sz != PRG_BANK_16K && prg_sz % PRG_BANK_32K != 0)
+            || chr_sz > chr_limit || chr_sz % CHR_BANK_8K != 0) {
+            fprintf(stderr, "Unsupported ROM/RAM size for mapper %d\n", mapper_no);
+            return -1;
+        }
     }
     if ((mapper_no == 64 || mapper_no == 158)
         && (prg_sz > 0x200000 || prg_sz % PRG_BANK_8K != 0
@@ -7014,7 +7080,7 @@ int mapper_init_from_header(const iNESHeader *h,
     C.nes2 = nes2;
     C.submapper = submapper;
     C.mmc1a = mapper_no == 155;
-    C.bus_conflicts = mapper_no == 11
+    C.bus_conflicts = mapper_no == 11 || mapper_no == 144
         || mapper_no == 72 || mapper_no == 78 || mapper_no == 92
         || mapper_no == 77 || mapper_no == 96 || mapper_no == 185
         || (mapper_no == 34 && !mapper34_nina)
@@ -7043,7 +7109,7 @@ int mapper_init_from_header(const iNESHeader *h,
                         mmc1_ppu_read, mmc1_ppu_write, mmc1_reset, mmc1_mirr);
             cart = &mapper_mmc1;
             break;
-        case 2:
+        case 2: case 94: case 180:
             build_mapper(&mapper_uxrom, uxrom_cpu_read, uxrom_cpu_write,
                         uxrom_ppu_read, uxrom_ppu_write, uxrom_reset, uxrom_mirr);
             cart = &mapper_uxrom;
@@ -7085,10 +7151,15 @@ int mapper_init_from_header(const iNESHeader *h,
                         mmc4_ppu_read, mmc4_ppu_write, mmc4_reset, mmc4_mirr);
             cart = &mapper_mmc4;
             break;
-        case 11:
+        case 11: case 144:
             build_mapper(&mapper_colordreams, colordreams_cpu_read, colordreams_cpu_write,
                         colordreams_ppu_read, colordreams_ppu_write, colordreams_reset, colordreams_mirr);
             cart = &mapper_colordreams;
+            break;
+        case 79: case 113: case 146:
+            build_mapper(&mapper_nina, nina_cpu_read, nina_cpu_write,
+                         nina_ppu_read, nina_ppu_write, nina_reset, nina_mirr);
+            cart = &mapper_nina;
             break;
         case 13:
             build_mapper(&mapper_cprom, cprom_cpu_read, cprom_cpu_write,
