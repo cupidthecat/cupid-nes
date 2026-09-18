@@ -17,6 +17,7 @@ Cupid has an SDL application for running games and a separate executable for tes
 
 | Guide | Contents |
 | --- | --- |
+| [Hardware terminology](glossary.md) | CPU, PPU, mapper, memory, bus, interrupt, DMA, and test terminology |
 | [Architecture](architecture.md) | Source layout, bus timing, state ownership, dual systems, and audio threading |
 | [Development and testing](development.md) | Build commands, pinned test data, diagnostic modes, and regression workflow |
 | [Accuracy notes](accuracy.md) | Detailed CPU, PPU, APU, DMA, and cartridge behavior, test conventions, and limits |

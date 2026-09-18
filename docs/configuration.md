@@ -18,7 +18,7 @@ On Windows, replace `./cupid-nes` with `.\build\windows\cupid-nes.exe`. Supply o
 | `--cpu-revision REVISION` | `early-2a03`, `late-2a03` | `early-2a03` | CPU/APU revision behavior used by the DMC model |
 | `--ppu-revision REVISION` | `2c02-pre-e`, `2c02e-plus` | `2c02e-plus` | PPU silicon revision used by optional OAM behavior |
 | `--ppu-oam-row-corruption` | No value | Off | Enables the deterministic worst-case OAM row-corruption profile |
-| `--ppu-startup-restriction` | No value | Off | Enables the protected PPU register-write interval after power-on |
+| `--ppu-startup-restriction` | No value | Off | Enables the protected PPU register-write interval after power-on and soft reset |
 | `--ppu-oam-decay` | No value | Off | Enables OAM row refresh and decay tracking |
 
 The ROM header selects the timing region. `--console famicom` changes console wiring and does not force NTSC, PAL, or Dendy timing. There is no application `--region` option.
@@ -49,6 +49,10 @@ Examples:
 `--zapper-radius` controls the light-sampling radius around the mouse aim point. It does not change the trigger mapping. [Controls](controls.md) explains controller slots, mouse input, and mat keys.
 
 ## Datach barcode input
+
+| Option | Accepted value | Default |
+| --- | --- | --- |
+| `--barcode DIGITS` | Exactly 8 or 13 decimal digits | No barcode scan |
 
 ```sh
 ./cupid-nes --barcode 4901234567894 "datach.nes"
@@ -92,6 +96,10 @@ Start the matching load or save operation in BASIC before pressing F10. The tape
 Runtime disk keys and disk replacement behavior are documented in [controls](controls.md) and [saves and media](saves.md).
 
 ## VS DIP switches
+
+| Option | Accepted value | Default |
+| --- | --- | --- |
+| `--vs-dip VALUE` | Integer from 0 through 65535 | `0` |
 
 `--vs-dip VALUE` accepts an integer from `0` through `65535`. The parser accepts decimal and C-style base prefixes, including `0x` for hexadecimal. Use plain decimal without a leading zero when you do not intend octal interpretation.
 

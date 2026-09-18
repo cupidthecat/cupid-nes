@@ -105,6 +105,7 @@ disk images, and BASIC tapes, including their different failure behavior.
 | Look up options and defaults | [Configuration](docs/configuration.md) |
 | Set up controllers and peripherals | [Controls](docs/controls.md) |
 | Check supported hardware and ROM formats | [Hardware](docs/hardware.md) |
+| Look up hardware and test terminology | [Hardware terminology](docs/glossary.md) |
 | Locate saves and use writable media | [Saves and media](docs/saves.md) |
 | Diagnose a build or runtime problem | [Troubleshooting](docs/troubleshooting.md) |
 | Understand the core and source layout | [Architecture](docs/architecture.md) |
