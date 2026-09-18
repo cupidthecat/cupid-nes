@@ -43,6 +43,49 @@ static CpuRuntimeState main_runtime = {.ppu_master_phase = 3};
 static CpuRuntimeState *cpu_runtime = &main_runtime;
 static uint8_t *cpu_ram = ram;
 static uint64_t *cpu_cycles = &cpu_total_cycles;
+static enum { ALIGNMENT_DEFAULT, ALIGNMENT_EXPLICIT, ALIGNMENT_SEEDED } alignment_mode;
+static CpuStartupAlignment configured_alignment;
+static uint32_t alignment_random_state;
+
+void cpu_use_default_startup_alignment(void) {
+    alignment_mode = ALIGNMENT_DEFAULT;
+}
+
+bool cpu_set_startup_alignment(unsigned cpu_offset, unsigned ppu_phase) {
+    const NesTiming *timing = nes_timing();
+    if (cpu_offset >= timing->cpu_divider || ppu_phase >= timing->ppu_divider)
+        return false;
+    configured_alignment = (CpuStartupAlignment){(uint8_t)cpu_offset, (uint8_t)ppu_phase};
+    alignment_mode = ALIGNMENT_EXPLICIT;
+    return true;
+}
+
+void cpu_seed_startup_alignment(uint32_t seed) {
+    alignment_random_state = seed;
+    alignment_mode = ALIGNMENT_SEEDED;
+}
+
+bool cpu_startup_alignment_valid(NesRegion region) {
+    const NesTiming *timing = nes_timing_for_region(region);
+    return alignment_mode != ALIGNMENT_EXPLICIT
+        || (configured_alignment.cpu_offset < timing->cpu_divider
+            && configured_alignment.ppu_phase < timing->ppu_divider);
+}
+
+CpuStartupAlignment cpu_get_startup_alignment(void) {
+    return cpu_runtime->startup_alignment;
+}
+
+static uint8_t random_alignment_offset(uint32_t limit) {
+    uint32_t value;
+    uint32_t threshold = (uint32_t)(0u - limit) % limit;
+    do {
+        alignment_random_state = alignment_random_state * 1664525u + 1013904223u;
+        value = alignment_random_state;
+        value ^= value >> 16;
+    } while (value < threshold);
+    return (uint8_t)(value % limit);
+}
 
 #define cpu_external_bus (cpu_runtime->external_bus)
 #define cpu_internal_bus (cpu_runtime->internal_bus)
@@ -228,11 +271,20 @@ static void cpu_reset_sequence(CPU* cpu) {
     joypad_write_pending = 0;
 }
 
-void cpu_power_on(CPU* cpu) {
+bool cpu_power_on(CPU* cpu) {
+    if (!cpu || !cpu_startup_alignment_valid(nes_timing()->region)) return false;
+    CpuStartupAlignment alignment = {0, (uint8_t)(nes_timing()->ppu_divider - 1)};
+    if (alignment_mode == ALIGNMENT_EXPLICIT) {
+        alignment = configured_alignment;
+    } else if (alignment_mode == ALIGNMENT_SEEDED) {
+        alignment.cpu_offset = random_alignment_offset(nes_timing()->cpu_divider);
+        alignment.ppu_phase = random_alignment_offset(nes_timing()->ppu_divider);
+    }
     running_cpu = NULL;
     in_bus_cycle = false;
     active_cpu_cycles = 0;
-    ppu_master_phase = (uint8_t)(nes_timing()->ppu_divider - 1);
+    ppu_master_phase = alignment.ppu_phase;
+    cpu_runtime->startup_alignment = alignment;
     cpu_external_bus = 0;
     cpu_internal_bus = 0;
     joypad_read_valid = false;
@@ -244,10 +296,11 @@ void cpu_power_on(CPU* cpu) {
     cpu->sp = 0;
     cpu->status = INTERRUPT_FLAG | UNUSED_FLAG;
     cpu->halted = false;
-    // Choose a fixed divider alignment: the PPU starts one clock before CPU
-    // reset is released. A soft reset preserves the running divider phase.
-    clock_ppu_master(nes_timing()->ppu_divider);
+    // The default starts the PPU one clock before reset. Optional CPU offset
+    // adds master clocks before the same seven bus accesses; no CPU cycle is skipped.
+    clock_ppu_master(nes_timing()->ppu_divider + alignment.cpu_offset);
     cpu_reset_sequence(cpu);
+    return true;
 }
 
 void cpu_soft_reset(CPU* cpu) {

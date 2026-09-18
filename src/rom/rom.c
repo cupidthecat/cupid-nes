@@ -33,6 +33,7 @@
 #include "fds.h"
 #include "../system/timing.h"
 #include "../system/vs_system.h"
+#include "../cpu/cpu.h"
 
 #define PRG_ROM_BANK_SIZE 0x4000  // 16KB
 #define CHR_ROM_BANK_SIZE 0x2000  // 8KB
@@ -150,6 +151,10 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
         fprintf(stderr, "Unsupported NES console type\n");
         return -1;
     }
+    if (!cpu_startup_alignment_valid(rom_region(&header))) {
+        fprintf(stderr, "Startup alignment is outside this image's regional dividers\n");
+        return -1;
+    }
 
     size_t new_prg_size, rom_chr_size;
     int nes2 = is_nes20(&header);
@@ -258,6 +263,10 @@ int load_rom_memory(const uint8_t *data, size_t size) {
 int load_fds_memory(const uint8_t *disk, size_t disk_size,
                     const uint8_t *bios, size_t bios_size,
                     const char *disk_path, bool write_protected) {
+    if (!cpu_startup_alignment_valid(NES_REGION_NTSC)) {
+        fprintf(stderr, "FDS startup alignment must fit the NTSC dividers\n");
+        return -1;
+    }
     FdsImage *image = fds_image_create(disk, disk_size, bios, bios_size,
                                        disk_path, write_protected);
     if (!image) {

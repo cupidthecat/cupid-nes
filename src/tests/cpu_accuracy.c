@@ -1168,6 +1168,136 @@ static int dma_cycle_accounting(void) {
     return 0;
 }
 
+static int startup_phase_selection(void) {
+    static const NesRegion regions[] = {NES_REGION_NTSC, NES_REGION_PAL, NES_REGION_DENDY};
+    for (size_t region = 0; region < sizeof(regions) / sizeof(regions[0]); ++region) {
+        cpu_use_default_startup_alignment();
+        reset_fixture_region(regions[region]);
+        const NesTiming *timing = nes_timing();
+        for (unsigned cpu_offset = 0; cpu_offset < timing->cpu_divider; ++cpu_offset) {
+            for (unsigned phase = 0; phase < timing->ppu_divider; ++phase) {
+                CHECK(cpu_set_startup_alignment(cpu_offset, phase));
+                CHECK(!cpu_set_startup_alignment(timing->cpu_divider, phase));
+                CHECK(!cpu_set_startup_alignment(cpu_offset, timing->ppu_divider));
+                ppu_power_on(&ppu);
+                apu_power_on(&apu);
+                bus_count = 0;
+                mapper_clocks = 0;
+                CHECK(cpu_power_on(&cpu));
+                CpuStartupAlignment actual = cpu_get_startup_alignment();
+                CHECK(actual.cpu_offset == cpu_offset && actual.ppu_phase == phase);
+                CHECK(cpu_total_cycles == 7 && mapper_clocks == 7 && cpu.sp == 0xFD);
+                CHECK(cpu.pc == 0x8000 && cpu.a == 0 && cpu.x == 0 && cpu.y == 0);
+                CHECK(cpu.status == (INTERRUPT_FLAG | UNUSED_FLAG));
+                CHECK(bus_count == 2 && bus_events[0].addr == 0xFFFC && bus_events[1].addr == 0xFFFD);
+                unsigned initial = phase + timing->ppu_divider + cpu_offset;
+                for (unsigned vector = 0; vector < 2; ++vector) {
+                    unsigned clocks = initial + (5 + vector) * timing->cpu_divider
+                                    + timing->cpu_divider / 2 - 1;
+                    CHECK(bus_events[vector].cycle == 6 + vector);
+                    CHECK(bus_events[vector].ppu_cycle == clocks / timing->ppu_divider);
+                }
+                CHECK(ppu.total_cycles == (initial + 7u * timing->cpu_divider) / timing->ppu_divider);
+                cpu.a = 0xA5;
+                ram[0x12] = 0xC3;
+                cpu_soft_reset(&cpu);
+                CHECK(cpu_total_cycles == 14 && mapper_clocks == 14 && cpu.sp == 0xFA);
+                CHECK(cpu.a == 0xA5 && ram[0x12] == 0xC3);
+                CHECK(ppu.total_cycles == (initial + 14u * timing->cpu_divider) / timing->ppu_divider);
+                actual = cpu_get_startup_alignment();
+                CHECK(actual.cpu_offset == cpu_offset && actual.ppu_phase == phase);
+            }
+        }
+    }
+
+    cpu_use_default_startup_alignment();
+    reset_fixture_region(NES_REGION_PAL);
+    CHECK(cpu_set_startup_alignment(15, 4));
+    CHECK(!cpu_startup_alignment_valid(NES_REGION_NTSC));
+    CHECK(!cpu_startup_alignment_valid(NES_REGION_DENDY));
+    uint8_t image[16 + 0x4000 + 0x2000] = {0};
+    memcpy(image, "NES\x1A", 4);
+    image[4] = 1;
+    image[5] = 1;
+    image[7] = 8;
+    CHECK(load_rom_memory(image, sizeof(image)) == -1);
+    CHECK(cart == &fixture_mapper && nes_timing()->region == NES_REGION_PAL);
+    nes_set_region(NES_REGION_NTSC);
+    uint64_t previous_cycles = cpu_total_cycles;
+    uint64_t previous_ppu = ppu.total_cycles;
+    cpu.a = 0x5A;
+    CHECK(!cpu_power_on(&cpu));
+    CHECK(cpu.a == 0x5A && cpu_total_cycles == previous_cycles && ppu.total_cycles == previous_ppu);
+    cpu_use_default_startup_alignment();
+    return 0;
+}
+
+static int seeded_startup_alignment(void) {
+    BusEvent first_trace[64][4];
+    CpuStartupAlignment first_alignment[64];
+    cpu_use_default_startup_alignment();
+    reset_fixture();
+    program(0xEA, 0xEA, 0);
+    unsigned phases_seen = 0;
+    for (unsigned pass = 0; pass < 2; ++pass) {
+        cpu_seed_startup_alignment(123456789u);
+        for (unsigned boot = 0; boot < 64; ++boot) {
+            ppu_power_on(&ppu);
+            apu_power_on(&apu);
+            bus_count = 0;
+            CHECK(cpu_power_on(&cpu));
+            CpuStartupAlignment actual = cpu_get_startup_alignment();
+            CHECK(actual.cpu_offset < nes_timing()->cpu_divider);
+            CHECK(actual.ppu_phase < nes_timing()->ppu_divider);
+            phases_seen |= 1u << actual.ppu_phase;
+            CHECK(cpu_step(&cpu) == 2 && bus_count == 4);
+            if (!pass) {
+                first_alignment[boot] = actual;
+                memcpy(first_trace[boot], bus_events, sizeof(first_trace[boot]));
+            } else {
+                CHECK(actual.cpu_offset == first_alignment[boot].cpu_offset);
+                CHECK(actual.ppu_phase == first_alignment[boot].ppu_phase);
+                for (unsigned event = 0; event < 4; ++event) {
+                    CHECK(bus_events[event].addr == first_trace[boot][event].addr);
+                    CHECK(bus_events[event].value == first_trace[boot][event].value);
+                    CHECK(bus_events[event].cycle == first_trace[boot][event].cycle);
+                    CHECK(bus_events[event].ppu_cycle == first_trace[boot][event].ppu_cycle);
+                }
+            }
+        }
+    }
+    CHECK(phases_seen == 0x0F);
+    CpuStartupAlignment actual = cpu_get_startup_alignment();
+    uint64_t before = ppu.total_cycles;
+    cpu_seed_startup_alignment(0);
+    cpu_soft_reset(&cpu);
+    CpuStartupAlignment after = cpu_get_startup_alignment();
+    CHECK(after.cpu_offset == actual.cpu_offset && after.ppu_phase == actual.ppu_phase);
+    CHECK(ppu.total_cycles - before == 21);
+    cpu_use_default_startup_alignment();
+    return 0;
+}
+
+static int startup_phase_register_race(void) {
+    for (unsigned phase = 0; phase < 4; phase += 3) {
+        cpu_use_default_startup_alignment();
+        reset_fixture();
+        CHECK(cpu_set_startup_alignment(0, phase));
+        ppu_power_on(&ppu);
+        apu_power_on(&apu);
+        CHECK(cpu_power_on(&cpu));
+        program(0xAD, 0x02, 0x20);
+        ppu.scanline = 240;
+        ppu.dot = 332;
+        ppu.status = 0;
+        ppu.suppress_vblank = false;
+        CHECK(cpu_step(&cpu) == 4);
+        CHECK((cpu.a & 0x80) == (phase ? 0x80 : 0));
+    }
+    cpu_use_default_startup_alignment();
+    return 0;
+}
+
 int test_cpu_accuracy(void) {
     static int (*const tests[])(void) = {
         controller_latching, open_bus_and_cart_decoding, nop_and_zero_page_cycles,
@@ -1176,6 +1306,7 @@ int test_cpu_accuracy(void) {
         interrupt_entry, irq_mask_latency, frame_irq_acknowledgment, masked_store_addresses,
         reset_bus_sequence, halt_and_reset, regional_bus_timing_and_pal_dma,
         bus_cycle_interrupt_polling, dma_arbitration, dmc_revision_dma, dma_cycle_accounting,
+        startup_phase_selection, seeded_startup_alignment, startup_phase_register_race,
     };
     Mapper *saved_cart = cart;
     iNESHeader saved_header = ines_header;

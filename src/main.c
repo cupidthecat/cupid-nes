@@ -28,6 +28,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <errno.h>
 #include "rom/rom.h"
 #include "rom/fds.h"
 #include "cpu/cpu.h"
@@ -204,6 +205,10 @@ int main(int argc, char *argv[]) {
     bool fds_start_write_protected = false;
     bool vs_dip_set = false;
     uint16_t vs_dips = 0;
+    bool startup_phase_set = false;
+    bool startup_seed_set = false;
+    unsigned startup_cpu_offset = 0, startup_ppu_phase = 0;
+    uint32_t startup_seed = 0;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--console") == 0) {
             if (++i == argc || !nes_set_console_model_name(argv[i])) {
@@ -223,6 +228,42 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "CPU revision must be early-2a03 or late-2a03\n");
                 return 1;
             }
+        } else if (strcmp(argv[i], "--startup-phase") == 0) {
+            if (++i == argc || startup_phase_set || startup_seed_set) {
+                fprintf(stderr, "Choose one startup phase CPU:PPU or startup seed\n");
+                return 1;
+            }
+            char *end;
+            errno = 0;
+            unsigned long cpu_offset = strtoul(argv[i], &end, 10);
+            if (errno || argv[i][0] < '0' || argv[i][0] > '9' || *end != ':' || cpu_offset > 15) {
+                fprintf(stderr, "Startup phase must be CPU:PPU in regional master clocks\n");
+                return 1;
+            }
+            const char *ppu_text = end + 1;
+            errno = 0;
+            unsigned long ppu_phase = strtoul(ppu_text, &end, 10);
+            if (errno || ppu_text[0] < '0' || ppu_text[0] > '9' || *end || ppu_phase > 4) {
+                fprintf(stderr, "Startup phase must be CPU:PPU in regional master clocks\n");
+                return 1;
+            }
+            startup_cpu_offset = (unsigned)cpu_offset;
+            startup_ppu_phase = (unsigned)ppu_phase;
+            startup_phase_set = true;
+        } else if (strcmp(argv[i], "--startup-seed") == 0) {
+            if (++i == argc || startup_phase_set || startup_seed_set) {
+                fprintf(stderr, "Choose one startup phase CPU:PPU or startup seed\n");
+                return 1;
+            }
+            char *end;
+            errno = 0;
+            unsigned long long seed = strtoull(argv[i], &end, 10);
+            if (errno || argv[i][0] < '0' || argv[i][0] > '9' || *end || seed > UINT32_MAX) {
+                fprintf(stderr, "Startup seed must be an integer from 0 to 4294967295\n");
+                return 1;
+            }
+            startup_seed = (uint32_t)seed;
+            startup_seed_set = true;
         } else if (strcmp(argv[i], "--ppu-revision") == 0) {
             if (++i == argc || !ppu_set_revision_name(argv[i])) {
                 fprintf(stderr, "PPU revision must be 2c02-pre-e or 2c02e-plus\n");
@@ -321,6 +362,7 @@ int main(int argc, char *argv[]) {
     }
     if (!rom_path) {
         printf("Usage: %s [--console MODEL] [--cpu-revision REVISION] "
+               "[--startup-phase CPU:PPU | --startup-seed SEED] "
                "[--ppu-revision REVISION] [--ppu-oam-row-corruption] "
                "[--ppu-startup-restriction] [--ppu-oam-decay] "
                "[--adapter TYPE] [--port1 DEVICE] [--port2 DEVICE] "
@@ -361,6 +403,13 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Failed to load ROM\n");
         return 1;
     }
+    if (startup_phase_set && !cpu_set_startup_alignment(startup_cpu_offset, startup_ppu_phase)) {
+        fprintf(stderr, "Startup phase must be CPU 0..%u and PPU 0..%u for this image\n",
+                (unsigned)nes_timing()->cpu_divider - 1, (unsigned)nes_timing()->ppu_divider - 1);
+        unload_rom();
+        return 1;
+    }
+    if (startup_seed_set) cpu_seed_startup_alignment(startup_seed);
     if (vs_dip_set && !vs_set_dip_switches(vs_dips)) {
         fprintf(stderr, "--vs-dip requires a VS System image\n");
         unload_rom();
@@ -409,7 +458,15 @@ int main(int argc, char *argv[]) {
 
 
     printf("Resetting CPU...\n");
-    cpu_power_on(&cpu);
+    if (!cpu_power_on(&cpu)) {
+        fprintf(stderr, "Invalid CPU startup alignment\n");
+        unload_rom();
+        return 1;
+    }
+    CpuStartupAlignment alignment = cpu_get_startup_alignment();
+    printf("Startup alignment: CPU %u, PPU %u%s\n", (unsigned)alignment.cpu_offset,
+           (unsigned)alignment.ppu_phase, startup_seed_set ? " (seeded)" : "");
+    if (startup_seed_set) printf("Startup seed: %llu\n", (unsigned long long)startup_seed);
     vs_power_on_secondary();
     if (vs_enabled()) {
         printf("VS System: %s, PPU model %u, DIP $%04X\n",

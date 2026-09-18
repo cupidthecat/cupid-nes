@@ -208,6 +208,9 @@ void vs_power_on_secondary(void) {
     ppu_power_on(&vs.sub_ppu.state);
     apu_power_on(&vs.sub_apu);
     cpu_power_on(&vs.sub_cpu.cpu);
+    CpuStartupAlignment alignment = cpu_get_startup_alignment();
+    printf("VS secondary startup alignment: CPU %u, PPU %u\n",
+           (unsigned)alignment.cpu_offset, (unsigned)alignment.ppu_phase);
     select_side(0);
 }
 

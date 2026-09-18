@@ -29,6 +29,12 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "../joypad/joypad.h"
+#include "../system/timing.h"
+
+typedef struct {
+    uint8_t cpu_offset;
+    uint8_t ppu_phase;
+} CpuStartupAlignment;
 
 typedef struct { 
     uint8_t a;         // Accumulator
@@ -53,6 +59,7 @@ typedef struct {
     bool oam_dma_pending;
     uint8_t oam_dma_page;
     uint8_t ppu_master_phase;
+    CpuStartupAlignment startup_alignment;
     bool joypad_read_valid;
     uint16_t joypad_read_addr;
     uint64_t joypad_read_cycle;
@@ -87,7 +94,13 @@ extern Joypad pad1, pad2;
 extern CPU cpu;
 extern uint64_t cpu_total_cycles;
 
-void cpu_power_on(CPU* cpu);
+// Explicit offsets use master clocks and must fit the selected region's dividers.
+void cpu_use_default_startup_alignment(void);
+bool cpu_set_startup_alignment(unsigned cpu_offset, unsigned ppu_phase);
+void cpu_seed_startup_alignment(uint32_t seed);
+bool cpu_startup_alignment_valid(NesRegion region);
+CpuStartupAlignment cpu_get_startup_alignment(void);
+bool cpu_power_on(CPU* cpu);
 void cpu_soft_reset(CPU* cpu);
 void cpu_reset(CPU* cpu);
 // Select an independent CPU bus/RAM context. NULL selects the ordinary console.

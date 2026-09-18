@@ -16,6 +16,8 @@ On Windows, replace `./cupid-nes` with `.\build\windows\cupid-nes.exe`. Supply o
 | --- | --- | --- | --- |
 | `--console MODEL` | `nes-001`, `nes-101`, `famicom`, `av-famicom` | `nes-001` | Console controller-port wiring |
 | `--cpu-revision REVISION` | `early-2a03`, `late-2a03` | `early-2a03` | CPU/APU revision behavior used by the DMC model |
+| `--startup-phase CPU:PPU` | Decimal master-clock offsets within the regional dividers | CPU `0`, PPU divider minus one | Selects a reproducible power-on alignment |
+| `--startup-seed SEED` | Decimal integer from `0` through `4294967295` | No randomization | Generates a reproducible sequence of legal power-on alignments |
 | `--ppu-revision REVISION` | `2c02-pre-e`, `2c02e-plus` | `2c02e-plus` | PPU silicon revision used by optional OAM behavior |
 | `--ppu-oam-row-corruption` | No value | Off | Enables the deterministic worst-case OAM row-corruption profile |
 | `--ppu-startup-restriction` | No value | Off | Enables the protected PPU register-write interval after power-on and soft reset |
@@ -24,6 +26,8 @@ On Windows, replace `./cupid-nes` with `.\build\windows\cupid-nes.exe`. Supply o
 The ROM header selects the timing region. `--console famicom` changes console wiring and does not force NTSC, PAL, or Dendy timing. There is no application `--region` option.
 
 The three optional PPU profiles are compatibility models with documented assumptions. Their timing and limits are in [accuracy](accuracy.md).
+
+Choose either `--startup-phase` or `--startup-seed`. The CPU offset delays reset release in master clocks; the PPU phase selects the initial divider remainder. NTSC accepts CPU `0..11` and PPU `0..3`, PAL accepts `0..15` and `0..4`, and Dendy accepts `0..14` and `0..4`. The startup log records the applied pair and any supplied seed. For example, `--startup-phase 0:3` selects the default NTSC alignment. Soft reset retains the running phase. A seeded dual VS cabinet draws an alignment for each CPU in main-then-secondary order.
 
 ## Controllers and expansion devices
 
