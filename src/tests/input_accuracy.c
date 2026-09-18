@@ -22,9 +22,17 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 #include <stdio.h>
+#include <errno.h>
 #include <string.h>
 #include <time.h>
+#ifdef _WIN32
+#include <direct.h>
+#else
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 #include "../joypad/family_basic.h"
+#include "../joypad/special_peripherals.h"
 #include "../cpu/cpu.h"
 #include "../apu/apu.h"
 #include "../ppu/ppu.h"
@@ -1064,6 +1072,143 @@ static int family_basic_recording_and_media(void) {
     return 0;
 }
 
+typedef struct {
+    char directory[96];
+    char rom[128];
+    char turbo[128];
+} InputStorageFixture;
+
+static int input_storage_begin(InputStorageFixture *paths) {
+    for (unsigned attempt = 0; attempt < 1000; ++attempt) {
+        snprintf(paths->directory, sizeof(paths->directory), ".input-storage-test-%llu-%u",
+                 (unsigned long long)time(NULL), attempt);
+#ifdef _WIN32
+        int result = _mkdir(paths->directory);
+#else
+        int result = mkdir(paths->directory, 0700);
+#endif
+        if (result == 0) {
+            snprintf(paths->rom, sizeof(paths->rom), "%s/cart.nes", paths->directory);
+            snprintf(paths->turbo, sizeof(paths->turbo), "%s/cart.turbofile.sav", paths->directory);
+            return 0;
+        }
+        if (errno != EEXIST) return -1;
+    }
+    return -1;
+}
+
+static int input_storage_end(const InputStorageFixture *paths) {
+    int result = 0;
+    if (remove(paths->turbo) != 0 && errno != ENOENT) result = 1;
+#ifdef _WIN32
+    if (_rmdir(paths->directory) != 0) result = 1;
+#else
+    if (rmdir(paths->directory) != 0) result = 1;
+#endif
+    return result;
+}
+
+static void turbo_clock_bit(unsigned bit) {
+    joypad_write_ports((uint8_t)(0x06 | (bit & 1u)));
+    joypad_write_ports((uint8_t)(0x02 | (bit & 1u)));
+}
+
+static int turbo_file_protocol(void) {
+    input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+    CHECK(joypad_set_expansion_device_name("turbo-file"));
+    CHECK(joypad_expansion_device() == NES_EXPANSION_TURBO_FILE);
+    pad2.buttons = 1;
+    joypad_write_ports(0);
+    for (unsigned bit = 0; bit < 8; ++bit) turbo_clock_bit(0xA5u >> bit);
+    joypad_write_ports(0);
+    latch_controllers();
+    write_mem(0x4018, 0);
+    CHECK((read_mem(0x4017) & 5u) == 5u);
+    joypad_write_ports(0);
+    for (unsigned bit = 0; bit < 8; ++bit) {
+        write_mem(0x4018, 0);
+        CHECK((read_mem(0x4017) & 4u) == (uint8_t)(((0xA5u >> bit) & 1u) << 2));
+        turbo_clock_bit(0xA5u >> bit);
+    }
+
+    joypad_write_ports(0);
+    joypad_write_ports(7);
+    joypad_write_ports(7);
+    CHECK((turbo_file_read(1) & 4u) == 4u);
+    joypad_write_ports(3);
+    CHECK((turbo_file_read(1) & 4u) == 0u);
+
+    joypad_write_ports(0);
+    for (unsigned bit = 0; bit < 65536; ++bit) turbo_clock_bit(bit == 0);
+    CHECK((turbo_file_read(1) & 4u) == 4u);
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_NONE));
+    CHECK((read_mem(0x4017) & 4u) == 0);
+    CHECK(joypad_persistent_shutdown());
+    return 0;
+}
+
+static int turbo_file_persistence(void) {
+    InputStorageFixture paths;
+    CHECK(input_storage_begin(&paths) == 0);
+    input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_TURBO_FILE));
+    CHECK(joypad_persistent_configure(paths.rom));
+    joypad_write_ports(0);
+    for (unsigned byte = 0; byte < 0x2000; ++byte) {
+        uint8_t value = (uint8_t)(byte ^ (byte >> 5) ^ 0xA5);
+        for (unsigned bit = 0; bit < 8; ++bit) turbo_clock_bit(value >> bit);
+    }
+    CHECK(joypad_persistent_flush());
+    FILE *saved = fopen(paths.turbo, "rb");
+    CHECK(saved != NULL);
+    for (unsigned byte = 0; byte < 0x2000; ++byte)
+        CHECK(fgetc(saved) == (uint8_t)(byte ^ (byte >> 5) ^ 0xA5));
+    CHECK(fgetc(saved) == EOF);
+    CHECK(fclose(saved) == 0);
+
+    CHECK(joypad_persistent_shutdown());
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_TURBO_FILE));
+    CHECK(joypad_persistent_configure(paths.rom));
+    joypad_write_ports(0);
+    for (unsigned bit = 0; bit < 8; ++bit) {
+        CHECK((turbo_file_read(1) >> 2) == ((0xA5u >> bit) & 1u));
+        turbo_clock_bit(0xA5u >> bit);
+    }
+    CHECK(joypad_persistent_shutdown());
+    CHECK(input_storage_end(&paths) == 0);
+    return 0;
+}
+
+static int turbo_file_failed_save(void) {
+    InputStorageFixture paths;
+    CHECK(input_storage_begin(&paths) == 0);
+    input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_TURBO_FILE));
+    CHECK(joypad_persistent_configure(paths.rom));
+    joypad_write_ports(0);
+    turbo_clock_bit(1);
+#ifdef _WIN32
+    CHECK(_mkdir(paths.turbo) == 0);
+#else
+    CHECK(mkdir(paths.turbo, 0700) == 0);
+#endif
+    CHECK(!joypad_persistent_shutdown());
+    joypad_write_ports(0);
+    CHECK((turbo_file_read(1) & 4u) == 4u);
+#ifdef _WIN32
+    CHECK(_rmdir(paths.turbo) == 0);
+#else
+    CHECK(rmdir(paths.turbo) == 0);
+#endif
+    CHECK(joypad_persistent_flush());
+    FILE *saved = fopen(paths.turbo, "rb");
+    CHECK(saved != NULL && fgetc(saved) == 1);
+    CHECK(fclose(saved) == 0);
+    CHECK(joypad_persistent_shutdown());
+    CHECK(input_storage_end(&paths) == 0);
+    return 0;
+}
+
 int test_input_accuracy(void) {
     static int (*const tests[])(void) = {
         console_open_bus, console_read_clocks, console_strobe_timing,
@@ -1075,7 +1220,8 @@ int test_input_accuracy(void) {
         mat_selection_and_disconnect, zapper_port_signals, zapper_beam_and_persistence,
         zapper_brightness_and_area, zapper_cpu_and_dma, zapper_selection_and_disconnect,
         family_basic_matrix_scan, family_basic_cpu_tape_and_controller,
-        family_basic_recording_and_media
+        family_basic_recording_and_media, turbo_file_protocol,
+        turbo_file_persistence, turbo_file_failed_save
     };
     NesConsoleModel saved_model = nes_console_model();
     NesRegion saved_region = nes_timing()->region;

@@ -316,7 +316,7 @@ int main(int argc, char *argv[]) {
             }
         } else if (strcmp(argv[i], "--expansion") == 0) {
             if (++i == argc || !joypad_set_expansion_device_name(argv[i])) {
-                fprintf(stderr, "Expansion device must be none, arkanoid, family-trainer-a, family-trainer-b, zapper, or family-basic\n");
+                fprintf(stderr, "Expansion device must be none, arkanoid, family-trainer-a, family-trainer-b, zapper, family-basic, or turbo-file\n");
                 return 1;
             }
         } else if (strcmp(argv[i], "--zapper-radius") == 0) {
@@ -452,6 +452,11 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     if (startup_seed_set) cpu_seed_startup_alignment(startup_seed);
+    if (!joypad_persistent_configure(rom_path)) {
+        fprintf(stderr, "Failed to load expansion-device storage\n");
+        unload_rom();
+        return 1;
+    }
     if (vs_dip_set && !vs_set_dip_switches(vs_dips)) {
         fprintf(stderr, "--vs-dip requires a VS System image\n");
         unload_rom();
@@ -615,6 +620,10 @@ int main(int argc, char *argv[]) {
                     fprintf(stderr, "Failed to save modified FDS media; keeping the emulator open\n");
                     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "FDS Save Error",
                         "The modified disk image could not be saved. The emulator will remain open so the media changes are not discarded.", window);
+                } else if (!joypad_persistent_flush()) {
+                    fprintf(stderr, "Failed to save expansion-device storage; keeping the emulator open\n");
+                    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Peripheral Save Error",
+                        "Expansion-device storage could not be saved. The emulator will remain open so the changes are not discarded.", window);
                 } else {
                     running = false;
                 }
@@ -754,6 +763,7 @@ int main(int argc, char *argv[]) {
         if (controllers[player]) SDL_GameControllerClose(controllers[player]);
     bool tape_saved = finish_tape_capture(tape_record_path);
     bool tape_failed = family_basic_tape_failed();
+    bool peripheral_saved = joypad_persistent_shutdown();
     if (tape_failed) fprintf(stderr, "Tape recording stopped because the capture buffer could not grow\n");
     family_basic_shutdown();
     if (!unload_rom()) {
@@ -762,5 +772,5 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     SDL_Quit();
-    return tape_saved && !tape_failed ? 0 : 1;
+    return tape_saved && !tape_failed && peripheral_saved ? 0 : 1;
 }

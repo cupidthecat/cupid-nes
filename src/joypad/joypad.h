@@ -59,7 +59,8 @@ typedef enum {
     NES_EXPANSION_FAMILY_TRAINER_A,
     NES_EXPANSION_FAMILY_TRAINER_B,
     NES_EXPANSION_ZAPPER,
-    NES_EXPANSION_FAMILY_BASIC
+    NES_EXPANSION_FAMILY_BASIC,
+    NES_EXPANSION_TURBO_FILE
 } NesExpansionDevice;
 
 void    joypad_set(Joypad* jp, int btn, int pressed);
@@ -95,5 +96,8 @@ bool    joypad_set_zapper(unsigned slot, int x, int y, bool trigger);
 uint8_t joypad_zapper_serial_report(unsigned slot);
 unsigned joypad_zapper_radius(void);
 bool    joypad_set_zapper_radius(unsigned radius);
+bool    joypad_persistent_configure(const char *rom_path);
+bool    joypad_persistent_flush(void);
+bool    joypad_persistent_shutdown(void);
 
 #endif // JOYPAD_H

@@ -111,6 +111,8 @@ Some families have substantially different variants. Namco 175/340 variants do n
 
 Expansion sound includes MMC5 pulse/PCM, VRC6 pulse/saw, VRC7 FM, Namco 163 wavetable, Sunsoft 5B tone/noise/envelopes, and disk-system wavetable/modulation output. [Architecture](architecture.md) describes how the audio reaches the application.
 
+The Famicom expansion connector supports the ASCII Turbo File as an 8 KiB serial storage device. Its D1 reset, D2 clock, D0 write-data, and $4017 D2 read-data lines are handled through the normal controller bus, including bit-position wrap and separate persistent storage.
+
 ## EPSM expansion sound
 
 The YMF288 implementation provides six FM channels, three SSG tone/noise/envelope channels, and six ADPCM percussion voices. The CPU can write through `$401C-$401F` or the `$4016` data-bus/OUT-pin protocol. The delayed OUT1 edge samples the data bus at the time the pin changes. Timer IRQs join the CPU's ordinary interrupt polling path.

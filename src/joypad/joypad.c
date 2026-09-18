@@ -24,6 +24,7 @@
 
 #include "joypad.h"
 #include "family_basic.h"
+#include "special_peripherals.h"
 #include "../system/hardware.h"
 #include "../system/timing.h"
 #include "../ppu/ppu.h"
@@ -46,7 +47,8 @@ static const char *const port_device_names[] = {
     "pad", "none", "arkanoid", "power-pad-a", "power-pad-b", "zapper"
 };
 static const char *const expansion_device_names[] = {
-    "none", "arkanoid", "family-trainer-a", "family-trainer-b", "zapper", "family-basic"
+    "none", "arkanoid", "family-trainer-a", "family-trainer-b", "zapper", "family-basic",
+    "turbo-file"
 };
 
 typedef struct {
@@ -225,6 +227,8 @@ uint8_t joypad_read_port(Joypad *jp, unsigned port) {
         value |= read_zapper(2);
     else if (expansion_device == NES_EXPANSION_FAMILY_BASIC)
         value |= family_basic_read(port, cpu_total_cycles);
+    else if (expansion_device == NES_EXPANSION_TURBO_FILE)
+        value |= turbo_file_read(port);
     // The second built-in controller's microphone reaches $4016 D2.
     if (port == 0 && nes_console_model() == NES_CONSOLE_HVC001 && microphone_active)
         value |= 0x04;
@@ -280,6 +284,8 @@ void joypad_write_ports(uint8_t value) {
         family_trainer_rows = value & 7u;
     else if (expansion_device == NES_EXPANSION_FAMILY_BASIC)
         family_basic_write(value, cpu_total_cycles);
+    else if (expansion_device == NES_EXPANSION_TURBO_FILE)
+        turbo_file_write(value);
 }
 
 NesInputAdapter joypad_adapter(void) {
@@ -338,11 +344,12 @@ NesExpansionDevice joypad_expansion_device(void) {
 }
 
 bool joypad_set_expansion_device(NesExpansionDevice device) {
-    if ((unsigned)device > NES_EXPANSION_FAMILY_BASIC) return false;
+    if ((unsigned)device > NES_EXPANSION_TURBO_FILE) return false;
     expansion_device = device;
     paddles[2].strobe = paddles[2].shift = 0;
     family_trainer_rows = 0;
     family_basic_reset();
+    turbo_file_reset_protocol();
     return true;
 }
 
@@ -403,4 +410,16 @@ bool joypad_set_zapper_radius(unsigned radius) {
     if (radius > NES_ZAPPER_MAX_RADIUS) return false;
     zapper_radius = radius;
     return true;
+}
+
+bool joypad_persistent_configure(const char *rom_path) {
+    return expansion_device != NES_EXPANSION_TURBO_FILE || turbo_file_configure(rom_path);
+}
+
+bool joypad_persistent_flush(void) {
+    return expansion_device != NES_EXPANSION_TURBO_FILE || turbo_file_flush();
+}
+
+bool joypad_persistent_shutdown(void) {
+    return turbo_file_shutdown();
 }

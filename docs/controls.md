@@ -108,6 +108,10 @@ While Family BASIC is selected, keyboard events are consumed by the keyboard/tap
 
 With `--tape-play FILE`, F10 starts playback. With `--tape-record FILE`, F10 starts a new recording. F11 stops the tape and writes a pending recording. [Saves and media](saves.md) describes the tape file format and retry behavior.
 
+## ASCII Turbo File
+
+`--console famicom --expansion turbo-file` connects the 8 KiB serial storage device. Games control its reset, clock, data, and read lines through the Famicom expansion connector. The contents are loaded and saved automatically next to the ROM; there is no host key for manually advancing the device.
+
 ## FDS keys
 
 | Key | Disk-system action |

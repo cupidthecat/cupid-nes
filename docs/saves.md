@@ -2,7 +2,7 @@
 
 [Documentation index](README.md)
 
-Cupid persists cartridge nonvolatile memory, writable FDS/QD images, and Family BASIC tape recordings. These files preserve the emulated storage device involved; the application does not expose save-state or rewind commands.
+Cupid persists cartridge nonvolatile memory, writable FDS/QD images, Family BASIC tape recordings, and supported expansion storage. These files preserve the emulated storage device involved; the application does not expose save-state or rewind commands.
 
 ## Cartridge save files
 
@@ -38,6 +38,12 @@ Some mapper save files contain more than one memory area:
 Do not assume another emulator uses the same composite layout. Keep a backup before moving saves between emulator versions or board configurations.
 
 Ordinary PRG/CHR battery memory and EEPROM files are written directly to their destination. Flash uses a temporary file and replacement. Failed cartridge saves print an error; they do not keep the application open for recovery as a failed FDS save does.
+
+## Expansion storage
+
+The ASCII Turbo File uses an 8 KiB `.turbofile.sav` file derived from the ROM stem. For example, `games/game.nes` uses `games/game.turbofile.sav`. The file must be exactly 8 KiB when it already exists.
+
+Turbo File saves are written to a sibling temporary file and replace the destination only after the complete image is written and closed. If replacement fails during a window-close request, the modified device remains in memory and the emulator stays open so the save can be retried.
 
 ## Writable FDS and QD images
 

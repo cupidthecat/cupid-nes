@@ -13,7 +13,7 @@ CORE_SRC = src/system/timing.c src/system/hardware.c src/system/vs_system.c src/
            src/rom/fds.c \
            src/rom/vrc7_audio.c src/rom/emu2413.c \
            src/rom/eeprom.c src/rom/namco163.c src/rom/sunsoft5b.c \
-           src/joypad/joypad.c src/joypad/family_basic.c \
+           src/joypad/joypad.c src/joypad/family_basic.c src/joypad/special_peripherals.c \
            src/apu/apu.c src/ui/palette_tool.c
 CORE_CXX_SRC = src/apu/epsm.cpp src/third_party/ymfm/ymfm_opn.cpp \
                src/third_party/ymfm/ymfm_ssg.cpp src/third_party/ymfm/ymfm_adpcm.cpp

@@ -1,0 +1,27 @@
+/*
+ * special_peripherals.h - Famicom expansion peripheral helpers
+ *
+ * Author: @frankischilling
+ *
+ * This file is part of Cupid NES Emulator.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ */
+
+#ifndef SPECIAL_PERIPHERALS_H
+#define SPECIAL_PERIPHERALS_H
+
+#include <stdbool.h>
+#include <stdint.h>
+
+void turbo_file_reset_protocol(void);
+uint8_t turbo_file_read(unsigned port);
+void turbo_file_write(uint8_t value);
+bool turbo_file_configure(const char *rom_path);
+bool turbo_file_flush(void);
+bool turbo_file_shutdown(void);
+
+#endif
