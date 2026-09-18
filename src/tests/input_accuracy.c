@@ -1839,6 +1839,88 @@ static int jissen_mahjong_rows(void) {
     return 0;
 }
 
+static uint8_t barcode_battler_expected_bit(const char record[20], unsigned position) {
+    unsigned frame_bit = position % 10u;
+    if (frame_bit == 0) return 1;
+    if (frame_bit == 9) return 0;
+    unsigned character = position / 10u;
+    return (uint8_t)(1u ^ (((uint8_t)record[character] >> (frame_bit - 1u)) & 1u));
+}
+
+static int barcode_battler_stream(void) {
+    static const NesRegion regions[] = {NES_REGION_NTSC, NES_REGION_PAL, NES_REGION_DENDY};
+    static const char record[21] = "0123456789012EPOCH\r\n";
+
+    for (unsigned region = 0; region < sizeof(regions) / sizeof(regions[0]); ++region) {
+        input_fixture(NES_CONSOLE_HVC001, regions[region]);
+        CHECK(joypad_set_expansion_device_name("barcode-battler"));
+        CHECK(joypad_expansion_device() == NES_EXPANSION_BARCODE_BATTLER);
+        pad2.buttons = 1;
+        write_mem(0x4016, 1);
+        CHECK(joypad_scan_barcode_battler("0123456789012"));
+
+        uint64_t cycles_per_bit = (uint32_t)nes_timing()->cpu_hz / 1200u;
+        CHECK(cycles_per_bit != 0);
+        input_program(0xAD, 0x4017);
+        for (unsigned position = 0; position < 200; ++position) {
+            uint64_t read_cycle = position ? (uint64_t)position * cycles_per_bit : 4u;
+            cpu_total_cycles = read_cycle - 4u;
+            cpu.pc = 0x8000;
+            CHECK(cpu_step(&cpu) == 4);
+            uint8_t expected = barcode_battler_expected_bit(record, position);
+            CHECK((cpu.a & 0x05u) == (uint8_t)(1u | (expected << 2)));
+        }
+
+        cpu_total_cycles = 200u * cycles_per_bit - 4u;
+        cpu.pc = 0x8000;
+        CHECK(cpu_step(&cpu) == 4);
+        CHECK((cpu.a & 0x05u) == 1u);
+    }
+    return 0;
+}
+
+static int barcode_battler_lifetime(void) {
+    static const char first_record[21] = "     12345678EPOCH\r\n";
+    static const char second_record[21] = "     87654321EPOCH\r\n";
+
+    input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_BARCODE_BATTLER));
+    CHECK((read_mem(0x4017) & 4u) == 0);
+    CHECK(!joypad_scan_barcode_battler(NULL));
+    CHECK(!joypad_scan_barcode_battler("1234567"));
+    CHECK(!joypad_scan_barcode_battler("12345678901234"));
+    CHECK(!joypad_scan_barcode_battler("1234X678"));
+    CHECK((read_mem(0x4017) & 4u) == 0);
+
+    cpu_total_cycles = 100;
+    CHECK(joypad_scan_barcode_battler("12345678"));
+    uint64_t first_insert = cpu_total_cycles;
+    uint64_t cycles_per_bit = (uint32_t)nes_timing()->cpu_hz / 1200u;
+    cpu_total_cycles = first_insert + 73u * cycles_per_bit;
+    CHECK(!joypad_scan_barcode_battler("bad"));
+    CHECK((read_mem(0x4017) & 4u) ==
+          (uint8_t)(barcode_battler_expected_bit(first_record, 73) << 2));
+
+    cpu_total_cycles = first_insert + 90u * cycles_per_bit;
+    CHECK(joypad_scan_barcode_battler("87654321"));
+    uint64_t second_insert = cpu_total_cycles;
+    CHECK((read_mem(0x4017) & 4u) ==
+          (uint8_t)(barcode_battler_expected_bit(second_record, 0) << 2));
+    cpu_total_cycles = second_insert + 37u * cycles_per_bit;
+    CHECK((read_mem(0x4017) & 4u) ==
+          (uint8_t)(barcode_battler_expected_bit(second_record, 37) << 2));
+
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_NONE));
+    CHECK(!joypad_scan_barcode_battler("12345678"));
+    CHECK((read_mem(0x4017) & 4u) == 0);
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_BARCODE_BATTLER));
+    CHECK((read_mem(0x4017) & 4u) == 0);
+    CHECK(joypad_scan_barcode_battler("12345678"));
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_BARCODE_BATTLER));
+    CHECK((read_mem(0x4017) & 4u) == 0);
+    return 0;
+}
+
 int test_input_accuracy(void) {
     static int (*const tests[])(void) = {
         console_open_bus, console_read_clocks, console_strobe_timing,
@@ -1855,7 +1937,8 @@ int test_input_accuracy(void) {
         battle_box_persistence, battle_box_failed_save, subor_keyboard_matrix,
         subor_mouse_packets, hori_track_reports, konami_hyper_shot_signals,
         bandai_hyper_shot_signals, party_tap_reports, pachinko_reports,
-        exciting_boxing_signals, jissen_mahjong_rows
+        exciting_boxing_signals, jissen_mahjong_rows, barcode_battler_stream,
+        barcode_battler_lifetime
     };
     NesConsoleModel saved_model = nes_console_model();
     NesRegion saved_region = nes_timing()->region;

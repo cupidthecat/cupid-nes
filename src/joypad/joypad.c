@@ -49,7 +49,8 @@ static const char *const port_device_names[] = {
 static const char *const expansion_device_names[] = {
     "none", "arkanoid", "family-trainer-a", "family-trainer-b", "zapper", "family-basic",
     "turbo-file", "battle-box", "subor-keyboard", "hori-track", "konami-hyper-shot",
-    "bandai-hyper-shot", "party-tap", "pachinko", "exciting-boxing", "jissen-mahjong"
+    "bandai-hyper-shot", "party-tap", "pachinko", "exciting-boxing", "jissen-mahjong",
+    "barcode-battler"
 };
 
 typedef struct {
@@ -250,6 +251,8 @@ uint8_t joypad_read_port(Joypad *jp, unsigned port) {
         value |= exciting_boxing_read(port);
     else if (expansion_device == NES_EXPANSION_JISSEN_MAHJONG)
         value |= jissen_mahjong_read(port);
+    else if (expansion_device == NES_EXPANSION_BARCODE_BATTLER)
+        value |= barcode_battler_read(port, cpu_total_cycles, (uint32_t)nes_timing()->cpu_hz);
     // The second built-in controller's microphone reaches $4016 D2.
     if (port == 0 && nes_console_model() == NES_CONSOLE_HVC001 && microphone_active)
         value |= 0x04;
@@ -387,7 +390,7 @@ NesExpansionDevice joypad_expansion_device(void) {
 }
 
 bool joypad_set_expansion_device(NesExpansionDevice device) {
-    if ((unsigned)device > NES_EXPANSION_JISSEN_MAHJONG) return false;
+    if ((unsigned)device > NES_EXPANSION_BARCODE_BATTLER) return false;
     expansion_device = device;
     paddles[2].strobe = paddles[2].shift = 0;
     family_trainer_rows = 0;
@@ -402,6 +405,7 @@ bool joypad_set_expansion_device(NesExpansionDevice device) {
     pachinko_reset();
     exciting_boxing_reset();
     jissen_mahjong_reset();
+    barcode_battler_reset();
     return true;
 }
 
@@ -505,6 +509,11 @@ bool joypad_set_boxing_sensor(unsigned sensor, bool pressed) {
 bool joypad_set_jissen_key(JissenKey key, bool pressed) {
     if (expansion_device != NES_EXPANSION_JISSEN_MAHJONG) return false;
     return jissen_mahjong_set_key((unsigned)key, pressed);
+}
+
+bool joypad_scan_barcode_battler(const char *digits) {
+    if (expansion_device != NES_EXPANSION_BARCODE_BATTLER) return false;
+    return barcode_battler_scan(digits, cpu_total_cycles);
 }
 
 bool joypad_persistent_configure(const char *rom_path) {

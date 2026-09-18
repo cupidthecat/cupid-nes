@@ -175,6 +175,10 @@ Changing or ejecting a side does not flush the disk image. Follow the game's dis
 
 `--barcode DIGITS` performs the configured Datach scan after a compatible cartridge loads. F8 starts that same scan again. The value must contain exactly 8 or 13 decimal digits.
 
+## Barcode Battler
+
+`--console famicom --expansion barcode-battler --barcode-battler DIGITS` connects the expansion reader and starts an 8- or 13-digit scan. The device transmits its 200-bit framed character stream on `$4017 D2` at 1200 bits per second. F8 restarts the configured scan. Barcode Battler scan state is separate from Datach cartridge input.
+
 ## Palette controls
 
 F7 opens or closes the runtime palette overlay. Click one of the 64 swatches to open its color picker, then use the saturation/value area or hue strip to edit that color. F6 restores Cupid's built-in 64-color palette.

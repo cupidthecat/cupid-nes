@@ -53,7 +53,7 @@ NES 2.0 console selector 3 with extended subtype 4 enables EPSM sound. The devic
 | `--adapter TYPE` | `none`, `four-score`, `famicom-2`, `famicom-4` | `none` |
 | `--port1 DEVICE` | `pad`, `none`, `arkanoid`, `power-pad-a`, `power-pad-b`, `zapper` | `pad` |
 | `--port2 DEVICE` | `pad`, `none`, `arkanoid`, `power-pad-a`, `power-pad-b`, `zapper`, `subor-mouse` | `pad` |
-| `--expansion DEVICE` | `none`, `arkanoid`, `family-trainer-a`, `family-trainer-b`, `zapper`, `family-basic`, `turbo-file`, `battle-box`, `subor-keyboard`, `hori-track`, `konami-hyper-shot`, `bandai-hyper-shot`, `party-tap`, `pachinko`, `exciting-boxing`, `jissen-mahjong` | `none` |
+| `--expansion DEVICE` | `none`, `arkanoid`, `family-trainer-a`, `family-trainer-b`, `zapper`, `family-basic`, `turbo-file`, `battle-box`, `subor-keyboard`, `hori-track`, `konami-hyper-shot`, `bandai-hyper-shot`, `party-tap`, `pachinko`, `exciting-boxing`, `jissen-mahjong`, `barcode-battler` | `none` |
 | `--zapper-radius PIXELS` | Decimal integer from `0` through `255` | `0` |
 
 A Four Score requires both normal ports to stay set to `pad`. The `famicom-2` and `famicom-4` adapters use the expansion connector, so they cannot be combined with another `--expansion` device. An invalid combination exits before loading the image with `An adapter and another device cannot share the same connector`.
@@ -82,6 +82,14 @@ Examples:
 ```
 
 `--barcode DIGITS` accepts exactly 8 or 13 decimal digits and requires a supported Datach cartridge. The barcode is scanned once after loading. F8 starts the configured scan again while the game is running.
+
+Barcode Battler uses a separate input option and device state:
+
+| Option | Accepted value | Default |
+| --- | --- | --- |
+| `--barcode-battler DIGITS` | Exactly 8 or 13 decimal digits | No Barcode Battler scan |
+
+Use it with `--console famicom --expansion barcode-battler`. The configured scan begins after reset and F8 restarts it. This reader is independent of cartridge barcode hardware.
 
 ## Family BASIC tape
 

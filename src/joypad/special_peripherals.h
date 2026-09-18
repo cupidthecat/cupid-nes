@@ -75,4 +75,8 @@ void jissen_mahjong_write(uint8_t value);
 uint8_t jissen_mahjong_read(unsigned port);
 bool jissen_mahjong_set_key(unsigned key, bool pressed);
 
+void barcode_battler_reset(void);
+bool barcode_battler_scan(const char *digits, uint64_t cpu_cycles);
+uint8_t barcode_battler_read(unsigned port, uint64_t cpu_cycles, uint32_t cpu_hz);
+
 #endif

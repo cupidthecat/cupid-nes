@@ -323,6 +323,7 @@ int main(int argc, char *argv[]) {
 
     const char *rom_path = NULL;
     const char *barcode = NULL;
+    const char *barcode_battler = NULL;
     const char *tape_play_path = NULL;
     const char *tape_record_path = NULL;
     const char *fds_bios_path = NULL;
@@ -442,7 +443,7 @@ int main(int argc, char *argv[]) {
             }
         } else if (strcmp(argv[i], "--expansion") == 0) {
             if (++i == argc || !joypad_set_expansion_device_name(argv[i])) {
-                fprintf(stderr, "Expansion device must be none, arkanoid, family-trainer-a, family-trainer-b, zapper, family-basic, turbo-file, battle-box, subor-keyboard, hori-track, konami-hyper-shot, bandai-hyper-shot, party-tap, pachinko, exciting-boxing, or jissen-mahjong\n");
+                fprintf(stderr, "Expansion device must be none, arkanoid, family-trainer-a, family-trainer-b, zapper, family-basic, turbo-file, battle-box, subor-keyboard, hori-track, konami-hyper-shot, bandai-hyper-shot, party-tap, pachinko, exciting-boxing, jissen-mahjong, or barcode-battler\n");
                 return 1;
             }
         } else if (strcmp(argv[i], "--zapper-radius") == 0) {
@@ -476,6 +477,12 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             barcode = argv[i];
+        } else if (strcmp(argv[i], "--barcode-battler") == 0) {
+            if (++i == argc) {
+                fprintf(stderr, "Barcode Battler scan requires 8 or 13 decimal digits\n");
+                return 1;
+            }
+            barcode_battler = argv[i];
         } else if (strcmp(argv[i], "--tape-play") == 0 || strcmp(argv[i], "--tape-record") == 0) {
             bool record = strcmp(argv[i], "--tape-record") == 0;
             if (++i == argc || tape_play_path || tape_record_path) {
@@ -523,7 +530,7 @@ int main(int argc, char *argv[]) {
                "[--ppu-startup-restriction] [--ppu-oam-decay] "
                "[--mmc3-revision REVISION] [--cart-dip VALUE] "
                "[--adapter TYPE] [--port1 DEVICE] [--port2 DEVICE] "
-               "[--expansion DEVICE] [--barcode DIGITS] "
+               "[--expansion DEVICE] [--barcode DIGITS] [--barcode-battler DIGITS] "
                "[--zapper-radius PIXELS] [--vs-dip VALUE] [--tape-play FILE | --tape-record FILE] "
                "[--fds-bios BIOS] [--fds-side N] "
                "[--fds-eject] [--fds-write-protect] <rom-file>\n", argv[0]);
@@ -603,6 +610,12 @@ int main(int argc, char *argv[]) {
         if (fds_start_ejected) fds_eject_disk();
     }
     cpu_total_cycles = 0;
+    if (barcode_battler && !joypad_scan_barcode_battler(barcode_battler)) {
+        fprintf(stderr, "Barcode Battler input requires --expansion barcode-battler and 8 or 13 decimal digits\n");
+        unload_rom();
+        return 1;
+    }
+    if (barcode_battler) printf("Press F8 to scan the configured Barcode Battler code\n");
     ppu_power_on(&ppu);
     apu_power_on(&apu);
     // Print ROM metadata at startup so mapper selection can be checked from the log.
@@ -799,6 +812,8 @@ int main(int argc, char *argv[]) {
                         break;
                     case SDLK_F8:
                         if (down && !e.key.repeat && barcode) cart_set_barcode(barcode);
+                        if (down && !e.key.repeat && barcode_battler)
+                            joypad_scan_barcode_battler(barcode_battler);
                         if (down && !e.key.repeat && rom_is_fds()) {
                             if (fds_disk_inserted()) fds_eject_disk();
                             else (void)fds_insert_disk(fds_frontend_side);

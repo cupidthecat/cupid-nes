@@ -135,6 +135,14 @@ typedef struct {
 
 static JissenMahjong jissen_mahjong;
 
+typedef struct {
+    uint8_t stream[200];
+    uint64_t insert_cycle;
+    bool active;
+} BarcodeBattler;
+
+static BarcodeBattler barcode_battler;
+
 enum { SUBOR_NONE = 0xFF };
 static const uint8_t subor_matrix[104] = {
     SUBOR_KEY_4, SUBOR_KEY_G, SUBOR_KEY_F, SUBOR_KEY_C,
@@ -790,4 +798,47 @@ uint8_t jissen_mahjong_read(unsigned port) {
     uint8_t output = (uint8_t)((jissen_mahjong.state & 1u) << 1);
     jissen_mahjong.state >>= 1;
     return output;
+}
+
+void barcode_battler_reset(void) {
+    memset(&barcode_battler, 0, sizeof(barcode_battler));
+}
+
+bool barcode_battler_scan(const char *digits, uint64_t cpu_cycles) {
+    if (!digits) return false;
+    size_t digit_count = strlen(digits);
+    if (digit_count != 8 && digit_count != 13) return false;
+    for (size_t i = 0; i < digit_count; ++i)
+        if (digits[i] < '0' || digits[i] > '9') return false;
+
+    char record[20];
+    static const char suffix[] = "EPOCH\r\n";
+    size_t text_length = digit_count + sizeof(suffix) - 1;
+    size_t padding = sizeof(record) - text_length;
+    memset(record, ' ', padding);
+    memcpy(record + padding, digits, digit_count);
+    memcpy(record + padding + digit_count, suffix, sizeof(suffix) - 1);
+
+    uint8_t stream[200];
+    unsigned position = 0;
+    for (unsigned character = 0; character < sizeof(record); ++character) {
+        stream[position++] = 1;
+        for (unsigned bit = 0; bit < 8; ++bit)
+            stream[position++] = (uint8_t)(1u ^ ((record[character] >> bit) & 1u));
+        stream[position++] = 0;
+    }
+    memcpy(barcode_battler.stream, stream, sizeof(stream));
+    barcode_battler.insert_cycle = cpu_cycles;
+    barcode_battler.active = true;
+    return true;
+}
+
+uint8_t barcode_battler_read(unsigned port, uint64_t cpu_cycles, uint32_t cpu_hz) {
+    if (port != 1 || !barcode_battler.active || cpu_cycles < barcode_battler.insert_cycle
+        || !cpu_hz) return 0;
+    uint64_t cycles_per_bit = cpu_hz / 1200u;
+    if (!cycles_per_bit) cycles_per_bit = 1;
+    uint64_t position = (cpu_cycles - barcode_battler.insert_cycle) / cycles_per_bit;
+    if (position >= sizeof(barcode_battler.stream)) return 0;
+    return (uint8_t)(barcode_battler.stream[position] << 2);
 }

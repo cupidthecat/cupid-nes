@@ -70,7 +70,8 @@ typedef enum {
     NES_EXPANSION_PARTY_TAP,
     NES_EXPANSION_PACHINKO,
     NES_EXPANSION_EXCITING_BOXING,
-    NES_EXPANSION_JISSEN_MAHJONG
+    NES_EXPANSION_JISSEN_MAHJONG,
+    NES_EXPANSION_BARCODE_BATTLER
 } NesExpansionDevice;
 
 typedef enum {
@@ -147,6 +148,7 @@ bool    joypad_set_party_tap_button(unsigned button, bool pressed);
 bool    joypad_set_pachinko_controls(bool press, bool release);
 bool    joypad_set_boxing_sensor(unsigned sensor, bool pressed);
 bool    joypad_set_jissen_key(JissenKey key, bool pressed);
+bool    joypad_scan_barcode_battler(const char *digits);
 bool    joypad_persistent_configure(const char *rom_path);
 bool    joypad_persistent_flush(void);
 bool    joypad_persistent_shutdown(void);
