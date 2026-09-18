@@ -60,6 +60,7 @@ int test_board_mmc3_98_accuracy(void);
 int test_board_unlicensed_109_accuracy(void);
 int test_board_unlicensed_111_accuracy(void);
 int test_board_unlicensed_112_accuracy(void);
+int test_board_txc_107_accuracy(void);
 int test_bandai_accuracy(void);
 int test_fds_accuracy(void);
 int test_studybox_accuracy(void);
@@ -145,6 +146,7 @@ int main(int argc, char **argv) {
     failures += test_board_unlicensed_109_accuracy();
     failures += test_board_unlicensed_111_accuracy();
     failures += test_board_unlicensed_112_accuracy();
+    failures += test_board_txc_107_accuracy();
     failures += test_bandai_accuracy();
     failures += test_fds_accuracy();
     failures += test_studybox_accuracy();
