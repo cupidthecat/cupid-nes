@@ -2240,6 +2240,33 @@ static int test_mapper111_banks_flash_and_nametables(void) {
     return 0;
 }
 
+static int test_mapper111_cpu_soft_reset_preserves_state(void) {
+    iNESHeader h = m111_header();
+    CHECK(fixture_with_header(&h, 0x80000, 0x4000) == 111);
+    nes_set_region(NES_REGION_NTSC);
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    cpu_power_on(&cpu);
+
+    // Console soft reset only resets the CPU/APU/PPU. The GTROM latch and
+    // flash command state remain live across that reset.
+    cart_cpu_write(0x5000, 0x03);
+    CHECK(cart_cpu_read(0x8000) == 12);
+    m111_flash_command(0x90);
+    CHECK(cart_cpu_read(0x8000) == 0xBF);
+    cpu_soft_reset(&cpu);
+    CHECK(cart_cpu_read(0x8000) == 0xBF);
+    cart_cpu_write(0x8000, 0xF0);
+    CHECK(cart_cpu_read(0x8000) == 12);
+
+    m111_flash_command(0xA0);
+    cpu_soft_reset(&cpu);
+    cart_cpu_write(0x8123, 0x04);
+    CHECK(cart_cpu_read(0x8123) == 0x04);
+    CHECK(cart_cpu_read(0x8000) == 12);
+    return 0;
+}
+
 static void mmc5_enter_frame(uint8_t *nt) {
     (void)cart_nt_read(0x2000, nt);
     (void)cart_nt_read(0x2000, nt);
@@ -7740,7 +7767,7 @@ int test_mapper_accuracy(void) {
         test_action53_game_sizes, test_action53_largest_image,
         test_unrom512_banks_flash_and_mirroring, test_mmc5_memory_windows,
         test_unrom512_physical_flash_address, test_unrom512_cpu_flash,
-        test_mapper111_banks_flash_and_nametables,
+        test_mapper111_banks_flash_and_nametables, test_mapper111_cpu_soft_reset_preserves_state,
         test_mmc5_exram_and_irq, test_mmc5_chr_fetch_modes, test_mmc5_extended_rendering,
         test_mmc5_rendered_ppu_paths, test_mmc5_audio_and_pcm, test_header_and_mapper_rejection,
         test_loader_trainers_and_sizes, test_loader_rejection_preserves_cart,
