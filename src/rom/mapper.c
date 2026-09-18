@@ -72,7 +72,7 @@ static Mapper mapper_nrom, mapper_mmc1, mapper_m105, mapper_m232, mapper_uxrom, 
 static Mapper mapper_mmc5, mapper_aorom, mapper_mmc2, mapper_mmc4, mapper_colordreams;
 static Mapper mapper_cprom, mapper_100in1, mapper_bandai, mapper_action53, mapper_unrom512, mapper_fds;
 static Mapper mapper_taito33, mapper_taito48, mapper_taito_x1005, mapper_taito_x1017;
-static Mapper mapper_jaleco18, mapper_irem32, mapper_irem65;
+static Mapper mapper_jaleco18, mapper_irem32, mapper_irem65, mapper_irem77, mapper_irem97;
 static Mapper mapper_rambo1, mapper_rambo158;
 static Mapper mapper_vrc1, mapper_vrc3, mapper_vrc6, mapper_vrc24, mapper_vrc7;
 static Mapper mapper_sunsoft3, mapper_sunsoft4, mapper_sunsoft89, mapper_sunsoft93, mapper_sunsoft184;
@@ -159,6 +159,7 @@ static uint8_t mmc3_mixed_chr_ram[CHR_BANK_8K];
 static size_t mmc3_mixed_chr_first_bank;
 static size_t mmc3_mixed_chr_last_bank;
 static size_t mmc3_mixed_chr_ram_size;
+static uint8_t irem77_chr_ram[CHR_BANK_8K];
 static bool mmc5_exram_dirty = false;
 static bool battery_enabled = false;
 static char *battery_save_path = NULL;
@@ -554,6 +555,7 @@ void mapper_shutdown(void) {
     mmc3_mixed_chr_first_bank = 0;
     mmc3_mixed_chr_last_bank = 0;
     mmc3_mixed_chr_ram_size = 0;
+    memset(irem77_chr_ram, 0, sizeof(irem77_chr_ram));
     memset(bandai_eeprom, 0, sizeof(bandai_eeprom));
     mmc5_exram_dirty = false;
     unrom512_four_screen_chr = false;
@@ -5467,6 +5469,88 @@ static void jaleco18_reset(void) {
     mapper_irq_line = false;
 }
 
+// Mapper 77: Irem LROG017.
+static struct {
+    uint8_t prg_bank;
+    uint8_t chr_bank;
+} irem77;
+
+static uint8_t irem77_cpu_read(uint16_t a) {
+    if (a < 0x8000u) return cart_cpu_bus_input;
+    size_t banks = C.prg_sz / PRG_BANK_32K;
+    size_t bank = irem77.prg_bank % banks;
+    return C.prg[bank * PRG_BANK_32K + (a & 0x7FFFu)];
+}
+
+static void irem77_cpu_write(uint16_t a, uint8_t value) {
+    if (a < 0x8000u) return;
+    irem77.prg_bank = value & 0x0Fu;
+    irem77.chr_bank = (value >> 4) & 0x0Fu;
+}
+
+static uint8_t irem77_ppu_read(uint16_t a) {
+    a &= 0x1FFFu;
+    if (a < 0x0800u) {
+        size_t banks = C.chr_sz / 0x0800u;
+        size_t bank = irem77.chr_bank % banks;
+        return C.chr[bank * 0x0800u + a];
+    }
+    return irem77_chr_ram[a - 0x0800u];
+}
+
+static void irem77_ppu_write(uint16_t a, uint8_t value) {
+    a &= 0x1FFFu;
+    if (a < 0x0800u) return;
+    irem77_chr_ram[a - 0x0800u] = value;
+}
+
+static Mirroring irem77_mirr(void) { return MIRROR_FOUR; }
+
+static void irem77_power_on(void) {
+    memset(&irem77, 0, sizeof(irem77));
+    memset(irem77_chr_ram, 0, sizeof(irem77_chr_ram));
+}
+
+// Mapper 97: Irem TAM-S1.
+static struct {
+    uint8_t upper_prg_bank;
+    Mirroring mirr;
+} irem97;
+
+static uint8_t irem97_cpu_read(uint16_t a) {
+    if (a < 0x8000u) return cart_cpu_bus_input;
+    size_t banks = C.prg_sz / PRG_BANK_16K;
+    size_t bank = a < 0xC000u ? banks - 1 : irem97.upper_prg_bank % banks;
+    return C.prg[bank * PRG_BANK_16K + (a & 0x3FFFu)];
+}
+
+static void irem97_cpu_write(uint16_t a, uint8_t value) {
+    if (a < 0x8000u) return;
+    irem97.upper_prg_bank = value & 0x0Fu;
+    switch (value >> 6) {
+        case 0: irem97.mirr = MIRROR_SINGLE0; break;
+        case 1: irem97.mirr = MIRROR_HORIZONTAL; break;
+        case 2: irem97.mirr = MIRROR_VERTICAL; break;
+        case 3: irem97.mirr = MIRROR_SINGLE1; break;
+    }
+}
+
+static uint8_t irem97_ppu_read(uint16_t a) {
+    return C.chr[(a & 0x1FFFu) % C.chr_sz];
+}
+
+static void irem97_ppu_write(uint16_t a, uint8_t value) {
+    chr_ram_write((a & 0x1FFFu) % C.chr_sz, value);
+}
+
+static Mirroring irem97_mirr(void) { return irem97.mirr; }
+
+static void irem97_power_on(void) {
+    size_t banks = C.prg_sz / PRG_BANK_16K;
+    irem97.upper_prg_bank = (uint8_t)(banks - 1);
+    irem97.mirr = C.mirr_base;
+}
+
 // Mapper 32: Irem G-101.
 static struct {
     uint8_t prg_banks[2];
@@ -6108,6 +6192,9 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
     if (mixed_chr_ram) {
         if (chr_is_ram || chr_sz == 0) return false;
         if (nes2 && (ram->chr_ram != mixed_chr_ram || ram->chr_nvram != 0)) return false;
+    } else if (mapper_no == 77) {
+        if (ram->chr_nvram) return false;
+        if (nes2 && !chr_is_ram && ram->chr_ram != CHR_BANK_8K) return false;
     } else {
         // Other supported boards do not select separate CHR ROM/RAM or two RAM chips.
         if ((!chr_is_ram && chr_total) || (ram->chr_ram && ram->chr_nvram)) return false;
@@ -6188,8 +6275,8 @@ int mapper_init_from_header(const iNESHeader *h,
         case 16: case 153: case 157: case 159:
         case 18: case 32: case 33: case 34: case 48: case 64: case 65: case 158:
         case 21: case 22: case 23: case 24: case 25: case 26: case 27: case 183:
-        case 19: case 66: case 67: case 68: case 69: case 71: case 73: case 75: case 76: case 80: case 82: case 85:
-        case 88: case 89: case 93: case 95: case 99: case 105: case 151: case 154: case 184: case 206: case 207: case 210:
+        case 19: case 66: case 67: case 68: case 69: case 71: case 73: case 75: case 76: case 77: case 80: case 82: case 85:
+        case 88: case 89: case 93: case 95: case 97: case 99: case 105: case 151: case 154: case 184: case 206: case 207: case 210:
         case 90: case 191: case 192: case 194: case 195: case 209: case 211: case 232:
             break;
         default:
@@ -6223,6 +6310,14 @@ int mapper_init_from_header(const iNESHeader *h,
     if ((ram.prg_nvram || ram.chr_nvram) && !(h->flags6 & 2)) {
         fprintf(stderr, "Nonvolatile RAM declared without the battery flag\n");
         return -1;
+    }
+    if (mapper_no == 77 || mapper_no == 97) {
+        if (nes2 && (ram.prg_ram || ram.prg_nvram)) {
+            fprintf(stderr, "Unsupported RAM layout for mapper %d\n", mapper_no);
+            return -1;
+        }
+        ram.prg_ram = 0;
+        ram.prg_nvram = 0;
     }
     if (mapper_no == 80 || mapper_no == 82 || mapper_no == 207) {
         size_t expected = mapper_no == 82 ? 0x1400u : 0x100u;
@@ -6258,6 +6353,18 @@ int mapper_init_from_header(const iNESHeader *h,
         && (prg_sz > 0x200000 || (prg_sz % PRG_BANK_8K) != 0
             || chr_sz > 0x40000 || (chr_sz % CHR_BANK_1K) != 0)) {
         fprintf(stderr, "Unsupported ROM size for mapper %d\n", mapper_no);
+        return -1;
+    }
+    if (mapper_no == 77
+        && (prg_sz < PRG_BANK_32K || prg_sz > 0x80000 || (prg_sz % PRG_BANK_32K) != 0
+            || chr_is_ram || chr_sz > 0x8000 || (chr_sz % 0x0800u) != 0
+            || ram.chr_nvram || (nes2 && ram.chr_ram != CHR_BANK_8K))) {
+        fprintf(stderr, "Unsupported ROM/RAM size for mapper 77\n");
+        return -1;
+    }
+    if (mapper_no == 97
+        && (prg_sz > 0x40000 || (prg_sz % PRG_BANK_16K) != 0 || chr_sz != CHR_BANK_8K)) {
+        fprintf(stderr, "Unsupported ROM/RAM size for mapper 97\n");
         return -1;
     }
     if ((mapper_no == 64 || mapper_no == 158)
@@ -6463,6 +6570,7 @@ int mapper_init_from_header(const iNESHeader *h,
     C.submapper = submapper;
     C.mmc1a = mapper_no == 155;
     C.bus_conflicts = mapper_no == 11
+        || mapper_no == 77
         || (mapper_no == 34 && !mapper34_nina)
         || (submapper == 2 && (mapper_no == 2 || mapper_no == 3 || mapper_no == 7 || mapper_no == 30))
         || (mapper_no == 30 && submapper == 0 && !(h->flags6 & 2));
@@ -6672,6 +6780,18 @@ int mapper_init_from_header(const iNESHeader *h,
                         jaleco18_ppu_read, jaleco18_ppu_write, jaleco18_reset, jaleco18_mirr);
             mapper_jaleco18.clock = jaleco18_clock;
             cart = &mapper_jaleco18;
+            break;
+        case 77:
+            build_mapper(&mapper_irem77, irem77_cpu_read, irem77_cpu_write,
+                         irem77_ppu_read, irem77_ppu_write, NULL, irem77_mirr);
+            cart = &mapper_irem77;
+            irem77_power_on();
+            break;
+        case 97:
+            build_mapper(&mapper_irem97, irem97_cpu_read, irem97_cpu_write,
+                         irem97_ppu_read, irem97_ppu_write, NULL, irem97_mirr);
+            cart = &mapper_irem97;
+            irem97_power_on();
             break;
         case 32:
             build_mapper(&mapper_irem32, irem32_cpu_read, irem32_cpu_write,
