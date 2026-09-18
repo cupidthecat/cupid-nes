@@ -71,7 +71,8 @@ static CartCommon C;
 static Mapper mapper_nrom, mapper_mmc1, mapper_m105, mapper_m232, mapper_uxrom, mapper_cnrom, mapper_mmc3, mapper_tqrom, mapper_txsrom;
 static Mapper mapper_mmc5, mapper_aorom, mapper_mmc2, mapper_mmc4, mapper_colordreams;
 static Mapper mapper_cprom, mapper_100in1, mapper_bandai, mapper_action53, mapper_unrom512, mapper_fds;
-static Mapper mapper_taito33, mapper_taito48, mapper_jaleco18, mapper_irem32, mapper_irem65;
+static Mapper mapper_taito33, mapper_taito48, mapper_taito_x1005, mapper_taito_x1017;
+static Mapper mapper_jaleco18, mapper_irem32, mapper_irem65;
 static Mapper mapper_rambo1, mapper_rambo158;
 static Mapper mapper_vrc1, mapper_vrc3, mapper_vrc6, mapper_vrc24, mapper_vrc7;
 static Mapper mapper_sunsoft3, mapper_sunsoft4, mapper_sunsoft89, mapper_sunsoft93, mapper_sunsoft184;
@@ -2002,6 +2003,255 @@ static void taito48_reset(void) {
     mapper_irq_line = false;
 }
 
+// Mappers 80 and 207: Taito X1-005.
+static struct {
+    uint8_t prg[3];
+    uint8_t chr[8];
+    uint8_t prg_mapped;
+    uint8_t chr_mapped;
+    uint8_t ram_permission;
+    uint8_t nt_page[4];
+    uint8_t nt_mapped;
+    Mirroring mirr;
+} taito_x1005;
+
+static bool taito_x1005_ram_enabled(void) {
+    return taito_x1005.ram_permission == 0xA3u;
+}
+
+static uint8_t taito_x1005_cpu_read(uint16_t a) {
+    if (a >= 0x7F00u && a <= 0x7FFFu) {
+        if (!taito_x1005_ram_enabled()) return cart_cpu_bus_input;
+        return ram_read(default_prg_ram(), a - 0x7F00u);
+    }
+    if (a < 0x8000u) return cart_cpu_bus_input;
+
+    size_t banks = C.prg_sz / PRG_BANK_8K;
+    unsigned slot = (unsigned)((a - 0x8000u) >> 13);
+    size_t bank;
+    if (slot == 3) {
+        bank = banks - 1;
+    } else {
+        if (!(taito_x1005.prg_mapped & (1u << slot))) return cart_cpu_bus_input;
+        bank = taito_x1005.prg[slot] % banks;
+    }
+    return C.prg[bank * PRG_BANK_8K + (a & 0x1FFFu)];
+}
+
+static void taito_x1005_ram_write(uint16_t a, uint8_t value) {
+    if (!taito_x1005_ram_enabled()) return;
+    size_t offset = a - 0x7F00u;
+    // The physical 128-byte RAM is mirrored across the 256-byte CPU window.
+    ram_write(default_prg_ram(), offset, value);
+    ram_write(default_prg_ram(), offset ^ 0x80u, value);
+}
+
+static void taito_x1005_cpu_write(uint16_t a, uint8_t value) {
+    if (a >= 0x7F00u && a <= 0x7FFFu) {
+        taito_x1005_ram_write(a, value);
+        return;
+    }
+    if (a < 0x7EF0u || a > 0x7EFFu) return;
+
+    switch (a) {
+        case 0x7EF0:
+            taito_x1005.chr[0] = value;
+            taito_x1005.chr[1] = (uint8_t)(value + 1u);
+            taito_x1005.chr_mapped |= 0x03u;
+            if (C.mapper_no == 207) {
+                uint8_t page = value >> 7;
+                taito_x1005.nt_page[0] = page;
+                taito_x1005.nt_page[1] = page;
+                taito_x1005.nt_mapped |= 0x03u;
+            }
+            break;
+        case 0x7EF1:
+            taito_x1005.chr[2] = value;
+            taito_x1005.chr[3] = (uint8_t)(value + 1u);
+            taito_x1005.chr_mapped |= 0x0Cu;
+            if (C.mapper_no == 207) {
+                uint8_t page = value >> 7;
+                taito_x1005.nt_page[2] = page;
+                taito_x1005.nt_page[3] = page;
+                taito_x1005.nt_mapped |= 0x0Cu;
+            }
+            break;
+        case 0x7EF2: case 0x7EF3: case 0x7EF4: case 0x7EF5: {
+            unsigned slot = 4u + (unsigned)(a - 0x7EF2u);
+            taito_x1005.chr[slot] = value;
+            taito_x1005.chr_mapped |= (uint8_t)(1u << slot);
+            break;
+        }
+        case 0x7EF6: case 0x7EF7:
+            if (C.mapper_no != 207)
+                taito_x1005.mirr = (value & 1u) ? MIRROR_VERTICAL : MIRROR_HORIZONTAL;
+            break;
+        case 0x7EF8: case 0x7EF9:
+            taito_x1005.ram_permission = value;
+            break;
+        case 0x7EFA: case 0x7EFB:
+            taito_x1005.prg[0] = value;
+            taito_x1005.prg_mapped |= 0x01u;
+            break;
+        case 0x7EFC: case 0x7EFD:
+            taito_x1005.prg[1] = value;
+            taito_x1005.prg_mapped |= 0x02u;
+            break;
+        case 0x7EFE: case 0x7EFF:
+            taito_x1005.prg[2] = value;
+            taito_x1005.prg_mapped |= 0x04u;
+            break;
+    }
+}
+
+static uint8_t taito_x1005_ppu_read(uint16_t a) {
+    a &= 0x1FFFu;
+    unsigned slot = a >> 10;
+    if (!(taito_x1005.chr_mapped & (1u << slot)))
+        return C.chr_is_ram ? C.chr[a % C.chr_sz] : (uint8_t)a;
+    size_t bank = taito_x1005.chr[slot] % (C.chr_sz / CHR_BANK_1K);
+    return C.chr[bank * CHR_BANK_1K + (a & 0x03FFu)];
+}
+
+static void taito_x1005_ppu_write(uint16_t a, uint8_t value) {
+    if (!C.chr_is_ram) return;
+    a &= 0x1FFFu;
+    unsigned slot = a >> 10;
+    if (!(taito_x1005.chr_mapped & (1u << slot))) {
+        chr_ram_write(a % C.chr_sz, value);
+        return;
+    }
+    size_t bank = taito_x1005.chr[slot] % (C.chr_sz / CHR_BANK_1K);
+    chr_ram_write(bank * CHR_BANK_1K + (a & 0x03FFu), value);
+}
+
+static Mirroring taito_x1005_mirr(void) { return taito_x1005.mirr; }
+
+static void taito_x1005_reset(void) {
+    memset(&taito_x1005, 0, sizeof(taito_x1005));
+    taito_x1005.mirr = C.mirr_base;
+}
+
+// Mapper 82: Taito X1-017.
+static struct {
+    uint8_t prg[3];
+    uint8_t chr[6];
+    uint8_t prg_mapped;
+    bool chr_mapped;
+    uint8_t chr_mode;
+    uint8_t ram_permission[3];
+    Mirroring mirr;
+} taito_x1017;
+
+static bool taito_x1017_ram_location(uint16_t a, size_t *offset, unsigned *region) {
+    if (a >= 0x6000u && a <= 0x67FFu) {
+        *offset = a - 0x6000u;
+        *region = 0;
+        return true;
+    }
+    if (a >= 0x6800u && a <= 0x6FFFu) {
+        *offset = a - 0x6000u;
+        *region = 1;
+        return true;
+    }
+    if (a >= 0x7000u && a <= 0x73FFu) {
+        *offset = a - 0x6000u;
+        *region = 2;
+        return true;
+    }
+    return false;
+}
+
+static bool taito_x1017_ram_enabled(unsigned region) {
+    static const uint8_t key[3] = {0xCA, 0x69, 0x84};
+    return region < 3 && taito_x1017.ram_permission[region] == key[region];
+}
+
+static uint8_t taito_x1017_cpu_read(uint16_t a) {
+    size_t offset;
+    unsigned region;
+    if (taito_x1017_ram_location(a, &offset, &region))
+        return taito_x1017_ram_enabled(region) ? ram_read(default_prg_ram(), offset) : cart_cpu_bus_input;
+    if (a < 0x8000u) return cart_cpu_bus_input;
+
+    size_t banks = C.prg_sz / PRG_BANK_8K;
+    unsigned slot = (unsigned)((a - 0x8000u) >> 13);
+    size_t bank;
+    if (slot == 3) {
+        bank = banks - 1;
+    } else {
+        if (!(taito_x1017.prg_mapped & (1u << slot))) return cart_cpu_bus_input;
+        bank = taito_x1017.prg[slot] % banks;
+    }
+    return C.prg[bank * PRG_BANK_8K + (a & 0x1FFFu)];
+}
+
+static void taito_x1017_cpu_write(uint16_t a, uint8_t value) {
+    size_t offset;
+    unsigned region;
+    if (taito_x1017_ram_location(a, &offset, &region)) {
+        if (taito_x1017_ram_enabled(region)) ram_write(default_prg_ram(), offset, value);
+        return;
+    }
+    if (a < 0x7EF0u || a > 0x7EFFu) return;
+
+    if (a <= 0x7EF5u) {
+        taito_x1017.chr[a - 0x7EF0u] = value;
+        taito_x1017.chr_mapped = true;
+        return;
+    }
+    if (a == 0x7EF6u) {
+        taito_x1017.mirr = (value & 1u) ? MIRROR_VERTICAL : MIRROR_HORIZONTAL;
+        taito_x1017.chr_mode = (value >> 1) & 1u;
+        taito_x1017.chr_mapped = true;
+        return;
+    }
+    if (a >= 0x7EF7u && a <= 0x7EF9u) {
+        taito_x1017.ram_permission[a - 0x7EF7u] = value;
+        return;
+    }
+    if (a >= 0x7EFAu && a <= 0x7EFCu) {
+        unsigned slot = a - 0x7EFAu;
+        taito_x1017.prg[slot] = value >> 2;
+        taito_x1017.prg_mapped |= (uint8_t)(1u << slot);
+    }
+}
+
+static size_t taito_x1017_chr_bank(unsigned slot) {
+    if (taito_x1017.chr_mode == 0) {
+        if (slot < 4) return (taito_x1017.chr[slot >> 1] & 0xFEu) + (slot & 1u);
+        return taito_x1017.chr[slot - 2u];
+    }
+    if (slot < 4) return taito_x1017.chr[slot + 2u];
+    return (taito_x1017.chr[(slot - 4u) >> 1] & 0xFEu) + (slot & 1u);
+}
+
+static uint8_t taito_x1017_ppu_read(uint16_t a) {
+    a &= 0x1FFFu;
+    if (!taito_x1017.chr_mapped)
+        return C.chr_is_ram ? C.chr[a % C.chr_sz] : (uint8_t)a;
+    size_t bank = taito_x1017_chr_bank(a >> 10) % (C.chr_sz / CHR_BANK_1K);
+    return C.chr[bank * CHR_BANK_1K + (a & 0x03FFu)];
+}
+
+static void taito_x1017_ppu_write(uint16_t a, uint8_t value) {
+    if (!C.chr_is_ram) return;
+    a &= 0x1FFFu;
+    if (!taito_x1017.chr_mapped) {
+        chr_ram_write(a % C.chr_sz, value);
+        return;
+    }
+    size_t bank = taito_x1017_chr_bank(a >> 10) % (C.chr_sz / CHR_BANK_1K);
+    chr_ram_write(bank * CHR_BANK_1K + (a & 0x03FFu), value);
+}
+
+static Mirroring taito_x1017_mirr(void) { return taito_x1017.mirr; }
+
+static void taito_x1017_reset(void) {
+    memset(&taito_x1017, 0, sizeof(taito_x1017));
+    taito_x1017.mirr = C.mirr_base;
+}
+
 // Mappers 64 and 158: RAMBO-1.
 static size_t rambo1_prg_bank(uint16_t a) {
     size_t banks = C.prg_sz / PRG_BANK_8K;
@@ -3187,6 +3437,12 @@ uint8_t cart_nt_read(uint16_t addr, uint8_t *nt_ram) {
         size_t bank = sunsoft4.nt[sunsoft4_nt_reg(nt)] % (C.chr_sz / CHR_BANK_1K);
         return C.chr[bank * CHR_BANK_1K + (off & 0x03FFu)];
     }
+    if (cart == &mapper_taito_x1005 && C.mapper_no == 207) {
+        uint16_t off = (uint16_t)((addr - 0x2000u) & 0x0FFFu);
+        unsigned nt = (off >> 10) & 3u;
+        if (taito_x1005.nt_mapped & (1u << nt))
+            return nt_ram[(size_t)taito_x1005.nt_page[nt] * CHR_BANK_1K + (off & 0x03FFu)];
+    }
     if (cart == &mapper_mmc5) {
         mmc5_begin_ppu_read(addr);
         uint8_t value;
@@ -3268,6 +3524,14 @@ void cart_nt_write(uint16_t addr, uint8_t v, uint8_t *nt_ram) {
         size_t bank = sunsoft4.nt[sunsoft4_nt_reg(nt)] % (C.chr_sz / CHR_BANK_1K);
         chr_ram_write(bank * CHR_BANK_1K + (off & 0x03FFu), v);
         return;
+    }
+    if (cart == &mapper_taito_x1005 && C.mapper_no == 207) {
+        uint16_t off = (uint16_t)((addr - 0x2000u) & 0x0FFFu);
+        unsigned nt = (off >> 10) & 3u;
+        if (taito_x1005.nt_mapped & (1u << nt)) {
+            nt_ram[(size_t)taito_x1005.nt_page[nt] * CHR_BANK_1K + (off & 0x03FFu)] = v;
+            return;
+        }
     }
     if (cart == &mapper_mmc5) {
         uint16_t off = (uint16_t)((addr - 0x2000u) & 0x0FFFu);
@@ -5444,7 +5708,7 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
                                    bool chr_is_ram, size_t chr_sz) {
     size_t prg_total = ram->prg_ram + ram->prg_nvram;
     size_t chr_total = ram->chr_ram + ram->chr_nvram;
-    if (prg_total && (prg_total & (prg_total - 1))) return false;
+    if (mapper_no != 82 && prg_total && (prg_total & (prg_total - 1))) return false;
 
     // Only these boards have implemented selection between separate PRG RAM chips.
     bool split_prg = ram->prg_ram && ram->prg_nvram;
@@ -5459,6 +5723,10 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         } else if (prg_total > 0x10000) {
             return false; // Legacy bank registers address at most eight 8KB pages.
         }
+    } else if (mapper_no == 80 || mapper_no == 207) {
+        if (split_prg || prg_total != 0x100) return false;
+    } else if (mapper_no == 82) {
+        if (split_prg || prg_total != 0x1400) return false;
     } else if (mapper_no == 69) {
         if (split_prg || prg_total > 0x80000) return false;
     } else if (mapper_no == 19 || mapper_no == 210) {
@@ -5483,6 +5751,7 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         case 3: chr_limit = 0x200000; break;
         case 4: case 24: case 26: case 118: chr_limit = 0x40000; break;
         case 33: case 48: case 67: case 68: chr_limit = 0x80000; break;
+        case 80: case 82: case 207: chr_limit = 0x40000; break;
         case 64: case 158: chr_limit = 0x40000; break;
         case 5: chr_limit = 0x100000; break;
         case 13: chr_limit = 0x4000; break;
@@ -5548,8 +5817,8 @@ int mapper_init_from_header(const iNESHeader *h,
         case 16: case 153: case 157: case 159:
         case 18: case 32: case 33: case 34: case 48: case 64: case 65: case 158:
         case 21: case 22: case 23: case 24: case 25: case 26: case 27: case 183:
-        case 19: case 66: case 67: case 68: case 69: case 71: case 73: case 75: case 76: case 85:
-        case 88: case 89: case 93: case 95: case 99: case 105: case 151: case 154: case 184: case 206: case 210:
+        case 19: case 66: case 67: case 68: case 69: case 71: case 73: case 75: case 76: case 80: case 82: case 85:
+        case 88: case 89: case 93: case 95: case 99: case 105: case 151: case 154: case 184: case 206: case 207: case 210:
         case 232:
             break;
         default:
@@ -5582,6 +5851,16 @@ int mapper_init_from_header(const iNESHeader *h,
         fprintf(stderr, "Nonvolatile RAM declared without the battery flag\n");
         return -1;
     }
+    if (mapper_no == 80 || mapper_no == 82 || mapper_no == 207) {
+        size_t expected = mapper_no == 82 ? 0x1400u : 0x100u;
+        size_t declared = ram.prg_ram + ram.prg_nvram;
+        if (nes2 && ((ram.prg_ram && ram.prg_nvram) || (declared && declared != expected))) {
+            fprintf(stderr, "Unsupported RAM layout for mapper %d\n", mapper_no);
+            return -1;
+        }
+        ram.prg_ram = (h->flags6 & 2) ? 0 : expected;
+        ram.prg_nvram = (h->flags6 & 2) ? expected : 0;
+    }
     bool chr_is_ram = h->chr_rom_chunks == 0 && (!nes2 || (h->flags9 & 0xF0) == 0);
     bool mapper34_nina = mapper_no == 34
         && (submapper == 1 || (submapper == 0 && !chr_is_ram));
@@ -5599,6 +5878,12 @@ int mapper_init_from_header(const iNESHeader *h,
     if ((mapper_no == 33 || mapper_no == 48)
         && (prg_sz > 0x80000 || prg_sz % PRG_BANK_8K != 0
             || chr_sz % CHR_BANK_1K != 0 || (!chr_is_ram && chr_sz > 0x80000))) {
+        fprintf(stderr, "Unsupported ROM size for mapper %d\n", mapper_no);
+        return -1;
+    }
+    if ((mapper_no == 80 || mapper_no == 82 || mapper_no == 207)
+        && (prg_sz > 0x200000 || (prg_sz % PRG_BANK_8K) != 0
+            || chr_sz > 0x40000 || (chr_sz % CHR_BANK_1K) != 0)) {
         fprintf(stderr, "Unsupported ROM size for mapper %d\n", mapper_no);
         return -1;
     }
@@ -5981,6 +6266,20 @@ int mapper_init_from_header(const iNESHeader *h,
                         taito48_ppu_read, taito48_ppu_write, taito48_reset, taito48_mirr);
             mapper_taito48.clock = taito48_clock;
             cart = &mapper_taito48;
+            break;
+        case 80: case 207:
+            build_mapper(&mapper_taito_x1005, taito_x1005_cpu_read, taito_x1005_cpu_write,
+                         taito_x1005_ppu_read, taito_x1005_ppu_write,
+                         taito_x1005_reset, taito_x1005_mirr);
+            cart = &mapper_taito_x1005;
+            taito_x1005_reset();
+            break;
+        case 82:
+            build_mapper(&mapper_taito_x1017, taito_x1017_cpu_read, taito_x1017_cpu_write,
+                         taito_x1017_ppu_read, taito_x1017_ppu_write,
+                         taito_x1017_reset, taito_x1017_mirr);
+            cart = &mapper_taito_x1017;
+            taito_x1017_reset();
             break;
         case 30:
             build_mapper(&mapper_unrom512, m30_cpu_read, m30_cpu_write,

@@ -6741,6 +6741,196 @@ static int test_sunsoft_discrete_image_loading(void) {
     return 0;
 }
 
+static int test_taito_x1005_and_207(void) {
+    const unsigned mappers[] = {80, 207};
+    for (size_t i = 0; i < sizeof(mappers) / sizeof(mappers[0]); ++i) {
+        CHECK(fixture(mappers[i], 0x40000, 0x40000, false) == (int)mappers[i]);
+        CHECK(cart != NULL && cart->clock == NULL);
+        CHECK(cart_cpu_read_bus(0x8000, 0x56) == 0x56);
+        CHECK(cart_cpu_read_bus(0xA000, 0x69) == 0x69);
+        CHECK(cart_cpu_read_bus(0xC000, 0xA6) == 0xA6);
+        CHECK(cart_cpu_read(0xE000) == 31);
+        CHECK(cart_ppu_read(0x0123) == 0x23 && cart_ppu_read(0x1456) == 0x56);
+
+        cart_cpu_write(0x7EFA, 3);
+        cart_cpu_write(0x7EFC, 5);
+        cart_cpu_write(0x7EFE, 7);
+        CHECK(cart_cpu_read(0x8000) == 3 && cart_cpu_read(0xA000) == 5);
+        CHECK(cart_cpu_read(0xC000) == 7 && cart_cpu_read(0xE000) == 31);
+
+        cart_cpu_write(0x7EF0, 0x84);
+        cart_cpu_write(0x7EF1, 0x46);
+        cart_cpu_write(0x7EF2, 9);
+        cart_cpu_write(0x7EF3, 11);
+        cart_cpu_write(0x7EF4, 13);
+        cart_cpu_write(0x7EF5, 15);
+        const uint8_t expected_chr[] = {0x84, 0x85, 0x46, 0x47, 9, 11, 13, 15};
+        for (unsigned slot = 0; slot < 8; ++slot)
+            CHECK(cart_ppu_read((uint16_t)(slot * 0x400u)) == expected_chr[slot]);
+
+        CHECK(cart_cpu_read_bus(0x7F00, 0x35) == 0x35);
+        cart_cpu_write(0x7F00, 0xA6);
+        cart_cpu_write(0x7EF8, 0xA3);
+        CHECK(cart_cpu_read(0x7F00) == 0 && cart_cpu_read(0x7F80) == 0);
+        cart_cpu_write(0x7F00, 0x35);
+        CHECK(cart_cpu_read(0x7F00) == 0x35 && cart_cpu_read(0x7F80) == 0x35);
+        cart_cpu_write(0x7F80, 0x53);
+        CHECK(cart_cpu_read(0x7F00) == 0x53 && cart_cpu_read(0x7F80) == 0x53);
+        cart_cpu_write(0x7EF9, 0);
+        CHECK(cart_cpu_read_bus(0x7F00, 0x96) == 0x96);
+        cart_cpu_write(0x7EF8, 0xA3);
+        CHECK(cart_cpu_read(0x7F00) == 0x53 && cart_cpu_read(0x7F80) == 0x53);
+
+        if (mappers[i] == 80) {
+            cart_cpu_write(0x7EF6, 1);
+            CHECK(cart_get_mirroring() == MIRROR_VERTICAL);
+            cart_cpu_write(0x7EF7, 0);
+            CHECK(cart_get_mirroring() == MIRROR_HORIZONTAL);
+        } else {
+            uint8_t nt[0x1000] = {0};
+            nt[0] = 0x10;
+            nt[0x400] = 0x20;
+            CHECK(cart_nt_read(0x2000, nt) == 0x20 && cart_nt_read(0x2400, nt) == 0x20);
+            CHECK(cart_nt_read(0x2800, nt) == 0x10 && cart_nt_read(0x2C00, nt) == 0x10);
+            cart_nt_write(0x2001, 0xA1, nt);
+            CHECK(nt[0x401] == 0xA1 && cart_nt_read(0x2401, nt) == 0xA1);
+            Mirroring before = cart_get_mirroring();
+            cart_cpu_write(0x7EF6, 1);
+            CHECK(cart_get_mirroring() == before);
+        }
+
+        cart->reset();
+        CHECK(cart_cpu_read_bus(0x8000, 0x56) == 0x56 && cart_cpu_read(0xE000) == 31);
+        CHECK(cart_cpu_read_bus(0x7F00, 0x69) == 0x69);
+        CHECK(cart_ppu_read(0x0123) == 0x23);
+    }
+    return 0;
+}
+
+static int test_taito_x1017_banks_chr_and_ram(void) {
+    CHECK(fixture(82, 0x40000, 0x40000, false) == 82);
+    CHECK(cart != NULL && cart->clock == NULL);
+    CHECK(cart_cpu_read_bus(0x8000, 0x56) == 0x56 && cart_cpu_read(0xE000) == 31);
+    CHECK(cart_ppu_read(0x0123) == 0x23);
+
+    cart_cpu_write(0x7EFA, 12);
+    cart_cpu_write(0x7EFB, 20);
+    cart_cpu_write(0x7EFC, 28);
+    CHECK(cart_cpu_read(0x8000) == 3 && cart_cpu_read(0xA000) == 5);
+    CHECK(cart_cpu_read(0xC000) == 7 && cart_cpu_read(0xE000) == 31);
+
+    const uint8_t chr_regs[] = {9, 13, 15, 18, 21, 24};
+    for (unsigned i = 0; i < 6; ++i)
+        cart_cpu_write((uint16_t)(0x7EF0u + i), chr_regs[i]);
+    CHECK(cart_ppu_read(0x0000) == 8 && cart_ppu_read(0x0400) == 9);
+    CHECK(cart_ppu_read(0x0800) == 12 && cart_ppu_read(0x0C00) == 13);
+    CHECK(cart_ppu_read(0x1000) == 15 && cart_ppu_read(0x1400) == 18);
+    CHECK(cart_ppu_read(0x1800) == 21 && cart_ppu_read(0x1C00) == 24);
+
+    cart_cpu_write(0x7EF6, 3);
+    CHECK(cart_get_mirroring() == MIRROR_VERTICAL);
+    CHECK(cart_ppu_read(0x0000) == 15 && cart_ppu_read(0x0400) == 18);
+    CHECK(cart_ppu_read(0x0800) == 21 && cart_ppu_read(0x0C00) == 24);
+    CHECK(cart_ppu_read(0x1000) == 8 && cart_ppu_read(0x1400) == 9);
+    CHECK(cart_ppu_read(0x1800) == 12 && cart_ppu_read(0x1C00) == 13);
+
+    CHECK(cart_cpu_read_bus(0x6000, 0x35) == 0x35);
+    cart_cpu_write(0x7EF7, 0xCA);
+    cart_cpu_write(0x6000, 0x35);
+    cart_cpu_write(0x6400, 0x53);
+    CHECK(cart_cpu_read(0x6000) == 0x35 && cart_cpu_read(0x6400) == 0x53);
+    CHECK(cart_cpu_read_bus(0x6800, 0x69) == 0x69);
+    cart_cpu_write(0x7EF8, 0x69);
+    cart_cpu_write(0x6800, 0xA6);
+    cart_cpu_write(0x6C00, 0x7A);
+    CHECK(cart_cpu_read(0x6800) == 0xA6 && cart_cpu_read(0x6C00) == 0x7A);
+    CHECK(cart_cpu_read_bus(0x7000, 0x96) == 0x96);
+    cart_cpu_write(0x7EF9, 0x84);
+    cart_cpu_write(0x7000, 0x96);
+    CHECK(cart_cpu_read(0x7000) == 0x96 && cart_cpu_read_bus(0x7400, 0x35) == 0x35);
+
+    cart_cpu_write(0x7EF8, 0x68);
+    CHECK(cart_cpu_read_bus(0x6800, 0x53) == 0x53);
+    cart_cpu_write(0x7EF8, 0x69);
+    CHECK(cart_cpu_read(0x6800) == 0xA6 && cart_cpu_read(0x6C00) == 0x7A);
+
+    cart->reset();
+    CHECK(cart_cpu_read_bus(0x6000, 0x56) == 0x56);
+    CHECK(cart_cpu_read_bus(0x8000, 0x69) == 0x69 && cart_cpu_read(0xE000) == 31);
+    CHECK(cart_ppu_read(0x0123) == 0x23);
+    return 0;
+}
+
+static int test_taito_x1_persistence_and_loader(void) {
+    SaveFixture paths;
+    CHECK(save_fixture_begin(&paths) == 0);
+
+    iNESHeader h80 = header_for(80, 0x40000, false);
+    h80.flags6 |= 2;
+    CHECK(fixture_with_header(&h80, 0x40000, 0x40000) == 80);
+    cart_battery_configure(paths.rom, true);
+    cart_cpu_write(0x7EF8, 0xA3);
+    cart_cpu_write(0x7F00, 0xA6);
+    cart_battery_flush();
+    CHECK(saved_file_size(paths.prg_save) == 0x100);
+    CHECK(saved_byte(paths.prg_save, 0) == 0xA6 && saved_byte(paths.prg_save, 0x80) == 0xA6);
+    CHECK(fixture_with_header(&h80, 0x40000, 0x40000) == 80);
+    cart_battery_configure(paths.rom, true);
+    cart_cpu_write(0x7EF8, 0xA3);
+    CHECK(cart_cpu_read(0x7F00) == 0xA6 && cart_cpu_read(0x7F80) == 0xA6);
+    CHECK(save_fixture_end(&paths) == 0);
+
+    CHECK(save_fixture_begin(&paths) == 0);
+    iNESHeader h82 = header_for(82, 0x40000, false);
+    h82.flags6 |= 2;
+    CHECK(fixture_with_header(&h82, 0x40000, 0x40000) == 82);
+    cart_battery_configure(paths.rom, true);
+    cart_cpu_write(0x7EF7, 0xCA);
+    cart_cpu_write(0x7EF8, 0x69);
+    cart_cpu_write(0x7EF9, 0x84);
+    cart_cpu_write(0x6000, 0x35);
+    cart_cpu_write(0x6800, 0x53);
+    cart_cpu_write(0x7000, 0x96);
+    cart_battery_flush();
+    CHECK(saved_file_size(paths.prg_save) == 0x1400);
+    CHECK(fixture_with_header(&h82, 0x40000, 0x40000) == 82);
+    cart_battery_configure(paths.rom, true);
+    cart_cpu_write(0x7EF7, 0xCA);
+    cart_cpu_write(0x7EF8, 0x69);
+    cart_cpu_write(0x7EF9, 0x84);
+    CHECK(cart_cpu_read(0x6000) == 0x35 && cart_cpu_read(0x6800) == 0x53);
+    CHECK(cart_cpu_read(0x7000) == 0x96);
+    CHECK(save_fixture_end(&paths) == 0);
+
+    CHECK(fixture(207, 0x40000, 0x40000, false) == 207);
+    cart_cpu_write(0x7EFA, 3);
+    Mapper *previous = cart;
+    iNESHeader invalid = header_for(207, 0x40000, false);
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x202000, fixture_chr, 0x40000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 3);
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x40000, fixture_chr, 0x40400) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 3);
+
+    invalid.flags7 |= 8;
+    invalid.flags10 = 7;
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x40000, fixture_chr, 0x40000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 3);
+
+    iNESHeader valid80 = header_for(80, 0x40000, false);
+    valid80.flags7 |= 8;
+    valid80.flags10 = 2;
+    CHECK(fixture_with_header(&valid80, 0x40000, 0x40000) == 80);
+    iNESHeader valid82 = header_for(82, 0x40000, false);
+    valid82.flags7 |= 8;
+    valid82.flags10 = 0;
+    CHECK(fixture_with_header(&valid82, 0x40000, 0x40000) == 82);
+    iNESHeader valid207 = header_for(207, 0x40000, false);
+    valid207.flags7 |= 8;
+    valid207.flags10 = 2;
+    CHECK(fixture_with_header(&valid207, 0x40000, 0x40000) == 207);
+    return 0;
+}
+
 static int test_cartridge_unload(void) {
     iNESHeader h = header_for(0, 0x4000, true);
     size_t image_size;
@@ -6837,6 +7027,8 @@ int test_mapper_accuracy(void) {
         test_sunsoft4_cpu_licensed_reads,
         test_sunsoft_discrete_boards, test_sunsoft_discrete_loader_rejection,
         test_sunsoft_discrete_image_loading,
+        test_taito_x1005_and_207, test_taito_x1017_banks_chr_and_ram,
+        test_taito_x1_persistence_and_loader,
         test_cartridge_bus_reads, test_mmc6_persistence, test_cartridge_unload
     };
     int failures = 0;

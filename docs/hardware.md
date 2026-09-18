@@ -55,6 +55,7 @@ PRG is the cartridge memory read by the CPU; CHR holds graphics patterns read by
 | 30 | UNROM 512 | PRG/CHR banking, cartridge nametable memory, and flash programming and erase commands |
 | 32, 65 | Irem G-101 / H-3001 | PRG/CHR banking, board mirroring, and H-3001 IRQ timing |
 | 33, 48 | Taito | PRG/CHR banking, mirroring, and mapper 48 IRQ timing |
+| 80, 82, 207 | Taito X1-005 / X1-017 | PRG/CHR banking, protected cartridge RAM, CHR mode selection, and mapper 207 nametable routing |
 | 34 | BNROM / NINA-001 | 32 KiB PRG banks, board-specific CHR/RAM access, and BNROM bus conflicts |
 | 64, 158 | RAMBO-1 | PRG/CHR banks, CPU- or PPU-clocked IRQs, and mapper 158 nametable wiring |
 | 66 | GxROM | Combined PRG/CHR bank selection and bus conflicts |
