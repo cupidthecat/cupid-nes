@@ -26,6 +26,7 @@
 #include "jy_small.hpp"
 #include "nintendo.hpp"
 #include "drip_game.hpp"
+#include "rainbow.hpp"
 
 namespace cupid::boards {
 
@@ -98,6 +99,7 @@ std::unique_ptr<Board> CreateBoard(unsigned mapper) {
         case 35: return std::make_unique<Jy35>();
         case 91: return std::make_unique<Jy91>();
         case 284: return std::make_unique<DripGame>();
+        case 682: return std::make_unique<Rainbow>();
         default: return nullptr;
     }
 }
@@ -116,6 +118,7 @@ bool board_handles_mapper(unsigned mapper) {
         case 243: case 513: return true;
         case 35: case 91: return true;
         case 284: return true;
+        case 682: return true;
         case 56: case 142: case 171: case 175: case 302: case 303:
         case 305: case 306: case 307: case 312: case 346: return true;
         case 41: case 63: case 112: case 174: case 193: case 221: case 290: case 298: return true;

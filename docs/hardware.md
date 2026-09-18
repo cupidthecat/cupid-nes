@@ -100,6 +100,7 @@ PRG is the cartridge memory read by the CPU; CHR holds graphics patterns read by
 | 243 | Sachen 74LS374 variant | Separate CHR address wiring across registers 2, 4, and 6; register readback and nametable routing |
 | 35, 91 | JY Company | Separate PRG/CHR registers, partially decoded register aliases, and board-specific A12 interrupt counters |
 | 284 | Drip Game | Two PCM FIFOs, CPU-clocked IRQ timer, per-tile extended attributes, PRG/CHR banks, and work-RAM protection |
+| 682 | Rainbow | PRG/CHR flash, selectable ROM/RAM/CIRAM banks, per-tile attributes and patterns, window splits, extended sprites, generated OAM routines, CPU and PPU-read IRQ counters, and two pulse channels plus sawtooth audio |
 | 513 | Sachen 9602 | MMC3 bank and IRQ registers, outer PRG bits written through CHR registers, fixed first-block banks, and battery-backed CHR RAM |
 | 56, 142, 171, 175, 302, 303, 305, 306, 307, 312, 346 | Kaiser | Board-specific address decoding, small PRG windows, delayed bank latches, RAM/ROM selection, mirroring, and CPU-clocked one-shot IRQs |
 | 105 | NES-EVENT | MMC1 serial control, competition PRG modes, fixed CHR RAM, cartridge RAM, and DIP-selected timer IRQ |
@@ -171,6 +172,14 @@ Drip Game, mapper 284, starts with its final 16 KiB PRG bank mapped. Writes belo
 The board's two 256-byte PCM FIFOs have separate period, volume, reset, and status registers. Filling, draining, and overwriting a full FIFO preserve the circular pointer behavior. Period changes affect the next reload, volume changes affect a playing sample immediately, and an empty FIFO holds its output until another sample or reset changes it. The outputs feed the timestamped audio reconstruction path. The FIFO timers and registers survive CPU soft reset.
 
 Drip Game also has two volatile 1 KiB extended-attribute planes. CPU writes at `$C000-$FFFF` select a plane and byte through address aliases while reads still access PRG ROM. During rendering, a nametable fetch selects the attribute byte for the following attribute fetch. Mirroring selects the plane, and its low two bits supply the tile's palette. CPU VRAM reads bypass this substitution. The attribute planes use the configured power-on RAM state and are separate from both cartridge work RAM and battery saves.
+
+Rainbow, mapper 682, starts with PRG and CHR bank zero. Its upper CPU windows select PRG ROM or the cartridge RAM chip in 32, 16, 8, or 4 KiB banks. The lower windows can also select the board's 8 KiB FPGA RAM. CHR windows range from 8 KiB to 512 bytes and can address CHR ROM, CHR RAM, FPGA RAM, or CIRAM. Each nametable has an independent chip and bank selector. Extended attributes and pattern banks apply per tile, while the programmable window has its own nametable, scroll offsets, and fill control. Extended sprite banks follow the OAM Y data observed on the CPU bus, including DMA. Reads at `$4280` and `$4282` generate executable OAM and sprite-bank update routines from FPGA RAM.
+
+The CPU counter supports automatic reload and separate acknowledgement, including acknowledgement by reading `$4011`. The scanline counter detects repeated nametable reads, and its IRQ offset counts PPU reads within the scanline. Three CPU clocks without a PPU read end the detected frame. The two interrupt sources remain pending independently. Programmable NMI and IRQ vectors, parity, and interrupt-jitter registers are also available.
+
+Rainbow audio uses two 16-step pulse generators and a 14-step sawtooth generator. The output-control register selects cartridge expansion pins, and the master-volume register controls their contribution to the audio mixer. Reading `$4011` returns twice the most recently clocked generator sum, allowing a CPU read-modify-write instruction to feed the native DMC DAC. Soft reset restores the documented control registers without clearing the audio generators, RAM, or flash command state. The PRG and CHR flash chips independently support identification, byte programming, bypass programming, sector erase, and chip erase; programming only clears bits. Their persisted images use separate files described in [saves and media](saves.md).
+
+The Rainbow Wi-Fi control bits and buffer-page registers are stored, but receive/transmit status reads return zero. Wi-Fi communication, SD-card access, and external network services are not emulated.
 
 The mapper 72 and 92 cartridge banking and latch behavior is implemented. Optional speech hardware on those boards is not currently emulated.
 

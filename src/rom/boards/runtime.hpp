@@ -123,6 +123,8 @@ protected:
     bool IrqPending() const { return _irq; }
 
     uint8_t InternalReadRam(uint16_t addr) const;
+    int64_t PrgRomOffset(uint16_t addr) const;
+    int64_t ChrRomOffset(uint16_t addr) const;
     uint8_t InternalRead(uint16_t addr);
     uint8_t InternalReadVram(uint16_t addr) const;
     void InternalWriteVram(uint16_t addr, uint8_t value);
@@ -190,6 +192,8 @@ public:
     }
     virtual float AudioOutput() const { return 0.0f; }
     virtual bool SetMapperInput(unsigned, bool) { return false; }
+    virtual bool ReadCpuRegister(uint16_t, uint8_t &) { return false; }
+    virtual void ObserveCpuWrite(uint16_t, uint8_t) {}
     uint8_t ReadCpu(uint16_t addr, uint8_t openBus);
     void WriteCpu(uint16_t addr, uint8_t value);
     uint8_t ReadPpu(uint16_t addr, unsigned fetchSource);

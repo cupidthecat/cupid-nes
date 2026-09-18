@@ -719,6 +719,14 @@ uint8_t cart_cpu_read_bus(uint16_t a, uint8_t open_bus) {
     if (cart == &mapper_mmc5 && a == 0x5204) value |= open_bus & 0x3F;
     return value;
 }
+bool cart_read_cpu_register(uint16_t address, uint8_t *value) {
+    return board_read_cpu_register(active_board, address, value);
+}
+
+void cart_observe_cpu_write(uint16_t address, uint8_t value) {
+    board_observe_cpu_write(active_board, address, value);
+}
+
 void cart_cpu_write(uint16_t a, uint8_t v) {
     if (!cart) return;
     if (a >= 0x8000 && C.bus_conflicts) {

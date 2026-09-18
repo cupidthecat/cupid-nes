@@ -13,6 +13,8 @@ The cartridge loader derives save paths from the image path. It removes the fina
 | PRG NVRAM | `games/game.nes` | `games/game.sav` |
 | CHR NVRAM | `games/game.nes` | `games/game.chr.sav` |
 | Battery-backed UNROM 512 flash or GTROM flash | `games/game.nes` | `games/game.flash.sav` |
+| Rainbow PRG flash | `games/game.nes` | `games/game.flash.sav` |
+| Rainbow CHR flash | `games/game.nes` | `games/game.chr.flash.sav` |
 | 128-byte serial EEPROM | `games/game.nes` | `games/game.eeprom128` |
 | 256-byte serial EEPROM | `games/game.nes` | `games/game.eeprom256` |
 
@@ -25,6 +27,8 @@ Work RAM and save RAM retain separate chip ownership. For example, a trainer on 
 Taito X1-005/X1-017 boards use fixed cartridge-RAM allocations instead of taking a zero NES 2.0 RAM declaration literally. Mappers 80 and 207 allocate a 256-byte mirrored RAM image, and mapper 82 allocates 5 KiB. With the battery flag set, those bytes use the ordinary `.sav` path; without it, the same RAM is volatile.
 
 A short persistent flash save behaves differently: it replaces only the bytes read from the file, leaving the remaining PRG flash bytes from the loaded image. An incomplete file should not be treated as a verified backup. UNROM 512 gets a flash save path only when the cartridge header has the battery bit set. GTROM exposes persistent PRG flash even when that bit is clear; its CHR and nametable RAM remain volatile.
+
+Rainbow saves the complete writable PRG and CHR flash images independently, regardless of the battery flag. It loads those overlays after the original cartridge image and never changes the `.nes` file. Its ordinary PRG and CHR NVRAM use the normal `.sav` and `.chr.sav` paths; FPGA RAM remains volatile. Flash files are replaced through temporary files only after a complete write.
 
 Persistent cartridge data is flushed when the cartridge is shut down, including normal application exit. The main loop has no timed autosave. Close the emulator normally after making progress you want to retain.
 

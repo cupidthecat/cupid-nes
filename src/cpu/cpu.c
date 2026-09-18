@@ -347,6 +347,11 @@ static uint8_t read_bus_target(uint16_t addr, BusLatchTarget target) {
 
     // APU + I/O $4000-$4017
     if (addr >= 0x4000 && addr <= 0x4017) {
+        uint8_t cartridge_value;
+        if (addr == 0x4011 && cart_read_cpu_register(addr, &cartridge_value)) {
+            bus_latch(target, cartridge_value);
+            return cartridge_value;
+        }
         if (addr == 0x4016) {
             if (vs_enabled()) {
                 uint8_t v = vs_read_controller_port(0);
@@ -424,6 +429,7 @@ static void write_bus(uint16_t addr, uint8_t value) {
 
     if (addr >= 0x2000 && addr <= 0x3FFF) {
         // Cartridge address decoding sees the CPU address before PPU mirroring.
+        cart_observe_cpu_write(addr, value);
         if (addr == 0x2000 && !vs_ppu_is_2c05()) cart_notify_ppu_ctrl_write(value);
         ppu_reg_write_cpu(0x2000 | (addr & 7), value, previous_bus);
         return;

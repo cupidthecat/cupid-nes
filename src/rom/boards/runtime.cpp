@@ -250,6 +250,22 @@ uint8_t Board::InternalReadRam(uint16_t addr) const {
     return page.data ? page.data[addr & 0xFF] : 0;
 }
 
+int64_t Board::PrgRomOffset(uint16_t addr) const {
+    const Page &page = _cpuPages[addr >> 8];
+    uintptr_t mapped = reinterpret_cast<uintptr_t>(page.data);
+    uintptr_t base = reinterpret_cast<uintptr_t>(_prgRom);
+    if (!(page.access & Read) || mapped < base || mapped - base >= _prgSize) return -1;
+    return static_cast<int64_t>(mapped - base + (addr & 0xFF));
+}
+
+int64_t Board::ChrRomOffset(uint16_t addr) const {
+    const Page &page = _ppuPages[(addr & 0x3FFF) >> 8];
+    uintptr_t mapped = reinterpret_cast<uintptr_t>(page.data);
+    uintptr_t base = reinterpret_cast<uintptr_t>(_chrRom);
+    if (!(page.access & Read) || mapped < base || mapped - base >= _chrRomSize) return -1;
+    return static_cast<int64_t>(mapped - base + (addr & 0xFF));
+}
+
 uint8_t Board::InternalRead(uint16_t addr) {
     if (_registerReads && (_registerAccess[addr] & Read)) return ReadRegister(addr);
     const Page &page = _cpuPages[addr >> 8];
@@ -517,6 +533,12 @@ uint8_t board_cpu_read(CartridgeBoard *board, uint16_t address, uint8_t openBus)
 }
 void board_cpu_write(CartridgeBoard *board, uint16_t address, uint8_t value) {
     if (board) board->instance->WriteCpu(address, value);
+}
+bool board_read_cpu_register(CartridgeBoard *board, uint16_t address, uint8_t *value) {
+    return board && value && board->instance->ReadCpuRegister(address, *value);
+}
+void board_observe_cpu_write(CartridgeBoard *board, uint16_t address, uint8_t value) {
+    if (board) board->instance->ObserveCpuWrite(address, value);
 }
 uint8_t board_ppu_read(CartridgeBoard *board, uint16_t address, unsigned source) {
     return board ? board->instance->ReadPpu(address, source) : static_cast<uint8_t>(address);

@@ -34,6 +34,8 @@ bool board_set_fcns_kanji_firmware(const uint8_t *data, size_t size);
 void board_destroy(CartridgeBoard *board);
 uint8_t board_cpu_read(CartridgeBoard *board, uint16_t address, uint8_t open_bus);
 void board_cpu_write(CartridgeBoard *board, uint16_t address, uint8_t value);
+bool board_read_cpu_register(CartridgeBoard *board, uint16_t address, uint8_t *value);
+void board_observe_cpu_write(CartridgeBoard *board, uint16_t address, uint8_t value);
 uint8_t board_ppu_read(CartridgeBoard *board, uint16_t address, unsigned fetch_source);
 void board_ppu_write(CartridgeBoard *board, uint16_t address, uint8_t value);
 void board_clock_cpu(CartridgeBoard *board, bool write_cycle);
