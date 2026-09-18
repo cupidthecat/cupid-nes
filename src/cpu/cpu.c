@@ -46,6 +46,10 @@ static uint64_t *cpu_cycles = &cpu_total_cycles;
 static enum { ALIGNMENT_DEFAULT, ALIGNMENT_EXPLICIT, ALIGNMENT_SEEDED } alignment_mode;
 static CpuStartupAlignment configured_alignment;
 static uint32_t alignment_random_state;
+static bool cpu_test_mode;
+
+void cpu_set_test_mode(bool enabled) { cpu_test_mode = enabled; }
+bool cpu_test_mode_enabled(void) { return cpu_test_mode; }
 
 void cpu_use_default_startup_alignment(void) {
     alignment_mode = ALIGNMENT_DEFAULT;
@@ -364,6 +368,12 @@ static uint8_t read_bus_target(uint16_t addr, BusLatchTarget target) {
         uint8_t v = bus_get(); // write-only regs -> external open bus
         bus_latch(target, v);
         return v;
+    }
+
+    if (cpu_test_mode && addr >= 0x4018 && addr <= 0x401A) {
+        uint8_t value = apu_read_test_output(addr);
+        bus_latch(target, value);
+        return value;
     }
 
     // The cartridge decides which expansion registers, ROM and RAM drive the bus.

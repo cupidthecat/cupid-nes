@@ -204,6 +204,8 @@ ApuCpuRevision apu_get_cpu_revision(void);
 // memory-mapped access
 void    apu_write(uint16_t addr, uint8_t val);
 uint8_t apu_read(uint16_t addr);
+// Raw channel DAC values used by the optional CPU diagnostic-read profile.
+uint8_t apu_read_test_output(uint16_t addr);
 
 // ticking
 void apu_step(APU *a, int cpu_cycles);

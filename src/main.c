@@ -228,6 +228,8 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "CPU revision must be early-2a03 or late-2a03\n");
                 return 1;
             }
+        } else if (strcmp(argv[i], "--cpu-test-mode") == 0) {
+            cpu_set_test_mode(true);
         } else if (strcmp(argv[i], "--startup-phase") == 0) {
             if (++i == argc || startup_phase_set || startup_seed_set) {
                 fprintf(stderr, "Choose one startup phase CPU:PPU or startup seed\n");
@@ -362,6 +364,7 @@ int main(int argc, char *argv[]) {
     }
     if (!rom_path) {
         printf("Usage: %s [--console MODEL] [--cpu-revision REVISION] "
+               "[--cpu-test-mode] "
                "[--startup-phase CPU:PPU | --startup-seed SEED] "
                "[--ppu-revision REVISION] [--ppu-oam-row-corruption] "
                "[--ppu-startup-restriction] [--ppu-oam-decay] "
@@ -389,6 +392,7 @@ int main(int argc, char *argv[]) {
     printf("CPU revision: %s\n", apu_get_cpu_revision() == APU_CPU_REVISION_EARLY_2A03
            ? "early-2a03" : "late-2a03");
     printf("PPU revision: %s\n", ppu_revision_name());
+    printf("CPU test-register reads: %s\n", cpu_test_mode_enabled() ? "enabled" : "disabled");
     printf("PPU OAM row corruption: %s\n",
            ppu_oam_row_corruption_worst_case() ? "worst-case" : "compatibility");
     printf("PPU startup write restriction: %s\n",

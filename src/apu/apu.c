@@ -662,6 +662,21 @@ static inline float dmc_out(const DMC* d){
     return (float)d->output_level; // 0..127
 }
 
+uint8_t apu_read_test_output(uint16_t addr) {
+    switch (addr) {
+        case 0x4018:
+            return (uint8_t)((uint8_t)pulse_out(&apu.pulse1)
+                           | ((uint8_t)pulse_out(&apu.pulse2) << 4));
+        case 0x4019:
+            return (uint8_t)((uint8_t)triangle_out(&apu.tri)
+                           | ((uint8_t)noise_out(&apu.noise) << 4));
+        case 0x401A:
+            return (uint8_t)dmc_out(&apu.dmc);
+        default:
+            return 0;
+    }
+}
+
 // Nonlinear mixer (NESdev): pulse & TND
 static inline float mix_sample(float p1, float p2, float tri, float noi, float dmc){
     float pulse = (p1 + p2);

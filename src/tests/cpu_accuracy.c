@@ -1298,6 +1298,95 @@ static int startup_phase_register_race(void) {
     return 0;
 }
 
+static int read_test_mode_register(uint16_t addr, uint8_t expected) {
+    program(0xAD, (uint8_t)addr, (uint8_t)(addr >> 8));
+    cpu.pc = 0x8000;
+    CHECK(cpu_step(&cpu) == 4);
+    CHECK(cpu.a == expected);
+    return 0;
+}
+
+static int cpu_diagnostic_output_reads(void) {
+    reset_fixture();
+    CHECK(!cpu_test_mode_enabled());
+    for (uint16_t addr = 0x4018; addr <= 0x401F; ++addr) {
+        write_mem(0x401B, 0xA5);
+        CHECK(read_mem(addr) == 0xA5);
+    }
+    cpu_set_test_mode(true);
+    apu.pulse1.enabled = apu.pulse2.enabled = true;
+    apu.pulse1.lc.length = apu.pulse2.lc.length = 10;
+    apu.pulse1.env.constant_volume = apu.pulse2.env.constant_volume = true;
+    apu.pulse1.env.volume = 3;
+    apu.pulse2.env.volume = 10;
+    apu.pulse1.timer_reload = apu.pulse2.timer_reload = 100;
+    apu.pulse1.timer = apu.pulse2.timer = 1000;
+    apu.pulse1.duty_step = apu.pulse2.duty_step = 1;
+    apu.tri.output_level = 11;
+    apu.noise.enabled = true;
+    apu.noise.lc.length = 10;
+    apu.noise.env.constant_volume = true;
+    apu.noise.env.volume = 6;
+    apu.noise.lfsr = 0x4000;
+    apu.noise.timer = 1000;
+    write_mem(0x4011, 0x65);
+    raise_frame_irq();
+    CHECK(read_test_mode_register(0x4018, 0xA3) == 0);
+    CHECK(read_test_mode_register(0x4019, 0x6B) == 0);
+    CHECK(read_test_mode_register(0x401A, 0x65) == 0);
+    CHECK(apu.frame_irq_source); // Output reads do not acknowledge the frame counter.
+
+    apu.pulse1.timer = 0;
+    apu.noise.lfsr = 2;
+    apu.noise.timer = 0;
+    apu.noise.period = 4068;
+    apu.tri.step = 0;
+    apu.tri.lc.length = 1;
+    apu.tri.linear_counter = 1;
+    apu.tri.timer = 0;
+    apu.tri.timer_reload = 100;
+    apu.dmc.timer = 0;
+    apu.dmc.shift_reg = 1;
+    apu.dmc.bits_remaining = 8;
+    apu.dmc.silence = false;
+    apu_step(&apu, 1);
+    CHECK(read_test_mode_register(0x4018, 0xA0) == 0);
+    CHECK(read_test_mode_register(0x4019, 0x0E) == 0);
+    CHECK(read_test_mode_register(0x401A, 0x67) == 0);
+    write_mem(0x4018, 0xFF);
+    write_mem(0x4019, 0xFF);
+    write_mem(0x401A, 0xFF);
+    CHECK(read_mem(0x401A) == 0x67); // The profile does not add writable test registers.
+    for (uint16_t addr = 0x401B; addr <= 0x401F; ++addr) {
+        write_mem(0x401B, 0xA5);
+        CHECK(read_mem(addr) == 0xA5);
+    }
+    write_mem(0x401B, 0xA5);
+    CHECK((read_mem(0x4015) & 0x60) == 0x60);
+    CHECK(!apu.frame_irq_source && read_mem(0x401B) == 0xA5);
+
+    APU secondary = {0};
+    apu_power_on(&secondary);
+    apu_select_machine(&secondary);
+    write_mem(0x4011, 0x2B);
+    CHECK(read_test_mode_register(0x401A, 0x2B) == 0);
+    apu_select_machine(NULL);
+    CHECK(read_mem(0x401A) == 0x67);
+    apu_soft_reset(&apu);
+    cpu_soft_reset(&cpu);
+    CHECK(cpu_test_mode_enabled() && read_mem(0x401A) == 0);
+    apu_power_on(&apu);
+    CHECK(cpu_power_on(&cpu));
+    CHECK(cpu_test_mode_enabled());
+    cpu_set_test_mode(false);
+    for (uint16_t addr = 0x4018; addr <= 0x401F; ++addr) {
+        write_mem(0x401B, 0x5A);
+        CHECK(read_mem(addr) == 0x5A);
+    }
+    CHECK(read_test_mode_register(0x4018, 0x40) == 0); // High operand byte remains on the bus.
+    return 0;
+}
+
 int test_cpu_accuracy(void) {
     static int (*const tests[])(void) = {
         controller_latching, open_bus_and_cart_decoding, nop_and_zero_page_cycles,
@@ -1307,6 +1396,7 @@ int test_cpu_accuracy(void) {
         reset_bus_sequence, halt_and_reset, regional_bus_timing_and_pal_dma,
         bus_cycle_interrupt_polling, dma_arbitration, dmc_revision_dma, dma_cycle_accounting,
         startup_phase_selection, seeded_startup_alignment, startup_phase_register_race,
+        cpu_diagnostic_output_reads,
     };
     Mapper *saved_cart = cart;
     iNESHeader saved_header = ines_header;

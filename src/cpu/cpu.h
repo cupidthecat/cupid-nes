@@ -100,6 +100,8 @@ bool cpu_set_startup_alignment(unsigned cpu_offset, unsigned ppu_phase);
 void cpu_seed_startup_alignment(uint32_t seed);
 bool cpu_startup_alignment_valid(NesRegion region);
 CpuStartupAlignment cpu_get_startup_alignment(void);
+void cpu_set_test_mode(bool enabled);
+bool cpu_test_mode_enabled(void);
 bool cpu_power_on(CPU* cpu);
 void cpu_soft_reset(CPU* cpu);
 void cpu_reset(CPU* cpu);

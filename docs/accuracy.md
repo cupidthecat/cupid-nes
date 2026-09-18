@@ -8,6 +8,8 @@ The hardware targets use NTSC, PAL, or Dendy timing with the cartridge and input
 
 Each CPU read or write advances the PPU, APU, and cartridge. Reads and writes place the bus operation at different phases of the CPU clock. Fractional PPU clocks carry across CPU accesses. Interrupt lines are sampled at the CPU cycle boundaries used by instruction polling.
 
+`--cpu-test-mode` enables ordinary 2A03 diagnostic reads: `$4018` packs pulse 1 in the low nibble and pulse 2 in the high nibble, `$4019` packs triangle and noise the same way, and `$401A` returns the DMC's seven-bit output. The values come from the live channel DACs used by the mixer. The default retains open bus at these addresses. The profile survives reset and leaves `$4015`'s internal-bus behavior intact. Writable test registers and DMA-specific test-pin interactions are outside this profile's scope.
+
 | Region | Master clocks per CPU/PPU cycle | Scanlines | Vblank starts |
 | --- | --- | ---: | ---: |
 | NTSC | 12 / 4 | 262 | 241 |
