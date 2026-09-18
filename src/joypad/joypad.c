@@ -48,7 +48,7 @@ static const char *const port_device_names[] = {
 };
 static const char *const expansion_device_names[] = {
     "none", "arkanoid", "family-trainer-a", "family-trainer-b", "zapper", "family-basic",
-    "turbo-file"
+    "turbo-file", "battle-box"
 };
 
 typedef struct {
@@ -229,6 +229,8 @@ uint8_t joypad_read_port(Joypad *jp, unsigned port) {
         value |= family_basic_read(port, cpu_total_cycles);
     else if (expansion_device == NES_EXPANSION_TURBO_FILE)
         value |= turbo_file_read(port);
+    else if (expansion_device == NES_EXPANSION_BATTLE_BOX)
+        value |= battle_box_read(port);
     // The second built-in controller's microphone reaches $4016 D2.
     if (port == 0 && nes_console_model() == NES_CONSOLE_HVC001 && microphone_active)
         value |= 0x04;
@@ -286,6 +288,8 @@ void joypad_write_ports(uint8_t value) {
         family_basic_write(value, cpu_total_cycles);
     else if (expansion_device == NES_EXPANSION_TURBO_FILE)
         turbo_file_write(value);
+    else if (expansion_device == NES_EXPANSION_BATTLE_BOX)
+        battle_box_write(value);
 }
 
 NesInputAdapter joypad_adapter(void) {
@@ -344,12 +348,13 @@ NesExpansionDevice joypad_expansion_device(void) {
 }
 
 bool joypad_set_expansion_device(NesExpansionDevice device) {
-    if ((unsigned)device > NES_EXPANSION_TURBO_FILE) return false;
+    if ((unsigned)device > NES_EXPANSION_BATTLE_BOX) return false;
     expansion_device = device;
     paddles[2].strobe = paddles[2].shift = 0;
     family_trainer_rows = 0;
     family_basic_reset();
     turbo_file_reset_protocol();
+    battle_box_reset_protocol();
     return true;
 }
 
@@ -413,13 +418,19 @@ bool joypad_set_zapper_radius(unsigned radius) {
 }
 
 bool joypad_persistent_configure(const char *rom_path) {
-    return expansion_device != NES_EXPANSION_TURBO_FILE || turbo_file_configure(rom_path);
+    if (expansion_device == NES_EXPANSION_TURBO_FILE) return turbo_file_configure(rom_path);
+    if (expansion_device == NES_EXPANSION_BATTLE_BOX) return battle_box_configure(rom_path);
+    return true;
 }
 
 bool joypad_persistent_flush(void) {
-    return expansion_device != NES_EXPANSION_TURBO_FILE || turbo_file_flush();
+    if (expansion_device == NES_EXPANSION_TURBO_FILE) return turbo_file_flush();
+    if (expansion_device == NES_EXPANSION_BATTLE_BOX) return battle_box_flush();
+    return true;
 }
 
 bool joypad_persistent_shutdown(void) {
-    return turbo_file_shutdown();
+    bool turbo_ok = turbo_file_shutdown();
+    bool battle_ok = battle_box_shutdown();
+    return turbo_ok && battle_ok;
 }

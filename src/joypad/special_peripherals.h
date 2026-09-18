@@ -24,4 +24,11 @@ bool turbo_file_configure(const char *rom_path);
 bool turbo_file_flush(void);
 bool turbo_file_shutdown(void);
 
+void battle_box_reset_protocol(void);
+uint8_t battle_box_read(unsigned port);
+void battle_box_write(uint8_t value);
+bool battle_box_configure(const char *rom_path);
+bool battle_box_flush(void);
+bool battle_box_shutdown(void);
+
 #endif

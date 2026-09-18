@@ -43,7 +43,9 @@ Ordinary PRG/CHR battery memory and EEPROM files are written directly to their d
 
 The ASCII Turbo File uses an 8 KiB `.turbofile.sav` file derived from the ROM stem. For example, `games/game.nes` uses `games/game.turbofile.sav`. The file must be exactly 8 KiB when it already exists.
 
-Turbo File saves are written to a sibling temporary file and replace the destination only after the complete image is written and closed. If replacement fails during a window-close request, the modified device remains in memory and the emulator stays open so the save can be retried.
+BattleBox uses a 512-byte `.battlebox.sav` file containing both 128-word chips in chip order with each word stored low byte first. Existing files must match that size.
+
+Expansion saves are written to a sibling temporary file and replace the destination only after the complete image is written and closed. If replacement fails during a window-close request, the modified device remains in memory and the emulator stays open so the save can be retried.
 
 ## Writable FDS and QD images
 

@@ -112,7 +112,7 @@ Some families have substantially different variants. Namco 175/340 variants do n
 
 Expansion sound includes MMC5 pulse/PCM, VRC6 pulse/saw, VRC7 FM, Namco 163 wavetable, Sunsoft 5B tone/noise/envelopes, and disk-system wavetable/modulation output. [Architecture](architecture.md) describes how the audio reaches the application.
 
-The Famicom expansion connector supports the ASCII Turbo File as an 8 KiB serial storage device. Its D1 reset, D2 clock, D0 write-data, and $4017 D2 read-data lines are handled through the normal controller bus, including bit-position wrap and separate persistent storage.
+The Famicom expansion connector supports the ASCII Turbo File as an 8 KiB serial storage device. Its D1 reset, D2 clock, D0 write-data, and $4017 D2 read-data lines are handled through the normal controller bus, including bit-position wrap and separate persistent storage. BattleBox provides two 128-word serial chips with its command decoder, D0 edge handshake, chip-select behavior, D3 read data, D4 alternating output, write-enable latch, program, and erase commands.
 
 ## EPSM expansion sound
 

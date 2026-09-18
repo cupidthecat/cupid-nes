@@ -1076,6 +1076,7 @@ typedef struct {
     char directory[96];
     char rom[128];
     char turbo[128];
+    char battle[128];
 } InputStorageFixture;
 
 static int input_storage_begin(InputStorageFixture *paths) {
@@ -1090,6 +1091,7 @@ static int input_storage_begin(InputStorageFixture *paths) {
         if (result == 0) {
             snprintf(paths->rom, sizeof(paths->rom), "%s/cart.nes", paths->directory);
             snprintf(paths->turbo, sizeof(paths->turbo), "%s/cart.turbofile.sav", paths->directory);
+            snprintf(paths->battle, sizeof(paths->battle), "%s/cart.battlebox.sav", paths->directory);
             return 0;
         }
         if (errno != EEXIST) return -1;
@@ -1100,6 +1102,7 @@ static int input_storage_begin(InputStorageFixture *paths) {
 static int input_storage_end(const InputStorageFixture *paths) {
     int result = 0;
     if (remove(paths->turbo) != 0 && errno != ENOENT) result = 1;
+    if (remove(paths->battle) != 0 && errno != ENOENT) result = 1;
 #ifdef _WIN32
     if (_rmdir(paths->directory) != 0) result = 1;
 #else
@@ -1209,6 +1212,158 @@ static int turbo_file_failed_save(void) {
     return 0;
 }
 
+static unsigned battle_read_output(void) {
+    write_mem(0x4018, 0);
+    return (read_mem(0x4017) >> 4) & 1u;
+}
+
+static void battle_send_bit(unsigned bit) {
+    unsigned output = battle_read_output();
+    if (output != (bit & 1u)) output = battle_read_output();
+    (void)output;
+    write_mem(0x4016, 1);
+    write_mem(0x4016, 0);
+}
+
+static void battle_send_word(uint16_t value) {
+    for (unsigned bit = 0; bit < 16; ++bit) battle_send_bit(value >> bit);
+}
+
+static void battle_command(unsigned command, unsigned address) {
+    battle_send_word((uint16_t)((((command ^ 0x7Fu) & 0x7Fu) << 8) | (address & 0x7Fu)));
+}
+
+static uint16_t battle_read_word(unsigned address) {
+    battle_command(0x01, address);
+    uint16_t value = 0;
+    for (unsigned bit = 0; bit < 16; ++bit) {
+        write_mem(0x4018, 0);
+        uint8_t port = read_mem(0x4017);
+        value |= (uint16_t)(((port >> 3) & 1u) << bit);
+        write_mem(0x4016, 1);
+        write_mem(0x4016, 0);
+    }
+    return value;
+}
+
+static int battle_box_protocol(void) {
+    input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+    CHECK(joypad_set_expansion_device_name("battle-box"));
+    CHECK(joypad_expansion_device() == NES_EXPANSION_BATTLE_BOX);
+    pad2.buttons = 1;
+    latch_controllers();
+    uint8_t first = read_mem(0x4017);
+    uint8_t second = read_mem(0x4017);
+    CHECK((first & 1u) == 1u);
+    CHECK(((first ^ second) & 0x10u) == 0x10u);
+
+    battle_box_reset_protocol();
+    battle_command(0x09, 0);
+    battle_command(0x06, 0x2A);
+    battle_send_word(0xA55A);
+    battle_box_reset_protocol();
+    battle_command(0x09, 0);
+    CHECK(battle_read_word(0x2A) == 0xA55A);
+
+    battle_box_reset_protocol();
+    write_mem(0x4016, 1);
+    (void)read_mem(0x4017);
+    write_mem(0x4016, 0);
+    battle_command(0x09, 0);
+    battle_command(0x06, 0x2A);
+    battle_send_word(0x5AA5);
+    battle_box_reset_protocol();
+    write_mem(0x4016, 1);
+    (void)read_mem(0x4017);
+    write_mem(0x4016, 0);
+    CHECK(battle_read_word(0x2A) == 0x5AA5);
+
+    battle_box_reset_protocol();
+    battle_command(0x09, 0);
+    battle_command(0x0C, 0);
+    battle_box_reset_protocol();
+    CHECK(battle_read_word(0x2A) == 0);
+    write_mem(0x4016, 1);
+    (void)read_mem(0x4017);
+    write_mem(0x4016, 0);
+    battle_box_reset_protocol();
+    write_mem(0x4016, 1);
+    (void)read_mem(0x4017);
+    write_mem(0x4016, 0);
+    CHECK(battle_read_word(0x2A) == 0);
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_NONE));
+    CHECK(joypad_persistent_shutdown());
+    return 0;
+}
+
+static int battle_box_persistence(void) {
+    InputStorageFixture paths;
+    CHECK(input_storage_begin(&paths) == 0);
+    input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_BATTLE_BOX));
+    CHECK(joypad_persistent_configure(paths.rom));
+    battle_command(0x09, 0);
+    for (unsigned chip = 0; chip < 2; ++chip) {
+        if (chip) {
+            write_mem(0x4016, 1);
+            (void)read_mem(0x4017);
+            write_mem(0x4016, 0);
+        }
+        for (unsigned address = 0; address < 128; ++address) {
+            battle_command(0x06, address);
+            battle_send_word((uint16_t)(0x5A00u ^ (chip << 15) ^ address));
+        }
+    }
+    CHECK(joypad_persistent_flush());
+    FILE *saved = fopen(paths.battle, "rb");
+    CHECK(saved != NULL);
+    for (unsigned chip = 0; chip < 2; ++chip) {
+        for (unsigned address = 0; address < 128; ++address) {
+            uint16_t expected = (uint16_t)(0x5A00u ^ (chip << 15) ^ address);
+            CHECK(fgetc(saved) == (expected & 0xFF));
+            CHECK(fgetc(saved) == (expected >> 8));
+        }
+    }
+    CHECK(fgetc(saved) == EOF && fclose(saved) == 0);
+
+    CHECK(joypad_persistent_shutdown());
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_BATTLE_BOX));
+    CHECK(joypad_persistent_configure(paths.rom));
+    battle_box_reset_protocol();
+    CHECK(battle_read_word(0x7F) == (uint16_t)(0x5A00u ^ 0x7Fu));
+    CHECK(joypad_persistent_shutdown());
+    CHECK(input_storage_end(&paths) == 0);
+    return 0;
+}
+
+static int battle_box_failed_save(void) {
+    InputStorageFixture paths;
+    CHECK(input_storage_begin(&paths) == 0);
+    input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_BATTLE_BOX));
+    CHECK(joypad_persistent_configure(paths.rom));
+    battle_command(0x09, 0);
+    battle_command(0x06, 3);
+    battle_send_word(0x1234);
+#ifdef _WIN32
+    CHECK(_mkdir(paths.battle) == 0);
+#else
+    CHECK(mkdir(paths.battle, 0700) == 0);
+#endif
+    CHECK(!joypad_persistent_shutdown());
+    battle_box_reset_protocol();
+    CHECK(battle_read_word(3) == 0x1234);
+#ifdef _WIN32
+    CHECK(_rmdir(paths.battle) == 0);
+#else
+    CHECK(rmdir(paths.battle) == 0);
+#endif
+    CHECK(joypad_persistent_flush());
+    CHECK(joypad_persistent_shutdown());
+    CHECK(input_storage_end(&paths) == 0);
+    return 0;
+}
+
 int test_input_accuracy(void) {
     static int (*const tests[])(void) = {
         console_open_bus, console_read_clocks, console_strobe_timing,
@@ -1221,7 +1376,8 @@ int test_input_accuracy(void) {
         zapper_brightness_and_area, zapper_cpu_and_dma, zapper_selection_and_disconnect,
         family_basic_matrix_scan, family_basic_cpu_tape_and_controller,
         family_basic_recording_and_media, turbo_file_protocol,
-        turbo_file_persistence, turbo_file_failed_save
+        turbo_file_persistence, turbo_file_failed_save, battle_box_protocol,
+        battle_box_persistence, battle_box_failed_save
     };
     NesConsoleModel saved_model = nes_console_model();
     NesRegion saved_region = nes_timing()->region;

@@ -112,6 +112,8 @@ With `--tape-play FILE`, F10 starts playback. With `--tape-record FILE`, F10 sta
 
 `--console famicom --expansion turbo-file` connects the 8 KiB serial storage device. Games control its reset, clock, data, and read lines through the Famicom expansion connector. The contents are loaded and saved automatically next to the ROM; there is no host key for manually advancing the device.
 
+`--console famicom --expansion battle-box` connects the two-chip BattleBox serial storage device. Its command, chip-select, read, program, write-enable, and erase signals run entirely through the expansion connector.
+
 ## FDS keys
 
 | Key | Disk-system action |
