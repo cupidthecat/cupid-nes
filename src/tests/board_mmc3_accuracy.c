@@ -57,6 +57,21 @@ static int check_mmc3_a12_clock(NesRegion region, uint64_t phase_tag) {
     return 0;
 }
 
+static int check_mmc3_a12_reset_filter(void) {
+    mmc3_sync_a12(3000);
+    cart_cpu_write(0xC000, 0);
+    cart_cpu_write(0xC001, 0);
+    cart_cpu_write(0xE001, 0);
+    cart_notify_ppu_address(0x0000, 3001);
+    BOARD_CHECK(advance_cpu_cycles(2));
+    cart_console_reset(true);
+    BOARD_CHECK(advance_cpu_cycles(3));
+    cart_notify_ppu_address(0x1000, 3002);
+    BOARD_CHECK(cart_irq_pending());
+    cart_cpu_write(0xE000, 0);
+    return 0;
+}
+
 static int test_mmc3_12_and_14(void) {
     BoardImage image;
     BOARD_CHECK(board_image_create(&image, 12, 0x20000, 0x80000, true));
@@ -71,6 +86,11 @@ static int test_mmc3_12_and_14(void) {
     BOARD_CHECK(check_mmc3_a12_clock(NES_REGION_PAL, 2) == 0);
     BOARD_CHECK(check_mmc3_a12_clock(NES_REGION_DENDY, 7) == 0);
     nes_set_region(NES_REGION_NTSC);
+    BOARD_CHECK(check_mmc3_a12_reset_filter() == 0);
+
+    write_mem(0x8002, 6);
+    write_mem(0x8003, 5);
+    BOARD_CHECK(prg8_is(0x8000, 5));
     board_image_free(&image);
 
     BOARD_CHECK(board_image_create(&image, 14, 0x40000, 0x80000, true));
