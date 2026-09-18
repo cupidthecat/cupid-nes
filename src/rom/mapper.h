@@ -81,6 +81,15 @@ const char *cart_mmc3_revision_name(void);
 bool        cart_set_dip_switches(unsigned value);
 unsigned    cart_dip_switches(void);
 
+typedef enum {
+    CART_KARAOKE_A,
+    CART_KARAOKE_B,
+    CART_KARAOKE_MICROPHONE,
+    CART_KARAOKE_INPUT_COUNT
+} CartKaraokeInput;
+
+bool cart_set_karaoke_input(CartKaraokeInput input, bool pressed);
+
 // Mapper-aware nametable access ($2000-$2FFF decoded by PPU)
 uint8_t cart_nt_read (uint16_t addr, uint8_t *nt_ram);
 void    cart_nt_write(uint16_t addr, uint8_t v, uint8_t *nt_ram);

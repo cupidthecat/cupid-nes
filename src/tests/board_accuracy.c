@@ -219,6 +219,169 @@ static int test_bandai_discrete_saves(void) {
     return 0;
 }
 
+static void karaoke_make_register_writes_visible(BoardImage *image, size_t prg_bytes) {
+    if (!image || !image->data || image->size < sizeof(iNESHeader)) return;
+    const iNESHeader *header = (const iNESHeader *)image->data;
+    uint8_t *prg = image->data + sizeof(iNESHeader) + ((header->flags6 & 4) ? 512 : 0);
+    for (size_t bank = 0; bank + 0x4000 <= prg_bytes; bank += 0x4000)
+        prg[bank + 0x3FFF] = 0xFF;
+    if (prg_bytes >= 0x4000) prg[0x3FFE] = 0x13;
+}
+
+static int test_bandai_karaoke_banking_and_input(void) {
+    BoardImage image;
+    BOARD_CHECK(board_image_create(&image, 188, 0x20000, 0, true));
+    karaoke_make_register_writes_visible(&image, 0x20000);
+    BOARD_CHECK(board_image_load(&image) == 0);
+    BOARD_CHECK(read_mem(0x8000) == 0 && read_mem(0xC000) == 28);
+    ppu_write(0x0123, 0xA6);
+    BOARD_CHECK(ppu_read(0x0123) == 0xA6);
+
+    // ROM bus conflicts mask register data before the board sees it.
+    write_mem(0xBFFE, 0x3F);
+    BOARD_CHECK(read_mem(0x8000) == 12 && cart_get_mirroring() == MIRROR_VERTICAL);
+    write_mem(0xBFFF, 0x35);
+    BOARD_CHECK(read_mem(0x8000) == 20 && cart_get_mirroring() == MIRROR_HORIZONTAL);
+    write_mem(0xBFFF, 0x15);
+    BOARD_CHECK(read_mem(0x8000) == 20 && cart_get_mirroring() == MIRROR_VERTICAL);
+
+    // With less than 256 KiB of PRG, selecting the optional expansion ROM
+    // disconnects only the lower window. The fixed internal bank remains mapped.
+    write_mem(0xBFFF, 0x02);
+    write_mem(0x4018, 0xA6);
+    BOARD_CHECK(read_mem(0x8000) == 0xA6 && read_mem(0xBFFF) == 0xA6);
+    BOARD_CHECK(read_mem(0xC000) == 28);
+    write_mem(0xBFFF, 0x17); // An unmapped window cannot create a ROM bus conflict.
+    BOARD_CHECK(read_mem(0x8000) == 28 && read_mem(0xC000) == 28);
+
+    BOARD_CHECK(cart_set_karaoke_input(CART_KARAOKE_A, true));
+    BOARD_CHECK(cart_set_karaoke_input(CART_KARAOKE_B, true));
+    BOARD_CHECK(cart_set_karaoke_input(CART_KARAOKE_MICROPHONE, true));
+    write_mem(0x4018, 0xA8);
+    BOARD_CHECK(ppu.frame_count == 0 && read_mem(0x6000) == 0xAC);
+    start_frame();
+    for (unsigned clocks = 0; clocks < 40000 && !ppu.frame_complete; ++clocks) ppu_step(1);
+    BOARD_CHECK(ppu.frame_complete && ppu.frame_count == 1);
+    write_mem(0x4018, 0xA8);
+    BOARD_CHECK(read_mem(0x7FFF) == 0xA8);
+    start_frame();
+    for (unsigned clocks = 0; clocks < 40000 && !ppu.frame_complete; ++clocks) ppu_step(1);
+    BOARD_CHECK(ppu.frame_complete && ppu.frame_count == 2);
+    write_mem(0x4018, 0xA8);
+    BOARD_CHECK(read_mem(0x6000) == 0xAC);
+
+    BOARD_CHECK(board_image_load(&image) == 0);
+    write_mem(0x4018, 0xA8);
+    BOARD_CHECK(read_mem(0x6000) == 0xAB); // A replacement starts with released mapper inputs.
+    board_image_free(&image);
+
+    BOARD_CHECK(board_image_create(&image, 188, 0x50000, 0x3000, true));
+    image.data[8] |= 0xF0; // Nonzero submappers keep the same board behavior.
+    karaoke_make_register_writes_visible(&image, 0x50000);
+    BOARD_CHECK(board_image_load(&image) == 0);
+    BOARD_CHECK(read_mem(0xC000) == 28);
+    write_mem(0xBFFF, 0x03);
+    BOARD_CHECK(read_mem(0x8000) == 44 && read_mem(0xC000) == 28);
+    write_mem(0xBFFF, 0x07);
+    BOARD_CHECK(read_mem(0x8000) == 60);
+    write_mem(0xBFFF, 0x11);
+    BOARD_CHECK(read_mem(0x8000) == 4);
+    BOARD_CHECK(ppu_read(0x0000) == 0 && ppu_read(0x1FFF) == 7);
+    ppu_write(0x0123, 0xE7);
+    BOARD_CHECK(ppu_read(0x0123) == 0); // CHR ROM remains read-only.
+    board_image_free(&image);
+    return 0;
+}
+
+static int test_bandai_karaoke_page_sizes(void) {
+    BoardImage image;
+    BOARD_CHECK(board_image_create(&image, 188, 0xC000, 0x1000, true));
+    image.data[8] |= 0xA0;
+    karaoke_make_register_writes_visible(&image, 0xC000);
+    BOARD_CHECK(board_image_load(&image) == 0);
+    // Bank seven wraps across the three complete 16 KiB pages.
+    BOARD_CHECK(read_mem(0x8000) == 0 && read_mem(0xC000) == 4);
+    write_mem(0xBFFF, 0x17);
+    BOARD_CHECK(read_mem(0x8000) == 4 && read_mem(0xC000) == 4);
+    BOARD_CHECK(ppu_read(0x0FFF) == 3 && ppu_read(0x1234) == 0x34);
+    board_image_free(&image);
+
+    BOARD_CHECK(board_image_create(&image, 188, 0x5000, 0, true));
+    image.data[11] = 6; // 4 KiB CHR RAM uses the shared small-page mapping.
+    karaoke_make_register_writes_visible(&image, 0x5000);
+    BOARD_CHECK(board_image_load(&image) == 0);
+    BOARD_CHECK(read_mem(0x8000) == 0 && read_mem(0xBFFF) == 0xFF);
+    BOARD_CHECK(read_mem(0xC000) == 0 && read_mem(0xFFFF) == 0xFF);
+    ppu_write(0x0234, 0xD6);
+    BOARD_CHECK(ppu_read(0x0234) == 0xD6 && ppu_read(0x1234) == 0xD6);
+    board_image_free(&image);
+
+    BOARD_CHECK(board_image_create(&image, 188, 0x2000, 0, true));
+    karaoke_make_register_writes_visible(&image, 0x2000);
+    BOARD_CHECK(board_image_load(&image) == 0);
+    for (unsigned window = 0; window < 4; ++window) {
+        BOARD_CHECK(read_mem((uint16_t)(0x8000 + window * 0x2000)) == 0);
+        BOARD_CHECK(read_mem((uint16_t)(0x9FFF + window * 0x2000)) == 1);
+    }
+    board_image_free(&image);
+
+    BOARD_CHECK(board_image_create(&image, 188, 0x80000, 0x2000, true));
+    image.data[11] = 0x07; // CHR ROM plus separately declared volatile CHR RAM is accepted.
+    karaoke_make_register_writes_visible(&image, 0x80000);
+    BOARD_CHECK(board_image_load(&image) == 0);
+    write_mem(0xBFFF, 0x07);
+    BOARD_CHECK(read_mem(0x8000) == 60 && read_mem(0xC000) == 28);
+    BOARD_CHECK(ppu_read(0x0000) == 0 && ppu_read(0x1FFF) == 7);
+    board_image_free(&image);
+    return 0;
+}
+
+static int file_byte_at(const char *path, long offset) {
+    FILE *file = fopen(path, "rb");
+    if (!file) return -1;
+    if (fseek(file, offset, SEEK_SET) != 0) { fclose(file); return -1; }
+    int value = fgetc(file);
+    fclose(file);
+    return value;
+}
+
+static int test_bandai_karaoke_saves(void) {
+    for (unsigned nes20 = 0; nes20 < 2; ++nes20) {
+        BoardImage image;
+        BOARD_CHECK(board_image_create(&image, 188, 0x20000, 0x2000, nes20 != 0));
+        image.data[6] |= 2;
+        if (nes20) image.data[10] = 0x70; // Explicit 8 KiB battery-backed PRG RAM.
+        karaoke_make_register_writes_visible(&image, 0x20000);
+        char path[128], save[128];
+        unsigned long stamp = (unsigned long)time(NULL);
+        snprintf(path, sizeof(path), "build/board-karaoke-%u-%lu-%lu.nes",
+                 nes20, stamp, (unsigned long)clock());
+        memcpy(save, path, strlen(path) + 1);
+        strcpy(strrchr(save, '.'), ".sav");
+        FILE *file = fopen(path, "wb");
+        BOARD_CHECK(file != NULL);
+        size_t count = fwrite(image.data, 1, image.size, file);
+        int closed = fclose(file);
+        BOARD_CHECK(count == image.size && closed == 0);
+        BOARD_CHECK(load_rom(path) == 0);
+        write_mem(0x6123, (uint8_t)(0xB4 + nes20));
+        write_mem(0x7FFF, (uint8_t)(0xD5 + nes20));
+        write_mem(0x4018, 0xA8);
+        BOARD_CHECK(read_mem(0x6123) == 0xAB && read_mem(0x7FFF) == 0xAB);
+        BOARD_CHECK(unload_rom());
+        BOARD_CHECK(file_byte_at(save, 0x123) == 0xB4 + (int)nes20);
+        BOARD_CHECK(file_byte_at(save, 0x1FFF) == 0xD5 + (int)nes20);
+        file = fopen(save, "rb");
+        BOARD_CHECK(file != NULL && fseek(file, 0, SEEK_END) == 0);
+        long length = ftell(file);
+        closed = fclose(file);
+        BOARD_CHECK(length == 0x2000 && closed == 0);
+        BOARD_CHECK(remove(save) == 0 && remove(path) == 0);
+        board_image_free(&image);
+    }
+    return 0;
+}
+
 static int test_board_power_on_ram_case(unsigned mapper) {
     BoardImage image;
     BOARD_CHECK(board_image_create(&image, mapper, 0x8000, 0, false));
@@ -280,8 +443,11 @@ int test_board_accuracy(void) {
     failures += test_bandai_discrete_page_sizes();
     failures += test_bandai_discrete_failed_replacement();
     failures += test_bandai_discrete_saves();
+    failures += test_bandai_karaoke_banking_and_input();
+    failures += test_bandai_karaoke_page_sizes();
+    failures += test_bandai_karaoke_saves();
     failures += test_board_power_on_ram();
     unload_rom();
-    printf("Board accuracy: 5 groups, %d failures\n", failures);
+    printf("Board accuracy: 8 groups, %d failures\n", failures);
     return failures;
 }

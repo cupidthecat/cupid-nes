@@ -14,12 +14,14 @@ Select emulated input hardware with the options in [configuration](configuration
 | Enter | Player 1 Start |
 | Arrow keys | Player 1 D-pad |
 | R | Soft reset the emulated CPU, PPU, APU, and VS control state |
-| M, held | Original Famicom controller 2 microphone signal |
+| M, held | Original Famicom controller 2 microphone signal; Bandai Karaoke microphone when mapper 188 is loaded |
 | F6 | Restore the built-in palette |
 | F7 | Toggle the palette editor |
 | Ctrl+V | Paste palette text |
 
 Close the window for normal shutdown. The M key supplies the emulated microphone line only; Cupid does not capture a host microphone. Soft reset keeps the selected console, CPU/APU and PPU profiles, current CPU/PPU clock alignment, controller configuration, and persistent peripheral contents. It does not rerun command-line setup or reconnect host controllers.
+
+Mapper 188 Bandai Karaoke cartridges also use player-one A/B as their cartridge-owned A and B buttons. Z/X and the first SDL controller's A/B buttons update those inputs while mapper 188 is active. M drives the cartridge microphone as well as the original Famicom microphone line; mapper 188 reports the held microphone on alternating emulation frames.
 
 With `--ppu-reset-suppression`, R preserves PPU registers, scroll latches, raster position, and rendering state while the other reset paths still run. The setting also applies to the second PPU in a dual VS system. It does not change hard power-on behavior.
 

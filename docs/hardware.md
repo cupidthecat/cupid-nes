@@ -100,6 +100,7 @@ PRG is the cartridge memory read by the CPU; CHR holds graphics patterns read by
 | 119 | TQROM | MMC3 banking and IRQs with mixed CHR ROM and RAM |
 | 155 | MMC1A | MMC1 banking with the earlier revision's RAM-enable behavior |
 | 185 | Protected CNROM | CHR protection latch, ROM bus conflicts, and D0 pull-up behavior while pattern-table ROM is disabled |
+| 188 | Bandai Karaoke | Internal/expansion 16 KiB PRG banking, fixed upper bank, mirroring, bus conflicts, cartridge RAM, and mapper-owned A/B/microphone input |
 | 191, 192, 194, 195 | MMC3 mixed CHR | MMC3 banking and IRQs with board-specific CHR ROM/RAM selection ranges |
 | 232 | BF9096 | Outer PRG block and inner bank selection with the submapper-1 outer-bit wiring |
 
@@ -108,6 +109,10 @@ NES 2.0 submappers select supported wiring and revisions. Examples include MMC1 
 PRG mapping uses each board's native bank size. Larger images expose complete banks, and a PRG image smaller than a bank repeats as a whole image where it fits in the CPU window; a remaining partial copy stays on open bus. This permits irregular and small NES 2.0 payloads without changing the board's register bits. Some older mapper implementations still reject CHR ROM smaller than their native CHR page because those paths do not yet implement reduced-size slots. The newer board runtime and the existing adaptive CHR paths map those smaller slots directly. Rejected layouts leave the current cartridge intact.
 
 Bandai 70/152 start with vertical mirroring and accept their shared bank register throughout `$8000-$FFFF`, without ROM bus conflicts. Mapper 152 selects either single-screen page on every write. Mapper 70 retains vertical mirroring until a write sets D7; later writes then select either single-screen page. The register state survives CPU soft reset. Both IDs ignore the NES 2.0 submapper field. Their [board implementation](../src/rom/boards/bandai.hpp) uses complete memory pages, including small and irregular ROM images.
+
+Bandai Karaoke mapper 188 starts with PRG page 0 at `$8000-$BFFF`, internal page 7 at `$C000-$FFFF`, and CHR page 0. D4 selects internal pages 0-7 for the lower window; when D4 is clear and at least 256 KiB of PRG is present, the board selects expansion pages 8-15. Without that expansion area, the lower window is disconnected. D5 selects horizontal or vertical mirroring. Register writes have ROM bus conflicts. PRG and CHR mapping uses the shared board page rules, so complete pages wrap normally, small images use their smaller physical page size, and trailing partial pages do not become additional selectable pages. Mapper 188 does not impose its own ROM-size, CHR-type, or submapper restrictions.
+
+Reads at `$6000-$7FFF` expose the cartridge's A/B/microphone input while writes still reach the normal backing PRG RAM selected by the header and battery flag. A and B are active low on D0-D1. A held microphone drives D2 on even emulation frames and is low on odd frames; D3-D7 retain CPU open bus. Because host input is polled between frames, that microphone level stays stable for the full frame. Battery-backed RAM continues to use the ordinary `.sav` path even though CPU reads in this range see the input register.
 
 Golden Five starts with PRG bank 15 at `$C000-$FFFF`; the lower 16 KiB window remains on open bus until a bank write. Writes at `$8000-$9FFF` change the outer block when D3 is set. Writes at `$C000-$FFFF` select the inner bank, and writes at `$A000-$BFFF` have no effect. The registers survive CPU soft reset, and mirroring follows the header. The board uses the default CHR RAM window and does not select CHR ROM. Small PRG images use the shared page-mapping rules.
 

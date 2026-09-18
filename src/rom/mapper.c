@@ -624,7 +624,6 @@ bool cart_set_dip_switches(unsigned value) {
     return true;
 }
 unsigned cart_dip_switches(void) { return cart_dip_value; }
-
 static uint8_t repeated_prg_window_read(uint16_t address, uint16_t start, size_t window_size);
 
 static size_t mapper_prg_page_size(uint16_t mapper_no) {
@@ -696,6 +695,10 @@ static bool small_prg_window_read(uint16_t address, uint8_t *value) {
     return true;
 }
 
+bool cart_set_karaoke_input(CartKaraokeInput input, bool pressed) {
+    if (C.mapper_no != 188 || (unsigned)input >= CART_KARAOKE_INPUT_COUNT) return false;
+    return board_set_mapper_input(active_board, (unsigned)input, pressed);
+}
 uint8_t cart_cpu_read(uint16_t a) {
     if (active_board) return board_cpu_read(active_board, a, 0xFF);
     if (cart == &mapper_fds) return fds_cpu_read_bus(a, 0xFF);

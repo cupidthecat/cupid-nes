@@ -41,6 +41,7 @@ std::unique_ptr<Board> CreateBoard(unsigned mapper) {
         case 86: return std::make_unique<JalecoJf13>();
         case 104: return std::make_unique<GoldenFive>();
         case 152: return std::make_unique<Bandai74161>(true);
+        case 188: return std::make_unique<BandaiKaraoke>();
         case 218: return std::make_unique<MagicFloor>();
         case 323: return std::make_unique<FaridSlrom>();
         case 324: return std::make_unique<FaridUnrom>();
@@ -69,7 +70,7 @@ bool board_handles_mapper(unsigned mapper) {
         case 41: case 63: case 112: case 174: case 193: case 221: case 290: case 298: return true;
         case 6: case 8: case 17: return true;
         case 323: case 324: return true;
-        case 31: case 70: case 86: case 104: case 152: case 218: return true;
+        case 31: case 70: case 86: case 104: case 152: case 188: case 218: return true;
         default: return false;
     }
 }

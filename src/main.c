@@ -85,6 +85,10 @@ static void controller_event(const SDL_Event *event) {
             SDL_GameControllerClose(controllers[player]);
             controllers[player] = NULL;
             joypad_player(player)->buttons = 0;
+            if (player == 0) {
+                (void)cart_set_karaoke_input(CART_KARAOKE_A, false);
+                (void)cart_set_karaoke_input(CART_KARAOKE_B, false);
+            }
             if (player < 2) {
                 NesPortDevice device = joypad_port_device(player);
                 if (device == NES_PORT_SNES_CONTROLLER || device == NES_PORT_NTT_KEYPAD) {
@@ -116,7 +120,13 @@ static void controller_event(const SDL_Event *event) {
                 case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: button = BTN_RIGHT; break;
                 default: break;
             }
-            if (button >= 0) joypad_set_player(player, button, down);
+            if (button >= 0) {
+                joypad_set_player(player, button, down);
+                if (player == 0 && button == BTN_A)
+                    (void)cart_set_karaoke_input(CART_KARAOKE_A, down);
+                else if (player == 0 && button == BTN_B)
+                    (void)cart_set_karaoke_input(CART_KARAOKE_B, down);
+            }
             if (player < 2) {
                 NesPortDevice device = joypad_port_device(player);
                 if (device == NES_PORT_SNES_CONTROLLER || device == NES_PORT_NTT_KEYPAD) {
@@ -1038,15 +1048,24 @@ int main(int argc, char *argv[]) {
                     case SDLK_8: if (vs_dual_system()) vs_set_coin(3, down != 0); break;
                     case SDLK_F1: if (vs_enabled()) vs_set_service(0, down != 0); break;
                     case SDLK_F2: if (vs_dual_system()) vs_set_service(1, down != 0); break;
-                    case SDLK_z:        joypad_set_player(0, BTN_A,      down); break;
-                    case SDLK_x:        joypad_set_player(0, BTN_B,      down); break;
+                    case SDLK_z:
+                        joypad_set_player(0, BTN_A, down);
+                        (void)cart_set_karaoke_input(CART_KARAOKE_A, down);
+                        break;
+                    case SDLK_x:
+                        joypad_set_player(0, BTN_B, down);
+                        (void)cart_set_karaoke_input(CART_KARAOKE_B, down);
+                        break;
                     case SDLK_RSHIFT:   joypad_set_player(0, BTN_SELECT, down); break;
                     case SDLK_RETURN:   joypad_set_player(0, BTN_START,  down); break;
                     case SDLK_UP:       joypad_set_player(0, BTN_UP,     down); break;
                     case SDLK_DOWN:     joypad_set_player(0, BTN_DOWN,   down); break;
                     case SDLK_LEFT:     joypad_set_player(0, BTN_LEFT,   down); break;
                     case SDLK_RIGHT:    joypad_set_player(0, BTN_RIGHT,  down); break;
-                    case SDLK_m:        joypad_set_microphone(down != 0); break;
+                    case SDLK_m:
+                        joypad_set_microphone(down != 0);
+                        (void)cart_set_karaoke_input(CART_KARAOKE_MICROPHONE, down);
+                        break;
                     default: break;
                 }
 

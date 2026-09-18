@@ -115,6 +115,7 @@ protected:
     uint8_t GetPowerOnByte(uint8_t defaultValue = 0) const { return defaultValue; }
     uint8_t GetOpenBus(uint8_t mask = 0xFF) const { return _openBus & mask; }
     uint64_t CpuClock() const;
+    uint64_t FrameCount() const;
     uint64_t PpuClock() const { return _ppuClock; }
     bool CpuWriteCycle() const { return _writeCycle; }
     void SetIrq(bool asserted) { _irq = asserted; }
@@ -187,6 +188,7 @@ public:
         InternalWriteVram(addr, value);
     }
     virtual float AudioOutput() const { return 0.0f; }
+    virtual bool SetMapperInput(unsigned, bool) { return false; }
     uint8_t ReadCpu(uint16_t addr, uint8_t openBus);
     void WriteCpu(uint16_t addr, uint8_t value);
     uint8_t ReadPpu(uint16_t addr, unsigned fetchSource);

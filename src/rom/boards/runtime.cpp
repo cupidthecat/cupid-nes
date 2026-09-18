@@ -22,6 +22,7 @@
 extern "C" {
 #include "../mapper.h"
 #include "../../cpu/cpu.h"
+#include "../../ppu/ppu.h"
 #include "../../system/hardware.h"
 }
 
@@ -208,6 +209,7 @@ void Board::SelectChrPage8x(uint16_t slot, uint16_t page, ChrMemoryType type) {
 uint32_t Board::GetPrgPageCount() const { return _prgPageSize ? _prgSize / _prgPageSize : 0; }
 uint32_t Board::GetChrRomPageCount() const { return _chrRomPageSize ? _chrRomSize / _chrRomPageSize : 0; }
 uint64_t Board::CpuClock() const { return cpu_get_bus_cycle(); }
+uint64_t Board::FrameCount() const { return ppu.frame_count; }
 
 uint32_t Board::GetDipSwitches() {
     unsigned count = GetDipSwitchCount();
@@ -511,6 +513,9 @@ void board_after_reset(CartridgeBoard *board) { if (board) board->instance->OnAf
 bool board_irq_pending(const CartridgeBoard *board) { return board && board->instance->PendingIrq(); }
 void board_irq_ack(CartridgeBoard *board) { if (board) board->instance->AcknowledgeIrq(); }
 float board_audio(const CartridgeBoard *board) { return board ? board->instance->AudioOutput() : 0.0f; }
+bool board_set_mapper_input(CartridgeBoard *board, unsigned input, bool pressed) {
+    return board && board->instance->SetMapperInput(input, pressed);
+}
 Mirroring board_mirroring(const CartridgeBoard *board) {
     return board ? board->instance->MirroringMode() : MIRROR_HORIZONTAL;
 }
