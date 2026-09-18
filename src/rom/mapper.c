@@ -1620,6 +1620,7 @@ static struct { uint8_t chr[2]; bool mapped; } sunsoft184;
 
 static uint8_t sunsoft184_cpu_read(uint16_t a) {
     if (a >= 0x8000) return C.prg[(a - 0x8000u) % C.prg_sz];
+    if (a >= 0x6000) return prg_ram_read(a);
     return cart_cpu_bus_input;
 }
 

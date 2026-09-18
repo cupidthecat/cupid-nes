@@ -4506,6 +4506,114 @@ static int saved_byte(const char *path, long offset) {
     return value;
 }
 
+static int test_sunsoft184_inherited_ram_reads(void) {
+    iNESHeader h = header_for(184, 0x8000, false);
+    h.flags7 |= 0x08;
+    h.flags10 = 7; // 8 KiB volatile PRG-RAM.
+    h.flags6 |= 0x04; // Trainer preloads RAM even though CPU writes are mapper registers.
+    h.chr_rom_chunks = 4;
+    size_t image_size;
+    uint8_t *image = image_for(&h, 0x8000, 0x8000, &image_size);
+    CHECK(image != NULL);
+    size_t prg_offset = sizeof(h) + 512;
+    size_t chr_offset = sizeof(h) + 512 + 0x8000;
+    for (unsigned bank = 0; bank < 8; ++bank)
+        memset(image + chr_offset + bank * 0x1000, (int)bank, 0x1000);
+    const uint8_t ram_program[] = {
+        0xAD, 0x23, 0x71,       // LDA $7123: trainer-backed PRG-RAM read.
+        0xA9, 0x31,             // LDA #$31
+        0x8D, 0x23, 0x71,       // STA $7123: mapper register write, not RAM write.
+        0xAD, 0x23, 0x71        // LDA $7123: RAM value must remain unchanged.
+    };
+    memcpy(image + prg_offset + 0x0100, ram_program, sizeof(ram_program));
+    image[prg_offset + 0x7FFC] = 0x00;
+    image[prg_offset + 0x7FFD] = 0x81;
+    CHECK(load_rom_memory(image, image_size) == 0);
+    free(image);
+
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    CHECK(cpu_power_on(&cpu) && cpu.pc == 0x8100);
+    CHECK(cpu_step(&cpu) == 4 && cpu.a == 0x23);
+    CHECK(cpu_step(&cpu) == 2 && cpu.a == 0x31);
+    CHECK(cpu_step(&cpu) == 4);
+    CHECK(cart_ppu_read(0x0000) == 1 && cart_ppu_read(0x1000) == 7);
+    CHECK(cpu_step(&cpu) == 4 && cpu.a == 0x23);
+    CHECK(read_mem(0x7123) == 0x23);
+    write_mem(0x7123, 0x31);
+    CHECK(read_mem(0x7123) == 0x23);
+    CHECK(cart_ppu_read(0x0000) == 1 && cart_ppu_read(0x1000) == 7);
+
+    h.flags6 &= (uint8_t)~0x04u;
+    h.flags10 = 0;
+    image = image_for(&h, 0x8000, 0x8000, &image_size);
+    CHECK(image != NULL);
+    chr_offset = sizeof(h) + 0x8000;
+    for (unsigned bank = 0; bank < 8; ++bank)
+        memset(image + chr_offset + bank * 0x1000, (int)bank, 0x1000);
+    const uint8_t no_ram_program[] = {
+        0xA9, 0x26,             // LDA #$26
+        0x8D, 0x23, 0x61,       // STA $6123: mapper register still receives writes.
+        0xAD, 0x23, 0x61        // LDA $6123: open bus keeps operand high byte $61.
+    };
+    memcpy(image + sizeof(h) + 0x0100, no_ram_program, sizeof(no_ram_program));
+    image[sizeof(h) + 0x7FFC] = 0x00;
+    image[sizeof(h) + 0x7FFD] = 0x81;
+    CHECK(load_rom_memory(image, image_size) == 0);
+    free(image);
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    CHECK(cpu_power_on(&cpu) && cpu.pc == 0x8100);
+    CHECK(cpu_step(&cpu) == 2 && cpu.a == 0x26);
+    CHECK(cpu_step(&cpu) == 4);
+    CHECK(cart_ppu_read(0x0000) == 6 && cart_ppu_read(0x1000) == 6);
+    CHECK(cpu_step(&cpu) == 4 && cpu.a == 0x61);
+    write_mem(0x4018, 0xA6);
+    CHECK(read_mem(0x6123) == 0xA6);
+
+    SaveFixture paths;
+    CHECK(save_fixture_begin(&paths) == 0);
+    uint8_t save[0x2000];
+    for (size_t i = 0; i < sizeof(save); ++i) save[i] = (uint8_t)(i ^ 0xA5u);
+    FILE *fp = fopen(paths.prg_save, "wb");
+    CHECK(fp != NULL);
+    size_t written = fwrite(save, 1, sizeof(save), fp);
+    int closed = fclose(fp);
+    CHECK(written == sizeof(save) && closed == 0);
+
+    h = header_for(184, 0x8000, false);
+    h.flags6 |= 0x02;
+    h.chr_rom_chunks = 4;
+    image = image_for(&h, 0x8000, 0x8000, &image_size);
+    CHECK(image != NULL);
+    const uint8_t save_program[] = {
+        0xAD, 0x23, 0x61        // LDA $6123: battery-backed inherited RAM read.
+    };
+    memcpy(image + sizeof(h) + 0x0100, save_program, sizeof(save_program));
+    image[sizeof(h) + 0x7FFC] = 0x00;
+    image[sizeof(h) + 0x7FFD] = 0x81;
+    CHECK(load_rom_memory(image, image_size) == 0);
+    cart_battery_configure(paths.rom, true);
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    CHECK(cpu_power_on(&cpu) && cpu.pc == 0x8100);
+    CHECK(cpu_step(&cpu) == 4 && cpu.a == save[0x123]);
+    CHECK(read_mem(0x6123) == save[0x123]);
+    write_mem(0x6123, 0x26);
+    CHECK(read_mem(0x6123) == save[0x123]);
+    cart_battery_flush();
+    CHECK(saved_byte(paths.prg_save, 0x123) == save[0x123]);
+
+    CHECK(load_rom_memory(image, image_size) == 0);
+    free(image);
+    cart_battery_configure(paths.rom, true);
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    CHECK(cpu_power_on(&cpu));
+    CHECK(read_mem(0x6123) == save[0x123]);
+    return save_fixture_end(&paths);
+}
+
 static int prg_persistence_cases(const SaveFixture *paths) {
     uint8_t legacy_save[0x2000];
     for (size_t i = 0; i < sizeof(legacy_save); ++i) legacy_save[i] = (uint8_t)(i ^ 0xA5);
@@ -8667,7 +8775,7 @@ int test_mapper_accuracy(void) {
         test_sunsoft4_banks_nametables_and_timer, test_sunsoft4_chr_ram_persistence_and_loader,
         test_sunsoft4_cpu_licensed_reads,
         test_sunsoft_discrete_boards, test_sunsoft_discrete_loader_rejection,
-        test_sunsoft_discrete_image_loading,
+        test_sunsoft_discrete_image_loading, test_sunsoft184_inherited_ram_reads,
         test_taito_x1005_and_207, test_taito_x1017_banks_chr_and_ram,
         test_taito_x1_persistence_and_loader,
         test_irem77_mixed_chr_and_bus_conflicts, test_irem97_prg_and_mirroring,
