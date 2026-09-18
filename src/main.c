@@ -348,6 +348,7 @@ int main(int argc, char *argv[]) {
     bool fds_start_write_protected = false;
     bool vs_dip_set = false;
     uint16_t vs_dips = 0;
+    uint8_t input_overrides = 0;
     bool startup_phase_set = false;
     bool startup_seed_set = false;
     unsigned startup_cpu_offset = 0, startup_ppu_phase = 0;
@@ -475,17 +476,20 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "Adapter must be none, four-score, famicom-2, or famicom-4\n");
                 return 1;
             }
+            input_overrides |= NES_INPUT_OVERRIDE_ADAPTER;
         } else if (strcmp(argv[i], "--port1") == 0 || strcmp(argv[i], "--port2") == 0) {
             unsigned port = argv[i][6] == '2' ? 1 : 0;
             if (++i == argc || !joypad_set_port_device_name(port, argv[i])) {
                 fprintf(stderr, "Port device must be pad, none, arkanoid, power-pad-a, power-pad-b, zapper, or subor-mouse (port 2 only)\n");
                 return 1;
             }
+            input_overrides |= port ? NES_INPUT_OVERRIDE_PORT2 : NES_INPUT_OVERRIDE_PORT1;
         } else if (strcmp(argv[i], "--expansion") == 0) {
             if (++i == argc || !joypad_set_expansion_device_name(argv[i])) {
                 fprintf(stderr, "Expansion device must be none, arkanoid, family-trainer-a, family-trainer-b, zapper, family-basic, turbo-file, battle-box, subor-keyboard, hori-track, konami-hyper-shot, bandai-hyper-shot, party-tap, pachinko, exciting-boxing, jissen-mahjong, barcode-battler, or oeka-kids-tablet\n");
                 return 1;
             }
+            input_overrides |= NES_INPUT_OVERRIDE_EXPANSION;
         } else if (strcmp(argv[i], "--zapper-radius") == 0) {
             if (++i == argc) {
                 fprintf(stderr, "Zapper radius must be an integer from 0 to 255\n");
@@ -589,6 +593,7 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Tape input requires --expansion family-basic\n");
         return 1;
     }
+    joypad_set_configuration_overrides(input_overrides);
     
     printf("Console: %s\n", nes_console_model_name());
     printf("CPU revision: %s\n", apu_get_cpu_revision() == APU_CPU_REVISION_EARLY_2A03

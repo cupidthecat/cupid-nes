@@ -35,6 +35,7 @@ extern Joypad pad1, pad2;
 extern uint64_t cpu_total_cycles;
 static Joypad expansion_pads[NES_INPUT_PLAYERS - 2];
 static NesInputAdapter input_adapter;
+static uint8_t configuration_overrides;
 static uint8_t adapter_strobe;
 static uint8_t adapter_remaining[2];
 static uint8_t adapter_signature[2];
@@ -432,6 +433,93 @@ bool joypad_configuration_valid(void) {
         (port_devices[0] != NES_PORT_GAMEPAD || port_devices[1] != NES_PORT_GAMEPAD))
         return false;
     return input_adapter < NES_ADAPTER_FAMICOM_TWO || expansion_device == NES_EXPANSION_NONE;
+}
+
+void joypad_set_configuration_overrides(uint8_t mask) {
+    configuration_overrides = mask & (NES_INPUT_OVERRIDE_ADAPTER | NES_INPUT_OVERRIDE_PORT1
+                                    | NES_INPUT_OVERRIDE_PORT2 | NES_INPUT_OVERRIDE_EXPANSION);
+}
+
+uint8_t joypad_configuration_overrides(void) {
+    return configuration_overrides;
+}
+
+static bool configuration_valid(const NesInputConfiguration *config) {
+    if (!config) return false;
+    if (config->adapter == NES_ADAPTER_FOUR_SCORE
+        && (config->ports[0] != NES_PORT_GAMEPAD || config->ports[1] != NES_PORT_GAMEPAD))
+        return false;
+    return config->adapter < NES_ADAPTER_FAMICOM_TWO
+        || config->expansion == NES_EXPANSION_NONE;
+}
+
+bool joypad_resolve_default_input(uint8_t input_type, NesInputConfiguration *config,
+                                  bool *supported) {
+    if (!config || !supported) return false;
+    *supported = true;
+    NesInputConfiguration automatic = {
+        .adapter = NES_ADAPTER_NONE,
+        .ports = {NES_PORT_GAMEPAD, NES_PORT_GAMEPAD},
+        .expansion = NES_EXPANSION_NONE
+    };
+    bool famicom = nes_console_model() == NES_CONSOLE_HVC001
+                || nes_console_model() == NES_CONSOLE_HVC101;
+
+    switch (input_type) {
+        case 0x01: break;
+        case 0x02: automatic.adapter = NES_ADAPTER_FOUR_SCORE; break;
+        case 0x03: automatic.adapter = NES_ADAPTER_FAMICOM_TWO; break;
+        case 0x07: automatic.ports[0] = NES_PORT_ZAPPER; break;
+        case 0x08:
+            if (famicom) automatic.expansion = NES_EXPANSION_ZAPPER;
+            else automatic.ports[1] = NES_PORT_ZAPPER;
+            break;
+        case 0x0A: automatic.expansion = NES_EXPANSION_BANDAI_HYPER_SHOT; break;
+        case 0x0B: automatic.ports[1] = NES_PORT_POWER_PAD_A; break;
+        case 0x0C: automatic.ports[1] = NES_PORT_POWER_PAD_B; break;
+        case 0x0D: automatic.expansion = NES_EXPANSION_FAMILY_TRAINER_A; break;
+        case 0x0E: automatic.expansion = NES_EXPANSION_FAMILY_TRAINER_B; break;
+        case 0x0F: automatic.ports[1] = NES_PORT_ARKANOID; break;
+        case 0x10:
+        case 0x11: automatic.expansion = NES_EXPANSION_ARKANOID; break;
+        case 0x12: automatic.expansion = NES_EXPANSION_KONAMI_HYPER_SHOT; break;
+        case 0x13: automatic.expansion = NES_EXPANSION_PACHINKO; break;
+        case 0x14: automatic.expansion = NES_EXPANSION_EXCITING_BOXING; break;
+        case 0x15: automatic.expansion = NES_EXPANSION_JISSEN_MAHJONG; break;
+        case 0x16: automatic.expansion = NES_EXPANSION_PARTY_TAP; break;
+        case 0x17: automatic.expansion = NES_EXPANSION_OEKA_KIDS_TABLET; break;
+        case 0x18: automatic.expansion = NES_EXPANSION_BARCODE_BATTLER; break;
+        case 0x21: automatic.expansion = NES_EXPANSION_TURBO_FILE; break;
+        case 0x22: automatic.expansion = NES_EXPANSION_BATTLE_BOX; break;
+        case 0x23: automatic.expansion = NES_EXPANSION_FAMILY_BASIC; break;
+        case 0x27:
+            automatic.expansion = NES_EXPANSION_SUBOR_KEYBOARD;
+            automatic.ports[1] = NES_PORT_SUBOR_MOUSE;
+            break;
+        default:
+            *supported = false;
+            *config = (NesInputConfiguration){
+                .adapter = input_adapter,
+                .ports = {port_devices[0], port_devices[1]},
+                .expansion = expansion_device
+            };
+            return true;
+    }
+
+    *config = automatic;
+    if (configuration_overrides & NES_INPUT_OVERRIDE_ADAPTER) config->adapter = input_adapter;
+    if (configuration_overrides & NES_INPUT_OVERRIDE_PORT1) config->ports[0] = port_devices[0];
+    if (configuration_overrides & NES_INPUT_OVERRIDE_PORT2) config->ports[1] = port_devices[1];
+    if (configuration_overrides & NES_INPUT_OVERRIDE_EXPANSION) config->expansion = expansion_device;
+    return configuration_valid(config);
+}
+
+bool joypad_apply_configuration(const NesInputConfiguration *config) {
+    if (!configuration_valid(config)) return false;
+    return joypad_set_adapter(config->adapter)
+        && joypad_set_port_device(0, config->ports[0])
+        && joypad_set_port_device(1, config->ports[1])
+        && joypad_set_expansion_device(config->expansion);
 }
 
 bool joypad_set_paddle(unsigned slot, int position, bool fire) {

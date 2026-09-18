@@ -75,6 +75,19 @@ typedef enum {
     NES_EXPANSION_OEKA_KIDS_TABLET
 } NesExpansionDevice;
 
+typedef struct {
+    NesInputAdapter adapter;
+    NesPortDevice ports[2];
+    NesExpansionDevice expansion;
+} NesInputConfiguration;
+
+enum {
+    NES_INPUT_OVERRIDE_ADAPTER = 1u << 0,
+    NES_INPUT_OVERRIDE_PORT1 = 1u << 1,
+    NES_INPUT_OVERRIDE_PORT2 = 1u << 2,
+    NES_INPUT_OVERRIDE_EXPANSION = 1u << 3
+};
+
 typedef enum {
     JISSEN_KEY_A, JISSEN_KEY_B, JISSEN_KEY_C, JISSEN_KEY_D, JISSEN_KEY_E,
     JISSEN_KEY_F, JISSEN_KEY_G, JISSEN_KEY_H, JISSEN_KEY_I, JISSEN_KEY_J,
@@ -132,6 +145,11 @@ bool    joypad_set_expansion_device(NesExpansionDevice device);
 bool    joypad_set_expansion_device_name(const char *name);
 const char *joypad_expansion_device_name(void);
 bool    joypad_configuration_valid(void);
+void    joypad_set_configuration_overrides(uint8_t mask);
+uint8_t joypad_configuration_overrides(void);
+bool    joypad_resolve_default_input(uint8_t input_type, NesInputConfiguration *config,
+                                     bool *supported);
+bool    joypad_apply_configuration(const NesInputConfiguration *config);
 // Slots zero and one are NES ports; slot two is the Famicom expansion connector.
 bool    joypad_set_paddle(unsigned slot, int position, bool fire);
 // Mat positions are three rows of four, viewed from left to right on side A.

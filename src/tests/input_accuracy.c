@@ -36,6 +36,7 @@
 #include "../cpu/cpu.h"
 #include "../apu/apu.h"
 #include "../ppu/ppu.h"
+#include "../rom/rom.h"
 #include "../rom/mapper.h"
 #include "../system/hardware.h"
 #include "../system/timing.h"
@@ -97,6 +98,7 @@ static void input_fixture(NesConsoleModel model, NesRegion region) {
     joypad_set_port_device(0, NES_PORT_GAMEPAD);
     joypad_set_port_device(1, NES_PORT_GAMEPAD);
     joypad_set_expansion_device(NES_EXPANSION_NONE);
+    joypad_set_configuration_overrides(0);
     joypad_set_zapper_radius(0);
     for (unsigned slot = 0; slot < 3; ++slot) joypad_set_zapper(slot, -1, -1, false);
     for (unsigned slot = 0; slot < 3; ++slot)
@@ -301,6 +303,102 @@ static int console_selection_lifetime(void) {
         unload_rom();
         CHECK(nes_console_model() == (NesConsoleModel)model);
     }
+    return 0;
+}
+
+static int load_input_metadata_image(uint8_t input_type) {
+    uint8_t image[16 + 0x4000] = {0};
+    memcpy(image, "NES\x1A", 4);
+    image[4] = 1;
+    image[7] = 0x08;
+    image[11] = 7; // 8 KiB CHR RAM.
+    image[15] = input_type;
+    image[16 + 0x3FFC] = 0x00;
+    image[16 + 0x3FFD] = 0x80;
+    return load_rom_memory(image, sizeof(image));
+}
+
+static int default_input_metadata(void) {
+    input_fixture(NES_CONSOLE_NES001, NES_REGION_NTSC);
+    CHECK(load_input_metadata_image(0x02) == 0);
+    CHECK(joypad_adapter() == NES_ADAPTER_FOUR_SCORE);
+    CHECK(joypad_port_device(0) == NES_PORT_GAMEPAD && joypad_port_device(1) == NES_PORT_GAMEPAD);
+    joypad_player(0)->buttons = 0x01;
+    joypad_player(2)->buttons = 0x02;
+    latch_controllers();
+    CHECK((read_mem(0x4016) & 1u) == 1u);
+    for (unsigned bit = 1; bit < 8; ++bit) (void)read_mem(0x4016);
+    CHECK((read_mem(0x4016) & 1u) == 0u);
+    CHECK((read_mem(0x4016) & 1u) == 1u);
+
+    input_fixture(NES_CONSOLE_NES001, NES_REGION_NTSC);
+    CHECK(load_input_metadata_image(0x08) == 0);
+    CHECK(joypad_port_device(1) == NES_PORT_ZAPPER && joypad_expansion_device() == NES_EXPANSION_NONE);
+    CHECK(joypad_set_zapper(1, -1, -1, true));
+    write_mem(0x4018, 0);
+    CHECK((read_mem(0x4017) & 0x10) != 0);
+
+    input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+    CHECK(load_input_metadata_image(0x08) == 0);
+    CHECK(joypad_port_device(1) == NES_PORT_GAMEPAD && joypad_expansion_device() == NES_EXPANSION_ZAPPER);
+    CHECK(joypad_set_zapper(2, -1, -1, true));
+    write_mem(0x4018, 0);
+    CHECK((read_mem(0x4017) & 0x10) != 0);
+
+    static const struct {
+        uint8_t input;
+        NesExpansionDevice expansion;
+    } expansion_cases[] = {
+        {0x17, NES_EXPANSION_OEKA_KIDS_TABLET},
+        {0x21, NES_EXPANSION_TURBO_FILE},
+        {0x22, NES_EXPANSION_BATTLE_BOX},
+        {0x23, NES_EXPANSION_FAMILY_BASIC}
+    };
+    for (size_t i = 0; i < sizeof(expansion_cases) / sizeof(expansion_cases[0]); ++i) {
+        input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+        CHECK(load_input_metadata_image(expansion_cases[i].input) == 0);
+        CHECK(joypad_expansion_device() == expansion_cases[i].expansion);
+    }
+
+    input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+    CHECK(load_input_metadata_image(0x27) == 0);
+    CHECK(joypad_expansion_device() == NES_EXPANSION_SUBOR_KEYBOARD);
+    CHECK(joypad_port_device(1) == NES_PORT_SUBOR_MOUSE);
+    CHECK(joypad_set_subor_key(SUBOR_KEY_A, true));
+    write_mem(0x4016, 5);
+    write_mem(0x4016, 4);
+    for (unsigned row = 0; row < 5; ++row) {
+        write_mem(0x4016, 6);
+        write_mem(0x4016, 4);
+    }
+    write_mem(0x4016, 6);
+    CHECK((read_mem(0x4017) & 0x1E) == 0x1A);
+    CHECK(joypad_set_subor_key(SUBOR_KEY_A, false));
+
+    input_fixture(NES_CONSOLE_NES001, NES_REGION_NTSC);
+    CHECK(joypad_set_port_device(1, NES_PORT_ARKANOID));
+    joypad_set_configuration_overrides(NES_INPUT_OVERRIDE_PORT2);
+    CHECK(load_input_metadata_image(0x08) == 0);
+    CHECK(joypad_port_device(1) == NES_PORT_ARKANOID);
+    CHECK(joypad_port_device(0) == NES_PORT_GAMEPAD && joypad_adapter() == NES_ADAPTER_NONE);
+
+    input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+    CHECK(joypad_set_adapter(NES_ADAPTER_FAMICOM_TWO));
+    joypad_set_configuration_overrides(NES_INPUT_OVERRIDE_ADAPTER);
+    Mapper *previous_cart = cart;
+    CHECK(load_input_metadata_image(0x17) == -1);
+    CHECK(cart == previous_cart && joypad_adapter() == NES_ADAPTER_FAMICOM_TWO);
+    CHECK(joypad_expansion_device() == NES_EXPANSION_NONE);
+
+    input_fixture(NES_CONSOLE_NES001, NES_REGION_NTSC);
+    CHECK(joypad_set_port_device(1, NES_PORT_POWER_PAD_A));
+    CHECK(load_input_metadata_image(0x19) == 0);
+    CHECK(joypad_port_device(1) == NES_PORT_POWER_PAD_A);
+    CHECK(load_input_metadata_image(0x00) == 0);
+    CHECK(joypad_port_device(1) == NES_PORT_POWER_PAD_A);
+
+    joypad_set_configuration_overrides(0);
+    CHECK(unload_rom());
     return 0;
 }
 
@@ -2116,7 +2214,7 @@ static int oeka_kids_cartridge_and_tablet(void) {
 int test_input_accuracy(void) {
     static int (*const tests[])(void) = {
         console_open_bus, console_read_clocks, console_strobe_timing,
-        famicom_microphone, console_dma_reads, console_selection_lifetime,
+        famicom_microphone, console_dma_reads, console_selection_lifetime, default_input_metadata,
         adapter_reports, adapter_strobes_and_disconnect, adapter_cpu_and_dma_clocks,
         adapter_selection_lifetime, arkanoid_reports, arkanoid_latching,
         arkanoid_cpu_clocks, device_selection, power_pad_button_order,
@@ -2137,6 +2235,7 @@ int test_input_accuracy(void) {
     NesInputAdapter saved_adapter = joypad_adapter();
     NesPortDevice saved_ports[] = {joypad_port_device(0), joypad_port_device(1)};
     NesExpansionDevice saved_expansion = joypad_expansion_device();
+    uint8_t saved_overrides = joypad_configuration_overrides();
     unsigned saved_zapper_radius = joypad_zapper_radius();
     int failures = 0;
     input_checks = 0;
@@ -2150,6 +2249,7 @@ int test_input_accuracy(void) {
     joypad_set_port_device(0, saved_ports[0]);
     joypad_set_port_device(1, saved_ports[1]);
     joypad_set_expansion_device(saved_expansion);
+    joypad_set_configuration_overrides(saved_overrides);
     joypad_set_zapper_radius(saved_zapper_radius);
     printf("Input: %u checks, %d failures\n", input_checks, failures);
     return failures;

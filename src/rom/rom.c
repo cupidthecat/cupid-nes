@@ -36,6 +36,7 @@
 #include "../system/vs_system.h"
 #include "../cpu/cpu.h"
 #include "../apu/epsm.h"
+#include "../joypad/joypad.h"
 
 #define PRG_ROM_BANK_SIZE 0x4000  // 16KB
 #define CHR_ROM_BANK_SIZE 0x2000  // 8KB
@@ -216,6 +217,21 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
         return -1;
     }
 
+    NesInputConfiguration input_config;
+    bool input_supported = false;
+    bool apply_input_config = nes2 && !vs_config.enabled && header.zero[4] != 0;
+    if (apply_input_config) {
+        if (!joypad_resolve_default_input(header.zero[4], &input_config, &input_supported)) {
+            fprintf(stderr, "NES 2.0 default input conflicts with explicit input configuration\n");
+            return -1;
+        }
+        if (!input_supported) {
+            fprintf(stderr, "Unsupported NES 2.0 default input type: %u; keeping current input configuration\n",
+                    (unsigned)header.zero[4]);
+            apply_input_config = false;
+        }
+    }
+
     uint8_t *new_prg = (uint8_t *)malloc(new_prg_size);
     uint8_t *new_chr = (uint8_t *)calloc(1, new_chr_size ? new_chr_size : 1);
     if (!new_prg || !new_chr) {
@@ -229,6 +245,12 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
 
     if (fds_active() && fds_disk_dirty() && !fds_flush()) {
         fprintf(stderr, "Cannot replace the active FDS disk while modified media is unsaved\n");
+        free(new_prg);
+        free(new_chr);
+        return -1;
+    }
+    if (apply_input_config && !joypad_persistent_flush()) {
+        fprintf(stderr, "Cannot change input configuration while expansion-device data is unsaved\n");
         free(new_prg);
         free(new_chr);
         return -1;
@@ -267,6 +289,7 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
     mirroring_mode = (int)cart_get_mirroring();
     nes_set_region(rom_region(&header));
     fds_loaded = 0;
+    if (apply_input_config) (void)joypad_apply_configuration(&input_config);
 
     printf("Mapper: %d  (CHR %s)\n", mapper_no, rom_chr_size ? "ROM" : "RAM");
     return 0;
