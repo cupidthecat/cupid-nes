@@ -91,7 +91,6 @@ static bool mmc3_revision_a_profile = false;
 static unsigned cart_dip_value = 0;
 static bool cart_cpu_cycle_is_write = false;
 static void mmc3_irq_clock(void);
-static size_t namco_chr_bank(uint8_t bank);
 static float vrc7_expansion_output(void);
 static void vrc7_shutdown(void);
 
@@ -216,16 +215,16 @@ static struct {
     uint16_t irq_counter;
     uint8_t prg_bank[3];
     bool prg_mapped[3];
-    uint8_t chr_bank[8];
-    bool chr_mapped[8];
-    bool chr_ciram[8];
-    uint8_t chr_ciram_page[8];
-    uint8_t nt_bank[4];
-    bool nt_mapped[4];
-    bool nt_ciram[4];
-    uint8_t nt_ciram_page[4];
     Mirroring mirr;
 } namco;
+
+enum {
+    NAMCO_PPU_NONE = 0,
+    NAMCO_PPU_CHR,
+    NAMCO_PPU_CIRAM
+};
+static uint8_t namco_ppu_source[0x30];
+static size_t namco_ppu_offset[0x30];
 
 static struct {
     bool nina;
@@ -683,7 +682,8 @@ static size_t mapper_chr_page_size(uint16_t mapper_no) {
 static bool mapper_has_shrinking_chr_window(uint16_t mapper_no) {
     switch (mapper_no) {
         case 0: case 1: case 2: case 3: case 7: case 9: case 10: case 11:
-        case 13: case 15: case 16: case 18: case 21: case 22: case 23: case 24:
+        case 13: case 15: case 16: case 18: case 19: case 21: case 22: case 23:
+        case 24:
         case 25: case 26: case 27:
         case 32: case 33: case 34: case 48: case 64: case 65: case 66: case 67:
         case 68: case 69: case 71: case 72: case 73: case 74: case 75: case 76:
@@ -694,7 +694,7 @@ static bool mapper_has_shrinking_chr_window(uint16_t mapper_no) {
         case 140: case 144: case 146: case 151: case 153: case 154: case 155:
         case 157: case 158: case 159: case 180: case 183: case 184: case 185:
         case 191: case 192: case 194: case 195: case 206: case 207: case 209:
-        case 211: case 232:
+        case 210: case 211: case 232:
             return true;
         default:
             return false;
@@ -4325,15 +4325,15 @@ uint8_t cart_nt_read(uint16_t addr, uint8_t *nt_ram) {
                 return nt_ram[in];
         }
     }
-    if (cart == &mapper_namco
-        && (namco.variant == NAMCO_VARIANT_163 || namco.variant == NAMCO_VARIANT_340)) {
-        unsigned slot = (unsigned)(((addr - 0x2000u) & 0x0FFFu) >> 10);
-        uint16_t in = (uint16_t)((addr - 0x2000u) & 0x03FFu);
-        if (namco.nt_mapped[slot]) {
-            if (namco.nt_ciram[slot])
-                return nt_ram[(size_t)namco.nt_ciram_page[slot] * CHR_BANK_1K + in];
-            size_t bank = namco_chr_bank(namco.nt_bank[slot]);
-            return C.chr[bank * CHR_BANK_1K + in];
+    if (cart == &mapper_namco) {
+        uint16_t mapped = addr >= 0x3000u ? (uint16_t)(addr - 0x1000u) : addr;
+        if (mapped >= 0x2000u && mapped < 0x3000u) {
+            size_t chunk = mapped >> 8;
+            size_t offset = namco_ppu_offset[chunk] + (mapped & 0xFFu);
+            if (namco_ppu_source[chunk] == NAMCO_PPU_CIRAM)
+                return nt_ram[offset & 0x07FFu];
+            if (namco_ppu_source[chunk] == NAMCO_PPU_CHR)
+                return offset < C.chr_sz ? C.chr[offset] : (uint8_t)addr;
         }
     }
     if (cart == &mapper_namco108 && C.mapper_no == 95 && namco108.nametables_selected) {
@@ -4439,18 +4439,19 @@ void cart_nt_write(uint16_t addr, uint8_t v, uint8_t *nt_ram) {
                 return;
         }
     }
-    if (cart == &mapper_namco
-        && (namco.variant == NAMCO_VARIANT_163 || namco.variant == NAMCO_VARIANT_340)) {
-        unsigned slot = (unsigned)(((addr - 0x2000u) & 0x0FFFu) >> 10);
-        uint16_t in = (uint16_t)((addr - 0x2000u) & 0x03FFu);
-        if (namco.nt_mapped[slot]) {
-            if (namco.nt_ciram[slot]) {
-                nt_ram[(size_t)namco.nt_ciram_page[slot] * CHR_BANK_1K + in] = v;
-            } else if (C.chr_is_ram) {
-                size_t bank = namco_chr_bank(namco.nt_bank[slot]);
-                chr_ram_write(bank * CHR_BANK_1K + in, v);
+    if (cart == &mapper_namco) {
+        uint16_t mapped = addr >= 0x3000u ? (uint16_t)(addr - 0x1000u) : addr;
+        if (mapped >= 0x2000u && mapped < 0x3000u) {
+            size_t chunk = mapped >> 8;
+            size_t offset = namco_ppu_offset[chunk] + (mapped & 0xFFu);
+            if (namco_ppu_source[chunk] == NAMCO_PPU_CIRAM) {
+                nt_ram[offset & 0x07FFu] = v;
+                return;
             }
-            return;
+            if (namco_ppu_source[chunk] == NAMCO_PPU_CHR) {
+                if (C.chr_is_ram && offset < C.chr_sz) chr_ram_write(offset, v);
+                return;
+            }
         }
     }
     if (cart == &mapper_namco108 && C.mapper_no == 95 && namco108.nametables_selected) {
@@ -4691,9 +4692,28 @@ static size_t namco_prg_bank(uint8_t bank) {
     return banks ? (size_t)(bank & 0x3Fu) % banks : 0;
 }
 
-static size_t namco_chr_bank(uint8_t bank) {
-    size_t banks = C.chr_sz / CHR_BANK_1K;
-    return banks ? (size_t)bank % banks : 0;
+static void namco_map_ppu_page(unsigned slot, uint8_t value, bool ciram) {
+    size_t source_size = ciram ? 0x0800u : C.chr_sz;
+    size_t page_size = ciram ? CHR_BANK_1K : shrunk_chr_page_size(CHR_BANK_1K);
+    if (!source_size || page_size < 0x100u || (page_size & 0xFFu) != 0) return;
+
+    size_t page_count = source_size / page_size;
+    if (!page_count) return;
+
+    size_t page = ciram ? (size_t)(value & 1u) : (size_t)value % page_count;
+    size_t start = (size_t)slot * page_size;
+    size_t chunks = page_size / 0x100u;
+    for (size_t i = 0; i < chunks; ++i) {
+        size_t destination = start / 0x100u + i;
+        if (destination >= sizeof(namco_ppu_source)) break;
+        namco_ppu_source[destination] = ciram ? NAMCO_PPU_CIRAM : NAMCO_PPU_CHR;
+        namco_ppu_offset[destination] = page * page_size + i * 0x100u;
+    }
+}
+
+static void namco_clear_nt_ppu_mapping(void) {
+    memset(namco_ppu_source + 0x20, 0, 0x10);
+    memset(namco_ppu_offset + 0x20, 0, sizeof(namco_ppu_offset[0]) * 0x10);
 }
 
 static bool namco_ram_write_allowed(uint16_t address) {
@@ -4739,17 +4759,12 @@ static uint8_t namco_cpu_read(uint16_t address) {
 static void namco_set_pattern_bank(unsigned slot, uint8_t value) {
     bool low_half = slot < 4;
     bool nt_mode = low_half ? namco.low_chr_nt_mode : namco.high_chr_nt_mode;
-    namco.chr_mapped[slot] = true;
-    namco.chr_ciram[slot] = namco.variant == NAMCO_VARIANT_163 && !nt_mode && value >= 0xE0u;
-    namco.chr_ciram_page[slot] = value & 1u;
-    namco.chr_bank[slot] = value;
+    bool ciram = namco.variant == NAMCO_VARIANT_163 && !nt_mode && value >= 0xE0u;
+    namco_map_ppu_page(slot, value, ciram);
 }
 
 static void namco_set_nt_bank(unsigned slot, uint8_t value) {
-    namco.nt_mapped[slot] = true;
-    namco.nt_ciram[slot] = value >= 0xE0u;
-    namco.nt_ciram_page[slot] = value & 1u;
-    namco.nt_bank[slot] = value;
+    namco_map_ppu_page(8u + slot, value, value >= 0xE0u);
 }
 
 static void namco_cpu_write(uint16_t address, uint8_t value) {
@@ -4813,7 +4828,7 @@ static void namco_cpu_write(uint16_t address, uint8_t value) {
                     MIRROR_SINGLE0, MIRROR_VERTICAL, MIRROR_SINGLE1, MIRROR_HORIZONTAL
                 };
                 namco.mirr = modes[value >> 6];
-                memset(namco.nt_mapped, 0, sizeof(namco.nt_mapped));
+                namco_clear_nt_ppu_mapping();
             } else if (namco.variant == NAMCO_VARIANT_163) {
                 namco163_audio_set_disabled(&namco163_audio, (value & 0x40u) != 0);
             }
@@ -4842,27 +4857,28 @@ static void namco_cpu_write(uint16_t address, uint8_t value) {
 
 static uint8_t namco_ppu_read(uint16_t address) {
     address &= 0x1FFFu;
-    unsigned slot = address / CHR_BANK_1K;
-    if (!namco.chr_mapped[slot])
-        return C.chr_is_ram ? C.chr[address % C.chr_sz] : (uint8_t)address;
-    if (namco.chr_ciram[slot])
-        return ppu_vram[(size_t)namco.chr_ciram_page[slot] * CHR_BANK_1K + (address & 0x03FFu)];
-    size_t bank = namco_chr_bank(namco.chr_bank[slot]);
-    return C.chr[bank * CHR_BANK_1K + (address & 0x03FFu)];
+    size_t chunk = address >> 8;
+    size_t offset = namco_ppu_offset[chunk] + (address & 0xFFu);
+    if (namco_ppu_source[chunk] == NAMCO_PPU_CIRAM)
+        return ppu_vram[offset & 0x07FFu];
+    if (namco_ppu_source[chunk] == NAMCO_PPU_CHR)
+        return offset < C.chr_sz ? C.chr[offset] : (uint8_t)address;
+    return chr_unmapped_read(address);
 }
 
 static void namco_ppu_write(uint16_t address, uint8_t value) {
     address &= 0x1FFFu;
-    unsigned slot = address / CHR_BANK_1K;
-    if (namco.chr_mapped[slot] && namco.chr_ciram[slot]) {
-        ppu_vram[(size_t)namco.chr_ciram_page[slot] * CHR_BANK_1K + (address & 0x03FFu)] = value;
+    size_t chunk = address >> 8;
+    size_t offset = namco_ppu_offset[chunk] + (address & 0xFFu);
+    if (namco_ppu_source[chunk] == NAMCO_PPU_CIRAM) {
+        ppu_vram[offset & 0x07FFu] = value;
         return;
     }
-    if (!C.chr_is_ram) return;
-    size_t index = namco.chr_mapped[slot]
-        ? namco_chr_bank(namco.chr_bank[slot]) * CHR_BANK_1K + (address & 0x03FFu)
-        : address % C.chr_sz;
-    chr_ram_write(index, value);
+    if (namco_ppu_source[chunk] == NAMCO_PPU_CHR) {
+        if (C.chr_is_ram && offset < C.chr_sz) chr_ram_write(offset, value);
+        return;
+    }
+    if (C.chr_is_ram) chr_ram_write(address % C.chr_sz, value);
 }
 
 static Mirroring namco_mirr(void) { return namco.mirr; }
@@ -4887,6 +4903,8 @@ static void namco_reset(void) {
     namco.variant = variant;
     namco.auto_detect = auto_detect;
     namco.mirr = C.mirr_base;
+    memset(namco_ppu_source, 0, sizeof(namco_ppu_source));
+    memset(namco_ppu_offset, 0, sizeof(namco_ppu_offset));
     namco163_audio_reset(&namco163_audio);
     namco163_audio_dirty = false;
     mapper_irq_line = false;
@@ -7349,11 +7367,6 @@ int mapper_init_from_header(const iNESHeader *h,
         || !chr_is_ram || (chr_sz != 0x2000 && chr_sz != 0x4000 && chr_sz != 0x8000)
         || ((h->flags6 & 0x09) == 0x09 && submapper != 3 && chr_sz != 0x8000))) {
         fprintf(stderr, "Unsupported ROM/RAM size for mapper 30\n");
-        return -1;
-    }
-    if ((mapper_no == 19 || mapper_no == 210)
-        && chr_sz < CHR_BANK_1K) {
-        fprintf(stderr, "Unsupported ROM size for mapper %d\n", mapper_no);
         return -1;
     }
     if (mapper_no == 68 && (h->flags6 & 0x08)) {

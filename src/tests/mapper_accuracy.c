@@ -6027,6 +6027,120 @@ static int test_namco163_persistence_and_loader(void) {
     return save_fixture_end(&paths);
 }
 
+static int test_namco163_source_page_geometry(void) {
+    iNESHeader h = header_for(19, 0x20000, false);
+    h.flags7 |= 0x08;
+    h.chr_rom_chunks = 0x24; // NES 2.0 exponent encoding: 512-byte CHR-ROM.
+    h.flags9 = (uint8_t)((h.flags9 & 0x0Fu) | 0xF0u);
+
+    size_t size;
+    uint8_t *image = image_for(&h, 0x20000, 0x0200, &size);
+    CHECK(image != NULL);
+    uint8_t *prg = image + sizeof(h);
+    uint8_t *chr = prg + 0x20000;
+    for (size_t page = 0; page < 0x20000 / 0x2000; ++page)
+        memset(prg + page * 0x2000, (int)page, 0x2000);
+    memset(chr, 0xC3, 0x0200);
+    CHECK(load_rom_memory(image, size) == 0);
+    free(image);
+    CHECK(chr_size == 0x0200);
+    ppu_power_on(&ppu);
+    CHECK(cpu_power_on(&cpu));
+
+    cart_cpu_write(0xE000, 3);
+    CHECK(cart_cpu_read(0x8000) == 3 && cart_cpu_read(0xE000) == 15);
+
+    // A 512-byte source shrinks each logical CHR page and its destination
+    // spacing. Unselected chunks remain open bus.
+    CHECK(cart_ppu_read(0x0012) == 0x12);
+    cart_cpu_write(0x8000, 0x35);
+    CHECK(cart_ppu_read(0x0012) == 0xC3);
+    CHECK(cart_ppu_read(0x0212) == 0x12);
+    cart_cpu_write(0x8800, 0x7A);
+    CHECK(cart_ppu_read(0x0212) == 0xC3);
+    cart_cpu_write(0xB800, 0x53);
+    CHECK(cart_ppu_read(0x0E12) == 0xC3);
+    CHECK(cart_ppu_read(0x1012) == 0x12);
+
+    // CIRAM keeps its native 1 KiB page size. Replacing the same logical
+    // slot with shrunken CHR only overwrites the 512-byte destination range.
+    memset(ppu_vram, 0, sizeof(ppu_vram));
+    ppu_vram[0x0412] = 0xA6;
+    cart_cpu_write(0xA000, 0xE1);
+    CHECK(cart_ppu_read(0x1012) == 0xA6);
+    cart_ppu_write(0x1013, 0x69);
+    CHECK(ppu_vram[0x0413] == 0x69);
+    cart_cpu_write(0xE800, 0x80);
+    cart_cpu_write(0xA000, 0xE1);
+    CHECK(cart_ppu_read(0x0812) == 0xC3);
+    CHECK(cart_ppu_read(0x1012) == 0xA6);
+
+    // Nametable CHR registers use the CHR source page size too. A CIRAM
+    // selection for the same logical slot maps the normal nametable range.
+    ppu_vram[0x0012] = 0x35;
+    cart_cpu_write(0xC000, 0x00);
+    CHECK(cart_ppu_read(0x1012) == 0xC3);
+    CHECK(cart_nt_read(0x2012, ppu_vram) == 0x35);
+    ppu_vram[0x0412] = 0x96;
+    cart_cpu_write(0xC000, 0xE1);
+    CHECK(cart_nt_read(0x2012, ppu_vram) == 0x96);
+    cart_nt_write(0x2013, 0x5A, ppu_vram);
+    CHECK(ppu_vram[0x0413] == 0x5A);
+
+    // CPU soft reset retains the board registers and partial CHR/CIRAM maps.
+    cpu_soft_reset(&cpu);
+    CHECK(cart_cpu_read(0x8000) == 3 && cart_cpu_read(0xE000) == 15);
+    CHECK(cart_ppu_read(0x0012) == 0xC3);
+    CHECK(cart_nt_read(0x2012, ppu_vram) == 0x96);
+    CHECK(cart_nt_read(0x2013, ppu_vram) == 0x5A);
+
+    // Reinitializing the mapper removes those mappings. CHR ROM returns to
+    // open bus until a bank register selects it again.
+    cart->reset();
+    CHECK(cart_ppu_read(0x0012) == 0x12);
+    CHECK(cart_cpu_read(0xE000) == 15);
+
+    // Mapper 210 uses the same shrunken CHR source geometry.
+    h = namco210_header(1, false);
+    h.chr_rom_chunks = 0x24;
+    h.flags9 = (uint8_t)((h.flags9 & 0x0Fu) | 0xF0u);
+    image = image_for(&h, 0x20000, 0x0200, &size);
+    CHECK(image != NULL);
+    chr = image + sizeof(h) + 0x20000;
+    memset(chr, 0x87, 0x0200);
+    CHECK(load_rom_memory(image, size) == 0);
+    free(image);
+    cart_cpu_write(0x8000, 0xE1);
+    CHECK(cart_ppu_read(0x0012) == 0x87);
+    CHECK(cart_ppu_read(0x0212) == 0x12);
+
+    // A source page whose size is not a multiple of the mapper's 256-byte
+    // mapping granularity is accepted, but a bank write cannot map a partial
+    // hardware page.
+    h = header_for(19, 0x20000, false);
+    h.flags7 |= 0x08;
+    h.chr_rom_chunks = 0x1D; // NES 2.0 exponent encoding: 384-byte CHR-ROM.
+    h.flags9 = (uint8_t)((h.flags9 & 0x0Fu) | 0xF0u);
+    image = image_for(&h, 0x20000, 0x0180, &size);
+    CHECK(image != NULL);
+    memset(image + sizeof(h) + 0x20000, 0xD2, 0x0180);
+    CHECK(load_rom_memory(image, size) == 0);
+    free(image);
+    cart_cpu_write(0x8000, 0);
+    CHECK(cart_ppu_read(0x0012) == 0x12);
+
+    // Truncated replacements remain transactional after the new geometry is
+    // accepted.
+    h.chr_rom_chunks = 0x24;
+    image = image_for(&h, 0x20000, 0x0200, &size);
+    CHECK(image != NULL);
+    Mapper *previous = cart;
+    CHECK(load_rom_memory(image, size - 1) == -1);
+    free(image);
+    CHECK(cart == previous && cart_ppu_read(0x0012) == 0x12);
+    return 0;
+}
+
 static iNESHeader mapper34_header(unsigned submapper, bool chr_ram, bool nes2) {
     iNESHeader h = header_for(34, 0x40000, chr_ram);
     if (nes2) {
@@ -10535,6 +10649,7 @@ int test_mapper_accuracy(void) {
         test_mmc6_ram_mirroring, test_mmc6_protection, test_mmc6_banks_and_irq,
         test_namco163_banks_ram_and_nametables, test_namco163_irq_and_audio,
         test_namco175_340_variants, test_namco163_persistence_and_loader,
+        test_namco163_source_page_geometry,
         test_mapper34_bnrom_banking_and_ram, test_mapper34_nina_banks_and_selection,
         test_mapper34_loader_preserves_cart, test_mapper34_image_loading,
         test_gxrom_banks_reset_and_ram, test_gxrom_chr_ram_and_loader,
