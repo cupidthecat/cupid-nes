@@ -1239,6 +1239,7 @@ static int seeded_startup_alignment(void) {
     reset_fixture();
     program(0xEA, 0xEA, 0);
     unsigned phases_seen = 0;
+    unsigned cpu_offsets_seen = 0;
     for (unsigned pass = 0; pass < 2; ++pass) {
         cpu_seed_startup_alignment(123456789u);
         for (unsigned boot = 0; boot < 64; ++boot) {
@@ -1250,6 +1251,7 @@ static int seeded_startup_alignment(void) {
             CHECK(actual.cpu_offset < nes_timing()->cpu_divider);
             CHECK(actual.ppu_phase < nes_timing()->ppu_divider);
             phases_seen |= 1u << actual.ppu_phase;
+            cpu_offsets_seen |= 1u << actual.cpu_offset;
             CHECK(cpu_step(&cpu) == 2 && bus_count == 4);
             if (!pass) {
                 first_alignment[boot] = actual;
@@ -1267,6 +1269,7 @@ static int seeded_startup_alignment(void) {
         }
     }
     CHECK(phases_seen == 0x0F);
+    CHECK(cpu_offsets_seen == 0x0FFF);
     CpuStartupAlignment actual = cpu_get_startup_alignment();
     uint64_t before = ppu.total_cycles;
     cpu_seed_startup_alignment(0);
