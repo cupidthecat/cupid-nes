@@ -109,6 +109,16 @@ typedef struct {
 
 static PartyTap party_tap;
 
+typedef struct {
+    uint8_t position;
+    uint16_t state;
+    bool press;
+    bool release;
+    bool strobe;
+} Pachinko;
+
+static Pachinko pachinko;
+
 enum { SUBOR_NONE = 0xFF };
 static const uint8_t subor_matrix[104] = {
     SUBOR_KEY_4, SUBOR_KEY_G, SUBOR_KEY_F, SUBOR_KEY_C,
@@ -641,4 +651,41 @@ uint8_t party_tap_read(unsigned port) {
     party_tap.state >>= 3;
     party_tap.read_count++;
     return value;
+}
+
+static uint8_t reverse_byte(uint8_t value) {
+    value = (uint8_t)(((value & 0x55u) << 1) | ((value & 0xAAu) >> 1));
+    value = (uint8_t)(((value & 0x33u) << 2) | ((value & 0xCCu) >> 2));
+    return (uint8_t)((value << 4) | (value >> 4));
+}
+
+static void pachinko_latch(uint8_t buttons) {
+    if (pachinko.press && pachinko.position < 0x63) pachinko.position++;
+    else if (pachinko.release && pachinko.position > 0) pachinko.position--;
+    uint8_t position = reverse_byte(pachinko.position);
+    pachinko.state = (uint16_t)(buttons | ((uint16_t)(uint8_t)~position << 8));
+}
+
+void pachinko_reset(void) {
+    pachinko.position = 0;
+    pachinko.state = 0;
+    pachinko.strobe = false;
+}
+
+void pachinko_set_controls(bool press, bool release) {
+    pachinko.press = press;
+    pachinko.release = release;
+}
+
+void pachinko_write(uint8_t value, uint8_t buttons) {
+    bool strobe = (value & 1u) != 0;
+    if (pachinko.strobe && !strobe) pachinko_latch(buttons);
+    pachinko.strobe = strobe;
+}
+
+uint8_t pachinko_read(uint8_t buttons) {
+    if (pachinko.strobe) pachinko_latch(buttons);
+    uint8_t output = (uint8_t)((pachinko.state & 1u) << 1);
+    pachinko.state >>= 1;
+    return output;
 }

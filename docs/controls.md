@@ -130,6 +130,10 @@ Mouse motion uses SDL relative movement. Left and right mouse buttons map to the
 
 `--console famicom --expansion party-tap` connects the six-button Party Tap. Host keys 1 through 6 map to its six buttons. The first two reads return three buttons each on `$4017 D2-D4`; later reads return the device-detection value.
 
+## Pachinko controller
+
+`--console famicom --expansion pachinko` connects the Pachinko controller. Player-one buttons form the first eight serialized bits on expansion `$4016 D1`. Hold the left mouse button to increase the plunger position and the right mouse button to release it. The position changes only when the game latches a report and is bounded from 0 through 99.
+
 ## ASCII Turbo File
 
 `--console famicom --expansion turbo-file` connects the 8 KiB serial storage device. Games control its reset, clock, data, and read lines through the Famicom expansion connector. The contents are loaded and saved automatically next to the ROM; there is no host key for manually advancing the device.

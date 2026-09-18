@@ -67,7 +67,8 @@ typedef enum {
     NES_EXPANSION_HORI_TRACK,
     NES_EXPANSION_KONAMI_HYPER_SHOT,
     NES_EXPANSION_BANDAI_HYPER_SHOT,
-    NES_EXPANSION_PARTY_TAP
+    NES_EXPANSION_PARTY_TAP,
+    NES_EXPANSION_PACHINKO
 } NesExpansionDevice;
 
 typedef enum {
@@ -133,6 +134,7 @@ bool    joypad_add_subor_mouse_motion(int dx, int dy);
 bool    joypad_set_subor_mouse_buttons(bool left, bool right);
 bool    joypad_add_hori_track_motion(int dx, int dy);
 bool    joypad_set_party_tap_button(unsigned button, bool pressed);
+bool    joypad_set_pachinko_controls(bool press, bool release);
 bool    joypad_persistent_configure(const char *rom_path);
 bool    joypad_persistent_flush(void);
 bool    joypad_persistent_shutdown(void);

@@ -60,4 +60,9 @@ void party_tap_write(uint8_t value);
 uint8_t party_tap_read(unsigned port);
 bool party_tap_set_button(unsigned button, bool pressed);
 
+void pachinko_reset(void);
+void pachinko_write(uint8_t value, uint8_t buttons);
+uint8_t pachinko_read(uint8_t buttons);
+void pachinko_set_controls(bool press, bool release);
+
 #endif

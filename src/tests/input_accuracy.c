@@ -1675,6 +1675,60 @@ static int party_tap_reports(void) {
     return 0;
 }
 
+static uint16_t pachinko_report(void) {
+    latch_controllers();
+    uint16_t value = 0;
+    for (unsigned bit = 0; bit < 16; ++bit) {
+        write_mem(0x4018, 0);
+        value |= (uint16_t)(((read_mem(0x4016) >> 1) & 1u) << bit);
+    }
+    return value;
+}
+
+static int pachinko_reports(void) {
+    input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+    CHECK(joypad_set_expansion_device_name("pachinko"));
+    CHECK(joypad_expansion_device() == NES_EXPANSION_PACHINKO);
+    pad1.buttons = 0xA5;
+    CHECK(pachinko_report() == 0xFFA5);
+    CHECK(joypad_set_pachinko_controls(true, false));
+    CHECK(pachinko_report() == 0x7FA5);
+    for (unsigned i = 1; i < 0x32; ++i) (void)pachinko_report();
+    CHECK(joypad_set_pachinko_controls(false, false));
+    CHECK(pachinko_report() == 0xB3A5);
+    CHECK(joypad_set_pachinko_controls(true, false));
+    for (unsigned i = 0x32; i < 0x63; ++i) (void)pachinko_report();
+    CHECK(joypad_set_pachinko_controls(false, false));
+    CHECK(pachinko_report() == 0x39A5);
+    CHECK(joypad_set_pachinko_controls(true, false));
+    CHECK(pachinko_report() == 0x39A5);
+    CHECK(joypad_set_pachinko_controls(false, true));
+    CHECK(pachinko_report() == 0xB9A5);
+
+    CHECK(joypad_set_pachinko_controls(false, false));
+    pad1.buttons = 0x5A;
+    latch_controllers();
+    for (unsigned bit = 0; bit < 4; ++bit) {
+        write_mem(0x4018, 0);
+        uint8_t value = read_mem(0x4016);
+        CHECK((value & 1u) == ((0x5Au >> bit) & 1u));
+        CHECK(((value >> 1) & 1u) == ((0x5Au >> bit) & 1u));
+    }
+    pad1.buttons = 0xA5;
+    for (unsigned bit = 4; bit < 8; ++bit) {
+        write_mem(0x4018, 0);
+        CHECK(((read_mem(0x4016) >> 1) & 1u) == ((0x5Au >> bit) & 1u));
+    }
+
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_NONE));
+    CHECK(!joypad_set_pachinko_controls(true, false));
+    CHECK((read_mem(0x4016) & 2u) == 0);
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_PACHINKO));
+    pad1.buttons = 0;
+    CHECK(pachinko_report() == 0xFF00);
+    return 0;
+}
+
 int test_input_accuracy(void) {
     static int (*const tests[])(void) = {
         console_open_bus, console_read_clocks, console_strobe_timing,
@@ -1690,7 +1744,7 @@ int test_input_accuracy(void) {
         turbo_file_persistence, turbo_file_failed_save, battle_box_protocol,
         battle_box_persistence, battle_box_failed_save, subor_keyboard_matrix,
         subor_mouse_packets, hori_track_reports, konami_hyper_shot_signals,
-        bandai_hyper_shot_signals, party_tap_reports
+        bandai_hyper_shot_signals, party_tap_reports, pachinko_reports
     };
     NesConsoleModel saved_model = nes_console_model();
     NesRegion saved_region = nes_timing()->region;
