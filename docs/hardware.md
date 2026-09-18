@@ -90,6 +90,10 @@ PRG is the cartridge memory read by the CPU; CHR holds graphics patterns read by
 | 168 | Racermate | PRG and CHR RAM banking, periodic CPU-clocked IRQ, and partial CHR persistence; exercise-bike input is not emulated |
 | 552 | Taito X1-017 variant | Reversed PRG register bits, paired and independent CHR banks, and three save-RAM permission registers |
 | 41, 63, 112, 174, 193, 221, 290, 298 | NTDEC | Address and data bank registers, board-specific open-bus windows and resets, and TF1201 CPU-clocked IRQs |
+| 133, 143, 145, 148, 149 | Sachen discrete boards | Partially decoded bank registers, address-derived protection reads, and mapper 148 ROM bus conflicts |
+| 136, 147 | Sachen JV001 | Accumulator, inversion and output latches, board-specific data-bit wiring, and protection reads |
+| 137, 138, 139, 141 | Sachen 8259 | Four CHR wiring variants, normal and simple bank modes, PRG selection, and nametable routing |
+| 150 | Sachen 74LS374 | PRG/CHR registers, nametable routing, register readback, and DIP-controlled D2 wiring |
 | 105 | NES-EVENT | MMC1 serial control, competition PRG modes, fixed CHR RAM, cartridge RAM, and DIP-selected timer IRQ |
 | 111 | GTROM | 32 KiB PRG flash banking, two CHR-RAM banks, banked cartridge nametable RAM, register-read latching, and flash persistence |
 | 118 | TKSROM / TLSROM | MMC3 banking and IRQs with CHR-register-controlled nametable routing |
@@ -126,6 +130,14 @@ Mapper 174 follows documented address wiring, but that wiring has not been verif
 Racermate (168) banks the lower 16 KiB PRG window and upper 4 KiB CHR window through writes at `$8000-$BFFF`. The last PRG bank and first CHR bank stay fixed. Its interrupt counter runs on every CPU cycle, including writes, DMA, and soft reset. It begins at zero, first wraps after 65,536 cycles, and then reloads to 1,024 cycles. Writes at `$C000-$FFFF` acknowledge the interrupt and restart that interval. Legacy images use 64 KiB of CHR RAM and save only its upper 32 KiB to `.chr.sav`; NES 2.0 CHR persistence follows the declared nonvolatile tail. Explicit PRG NVRAM uses the normal `.sav` path. The exercise-bike peripheral is not emulated.
 
 Taito mapper 552 reverses the six low bits of each PRG register value before selecting an 8 KiB bank. The upper bank stays fixed. Six CHR registers select two even-aligned 2 KiB pairs and four 1 KiB banks, with a mode bit exchanging their pattern-table halves. The exact unlock values `$CA`, `$69`, and `$84` independently enable the first 2 KiB, next 2 KiB, and next 1 KiB of save RAM. Other values block both reads and writes to that region. Additional RAM declared outside those 5 KiB retains its initial mapping. The control and bank registers survive CPU soft reset. A fresh load locks the save regions and leaves the lower PRG windows and CHR ROM unmapped until their bank registers are written.
+
+Sachen mapper 133 decodes writes at addresses matching `$4100` under mask `$6100`, including aliases above `$8000`. Mapper 143 returns an address-derived protection byte throughout `$4100-$5FFF` and keeps fixed PRG/CHR mapping. Mapper 145 selects CHR through partially decoded writes below `$8000`; mapper 149 selects it through upper CPU writes. Mapper 148 combines PRG and CHR selection after resolving ROM bus conflicts. CHR ROM on mappers 145, 148, and 149 remains unmapped until the first bank write.
+
+JV001 mappers 136 and 147 retain separate staging, accumulator, inversion, increment, and output latches. Writes above `$8000` latch the bank output. Mapper 136 keeps PRG fixed and preserves the open-bus upper two bits on protection reads; mapper 147 rotates the data lines and uses the output for both PRG and CHR banks. Their registers and selected banks survive CPU soft reset.
+
+Sachen 8259 variants use the same indexed register interface with different CHR address wiring. Mapper 137 has four variable 1 KiB CHR slots and four fixed trailing slots. Mappers 138, 139, and 141 use 2 KiB slots with different outer address bits and leave CHR RAM in its default mapping. Their CHR ROM starts unmapped. Declaring separate CHR RAM alongside CHR ROM on those three variants suppresses CHR ROM selection. The simple mode reuses the first CHR register and fixes the mirroring selection. Normal mode also permits one CIRAM page in the first nametable and the other page in all remaining nametables.
+
+Mapper 150 starts with three nametables on CIRAM page zero and the fourth on page one. Indexed registers control PRG, CHR, and mirroring; reads return the selected register's low three bits while retaining the upper open-bus bits. Setting cartridge DIP bit zero through `--cart-dip 1` forces D2 high on register writes and leaves D2 on open bus during reads. These boards retain register state on CPU soft reset and accept the NES 2.0 submapper field without changing their wiring.
 
 The mapper 72 and 92 cartridge banking and latch behavior is implemented. Optional speech hardware on those boards is not currently emulated.
 

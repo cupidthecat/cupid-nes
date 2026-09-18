@@ -19,6 +19,7 @@
 #include "ntdec.hpp"
 #include "racermate.hpp"
 #include "taito.hpp"
+#include "sachen.hpp"
 
 namespace cupid::boards {
 
@@ -44,6 +45,14 @@ std::unique_ptr<Board> CreateBoard(unsigned mapper) {
         case 323: return std::make_unique<FaridSlrom>();
         case 324: return std::make_unique<FaridUnrom>();
         case 552: return std::make_unique<TaitoX1017>();
+        case 133: case 143: case 145: case 148: case 149: return std::make_unique<SachenDiscrete>();
+        case 136: return std::make_unique<SachenJv001>(false);
+        case 147: return std::make_unique<SachenJv001>(true);
+        case 137: return std::make_unique<Sachen8259>(Sachen8259Variant::D);
+        case 138: return std::make_unique<Sachen8259>(Sachen8259Variant::B);
+        case 139: return std::make_unique<Sachen8259>(Sachen8259Variant::C);
+        case 141: return std::make_unique<Sachen8259>(Sachen8259Variant::A);
+        case 150: return std::make_unique<Sachen74LS374>();
         default: return nullptr;
     }
 }
@@ -55,6 +64,8 @@ bool board_handles_mapper(unsigned mapper) {
         case 29: return true;
         case 168: return true;
         case 552: return true;
+        case 133: case 136: case 137: case 138: case 139: case 141:
+        case 143: case 145: case 147: case 148: case 149: case 150: return true;
         case 41: case 63: case 112: case 174: case 193: case 221: case 290: case 298: return true;
         case 6: case 8: case 17: return true;
         case 323: case 324: return true;

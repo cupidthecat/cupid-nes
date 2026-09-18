@@ -47,6 +47,7 @@ int test_board_sealie_accuracy(void);
 int test_board_ntdec_accuracy(void);
 int test_board_racermate_accuracy(void);
 int test_board_taito_accuracy(void);
+int test_board_sachen_accuracy(void);
 int test_bandai_accuracy(void);
 int test_fds_accuracy(void);
 int test_input_accuracy(void);
@@ -118,6 +119,7 @@ int main(int argc, char **argv) {
     failures += test_board_ntdec_accuracy();
     failures += test_board_racermate_accuracy();
     failures += test_board_taito_accuracy();
+    failures += test_board_sachen_accuracy();
     failures += test_bandai_accuracy();
     failures += test_fds_accuracy();
     failures += test_input_accuracy();
