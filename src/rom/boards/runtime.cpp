@@ -579,6 +579,9 @@ CartridgeBoard *board_create_with_metadata(const iNESHeader *header,
 }
 
 void board_destroy(CartridgeBoard *board) { delete board; }
+uint8_t *board_cpu_ram_8k(CartridgeBoard *board) {
+    return board ? board->instance->CpuRam8K() : nullptr;
+}
 uint8_t board_cpu_read(CartridgeBoard *board, uint16_t address, uint8_t openBus) {
     return board ? board->instance->ReadCpu(address, openBus) : openBus;
 }

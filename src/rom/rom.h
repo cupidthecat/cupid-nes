@@ -76,7 +76,8 @@ typedef enum {
     ROM_METADATA_DATABASE,
     ROM_METADATA_DATABASE_HEADERLESS,
     ROM_METADATA_FDS,
-    ROM_METADATA_STUDYBOX
+    ROM_METADATA_STUDYBOX,
+    ROM_METADATA_UNIF
 } RomMetadataSource;
 
 // expose sizes so CPU/PPU can reason about mirroring

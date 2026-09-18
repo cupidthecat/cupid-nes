@@ -194,6 +194,7 @@ public:
     }
     virtual float AudioOutput() const { return 0.0f; }
     virtual bool SetMapperInput(unsigned, bool) { return false; }
+    virtual uint8_t *CpuRam8K() { return nullptr; }
     virtual bool ReadCpuRegister(uint16_t, uint8_t &) { return false; }
     virtual void ObserveCpuWrite(uint16_t, uint8_t) {}
     uint8_t ReadCpu(uint16_t addr, uint8_t openBus);

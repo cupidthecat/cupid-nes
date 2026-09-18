@@ -59,6 +59,8 @@ typedef enum {
 } CartPpuFetchSource;
 
 // Front door used by CPU/PPU
+// A non-null buffer replaces mirrored 2 KiB CPU RAM with 8 KiB of distinct RAM.
+uint8_t *cart_cpu_ram_8k(void);
 uint8_t cart_cpu_read (uint16_t addr);
 // Resolve floating data lines against the CPU latch, without a data-byte sentinel.
 uint8_t cart_cpu_read_bus(uint16_t addr, uint8_t open_bus);

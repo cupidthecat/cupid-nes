@@ -38,6 +38,7 @@ CartridgeBoard *board_create_studybox(const uint8_t *bios, size_t bios_size,
                                       const uint8_t *media, size_t media_size);
 bool board_set_fcns_kanji_firmware(const uint8_t *data, size_t size);
 void board_destroy(CartridgeBoard *board);
+uint8_t *board_cpu_ram_8k(CartridgeBoard *board);
 uint8_t board_cpu_read(CartridgeBoard *board, uint16_t address, uint8_t open_bus);
 void board_cpu_write(CartridgeBoard *board, uint16_t address, uint8_t value);
 bool board_read_cpu_register(CartridgeBoard *board, uint16_t address, uint8_t *value);

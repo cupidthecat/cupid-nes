@@ -84,6 +84,14 @@ Headerless images use a separate whole-file CRC lookup. A matching database entr
 ./cupid-nes --game-db "NesDB.txt" --no-game-db-overrides "headerless.bin"
 ```
 
+## UNIF cartridges
+
+UNIF images are detected from their `UNIF` signature. The loader validates the 32-byte header and chunk lengths, assembles `PRG0` through `PRGF` and `CHR0` through `CHRF` in numeric order, and reads `MAPR`, `TVCI`, `BATR`, and `MIRR` metadata. Chunk order does not affect ROM bank order; the last copy of a repeated chunk wins. Unknown chunk types are ignored. Missing PRG data, a missing board name, an unresolved board after database lookup, invalid chunk indexes, and truncated chunks reject the load without replacing the active cartridge.
+
+`MAPR` accepts the board names and `NES-`, `HVC-`, `UNL-`, `BTL-`, and `BMC-` aliases used by the supported board table. Named boards that do not have a numeric mapper use their dedicated cartridge implementations. UNIF does not declare ordinary work-RAM sizes, so supported boards retain their cartridge defaults unless a matching game-database entry supplies an explicit override.
+
+A database match can identify an otherwise unknown board name. Its board, RAM, timing, and input corrections are applied before validating the resulting machine. The assembled UNIF chunks determine ROM sizes. A missing mirroring override keeps the image's mirroring setting, subject to the board's own fixed wiring and startup registers.
+
 ## Controllers and expansion devices
 
 | Option | Accepted value | Default |

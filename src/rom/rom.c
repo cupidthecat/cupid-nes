@@ -33,6 +33,7 @@
 #include "board.h"
 #include "fds.h"
 #include "game_db.h"
+#include "unif.h"
 #include "../system/timing.h"
 #include "../system/hardware.h"
 #include "../system/vs_system.h"
@@ -60,6 +61,8 @@ static uint32_t loaded_prg_crc32 = 0;
 static uint32_t loaded_prg_chr_crc32 = 0;
 
 static int read_file(const char *path, uint8_t **data, size_t *size);
+static NesRegion rom_region(const iNESHeader *h);
+static int rom_console_supported(const iNESHeader *h);
 static bool database_header(const iNESHeader *original, const GameDbEntry *entry,
                             bool headerless, iNESHeader *header);
 static void database_metadata(const GameDbEntry *entry, bool headerless,
@@ -83,6 +86,7 @@ const char *rom_metadata_source_name(void) {
         case ROM_METADATA_DATABASE_HEADERLESS: return "game database (headerless)";
         case ROM_METADATA_FDS: return "FDS";
         case ROM_METADATA_STUDYBOX: return "StudyBox";
+        case ROM_METADATA_UNIF: return "UNIF";
         case ROM_METADATA_NONE:
         default: return "none";
     }
@@ -91,6 +95,322 @@ const char *rom_metadata_source_name(void) {
 static int is_nes20(const iNESHeader *h) {
     // NES 2.0 if (flags7 & 0x0C) == 0x08
     return ((h->flags7 & 0x0C) == 0x08);
+}
+
+typedef struct {
+    const uint8_t *bytes;
+    size_t size;
+    bool present;
+} UnifChunkView;
+
+static int unif_chunk_index(uint8_t digit) {
+    if (digit >= '0' && digit <= '9') return digit - '0';
+    if (digit >= 'A' && digit <= 'F') return digit - 'A' + 10;
+    if (digit >= 'a' && digit <= 'f') return digit - 'a' + 10;
+    return -1;
+}
+
+static uint32_t unif_read_u32(const uint8_t *bytes) {
+    return (uint32_t)bytes[0] | ((uint32_t)bytes[1] << 8)
+         | ((uint32_t)bytes[2] << 16) | ((uint32_t)bytes[3] << 24);
+}
+
+static int load_unif_data(const uint8_t *data, size_t size, const char *filename) {
+    if (!data || size < 32 || memcmp(data, "UNIF", 4) != 0) {
+        fprintf(stderr, "Invalid UNIF image\n");
+        return -1;
+    }
+
+    UnifChunkView prg_chunks[16] = {{0}}, chr_chunks[16] = {{0}};
+    char board_name[64] = {0};
+    bool board_seen = false, battery = false;
+    Mirroring mirroring = MIRROR_HORIZONTAL;
+    NesRegion region = NES_REGION_NTSC;
+
+    size_t offset = 32;
+    while (offset < size) {
+        if (size - offset < 8) {
+            fprintf(stderr, "Truncated UNIF chunk header\n");
+            return -1;
+        }
+        const uint8_t *id = data + offset;
+        uint32_t length32 = unif_read_u32(data + offset + 4);
+        size_t length = length32;
+        offset += 8;
+        if (length > size - offset) {
+            fprintf(stderr, "UNIF chunk exceeds file size\n");
+            return -1;
+        }
+        const uint8_t *payload = data + offset;
+
+        if (memcmp(id, "MAPR", 4) == 0) {
+            size_t written = 0;
+            for (size_t i = 0; i < length && payload[i]; ++i) {
+                if (payload[i] == ' ') continue;
+                if (written + 1 >= sizeof(board_name)) {
+                    fprintf(stderr, "UNIF board name is too long\n");
+                    return -1;
+                }
+                board_name[written++] = (char)payload[i];
+            }
+            board_name[written] = '\0';
+            if (!written) {
+                fprintf(stderr, "UNIF image has an empty MAPR chunk\n");
+                return -1;
+            }
+            board_seen = true;
+        } else if (memcmp(id, "PRG", 3) == 0 || memcmp(id, "CHR", 3) == 0) {
+            int index = unif_chunk_index(id[3]);
+            if (index < 0) {
+                fprintf(stderr, "Invalid UNIF PRG/CHR chunk index\n");
+                return -1;
+            }
+            UnifChunkView *slot = memcmp(id, "PRG", 3) == 0
+                                ? &prg_chunks[index] : &chr_chunks[index];
+            slot->bytes = payload;
+            slot->size = length;
+            slot->present = true;
+        } else if (memcmp(id, "TVCI", 4) == 0) {
+            if (!length) { fprintf(stderr, "Empty UNIF TVCI chunk\n"); return -1; }
+            region = payload[0] == 1 ? NES_REGION_PAL : NES_REGION_NTSC;
+        } else if (memcmp(id, "BATR", 4) == 0) {
+            if (!length) { fprintf(stderr, "Empty UNIF BATR chunk\n"); return -1; }
+            battery = payload[0] != 0;
+        } else if (memcmp(id, "MIRR", 4) == 0) {
+            if (!length) { fprintf(stderr, "Empty UNIF MIRR chunk\n"); return -1; }
+            switch (payload[0]) {
+                case 1: mirroring = MIRROR_VERTICAL; break;
+                case 2: mirroring = MIRROR_SINGLE0; break;
+                case 3: mirroring = MIRROR_SINGLE1; break;
+                case 4: mirroring = MIRROR_FOUR; break;
+                case 0:
+                default: mirroring = MIRROR_HORIZONTAL; break;
+            }
+        }
+        offset += length;
+    }
+
+    if (!board_seen) {
+        fprintf(stderr, "UNIF image is missing MAPR\n");
+        return -1;
+    }
+    int32_t resolved = unif_board_mapper_id(board_name);
+    if (resolved < 0 || resolved > UINT16_MAX) {
+        fprintf(stderr, "Unsupported UNIF board: %s\n", board_name);
+        return -1;
+    }
+    uint16_t mapper = (uint16_t)resolved;
+
+    size_t prg_bytes = 0, chr_bytes = 0;
+    for (unsigned i = 0; i < 16; ++i) {
+        if (prg_chunks[i].size > SIZE_MAX - prg_bytes
+            || chr_chunks[i].size > SIZE_MAX - chr_bytes) {
+            fprintf(stderr, "UNIF ROM size overflows the address space\n");
+            return -1;
+        }
+        prg_bytes += prg_chunks[i].size;
+        chr_bytes += chr_chunks[i].size;
+    }
+    if (!prg_bytes) {
+        fprintf(stderr, "UNIF image has no PRG ROM\n");
+        return -1;
+    }
+    if (chr_bytes > SIZE_MAX - prg_bytes) {
+        fprintf(stderr, "UNIF ROM size overflows the address space\n");
+        return -1;
+    }
+
+    size_t allocated_prg = prg_bytes < 256u ? 256u : prg_bytes;
+    size_t allocated_chr = chr_bytes;
+    uint8_t *new_prg = (uint8_t *)malloc(allocated_prg);
+    uint8_t *new_chr = (uint8_t *)calloc(1, allocated_chr ? allocated_chr : 1);
+    if (!new_prg || !new_chr) {
+        fprintf(stderr, "UNIF cartridge allocation failed\n");
+        free(new_prg); free(new_chr);
+        return -1;
+    }
+    size_t cursor = 0;
+    for (unsigned i = 0; i < 16; ++i) {
+        if (prg_chunks[i].size) {
+            memcpy(new_prg + cursor, prg_chunks[i].bytes, prg_chunks[i].size);
+            cursor += prg_chunks[i].size;
+        }
+    }
+    for (size_t filled = prg_bytes; filled < allocated_prg;) {
+        size_t copy = prg_bytes;
+        if (copy > allocated_prg - filled) copy = allocated_prg - filled;
+        memcpy(new_prg + filled, new_prg, copy);
+        filled += copy;
+    }
+    cursor = 0;
+    for (unsigned i = 0; i < 16; ++i) {
+        if (chr_chunks[i].size) {
+            memcpy(new_chr + cursor, chr_chunks[i].bytes, chr_chunks[i].size);
+            cursor += chr_chunks[i].size;
+        }
+    }
+    iNESHeader header = {0};
+    memcpy(header.signature, "NES\x1A", 4);
+    header.prg_rom_chunks = prg_bytes ? 1 : 0;
+    header.chr_rom_chunks = chr_bytes ? 1 : 0;
+    header.flags6 = (uint8_t)((mapper & 0x0Fu) << 4);
+    header.flags7 = (uint8_t)(mapper & 0xF0u);
+    if (battery) header.flags6 |= 0x02u;
+    if (mirroring == MIRROR_VERTICAL) header.flags6 |= 0x01u;
+    else if (mirroring == MIRROR_FOUR) header.flags6 |= 0x08u;
+    if (region == NES_REGION_PAL) header.flags9 = 1;
+
+    RomDatabaseInfo metadata = {0};
+    metadata.present = true;
+    metadata.mapper = mapper;
+    metadata.prg_rom_size = prg_bytes;
+    metadata.chr_rom_size = chr_bytes;
+    metadata.bus_conflicts = -1;
+    metadata.mirroring_override = true;
+    metadata.mirroring = mirroring;
+    snprintf(metadata.board, sizeof(metadata.board), "%s", board_name);
+
+    uint32_t file_crc = game_db_crc32(data, size);
+    uint32_t prg_crc = game_db_crc32(new_prg, prg_bytes);
+    uint32_t prg_chr_crc = prg_crc;
+    if (chr_bytes) {
+        uint8_t *combined = (uint8_t *)malloc(prg_bytes + chr_bytes);
+        if (!combined) {
+            fprintf(stderr, "UNIF hash allocation failed\n");
+            free(new_prg); free(new_chr);
+            return -1;
+        }
+        memcpy(combined, new_prg, prg_bytes);
+        memcpy(combined + prg_bytes, new_chr, chr_bytes);
+        prg_chr_crc = game_db_crc32(combined, prg_bytes + chr_bytes);
+        free(combined);
+    }
+
+    RomMetadataSource source = ROM_METADATA_UNIF;
+    GameDbEntry database_entry = {0};
+    RomDatabaseInfo database_info = {0};
+    if (database_overrides && game_db_lookup(prg_chr_crc, &database_entry)) {
+        // UNIF chunks own the ROM geometry; database fields describe the board.
+        database_entry.prg_rom_size = prg_bytes;
+        database_entry.chr_rom_size = chr_bytes;
+        iNESHeader corrected = {0};
+        if (!database_header(&header, &database_entry, false, &corrected)) {
+            fprintf(stderr, "Game database entry cannot describe this UNIF cartridge\n");
+            free(new_prg); free(new_chr);
+            return -1;
+        }
+        database_metadata(&database_entry, false, &database_info);
+        if (!database_info.mirroring_override) {
+            database_info.mirroring_override = true;
+            database_info.mirroring = mirroring;
+        }
+        header = corrected;
+        metadata = database_info;
+        mapper = metadata.mapper;
+        battery = (header.flags6 & 2u) != 0;
+        source = ROM_METADATA_DATABASE;
+        region = rom_region(&header);
+    }
+
+    if (mapper == UNIF_BOARD_UNKNOWN || !rom_console_supported(&header)) {
+        fprintf(stderr, "Unsupported UNIF board or console: %s\n", board_name);
+        free(new_prg); free(new_chr);
+        return -1;
+    }
+    if (!cpu_startup_alignment_valid(region)) {
+        fprintf(stderr, "Startup alignment is outside this UNIF image's regional dividers\n");
+        free(new_prg); free(new_chr);
+        return -1;
+    }
+
+    if (!chr_bytes) {
+        RomRamSizes ram;
+        if (rom_ram_sizes_with_metadata(&header, &metadata, &ram) != 0
+            || ram.chr_nvram > SIZE_MAX - ram.chr_ram) {
+            free(new_prg); free(new_chr);
+            return -1;
+        }
+        size_t final_chr_size = ram.chr_ram + ram.chr_nvram;
+        if (!final_chr_size && !board_handles_mapper(mapper)) {
+            fprintf(stderr, "UNIF cartridge declares no CHR memory\n");
+            free(new_prg); free(new_chr);
+            return -1;
+        }
+        if (final_chr_size != allocated_chr) {
+            uint8_t *replacement = (uint8_t *)calloc(1, final_chr_size ? final_chr_size : 1);
+            if (!replacement) {
+                free(new_prg); free(new_chr);
+                return -1;
+            }
+            free(new_chr);
+            new_chr = replacement;
+            allocated_chr = final_chr_size;
+        }
+        if (!board_handles_mapper(mapper))
+            nes_initialize_power_on_ram(new_chr, allocated_chr, 0);
+    }
+
+    VsRomConfig vs_config;
+    char vs_reason[96];
+    if (!vs_decode_header(&header, mapper, prg_bytes, chr_bytes,
+                          &vs_config, vs_reason, sizeof(vs_reason))) {
+        fprintf(stderr, "Unsupported VS System configuration: %s\n", vs_reason);
+        free(new_prg); free(new_chr);
+        return -1;
+    }
+    NesInputConfiguration input_config;
+    bool input_supported = false;
+    bool apply_input_config = is_nes20(&header) && !vs_config.enabled && header.zero[4] != 0;
+    if (apply_input_config) {
+        if (!joypad_resolve_default_input(header.zero[4], &input_config, &input_supported)) {
+            fprintf(stderr, "Default input conflicts with explicit input configuration\n");
+            free(new_prg); free(new_chr);
+            return -1;
+        }
+        if (!input_supported) {
+            fprintf(stderr, "Unsupported default input type: %u; keeping current input configuration\n",
+                    (unsigned)header.zero[4]);
+            apply_input_config = false;
+        }
+    }
+
+    if (fds_active() && fds_disk_dirty() && !fds_flush()) {
+        fprintf(stderr, "Cannot replace the active FDS disk while modified media is unsaved\n");
+        free(new_prg); free(new_chr);
+        return -1;
+    }
+
+    if (apply_input_config && !joypad_persistent_flush()) {
+        fprintf(stderr, "Cannot change input configuration while expansion-device data is unsaved\n");
+        free(new_prg); free(new_chr);
+        return -1;
+    }
+
+    int mapper_no = mapper_init_from_header_metadata(&header, new_prg, allocated_prg,
+                                                     new_chr, allocated_chr, &metadata);
+    if (mapper_no < 0) {
+        free(new_prg); free(new_chr);
+        return -1;
+    }
+
+    free(prg_rom); free(chr_rom);
+    ines_header = header;
+    prg_rom = new_prg; chr_rom = new_chr;
+    prg_size = allocated_prg; chr_size = allocated_chr;
+    vs_commit_config(&vs_config);
+    epsm_activate(NULL);
+    cart_battery_configure(filename, battery);
+    mirroring_mode = (int)cart_get_mirroring();
+    nes_set_region(region);
+    fds_loaded = 0; studybox_loaded = 0;
+    metadata_source = source;
+    loaded_file_crc32 = file_crc;
+    loaded_prg_crc32 = prg_crc;
+    loaded_prg_chr_crc32 = prg_chr_crc;
+    if (apply_input_config) (void)joypad_apply_configuration(&input_config);
+    printf("UNIF board: %s\n", board_name);
+    printf("Mapper: %d  (CHR %s)\n", mapper_no, chr_bytes ? "ROM" : "RAM");
+    return 0;
 }
 
 int rom_mapper_number(const iNESHeader *h) {
@@ -199,6 +519,9 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
         return -1;
     }
 
+    if (size >= 4 && memcmp(data, "UNIF", 4) == 0)
+        return load_unif_data(data, size, filename);
+
     uint32_t file_crc = game_db_crc32(data, size);
     iNESHeader original_header = {0};
     iNESHeader header = {0};
@@ -301,7 +624,9 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
         RomRamSizes ram;
         if (rom_ram_sizes_with_metadata(&header, database, &ram) != 0) return -1;
         new_chr_size = ram.chr_ram + ram.chr_nvram;
-        if (!new_chr_size && !board_handles_header(&header)) {
+        if (!new_chr_size && !(database && database->present
+                              ? board_handles_mapper(database->mapper)
+                              : board_handles_header(&header))) {
             fprintf(stderr, "Cartridge declares no CHR-ROM or CHR-RAM\n");
             return -1;
         }
@@ -539,7 +864,8 @@ static void database_metadata(const GameDbEntry *entry, bool headerless,
 
 static bool database_header(const iNESHeader *original, const GameDbEntry *entry,
                             bool headerless, iNESHeader *header) {
-    if (!entry || !header || entry->mapper > 0x0FFFu || !entry->prg_rom_size) return false;
+    if (!entry || !header || !entry->prg_rom_size
+        || (entry->mapper > 0x0FFFu && !board_handles_mapper(entry->mapper))) return false;
 
     iNESHeader source = {0};
     if (original) source = *original;

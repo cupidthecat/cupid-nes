@@ -35,6 +35,7 @@
 #endif
 #include "../rom/mapper.h"
 #include "../rom/game_db.h"
+#include "../rom/unif.h"
 #include "../cpu/cpu.h"
 #include "../ppu/ppu.h"
 #include "../apu/apu.h"
@@ -67,6 +68,47 @@ static iNESHeader header_for(unsigned mapper, size_t prg_bytes, bool chr_ram) {
     h.flags6 = (uint8_t)(mapper << 4);
     h.flags7 = (uint8_t)(mapper & 0xF0);
     return h;
+}
+
+typedef struct {
+    uint8_t *data;
+    size_t size;
+} UnifFixture;
+
+static int unif_fixture_begin(UnifFixture *fixture) {
+    fixture->data = (uint8_t *)calloc(1, 32);
+    if (!fixture->data) return -1;
+    fixture->size = 32;
+    memcpy(fixture->data, "UNIF", 4);
+    fixture->data[4] = 7;
+    return 0;
+}
+
+static int unif_fixture_chunk(UnifFixture *fixture, const char id[4],
+                              const void *payload, size_t length) {
+    if (!fixture || !fixture->data || length > UINT32_MAX
+        || fixture->size > SIZE_MAX - 8 - length) return -1;
+    size_t old_size = fixture->size;
+    size_t new_size = old_size + 8 + length;
+    uint8_t *grown = (uint8_t *)realloc(fixture->data, new_size);
+    if (!grown) return -1;
+    fixture->data = grown;
+    memcpy(grown + old_size, id, 4);
+    uint32_t len = (uint32_t)length;
+    grown[old_size + 4] = (uint8_t)len;
+    grown[old_size + 5] = (uint8_t)(len >> 8);
+    grown[old_size + 6] = (uint8_t)(len >> 16);
+    grown[old_size + 7] = (uint8_t)(len >> 24);
+    if (length) memcpy(grown + old_size + 8, payload, length);
+    fixture->size = new_size;
+    return 0;
+}
+
+static void unif_fixture_end(UnifFixture *fixture) {
+    if (!fixture) return;
+    free(fixture->data);
+    fixture->data = NULL;
+    fixture->size = 0;
 }
 
 static int fixture_with_header(const iNESHeader *h, size_t prg_bytes, size_t chr_bytes) {
@@ -10947,6 +10989,123 @@ static int test_game_database_and_headerless_loading(void) {
     return 0;
 }
 
+static int test_unif_loading_and_named_boards(void) {
+    CHECK(unload_rom());
+    rom_database_clear();
+    rom_database_set_overrides(true);
+
+    uint8_t prg0[0x4000], prg1[0x4000], chr0[0x1000], chr1[0x1000];
+    memset(prg0, 0x11, sizeof(prg0));
+    memset(prg1, 0x22, sizeof(prg1));
+    memset(chr0, 0x33, sizeof(chr0));
+    memset(chr1, 0x44, sizeof(chr1));
+    const char nrom_board[] = "NES-NROM-256";
+    const uint8_t tv_pal = 1, battery = 1, vertical = 1;
+
+    UnifFixture unif;
+    CHECK(unif_fixture_begin(&unif) == 0);
+    CHECK(unif_fixture_chunk(&unif, "PRG1", prg1, sizeof(prg1)) == 0);
+    CHECK(unif_fixture_chunk(&unif, "MAPR", nrom_board, sizeof(nrom_board)) == 0);
+    CHECK(unif_fixture_chunk(&unif, "CHR1", chr1, sizeof(chr1)) == 0);
+    CHECK(unif_fixture_chunk(&unif, "TVCI", &tv_pal, 1) == 0);
+    CHECK(unif_fixture_chunk(&unif, "BATR", &battery, 1) == 0);
+    CHECK(unif_fixture_chunk(&unif, "MIRR", &vertical, 1) == 0);
+    CHECK(unif_fixture_chunk(&unif, "PRG0", prg0, sizeof(prg0)) == 0);
+    CHECK(unif_fixture_chunk(&unif, "CHR0", chr0, sizeof(chr0)) == 0);
+    CHECK(load_rom_memory(unif.data, unif.size) == 0);
+    CHECK(rom_metadata_source() == ROM_METADATA_UNIF);
+    CHECK(rom_mapper_number(&ines_header) == 0);
+    CHECK(prg_size == 0x8000 && chr_size == 0x2000);
+    CHECK(cart_cpu_read(0x8000) == 0x11 && cart_cpu_read(0xC000) == 0x22);
+    CHECK(cart_ppu_read(0x0000) == 0x33 && cart_ppu_read(0x1000) == 0x44);
+    CHECK(cart_get_mirroring() == MIRROR_VERTICAL && nes_timing()->region == NES_REGION_PAL);
+    cart_cpu_write(0x6123, 0xA6);
+    CHECK(cart_cpu_read(0x6123) == 0xA6);
+    uint8_t ordered_prg[0x8000];
+    memcpy(ordered_prg, prg0, sizeof(prg0));
+    memcpy(ordered_prg + sizeof(prg0), prg1, sizeof(prg1));
+    CHECK(rom_prg_crc32() == game_db_crc32(ordered_prg, sizeof(ordered_prg)));
+    CHECK(rom_file_crc32() == game_db_crc32(unif.data, unif.size));
+    unif_fixture_end(&unif);
+
+    CHECK(unif_board_mapper_id("UNL-NROM") == 0);
+    CHECK(unif_board_mapper_id("HVC-SLROM") == 1);
+    CHECK(unif_board_mapper_id("BTL-MARIO1-MALEE2") == UNIF_BOARD_MALEE);
+    CHECK(unif_board_mapper_id("BMC-SSS-NROM-256") == UNIF_BOARD_SSS_NROM_256);
+    CHECK(unif_board_mapper_id("NOT-A-BOARD") == UNIF_BOARD_UNKNOWN);
+
+    char database[256];
+    int db_len = snprintf(database, sizeof(database),
+        "12345678,NesNtsc,NES-MARIO1-MALEE2,,,65000,34,8,0,0,0,0,h,1,N,,0,0\n");
+    CHECK(db_len > 0 && (size_t)db_len < sizeof(database));
+    CHECK(rom_database_load_memory(database, (size_t)db_len));
+    GameDbEntry resolved = {0};
+    CHECK(game_db_lookup(0x12345678u, &resolved));
+    CHECK(resolved.mapper == UNIF_BOARD_MALEE);
+    rom_database_clear();
+
+    uint8_t malee_prg[0x8800], malee_chr[0x2000];
+    for (size_t page = 0; page < sizeof(malee_prg) / 0x800; ++page)
+        memset(malee_prg + page * 0x800, (int)page, 0x800);
+    memset(malee_chr, 0x5C, sizeof(malee_chr));
+    const char malee_board[] = "UNL-MARIO1-MALEE2";
+    CHECK(unif_fixture_begin(&unif) == 0);
+    CHECK(unif_fixture_chunk(&unif, "CHR0", malee_chr, sizeof(malee_chr)) == 0);
+    CHECK(unif_fixture_chunk(&unif, "MAPR", malee_board, sizeof(malee_board)) == 0);
+    CHECK(unif_fixture_chunk(&unif, "PRG0", malee_prg, sizeof(malee_prg)) == 0);
+    CHECK(load_rom_memory(unif.data, unif.size) == 0);
+    CHECK(rom_metadata_source() == ROM_METADATA_UNIF);
+    CHECK(cart_cpu_read(0x6000) == 16 && cart_cpu_read(0x8000) == 0);
+    CHECK(cart_ppu_read(0x0123) == 0x5C);
+    unif_fixture_end(&unif);
+
+    uint8_t box_prg[0x8000], box_chr[0x2000];
+    memset(box_prg, 0x71, sizeof(box_prg));
+    memset(box_chr, 0x2E, sizeof(box_chr));
+    const char box_board[] = "SSS-NROM-256";
+    CHECK(unif_fixture_begin(&unif) == 0);
+    CHECK(unif_fixture_chunk(&unif, "MAPR", box_board, sizeof(box_board)) == 0);
+    CHECK(unif_fixture_chunk(&unif, "PRG0", box_prg, sizeof(box_prg)) == 0);
+    CHECK(unif_fixture_chunk(&unif, "CHR0", box_chr, sizeof(box_chr)) == 0);
+    CHECK(load_rom_memory(unif.data, unif.size) == 0);
+    CHECK(cart_cpu_read_bus(0x5007, 0x00) == 0x22);
+    uint8_t *active_prg = prg_rom;
+    Mapper *active_cart = cart;
+    unif_fixture_end(&unif);
+
+    const char unknown_board[] = "BMC-NOT-A-BOARD";
+    CHECK(unif_fixture_begin(&unif) == 0);
+    CHECK(unif_fixture_chunk(&unif, "MAPR", unknown_board, sizeof(unknown_board)) == 0);
+    CHECK(unif_fixture_chunk(&unif, "PRG0", box_prg, sizeof(box_prg)) == 0);
+    CHECK(load_rom_memory(unif.data, unif.size) == -1);
+    CHECK(prg_rom == active_prg && cart == active_cart);
+    CHECK(cart_cpu_read_bus(0x5007, 0x00) == 0x22);
+    unif_fixture_end(&unif);
+
+    CHECK(unif_fixture_begin(&unif) == 0);
+    CHECK(unif_fixture_chunk(&unif, "MAPR", nrom_board, sizeof(nrom_board)) == 0);
+    CHECK(load_rom_memory(unif.data, unif.size) == -1);
+    CHECK(prg_rom == active_prg && cart == active_cart);
+    unif_fixture_end(&unif);
+
+    uint8_t malformed[40] = {0};
+    memcpy(malformed, "UNIF", 4);
+    memcpy(malformed + 32, "MAPR", 4);
+    malformed[36] = 0x40;
+    CHECK(load_rom_memory(malformed, sizeof(malformed)) == -1);
+    CHECK(prg_rom == active_prg && cart == active_cart);
+
+    CHECK(unif_fixture_begin(&unif) == 0);
+    CHECK(unif_fixture_chunk(&unif, "MAPR", nrom_board, sizeof(nrom_board)) == 0);
+    CHECK(unif_fixture_chunk(&unif, "PRGZ", prg0, sizeof(prg0)) == 0);
+    CHECK(load_rom_memory(unif.data, unif.size) == -1);
+    CHECK(prg_rom == active_prg && cart == active_cart);
+    unif_fixture_end(&unif);
+
+    CHECK(unload_rom());
+    return 0;
+}
+
 static int test_cartridge_unload(void) {
     iNESHeader h = header_for(0, 0x4000, true);
     size_t image_size;
@@ -11079,7 +11238,8 @@ int test_mapper_accuracy(void) {
         test_cnrom185_cpu_bus_conflict_control,
         test_cnrom185_loader_and_cnrom_regression,
         test_cartridge_bus_reads, test_mmc6_persistence,
-        test_game_database_and_headerless_loading, test_cartridge_unload
+        test_game_database_and_headerless_loading, test_unif_loading_and_named_boards,
+        test_cartridge_unload
     };
     int failures = 0;
     for (size_t i = 0; i < sizeof(tests) / sizeof(tests[0]); ++i) failures += tests[i]();

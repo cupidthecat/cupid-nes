@@ -143,7 +143,8 @@ uint64_t cpu_get_bus_cycle(void) {
 }
 
 uint8_t cpu_peek_internal_ram(uint16_t addr) {
-    return cpu_ram[addr & 0x07FF];
+    uint8_t *expanded = cart_cpu_ram_8k();
+    return expanded ? expanded[addr & 0x1FFF] : cpu_ram[addr & 0x07FF];
 }
 
 void cpu_select_machine(CpuMachineContext *context) {
@@ -287,7 +288,8 @@ static void cpu_reset_sequence(CPU* cpu) {
 bool cpu_power_on(CPU* cpu) {
     if (!cpu || !cpu_startup_alignment_valid(nes_timing()->region)) return false;
     cart_console_reset(false);
-    nes_initialize_power_on_ram(cpu_ram, 0x0800, 0x00);
+    uint8_t *expanded = cart_cpu_ram_8k();
+    nes_initialize_power_on_ram(expanded ? expanded : cpu_ram, expanded ? 0x2000 : 0x0800, 0x00);
     CpuStartupAlignment alignment = {0, (uint8_t)(nes_timing()->ppu_divider - 1)};
     if (alignment_mode == ALIGNMENT_EXPLICIT) {
         alignment = configured_alignment;
@@ -338,7 +340,7 @@ static inline void bus_latch(BusLatchTarget target, uint8_t value) {
 
 static uint8_t read_bus_target(uint16_t addr, BusLatchTarget target) {
     if (addr <= 0x1FFF) {
-        uint8_t v = cpu_ram[addr & 0x07FF];
+        uint8_t v = cpu_peek_internal_ram(addr);
         bus_latch(target, v);
         return v;
     }
@@ -429,7 +431,12 @@ static void write_bus(uint16_t addr, uint8_t value) {
     uint8_t previous_bus = bus_get();
     bus_set(value); // writes still put value on the CPU bus latch
 
-    if (addr <= 0x1FFF) { cpu_ram[addr & 0x07FF] = value; return; }
+    if (addr <= 0x1FFF) {
+        uint8_t *expanded = cart_cpu_ram_8k();
+        if (expanded) expanded[addr] = value;
+        else cpu_ram[addr & 0x07FF] = value;
+        return;
+    }
 
     if (addr >= 0x2000 && addr <= 0x3FFF) {
         // Cartridge address decoding sees the CPU address before PPU mirroring.

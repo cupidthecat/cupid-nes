@@ -486,7 +486,8 @@ class Mmc3_208 final : public Mmc3 {
     }
 };
 
-class Mmc3_215 final : public Mmc3 {
+class Mmc3_215 : public Mmc3 {
+protected:
     inline static constexpr uint8_t LutReg[8][8] = {
         {0,1,2,3,4,5,6,7}, {0,2,6,1,7,3,4,5},
         {0,5,4,1,7,2,6,3}, {0,6,3,7,5,2,4,1},

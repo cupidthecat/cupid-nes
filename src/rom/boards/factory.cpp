@@ -37,6 +37,8 @@
 #include "unlicensed_114.hpp"
 #include "unlicensed_110.hpp"
 #include "unlicensed_115.hpp"
+#include "unif.hpp"
+#include "../unif.h"
 
 namespace cupid::boards {
 
@@ -219,6 +221,15 @@ std::unique_ptr<Board> CreateBoard(unsigned mapper) {
         case 91: return std::make_unique<Jy91>();
         case 284: return std::make_unique<DripGame>();
         case 682: return std::make_unique<Rainbow>();
+        case UNIF_BOARD_MALEE: return std::make_unique<UnifMalee>();
+        case UNIF_BOARD_GS2013: return std::make_unique<UnifGs2013>();
+        case UNIF_BOARD_GHOSTBUSTERS_63IN1: return std::make_unique<UnifGhostbusters63in1>();
+        case UNIF_BOARD_CC21: return std::make_unique<UnifCc21>();
+        case UNIF_BOARD_AC08: return std::make_unique<UnifAc08>();
+        case UNIF_BOARD_PUZZLE: return std::make_unique<UnifPuzzle>();
+        case UNIF_BOARD_255IN1: return std::make_unique<Unif255in1>();
+        case UNIF_BOARD_8237A: return std::make_unique<Unif8237A>();
+        case UNIF_BOARD_SSS_NROM_256: return std::make_unique<UnifFamicomBox>();
         default: return nullptr;
     }
 }
@@ -267,6 +278,9 @@ bool board_handles_mapper(unsigned mapper) {
         case 301: case 314: case 319: case 320: case 328: case 329: return true;
         case 331: case 332: case 336: case 349: case 487:
         case 518: case 519: case 521: case 529: case 530: return true;
+        case UNIF_BOARD_MALEE: case UNIF_BOARD_GS2013: case UNIF_BOARD_GHOSTBUSTERS_63IN1:
+        case UNIF_BOARD_CC21: case UNIF_BOARD_AC08: case UNIF_BOARD_PUZZLE:
+        case UNIF_BOARD_255IN1: case UNIF_BOARD_8237A: case UNIF_BOARD_SSS_NROM_256: return true;
         default: return false;
     }
 }

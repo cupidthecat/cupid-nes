@@ -764,6 +764,10 @@ bool cart_read_cpu_register(uint16_t address, uint8_t *value) {
     return board_read_cpu_register(active_board, address, value);
 }
 
+uint8_t *cart_cpu_ram_8k(void) {
+    return board_cpu_ram_8k(active_board);
+}
+
 void cart_observe_cpu_write(uint16_t address, uint8_t value) {
     board_observe_cpu_write(active_board, address, value);
 }
@@ -7267,7 +7271,8 @@ int mapper_init_from_header_metadata(const iNESHeader *h,
                                      uint8_t *chr, size_t chr_sz,
                                      const RomDatabaseInfo *database)
 {
-    if (h && board_handles_header(h)) {
+    if ((database && database->present && board_handles_mapper(database->mapper))
+        || (h && board_handles_header(h))) {
         CartridgeBoard *prepared = board_create_with_metadata(h, prg, prg_sz, chr, chr_sz, database);
         if (!prepared) return -1;
         uint16_t mapper_no = board_is_fcns_header(h) ? BOARD_FCNS_MAPPER_ID
