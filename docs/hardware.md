@@ -48,6 +48,7 @@ PRG is the cartridge memory read by the CPU; CHR holds graphics patterns read by
 | 217, 219, 224, 238, 245, 249, 250, 254, 258, 259, 260, 262 | MMC3 variants | Multicart outer banking, address/data register permutations, protection and open-bus reads, CHR-RAM modes, DIP switches, reset latches, and alternate PRG/CHR wiring |
 | 263, 268, 287, 292, 313, 325, 333, 348, 366 | MMC3 variants | Data and address register permutations, multicart outer banking, CPU RAM driven CHR latches, reset-selected outer banks, cartridge RAM controls, DIP switches, and MMC3 IRQ wiring |
 | 36, 61, 132, 172, 173, 189, 299 | TXC boards | TXC/JV001 accumulator and inverter registers, open-bus protection reads, PRG/CHR banking, mirroring, reset banking, and MMC3 IRQs on mapper 189 |
+| 60, 62, 83, 103, 106, 107, 108, 116, 117, 120, 156, 163 | Unlicensed boards | Reset-selected and address-selected banks, multicart/DIP registers, CPU and A12 IRQs, VRC2/MMC3/MMC1 mode switching, ROM/RAM overlays, protection reads, and scanline-driven CHR switching |
 | 5 | MMC5, partial | PRG/CHR banking, banked RAM, ExRAM/fill nametables, extended attributes, vertical split, multiplication, PPU-read-driven scanline IRQs, and pulse/PCM audio |
 | 7 | AxROM | 32 KiB PRG banking and single-screen mirroring |
 | 9 | MMC2 | PRG banking and pattern-fetch CHR latches |
@@ -276,6 +277,10 @@ NES 2.0 RAM declarations are normally explicit, including zero RAM. Taito X1-005
 Cartridge RAM keeps separate volatile and persistent allocations. MMC1/MMC1A and MMC5 support the implemented combinations of PRG work and save RAM. In the 8 KiB plus 8 KiB MMC5 layout, bank-select bit 2 chooses the work socket when set and the save socket when clear. A single 16 KiB chip mirrors through the eight low bank selectors. NROM, MMC1/MMC1A, and MMC5 can retain declared CHR RAM alongside CHR ROM without replacing the mapped ROM. Separate CHR ROM/RAM selection still requires a board that implements it; accepted storage does not imply that every allocated chip is CPU- or PPU-addressable.
 
 The RAM power-on profile initializes ordinary cartridge RAM before trainer and save overlays. Trainer initialization prefers a volatile PRG chip of at least 8 KiB, otherwise a persistent chip of at least 8 KiB, and copies at chip offset `$1000`. This placement does not depend on the board's initial bank selection. Existing save bytes take precedence where they overlap the trainer. See [saves and media](saves.md) for save layouts, including MMC5 ExRAM and N163 audio RAM.
+
+Mappers 116 and 117 qualify A12 rises after at least ten PPU dots with A12 low. The filter retains elapsed low time across repeated low addresses and the end of a frame. Mapper 116 applies it in MMC3 mode; mapper 117 uses its separate reload, enable, and acknowledgement registers. Rendering fetches and CPU PPU accesses use the same address hook. These boards keep their PPU-dot filter separate from the CPU-cycle filter used by the ordinary MMC3 boards.
+
+Mapper 103 writes its physical work-RAM offsets even while ROM is selected for CPU reads. Writes within a smaller declared chip remain valid; addresses beyond that chip do not overwrite a mirrored byte. With separate work and save RAM, those writes and the trainer use the work chip, while battery data keeps its own allocation. Mapper 156 starts with its lower PRG window and CHR ROM unmapped; CHR register writes establish all eight CHR windows, and CPU soft reset retains them. Mapper 163 changes CHR banks during its scanline transitions and recognizes the pre-render line as preceding the visible scanlines when automatic CHR switching is disabled.
 
 ## Cartridge behavior
 

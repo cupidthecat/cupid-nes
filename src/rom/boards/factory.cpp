@@ -35,6 +35,7 @@
 #include "txc_107.hpp"
 #include "unlicensed_113.hpp"
 #include "unlicensed_114.hpp"
+#include "unlicensed_110.hpp"
 
 namespace cupid::boards {
 
@@ -42,11 +43,23 @@ std::unique_ptr<Board> CreateBoard(unsigned mapper) {
     switch (mapper) {
         case 29: return std::make_unique<SealieComputing>();
         case 36: return std::make_unique<Txc22000>();
+        case 60: return std::make_unique<Unl60>();
         case 41: return std::make_unique<Caltron41>();
         case 61: return std::make_unique<TxcMapper61>();
+        case 62: return std::make_unique<Unl62>();
         case 63: return std::make_unique<Ntdec63>();
+        case 83: return std::make_unique<Unl83>();
+        case 103: return std::make_unique<Unl103>();
+        case 106: return std::make_unique<Unl106>();
+        case 107: return std::make_unique<Unl107>();
+        case 108: return std::make_unique<Unl108>();
         case 112: return std::make_unique<Ntdec112>();
+        case 116: return std::make_unique<Unl116>();
+        case 117: return std::make_unique<Unl117>();
+        case 120: return std::make_unique<Unl120>();
         case 132: return std::make_unique<Txc22211A>();
+        case 156: return std::make_unique<Unl156>();
+        case 163: return std::make_unique<Unl163>();
         case 174: return std::make_unique<Ntdec174>();
         case 168: return std::make_unique<Racermate>();
         case 172: return std::make_unique<Txc22211B>();
@@ -207,6 +220,8 @@ bool board_handles_mapper(unsigned mapper) {
     switch (mapper) {
         case 29: return true;
         case 36: case 61: case 132: case 172: case 173: case 189: case 299: return true;
+        case 60: case 62: case 83: case 103: case 106: case 107: case 108:
+        case 116: case 117: case 120: case 156: case 163: return true;
         case 168: return true;
         case 552: return true;
         case 133: case 136: case 137: case 138: case 139: case 141:
