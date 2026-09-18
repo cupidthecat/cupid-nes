@@ -31,4 +31,15 @@ bool battle_box_configure(const char *rom_path);
 bool battle_box_flush(void);
 bool battle_box_shutdown(void);
 
+void subor_keyboard_reset(void);
+uint8_t subor_keyboard_read(unsigned port);
+void subor_keyboard_write(uint8_t value);
+bool subor_keyboard_set_key(unsigned key, bool pressed);
+
+void subor_mouse_reset(void);
+uint8_t subor_mouse_read(void);
+void subor_mouse_write(uint8_t value);
+void subor_mouse_add_motion(int dx, int dy);
+void subor_mouse_set_buttons(bool left, bool right);
+
 #endif

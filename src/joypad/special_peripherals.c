@@ -15,6 +15,7 @@
  */
 
 #include "special_peripherals.h"
+#include "joypad.h"
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -52,6 +53,59 @@ typedef struct {
 } BattleBox;
 
 static BattleBox battle_box;
+
+typedef struct {
+    bool pressed[99];
+    uint8_t row;
+    uint8_t column;
+    bool enabled;
+    bool strobe;
+} SuborKeyboard;
+
+typedef struct {
+    int dx;
+    int dy;
+    bool left;
+    bool right;
+    uint8_t state;
+    uint8_t packet[3];
+    uint8_t packet_pos;
+    uint8_t packet_size;
+    bool strobe;
+} SuborMouse;
+
+static SuborKeyboard subor_keyboard;
+static SuborMouse subor_mouse = {.packet_size = 1};
+
+enum { SUBOR_NONE = 0xFF };
+static const uint8_t subor_matrix[104] = {
+    SUBOR_KEY_4, SUBOR_KEY_G, SUBOR_KEY_F, SUBOR_KEY_C,
+    SUBOR_KEY_F2, SUBOR_KEY_E, SUBOR_KEY_5, SUBOR_KEY_V,
+    SUBOR_KEY_2, SUBOR_KEY_D, SUBOR_KEY_S, SUBOR_KEY_END,
+    SUBOR_KEY_F1, SUBOR_KEY_W, SUBOR_KEY_3, SUBOR_KEY_X,
+    SUBOR_KEY_INSERT, SUBOR_KEY_BACKSPACE, SUBOR_KEY_PAGEDOWN, SUBOR_KEY_RIGHT,
+    SUBOR_KEY_F8, SUBOR_KEY_PAGEUP, SUBOR_KEY_DELETE, SUBOR_KEY_HOME,
+    SUBOR_KEY_9, SUBOR_KEY_I, SUBOR_KEY_L, SUBOR_KEY_COMMA,
+    SUBOR_KEY_F5, SUBOR_KEY_O, SUBOR_KEY_0, SUBOR_KEY_DOT,
+    SUBOR_KEY_RIGHT_BRACKET, SUBOR_KEY_ENTER, SUBOR_KEY_UP, SUBOR_KEY_LEFT,
+    SUBOR_KEY_F7, SUBOR_KEY_LEFT_BRACKET, SUBOR_KEY_BACKSLASH, SUBOR_KEY_DOWN,
+    SUBOR_KEY_Q, SUBOR_KEY_CAPSLOCK, SUBOR_KEY_Z, SUBOR_KEY_TAB,
+    SUBOR_KEY_ESCAPE, SUBOR_KEY_A, SUBOR_KEY_1, SUBOR_KEY_CTRL,
+    SUBOR_KEY_7, SUBOR_KEY_Y, SUBOR_KEY_K, SUBOR_KEY_M,
+    SUBOR_KEY_F4, SUBOR_KEY_U, SUBOR_KEY_8, SUBOR_KEY_J,
+    SUBOR_KEY_MINUS, SUBOR_KEY_SEMICOLON, SUBOR_KEY_APOSTROPHE, SUBOR_KEY_SLASH,
+    SUBOR_KEY_F6, SUBOR_KEY_P, SUBOR_KEY_EQUAL, SUBOR_KEY_SHIFT,
+    SUBOR_KEY_T, SUBOR_KEY_H, SUBOR_KEY_N, SUBOR_KEY_SPACE,
+    SUBOR_KEY_F3, SUBOR_KEY_R, SUBOR_KEY_6, SUBOR_KEY_B,
+    SUBOR_KEY_KP6, SUBOR_KEY_KP_ENTER, SUBOR_KEY_KP4, SUBOR_KEY_KP8,
+    SUBOR_NONE, SUBOR_KEY_UNKNOWN1, SUBOR_KEY_UNKNOWN2, SUBOR_KEY_UNKNOWN3,
+    SUBOR_KEY_ALT, SUBOR_KEY_KP4, SUBOR_KEY_KP7, SUBOR_KEY_F11,
+    SUBOR_KEY_F12, SUBOR_KEY_KP1, SUBOR_KEY_KP2, SUBOR_KEY_KP8,
+    SUBOR_KEY_KP_MINUS, SUBOR_KEY_KP_PLUS, SUBOR_KEY_KP_MULTIPLY, SUBOR_KEY_KP9,
+    SUBOR_KEY_F10, SUBOR_KEY_KP5, SUBOR_KEY_KP_DIVIDE, SUBOR_KEY_NUMLOCK,
+    SUBOR_KEY_GRAVE, SUBOR_KEY_KP6, SUBOR_KEY_PAUSE, SUBOR_KEY_SPACE,
+    SUBOR_KEY_F9, SUBOR_KEY_KP3, SUBOR_KEY_KP_DOT, SUBOR_KEY_KP0
+};
 
 static char *storage_path(const char *rom_path, const char *suffix) {
     if (!rom_path || !*rom_path || !suffix) return NULL;
@@ -312,4 +366,123 @@ bool battle_box_shutdown(void) {
     free(battle_box.save_path);
     memset(&battle_box, 0, sizeof(battle_box));
     return true;
+}
+
+void subor_keyboard_reset(void) {
+    subor_keyboard.row = 0;
+    subor_keyboard.column = 0;
+    subor_keyboard.enabled = false;
+    subor_keyboard.strobe = false;
+}
+
+bool subor_keyboard_set_key(unsigned key, bool pressed) {
+    if (key >= sizeof(subor_keyboard.pressed) / sizeof(subor_keyboard.pressed[0])) return false;
+    subor_keyboard.pressed[key] = pressed;
+    return true;
+}
+
+static uint8_t subor_keyboard_active(void) {
+    unsigned base = subor_keyboard.row * 8u + (subor_keyboard.column ? 4u : 0u);
+    uint8_t result = 0;
+    for (unsigned bit = 0; bit < 4; ++bit) {
+        uint8_t key = subor_matrix[base + bit];
+        if (key != SUBOR_NONE && subor_keyboard.pressed[key]) result |= (uint8_t)(1u << bit);
+    }
+    if (subor_keyboard.row == 9 && subor_keyboard.column) result |= 1u;
+    return result;
+}
+
+uint8_t subor_keyboard_read(unsigned port) {
+    if (port != 1) return 0;
+    return subor_keyboard.enabled
+        ? (uint8_t)((~(unsigned)subor_keyboard_active() << 1) & 0x1Eu) : 0x1E;
+}
+
+void subor_keyboard_write(uint8_t value) {
+    bool old_strobe = subor_keyboard.strobe;
+    subor_keyboard.strobe = (value & 1u) != 0;
+    if (old_strobe && !subor_keyboard.strobe) {
+        subor_keyboard.row = 0;
+        subor_keyboard.column = 0;
+    }
+    uint8_t previous_column = subor_keyboard.column;
+    subor_keyboard.column = (uint8_t)((value >> 1) & 1u);
+    subor_keyboard.enabled = (value & 4u) != 0;
+    if (subor_keyboard.enabled && previous_column && !subor_keyboard.column)
+        subor_keyboard.row = (uint8_t)((subor_keyboard.row + 1u) % 13u);
+}
+
+static void subor_mouse_refresh(void) {
+    if (subor_mouse.packet_pos + 1u < subor_mouse.packet_size) {
+        subor_mouse.packet_pos++;
+        subor_mouse.state = subor_mouse.packet[subor_mouse.packet_pos];
+        return;
+    }
+    int dx = subor_mouse.dx;
+    int dy = subor_mouse.dy;
+    subor_mouse.dx = 0;
+    subor_mouse.dy = 0;
+    bool leftward = dx < 0;
+    bool upward = dy < 0;
+    int xmag = dx < 0 ? -dx : dx;
+    int ymag = dy < 0 ? -dy : dy;
+    if (xmag > 31) xmag = 31;
+    if (ymag > 31) ymag = 31;
+    if (xmag <= 1 && ymag <= 1) {
+        subor_mouse.packet[0] =
+            (subor_mouse.left ? 0x80 : 0) |
+            (subor_mouse.right ? 0x40 : 0) |
+            (leftward && xmag ? 0x30 : (xmag ? 0x10 : 0)) |
+            (upward && ymag ? 0x0C : (ymag ? 0x04 : 0));
+        subor_mouse.packet[1] = 0;
+        subor_mouse.packet[2] = 0;
+        subor_mouse.packet_size = 1;
+    } else {
+        subor_mouse.packet[0] =
+            (subor_mouse.left ? 0x80 : 0) |
+            (subor_mouse.right ? 0x40 : 0) |
+            (leftward ? 0x20 : 0) |
+            (xmag & 0x10) |
+            (upward ? 0x08 : 0) |
+            ((ymag & 0x10) >> 2) | 0x01;
+        subor_mouse.packet[1] = (uint8_t)(((xmag & 0x0F) << 2) | 0x02);
+        subor_mouse.packet[2] = (uint8_t)(((ymag & 0x0F) << 2) | 0x03);
+        subor_mouse.packet_size = 3;
+    }
+    subor_mouse.packet_pos = 0;
+    subor_mouse.state = subor_mouse.packet[0];
+}
+
+void subor_mouse_reset(void) {
+    memset(&subor_mouse, 0, sizeof(subor_mouse));
+    subor_mouse.packet_size = 1;
+}
+
+void subor_mouse_add_motion(int dx, int dy) {
+    long long x = (long long)subor_mouse.dx + dx;
+    long long y = (long long)subor_mouse.dy + dy;
+    if (x > 32767) x = 32767;
+    if (x < -32768) x = -32768;
+    if (y > 32767) y = 32767;
+    if (y < -32768) y = -32768;
+    subor_mouse.dx = (int)x;
+    subor_mouse.dy = (int)y;
+}
+
+void subor_mouse_set_buttons(bool left, bool right) {
+    subor_mouse.left = left;
+    subor_mouse.right = right;
+}
+
+uint8_t subor_mouse_read(void) {
+    if (subor_mouse.strobe) subor_mouse_refresh();
+    uint8_t result = (uint8_t)((subor_mouse.state >> 7) & 1u);
+    subor_mouse.state <<= 1;
+    return result;
+}
+
+void subor_mouse_write(uint8_t value) {
+    bool strobe = (value & 1u) != 0;
+    if (subor_mouse.strobe && !strobe) subor_mouse_refresh();
+    subor_mouse.strobe = strobe;
 }

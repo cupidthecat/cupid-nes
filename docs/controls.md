@@ -108,6 +108,12 @@ While Family BASIC is selected, keyboard events are consumed by the keyboard/tap
 
 With `--tape-play FILE`, F10 starts playback. With `--tape-record FILE`, F10 starts a new recording. F11 stops the tape and writes a pending recording. [Saves and media](saves.md) describes the tape file format and retry behavior.
 
+## Subor keyboard and mouse
+
+`--console famicom --expansion subor-keyboard --port2 subor-mouse` connects the supported keyboard-and-mouse arrangement. The keyboard routes letters, number row keys, F1 through F12, navigation keys, punctuation, modifiers, and numeric keypad keys into the 13-row matrix. Keyboard input is consumed before normal application shortcuts while this device is selected.
+
+Mouse motion uses SDL relative movement. Left and right mouse buttons map to the two Subor mouse buttons. Small movement uses the one-byte report; larger movement is split across the three-byte report and each axis is bounded to 31 units per packet.
+
 ## ASCII Turbo File
 
 `--console famicom --expansion turbo-file` connects the 8 KiB serial storage device. Games control its reset, clock, data, and read lines through the Famicom expansion connector. The contents are loaded and saved automatically next to the ROM; there is no host key for manually advancing the device.

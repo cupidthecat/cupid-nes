@@ -44,11 +44,11 @@ static const char *const adapter_names[] = {
 static NesPortDevice port_devices[2];
 static NesExpansionDevice expansion_device;
 static const char *const port_device_names[] = {
-    "pad", "none", "arkanoid", "power-pad-a", "power-pad-b", "zapper"
+    "pad", "none", "arkanoid", "power-pad-a", "power-pad-b", "zapper", "subor-mouse"
 };
 static const char *const expansion_device_names[] = {
     "none", "arkanoid", "family-trainer-a", "family-trainer-b", "zapper", "family-basic",
-    "turbo-file", "battle-box"
+    "turbo-file", "battle-box", "subor-keyboard"
 };
 
 typedef struct {
@@ -211,6 +211,8 @@ uint8_t joypad_read_port(Joypad *jp, unsigned port) {
             value = read_mat(port);
         else if (port_devices[port] == NES_PORT_ZAPPER)
             value = read_zapper(port);
+        else if (port_devices[port] == NES_PORT_SUBOR_MOUSE)
+            value = subor_mouse_read();
         else
             value = port_devices[port] == NES_PORT_GAMEPAD ? joypad_read(jp) : 0;
         if (input_adapter == NES_ADAPTER_FAMICOM_TWO)
@@ -231,6 +233,8 @@ uint8_t joypad_read_port(Joypad *jp, unsigned port) {
         value |= turbo_file_read(port);
     else if (expansion_device == NES_EXPANSION_BATTLE_BOX)
         value |= battle_box_read(port);
+    else if (expansion_device == NES_EXPANSION_SUBOR_KEYBOARD)
+        value |= subor_keyboard_read(port);
     // The second built-in controller's microphone reaches $4016 D2.
     if (port == 0 && nes_console_model() == NES_CONSOLE_HVC001 && microphone_active)
         value |= 0x04;
@@ -279,6 +283,8 @@ void joypad_write_ports(uint8_t value) {
         if (port_devices[port] == NES_PORT_ARKANOID) write_paddle(&paddles[port], value);
         else if (port_devices[port] == NES_PORT_POWER_PAD_A || port_devices[port] == NES_PORT_POWER_PAD_B)
             write_mat(port, value);
+        else if (port_devices[port] == NES_PORT_SUBOR_MOUSE)
+            subor_mouse_write(value);
     }
     if (expansion_device == NES_EXPANSION_ARKANOID) write_paddle(&paddles[2], value);
     else if (expansion_device == NES_EXPANSION_FAMILY_TRAINER_A
@@ -290,6 +296,8 @@ void joypad_write_ports(uint8_t value) {
         turbo_file_write(value);
     else if (expansion_device == NES_EXPANSION_BATTLE_BOX)
         battle_box_write(value);
+    else if (expansion_device == NES_EXPANSION_SUBOR_KEYBOARD)
+        subor_keyboard_write(value);
 }
 
 NesInputAdapter joypad_adapter(void) {
@@ -323,10 +331,12 @@ NesPortDevice joypad_port_device(unsigned port) {
 }
 
 bool joypad_set_port_device(unsigned port, NesPortDevice device) {
-    if (port >= 2 || (unsigned)device > NES_PORT_ZAPPER) return false;
+    if (port >= 2 || (unsigned)device > NES_PORT_SUBOR_MOUSE) return false;
+    if (device == NES_PORT_SUBOR_MOUSE && port != 1) return false;
     port_devices[port] = device;
     paddles[port].strobe = paddles[port].shift = 0;
     mats[port].strobe = mats[port].low = mats[port].high = 0;
+    if (device == NES_PORT_SUBOR_MOUSE) subor_mouse_reset();
     return true;
 }
 
@@ -348,13 +358,14 @@ NesExpansionDevice joypad_expansion_device(void) {
 }
 
 bool joypad_set_expansion_device(NesExpansionDevice device) {
-    if ((unsigned)device > NES_EXPANSION_BATTLE_BOX) return false;
+    if ((unsigned)device > NES_EXPANSION_SUBOR_KEYBOARD) return false;
     expansion_device = device;
     paddles[2].strobe = paddles[2].shift = 0;
     family_trainer_rows = 0;
     family_basic_reset();
     turbo_file_reset_protocol();
     battle_box_reset_protocol();
+    subor_keyboard_reset();
     return true;
 }
 
@@ -414,6 +425,22 @@ unsigned joypad_zapper_radius(void) {
 bool joypad_set_zapper_radius(unsigned radius) {
     if (radius > NES_ZAPPER_MAX_RADIUS) return false;
     zapper_radius = radius;
+    return true;
+}
+
+bool joypad_set_subor_key(SuborKey key, bool pressed) {
+    return subor_keyboard_set_key((unsigned)key, pressed);
+}
+
+bool joypad_add_subor_mouse_motion(int dx, int dy) {
+    if (port_devices[1] != NES_PORT_SUBOR_MOUSE) return false;
+    subor_mouse_add_motion(dx, dy);
+    return true;
+}
+
+bool joypad_set_subor_mouse_buttons(bool left, bool right) {
+    if (port_devices[1] != NES_PORT_SUBOR_MOUSE) return false;
+    subor_mouse_set_buttons(left, right);
     return true;
 }
 

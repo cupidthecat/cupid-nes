@@ -1364,6 +1364,125 @@ static int battle_box_failed_save(void) {
     return 0;
 }
 
+static void subor_select_row(unsigned row, bool upper) {
+    write_mem(0x4016, 5);
+    write_mem(0x4016, 4);
+    for (unsigned i = 0; i < row; ++i) {
+        write_mem(0x4016, 6);
+        write_mem(0x4016, 4);
+    }
+    if (upper) write_mem(0x4016, 6);
+}
+
+static int subor_keyboard_matrix(void) {
+    typedef struct {
+        SuborKey key;
+        uint8_t bit;
+    } KeyCase;
+    static const KeyCase cases[13][2] = {
+        {{SUBOR_KEY_4, 0}, {SUBOR_KEY_F2, 0}},
+        {{SUBOR_KEY_2, 0}, {SUBOR_KEY_F1, 0}},
+        {{SUBOR_KEY_INSERT, 0}, {SUBOR_KEY_F8, 0}},
+        {{SUBOR_KEY_9, 0}, {SUBOR_KEY_F5, 0}},
+        {{SUBOR_KEY_RIGHT_BRACKET, 0}, {SUBOR_KEY_F7, 0}},
+        {{SUBOR_KEY_Q, 0}, {SUBOR_KEY_ESCAPE, 0}},
+        {{SUBOR_KEY_7, 0}, {SUBOR_KEY_F4, 0}},
+        {{SUBOR_KEY_MINUS, 0}, {SUBOR_KEY_F6, 0}},
+        {{SUBOR_KEY_T, 0}, {SUBOR_KEY_F3, 0}},
+        {{SUBOR_KEY_KP6, 0}, {SUBOR_KEY_UNKNOWN1, 1}},
+        {{SUBOR_KEY_ALT, 0}, {SUBOR_KEY_F12, 0}},
+        {{SUBOR_KEY_KP_MINUS, 0}, {SUBOR_KEY_F10, 0}},
+        {{SUBOR_KEY_GRAVE, 0}, {SUBOR_KEY_F9, 0}}
+    };
+
+    input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+    CHECK(joypad_set_expansion_device_name("subor-keyboard"));
+    CHECK(joypad_expansion_device() == NES_EXPANSION_SUBOR_KEYBOARD);
+    write_mem(0x4016, 0);
+    CHECK((read_mem(0x4017) & 0x1E) == 0x1E);
+    for (unsigned row = 0; row < 13; ++row) {
+        for (unsigned upper = 0; upper < 2; ++upper) {
+            KeyCase test = cases[row][upper];
+            CHECK(joypad_set_subor_key(test.key, true));
+            subor_select_row(row, upper != 0);
+            uint8_t expected = (uint8_t)(0x1E & ~(1u << (test.bit + 1u)));
+            if (row == 9 && upper) expected &= (uint8_t)~0x02u;
+            CHECK((read_mem(0x4017) & 0x1E) == expected);
+            CHECK(joypad_set_subor_key(test.key, false));
+        }
+    }
+
+    CHECK(joypad_set_subor_key(SUBOR_KEY_A, true));
+    subor_select_row(5, true);
+    CHECK((read_mem(0x4017) & 0x1E) == 0x1A);
+    write_mem(0x4016, 6);
+    CHECK((read_mem(0x4017) & 0x1E) == 0x1A);
+    write_mem(0x4016, 4);
+    CHECK((read_mem(0x4017) & 0x1E) == 0x1E);
+    CHECK(joypad_set_subor_key(SUBOR_KEY_A, false));
+    CHECK(!joypad_set_subor_key(SUBOR_KEY_COUNT, true));
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_NONE));
+    CHECK((read_mem(0x4017) & 0x1E) == 0);
+    return 0;
+}
+
+static uint8_t subor_mouse_read_byte(void) {
+    uint8_t value = 0;
+    for (unsigned bit = 0; bit < 8; ++bit) {
+        write_mem(0x4018, 0);
+        value = (uint8_t)((value << 1) | (read_mem(0x4017) & 1u));
+    }
+    return value;
+}
+
+static void subor_mouse_latch(void) {
+    write_mem(0x4016, 1);
+    write_mem(0x4016, 0);
+}
+
+static int subor_mouse_packets(void) {
+    input_fixture(NES_CONSOLE_NES001, NES_REGION_NTSC);
+    CHECK(!joypad_set_port_device_name(0, "subor-mouse"));
+    CHECK(joypad_set_port_device_name(1, "subor-mouse"));
+    CHECK(joypad_port_device(1) == NES_PORT_SUBOR_MOUSE);
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_SUBOR_KEYBOARD));
+    CHECK(joypad_configuration_valid());
+
+    CHECK(joypad_add_subor_mouse_motion(1, -1));
+    CHECK(joypad_set_subor_mouse_buttons(true, false));
+    subor_mouse_latch();
+    CHECK(subor_mouse_read_byte() == 0x9C);
+
+    CHECK(joypad_add_subor_mouse_motion(-40, 20));
+    CHECK(joypad_set_subor_mouse_buttons(true, true));
+    subor_mouse_latch();
+    CHECK(subor_mouse_read_byte() == 0xF5);
+    subor_mouse_latch();
+    CHECK(subor_mouse_read_byte() == 0x3E);
+    subor_mouse_latch();
+    CHECK(subor_mouse_read_byte() == 0x13);
+
+    CHECK(joypad_add_subor_mouse_motion(5, -6));
+    CHECK(joypad_set_subor_mouse_buttons(false, false));
+    subor_mouse_latch();
+    uint8_t partial = 0;
+    for (unsigned bit = 0; bit < 4; ++bit)
+        partial = (uint8_t)((partial << 1) | (read_mem(0x4017) & 1u));
+    CHECK(partial == 0);
+    CHECK(joypad_add_subor_mouse_motion(1, 1));
+    subor_mouse_latch();
+    CHECK(subor_mouse_read_byte() == 0x16);
+    subor_mouse_latch();
+    CHECK(subor_mouse_read_byte() == 0x1B);
+    subor_mouse_latch();
+    CHECK(subor_mouse_read_byte() == 0x14);
+
+    CHECK(joypad_set_port_device(1, NES_PORT_GAMEPAD));
+    CHECK(!joypad_add_subor_mouse_motion(1, 1));
+    CHECK(!joypad_set_subor_mouse_buttons(true, true));
+    return 0;
+}
+
 int test_input_accuracy(void) {
     static int (*const tests[])(void) = {
         console_open_bus, console_read_clocks, console_strobe_timing,
@@ -1377,7 +1496,8 @@ int test_input_accuracy(void) {
         family_basic_matrix_scan, family_basic_cpu_tape_and_controller,
         family_basic_recording_and_media, turbo_file_protocol,
         turbo_file_persistence, turbo_file_failed_save, battle_box_protocol,
-        battle_box_persistence, battle_box_failed_save
+        battle_box_persistence, battle_box_failed_save, subor_keyboard_matrix,
+        subor_mouse_packets
     };
     NesConsoleModel saved_model = nes_console_model();
     NesRegion saved_region = nes_timing()->region;
