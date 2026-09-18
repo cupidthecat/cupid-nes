@@ -12,6 +12,7 @@ Cupid models the CPU, picture processing unit (PPU), audio processing unit (APU)
 | Famicom Disk System | NTSC | Requires a supplied BIOS and a supported disk image |
 | VS System | NTSC | Requires supported console, PPU, input, and cartridge metadata |
 | NES with EPSM | NES 2.0 header | Extended subtype 4 adds an 8 MHz YMF288 with stereo output |
+| Famicom Network System | NES 2.0 header | Extended subtype `0x0C`; optional 256 KiB character ROM supplied by the user |
 
 NTSC uses 262 scanlines with vblank beginning at line 241. PAL uses 312 scanlines with vblank beginning at line 241, and Dendy uses 312 with vblank beginning at line 291. PAL advances the PPU at 3.2 clocks per CPU clock; NTSC and Dendy use 3. The NTSC 2C02 skips one clock on rendered odd frames. VS RGB PPUs retain all 89,342 clocks on both frame parities, including both sides of a dual cabinet.
 
@@ -179,6 +180,8 @@ Larger ROM images retain the board's implemented bank-selection bits. Bank numbe
 
 Color Dreams writes resolve ROM bus conflicts before selecting banks. Both mapper 11 and mapper 144 retain all four PRG selection bits. Mapper 144 then takes D0 from the byte in the previously mapped ROM bank, so a CPU write of zero can still select an odd PRG bank.
 
+The Famicom Network System uses its NES 2.0 extended-console subtype instead of the numeric mapper to select its dedicated board. Its cartridge path builds on MMC1 serial PRG banking and adds the system's mirroring register, two 8 KiB work/save RAM socket controls, two 8 KiB CHR-RAM banks, and a 256 KiB character-ROM interface. Reads from `$5000-$5FFF` step through 32-byte character records; `$40B0` selects the character-ROM half and resets the record position when read, while `$40C0` also controls the second work-RAM enable and CHR-RAM bank. The FCNS controller serializes the ordinary eight controller buttons followed by its keypad state on `$4016 D1`. The implementation covers the local hardware and supplied character ROM; it does not emulate the original online service.
+
 ## What the cartridge header controls
 
 An image begins with an iNES or NES 2.0 header that describes the board and its memory. A mapper number identifies a hardware family. A submapper narrows that choice to a wiring or chip variant, such as an IRQ-counter revision or a different register address layout.
@@ -190,7 +193,7 @@ An image begins with an iNES or NES 2.0 header that describes the board and its 
 | Mapper and submapper | Register decoding, banking, mirroring, and device behavior |
 | Mirroring flags | Initial nametable layout, subject to board-specific wiring |
 | Volatile and nonvolatile RAM | Allocation, addressability, and persistent storage |
-| Timing and console type | Regional timing, supported arcade configuration, or EPSM expansion sound |
+| Timing and console type | Regional timing, supported arcade configuration, EPSM expansion sound, or Famicom Network System hardware |
 | Trainer flag | A 512-byte initialization window applied through cartridge handling |
 
 The loader checks payload sizes and size overflows before activating a cartridge. A truncated or unsupported image returns an error and preserves an already loaded cartridge. The application exits when its initial load fails; preservation also matters to callers of the loader API.

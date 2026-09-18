@@ -72,7 +72,7 @@ static int rom_console_supported(const iNESHeader *h) {
         if (console == 0 || console == 1) return 1;
         // Extended subtypes identify NES/Famicom, VS, and EPSM hardware.
         unsigned subtype = h->zero[2] & 0x0Fu;
-        return console == 3 && (subtype <= 1 || subtype == 4);
+        return console == 3 && (subtype <= 1 || subtype == 4 || subtype == 0x0C);
     }
     // Archaic headers have unreliable byte 7 contents.  Only clean iNES headers
     // use its low bits as the VS/PlayChoice console selector.
@@ -202,7 +202,7 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
         RomRamSizes ram;
         rom_ram_sizes(&header, &ram);
         new_chr_size = ram.chr_ram + ram.chr_nvram;
-        if (!new_chr_size && !board_handles_mapper((unsigned)rom_mapper_number(&header))) {
+        if (!new_chr_size && !board_handles_header(&header)) {
             fprintf(stderr, "Cartridge declares no CHR-ROM or CHR-RAM\n");
             return -1;
         }
@@ -249,7 +249,7 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
         filled += chunk;
     }
     if (rom_chr_size) memcpy(new_chr, data + offset + prg_payload_size, rom_chr_size);
-    else if (!board_handles_mapper((unsigned)mapper_number))
+    else if (!board_handles_header(&header))
         nes_initialize_power_on_ram(new_chr, new_chr_size, 0);
 
     if (fds_active() && fds_disk_dirty() && !fds_flush()) {
@@ -392,6 +392,20 @@ static int read_file(const char *path, uint8_t **data, size_t *size) {
     *data = buffer;
     *size = bytes;
     return 0;
+}
+
+bool rom_set_fcns_kanji_firmware(const char *path) {
+    if (!path) return board_set_fcns_kanji_firmware(NULL, 0);
+    uint8_t *data = NULL;
+    size_t size = 0;
+    if (read_file(path, &data, &size) != 0) {
+        fprintf(stderr, "Failed to read FCNS Kanji ROM file\n");
+        return false;
+    }
+    bool valid = board_set_fcns_kanji_firmware(data, size);
+    if (!valid) fprintf(stderr, "FCNS Kanji ROM must be exactly 256 KiB\n");
+    free(data);
+    return valid;
 }
 
 int load_fds(const char *disk_path, const char *bios_path, bool write_protected) {

@@ -23,6 +23,7 @@
 #include "sachen.hpp"
 #include "kaiser.hpp"
 #include "jy_small.hpp"
+#include "nintendo.hpp"
 
 namespace cupid::boards {
 
@@ -86,6 +87,8 @@ std::unique_ptr<Board> CreateBoard(unsigned mapper) {
     }
 }
 
+std::unique_ptr<Board> CreateFcnsBoard() { return std::make_unique<FnsMmc1>(); }
+
 } // namespace cupid::boards
 
 bool board_handles_mapper(unsigned mapper) {
@@ -107,4 +110,14 @@ bool board_handles_mapper(unsigned mapper) {
         case 114: case 115: case 121: case 123: return true;
         default: return false;
     }
+}
+
+bool board_is_fcns_header(const iNESHeader *header) {
+    if (!header || (header->flags7 & 0x0C) != 0x08) return false;
+    return (header->flags7 & 3u) == 3u && (header->zero[2] & 0x0Fu) == 0x0Cu;
+}
+
+bool board_handles_header(const iNESHeader *header) {
+    return board_is_fcns_header(header)
+        || (header && board_handles_mapper((unsigned)rom_mapper_number(header)));
 }

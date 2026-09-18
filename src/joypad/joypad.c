@@ -53,7 +53,7 @@ static const char *const expansion_device_names[] = {
     "none", "arkanoid", "family-trainer-a", "family-trainer-b", "zapper", "family-basic",
     "turbo-file", "battle-box", "subor-keyboard", "hori-track", "konami-hyper-shot",
     "bandai-hyper-shot", "party-tap", "pachinko", "exciting-boxing", "jissen-mahjong",
-    "barcode-battler", "oeka-kids-tablet"
+    "barcode-battler", "oeka-kids-tablet", "fcns"
 };
 
 typedef struct {
@@ -87,6 +87,9 @@ static ExtendedSerialPad extended_pads[2];
 static uint32_t ntt_keys[2];
 static uint16_t virtual_boy_extra[2];
 static SnesMouseState snes_mice[2];
+static uint16_t fcns_keys;
+static uint32_t fcns_shift;
+static bool fcns_strobe;
 
 static bool extended_device(NesPortDevice device) {
     return device == NES_PORT_SNES_CONTROLLER || device == NES_PORT_NTT_KEYPAD
@@ -95,6 +98,41 @@ static bool extended_device(NesPortDevice device) {
 
 static bool pressed(uint8_t buttons, unsigned bit) {
     return (buttons & (1u << bit)) != 0;
+}
+
+static uint32_t fcns_report(void) {
+    uint8_t buttons = pad1.buttons;
+    bool up = pressed(buttons, BTN_UP), down = pressed(buttons, BTN_DOWN);
+    bool left = pressed(buttons, BTN_LEFT), right = pressed(buttons, BTN_RIGHT);
+    if (up && down) buttons &= (uint8_t)~((1u << BTN_UP) | (1u << BTN_DOWN));
+    if (left && right) buttons &= (uint8_t)~((1u << BTN_LEFT) | (1u << BTN_RIGHT));
+    uint32_t report = buttons;
+    for (unsigned key = 0; key < 14; ++key)
+        if (fcns_keys & (1u << key)) report |= 1u << (8 + key);
+    if (fcns_keys & (1u << FCNS_KEY_END)) report |= 1u << 23;
+    return report;
+}
+
+static void fcns_latch(void) { fcns_shift = fcns_report(); }
+
+static uint8_t fcns_read(unsigned port) {
+    if (port != 0) return 0;
+    if (fcns_strobe) fcns_latch();
+    uint8_t value = (uint8_t)((fcns_shift & 1u) << 1);
+    fcns_shift = (fcns_shift >> 1) | 0x800000u;
+    return value;
+}
+
+static void fcns_write(uint8_t value) {
+    bool strobe = (value & 1u) != 0;
+    if (fcns_strobe && !strobe) fcns_latch();
+    fcns_strobe = strobe;
+}
+
+static void fcns_reset(void) {
+    fcns_keys = 0;
+    fcns_shift = 0;
+    fcns_strobe = false;
 }
 
 static uint16_t snes_report(unsigned port) {
@@ -427,6 +465,8 @@ uint8_t joypad_read_port(Joypad *jp, unsigned port) {
         value |= barcode_battler_read(port, cpu_total_cycles, (uint32_t)nes_timing()->cpu_hz);
     else if (expansion_device == NES_EXPANSION_OEKA_KIDS_TABLET)
         value |= oeka_kids_tablet_read(port);
+    else if (expansion_device == NES_EXPANSION_FCNS_CONTROLLER)
+        value |= fcns_read(port);
     // The second built-in controller's microphone reaches $4016 D2.
     if (port == 0 && nes_console_model() == NES_CONSOLE_HVC001 && microphone_active)
         value |= 0x04;
@@ -510,6 +550,8 @@ void joypad_write_ports(uint8_t value) {
         jissen_mahjong_write(value);
     else if (expansion_device == NES_EXPANSION_OEKA_KIDS_TABLET)
         oeka_kids_tablet_write(value);
+    else if (expansion_device == NES_EXPANSION_FCNS_CONTROLLER)
+        fcns_write(value);
 }
 
 NesInputAdapter joypad_adapter(void) {
@@ -575,7 +617,7 @@ NesExpansionDevice joypad_expansion_device(void) {
 }
 
 bool joypad_set_expansion_device(NesExpansionDevice device) {
-    if ((unsigned)device > NES_EXPANSION_OEKA_KIDS_TABLET) return false;
+    if ((unsigned)device > NES_EXPANSION_FCNS_CONTROLLER) return false;
     expansion_device = device;
     paddles[2].strobe = paddles[2].shift = 0;
     family_trainer_rows = 0;
@@ -592,6 +634,7 @@ bool joypad_set_expansion_device(NesExpansionDevice device) {
     jissen_mahjong_reset();
     barcode_battler_reset();
     oeka_kids_tablet_reset();
+    fcns_reset();
     return true;
 }
 
@@ -629,7 +672,7 @@ static bool configuration_valid(const NesInputConfiguration *config) {
     if ((unsigned)config->adapter > NES_ADAPTER_FAMICOM_FOUR
         || (unsigned)config->ports[0] > NES_PORT_VIRTUAL_BOY
         || (unsigned)config->ports[1] > NES_PORT_VIRTUAL_BOY
-        || (unsigned)config->expansion > NES_EXPANSION_OEKA_KIDS_TABLET)
+        || (unsigned)config->expansion > NES_EXPANSION_FCNS_CONTROLLER)
         return false;
     if (config->ports[0] == NES_PORT_SUBOR_MOUSE) return false;
     if (config->adapter == NES_ADAPTER_FOUR_SCORE
@@ -686,6 +729,7 @@ bool joypad_resolve_default_input(uint8_t input_type, NesInputConfiguration *con
             automatic.ports[0] = NES_PORT_SNES_CONTROLLER;
             automatic.ports[1] = NES_PORT_SNES_CONTROLLER;
             break;
+        case 0x3B: automatic.expansion = NES_EXPANSION_FCNS_CONTROLLER; break;
         default:
             *supported = false;
             *config = (NesInputConfiguration){
@@ -817,6 +861,15 @@ bool joypad_set_ntt_key(unsigned port, NttKey key, bool is_pressed) {
     uint32_t mask = 1u << key;
     if (is_pressed) ntt_keys[port] |= mask;
     else ntt_keys[port] &= ~mask;
+    return true;
+}
+
+bool joypad_set_fcns_key(FcnsKey key, bool is_pressed) {
+    if (expansion_device != NES_EXPANSION_FCNS_CONTROLLER || (unsigned)key >= FCNS_KEY_COUNT)
+        return false;
+    uint16_t mask = (uint16_t)(1u << key);
+    if (is_pressed) fcns_keys |= mask;
+    else fcns_keys &= (uint16_t)~mask;
     return true;
 }
 

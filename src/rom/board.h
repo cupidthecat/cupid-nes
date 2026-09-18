@@ -23,9 +23,14 @@ extern "C" {
 
 typedef struct CartridgeBoard CartridgeBoard;
 
+enum { BOARD_FCNS_MAPPER_ID = 65532 };
+
 bool board_handles_mapper(unsigned mapper);
+bool board_is_fcns_header(const iNESHeader *header);
+bool board_handles_header(const iNESHeader *header);
 CartridgeBoard *board_create(const iNESHeader *header, uint8_t *prg, size_t prg_bytes,
                              uint8_t *chr, size_t chr_bytes);
+bool board_set_fcns_kanji_firmware(const uint8_t *data, size_t size);
 void board_destroy(CartridgeBoard *board);
 uint8_t board_cpu_read(CartridgeBoard *board, uint16_t address, uint8_t open_bus);
 void board_cpu_write(CartridgeBoard *board, uint16_t address, uint8_t value);

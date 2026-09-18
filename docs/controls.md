@@ -68,6 +68,10 @@ The NTT Data keypad uses the numeric keypad digits for 0 through 9, keypad `*` f
 
 The SNES mouse uses relative host-mouse movement and the left/right mouse buttons. The emulated mouse keeps the packet's direction flags, clamps each latched axis magnitude to seven bits, and cycles through its three sensitivity levels when software reads while strobe is high.
 
+## Famicom Network System controller
+
+`--expansion fcns` connects the FCNS controller. NES 2.0 default-input value `0x3B` selects the same device automatically unless the expansion setting was overridden. Player-one A/B, Select/Start, and the D-pad form the first eight serial bits. The numeric keypad digits, keypad `*`, keypad `/`, keypad decimal, C, and E supply the FCNS number/function keys and End Communication bit. The 24-bit report is read on `$4016 D1`; reads after the report return one.
+
 ## Arkanoid paddle
 
 Use `--port1 arkanoid`, `--port2 arkanoid`, or `--console famicom --expansion arkanoid` according to the game. Horizontal mouse position controls the paddle. The left mouse button is the paddle fire button.

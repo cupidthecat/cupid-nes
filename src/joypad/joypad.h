@@ -129,8 +129,16 @@ typedef enum {
     NES_EXPANSION_EXCITING_BOXING,
     NES_EXPANSION_JISSEN_MAHJONG,
     NES_EXPANSION_BARCODE_BATTLER,
-    NES_EXPANSION_OEKA_KIDS_TABLET
+    NES_EXPANSION_OEKA_KIDS_TABLET,
+    NES_EXPANSION_FCNS_CONTROLLER
 } NesExpansionDevice;
+
+typedef enum {
+    FCNS_KEY_0, FCNS_KEY_1, FCNS_KEY_2, FCNS_KEY_3, FCNS_KEY_4,
+    FCNS_KEY_5, FCNS_KEY_6, FCNS_KEY_7, FCNS_KEY_8, FCNS_KEY_9,
+    FCNS_KEY_STAR, FCNS_KEY_POUND, FCNS_KEY_PERIOD, FCNS_KEY_C, FCNS_KEY_END,
+    FCNS_KEY_COUNT
+} FcnsKey;
 
 typedef struct {
     NesInputAdapter adapter;
@@ -223,6 +231,7 @@ bool    joypad_set_snes_button(unsigned port, SnesButton button, bool pressed);
 bool    joypad_add_snes_mouse_motion(unsigned port, int dx, int dy);
 bool    joypad_set_snes_mouse_buttons(unsigned port, bool left, bool right);
 bool    joypad_set_ntt_key(unsigned port, NttKey key, bool pressed);
+bool    joypad_set_fcns_key(FcnsKey key, bool pressed);
 bool    joypad_set_virtual_boy_button(unsigned port, VirtualBoyButton button, bool pressed);
 bool    joypad_add_hori_track_motion(int dx, int dy);
 bool    joypad_set_party_tap_button(unsigned button, bool pressed);

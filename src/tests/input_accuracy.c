@@ -368,7 +368,8 @@ static int default_input_metadata(void) {
         {0x17, NES_EXPANSION_OEKA_KIDS_TABLET},
         {0x21, NES_EXPANSION_TURBO_FILE},
         {0x22, NES_EXPANSION_BATTLE_BOX},
-        {0x23, NES_EXPANSION_FAMILY_BASIC}
+        {0x23, NES_EXPANSION_FAMILY_BASIC},
+        {0x3B, NES_EXPANSION_FCNS_CONTROLLER}
     };
     for (size_t i = 0; i < sizeof(expansion_cases) / sizeof(expansion_cases[0]); ++i) {
         input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
@@ -706,6 +707,53 @@ static int extended_port_protocols(void) {
     CHECK(joypad_port_device(1) == valid.ports[1]);
 
     CHECK(!joypad_set_port_device_name(0, "unknown-extended"));
+    return 0;
+}
+
+static int fcns_controller_protocol(void) {
+    input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+    CHECK(joypad_set_expansion_device_name("fcns"));
+    CHECK(joypad_expansion_device() == NES_EXPANSION_FCNS_CONTROLLER);
+    CHECK(joypad_set_player(0, BTN_A, true));
+    CHECK(joypad_set_player(0, BTN_START, true));
+    CHECK(joypad_set_player(0, BTN_UP, true));
+    CHECK(joypad_set_fcns_key(FCNS_KEY_0, true));
+    CHECK(joypad_set_fcns_key(FCNS_KEY_9, true));
+    CHECK(joypad_set_fcns_key(FCNS_KEY_STAR, true));
+    CHECK(joypad_set_fcns_key(FCNS_KEY_POUND, true));
+    CHECK(joypad_set_fcns_key(FCNS_KEY_PERIOD, true));
+    CHECK(joypad_set_fcns_key(FCNS_KEY_C, true));
+    CHECK(joypad_set_fcns_key(FCNS_KEY_END, true));
+
+    uint32_t expected = pad1.buttons
+        | (1u << (8 + FCNS_KEY_0)) | (1u << (8 + FCNS_KEY_9))
+        | (1u << (8 + FCNS_KEY_STAR)) | (1u << (8 + FCNS_KEY_POUND))
+        | (1u << (8 + FCNS_KEY_PERIOD)) | (1u << (8 + FCNS_KEY_C))
+        | (1u << 23);
+    latch_controllers();
+    for (unsigned bit = 0; bit < 24; ++bit)
+        CHECK(((read_mem(0x4016) >> 1) & 1u) == ((expected >> bit) & 1u));
+    CHECK((read_mem(0x4016) & 2u) == 2u);
+    CHECK((read_mem(0x4017) & 2u) == 0);
+
+    write_mem(0x4016, 1);
+    CHECK((read_mem(0x4016) & 2u) == 2u);
+    CHECK(joypad_set_player(0, BTN_A, false));
+    CHECK((read_mem(0x4016) & 2u) == 0);
+    write_mem(0x4016, 0);
+    CHECK(joypad_set_player(0, BTN_A, true));
+    CHECK((read_mem(0x4016) & 2u) == 0); // Falling edge retained released A.
+
+    CHECK(joypad_set_player(0, BTN_A, false));
+    CHECK(joypad_set_player(0, BTN_START, false));
+    CHECK(joypad_set_player(0, BTN_UP, false));
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_NONE));
+    CHECK(!joypad_set_fcns_key(FCNS_KEY_0, true));
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_FCNS_CONTROLLER));
+    latch_controllers();
+    for (unsigned bit = 0; bit < 24; ++bit)
+        CHECK((read_mem(0x4016) & 2u) == 0);
+    CHECK((read_mem(0x4016) & 2u) == 2u);
     return 0;
 }
 
@@ -2396,7 +2444,8 @@ int test_input_accuracy(void) {
         console_open_bus, console_read_clocks, console_strobe_timing,
         famicom_microphone, console_dma_reads, console_selection_lifetime, default_input_metadata,
         adapter_reports, adapter_strobes_and_disconnect, adapter_cpu_and_dma_clocks,
-        adapter_selection_lifetime, extended_port_protocols, arkanoid_reports, arkanoid_latching,
+        adapter_selection_lifetime, extended_port_protocols, fcns_controller_protocol,
+        arkanoid_reports, arkanoid_latching,
         arkanoid_cpu_clocks, device_selection, power_pad_button_order,
         power_pad_latching, family_trainer_rows, family_trainer_cpu_writes,
         mat_selection_and_disconnect, zapper_port_signals, zapper_beam_and_persistence,

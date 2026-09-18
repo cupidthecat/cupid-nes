@@ -185,6 +185,8 @@ static bool extended_port_key_event(const SDL_KeyboardEvent *event) {
     }
     if (keypad_event) {
         bool handled = false;
+        if (joypad_expansion_device() == NES_EXPANSION_FCNS_CONTROLLER)
+            handled |= joypad_set_fcns_key((FcnsKey)keypad_key, down);
         for (unsigned port = 0; port < 2; ++port) {
             if (joypad_port_device(port) == NES_PORT_NTT_KEYPAD) {
                 handled |= joypad_set_ntt_key(port, keypad_key, down);
@@ -473,6 +475,7 @@ int main(int argc, char *argv[]) {
     bool power_on_seed_set = false;
     uint32_t power_on_seed = 0;
     const char *epsm_adpcm_path = NULL;
+    const char *fcns_kanji_path = NULL;
     bool ntsc_composite_requested = false;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--console") == 0) {
@@ -501,6 +504,12 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             epsm_adpcm_path = argv[i];
+        } else if (strcmp(argv[i], "--fcns-kanji") == 0) {
+            if (++i == argc) {
+                fprintf(stderr, "--fcns-kanji requires a 256 KiB Kanji ROM file\n");
+                return 1;
+            }
+            fcns_kanji_path = argv[i];
         } else if (strcmp(argv[i], "--startup-phase") == 0) {
             if (++i == argc || startup_phase_set || startup_seed_set) {
                 fprintf(stderr, "Choose one startup phase CPU:PPU or startup seed\n");
@@ -617,7 +626,7 @@ int main(int argc, char *argv[]) {
             input_overrides |= port ? NES_INPUT_OVERRIDE_PORT2 : NES_INPUT_OVERRIDE_PORT1;
         } else if (strcmp(argv[i], "--expansion") == 0) {
             if (++i == argc || !joypad_set_expansion_device_name(argv[i])) {
-                fprintf(stderr, "Expansion device must be none, arkanoid, family-trainer-a, family-trainer-b, zapper, family-basic, turbo-file, battle-box, subor-keyboard, hori-track, konami-hyper-shot, bandai-hyper-shot, party-tap, pachinko, exciting-boxing, jissen-mahjong, barcode-battler, or oeka-kids-tablet\n");
+                fprintf(stderr, "Expansion device must be none, arkanoid, family-trainer-a, family-trainer-b, zapper, family-basic, turbo-file, battle-box, subor-keyboard, hori-track, konami-hyper-shot, bandai-hyper-shot, party-tap, pachinko, exciting-boxing, jissen-mahjong, barcode-battler, oeka-kids-tablet, or fcns\n");
                 return 1;
             }
             input_overrides |= NES_INPUT_OVERRIDE_EXPANSION;
@@ -700,6 +709,7 @@ int main(int argc, char *argv[]) {
         printf("Usage: %s [--console MODEL] [--cpu-revision REVISION] "
                "[--cpu-test-mode] "
                "[--epsm-adpcm FILE] "
+               "[--fcns-kanji FILE] "
                "[--startup-phase CPU:PPU | --startup-seed SEED] "
                "[--ram-power-on STATE] [--power-on-seed SEED] [--random-vblank] "
                "[--ppu-revision REVISION] [--ppu-oam-row-corruption] "
@@ -747,6 +757,10 @@ int main(int argc, char *argv[]) {
     printf("Loading ROM: %s\n", rom_path);
     if (epsm_adpcm_path && !epsm_load_adpcm_file(epsm_adpcm_path)) {
         fprintf(stderr, "Could not load the 8 KiB YMF288 ADPCM ROM: %s\n", epsm_adpcm_path);
+        return 1;
+    }
+    if (fcns_kanji_path && !rom_set_fcns_kanji_firmware(fcns_kanji_path)) {
+        fprintf(stderr, "Could not load the 256 KiB FCNS Kanji ROM: %s\n", fcns_kanji_path);
         return 1;
     }
     if (power_on_seed_set) nes_seed_power_on_random(power_on_seed);

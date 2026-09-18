@@ -13,6 +13,7 @@
  * Public License for details. See <https://www.gnu.org/licenses/>.
  */
 #include "board_tests.h"
+#include "../rom/board.h"
 #include "../system/hardware.h"
 #include <time.h>
 
@@ -382,6 +383,109 @@ static int test_bandai_karaoke_saves(void) {
     return 0;
 }
 
+static void fcns_serial_write(uint16_t address, uint8_t value) {
+    for (unsigned bit = 0; bit < 5; ++bit) {
+        cpu_total_cycles += 2;
+        cart_cpu_write(address, (uint8_t)((value >> bit) & 1u));
+    }
+}
+
+static bool write_test_file(const char *path, const uint8_t *data, size_t size) {
+    FILE *file = fopen(path, "wb");
+    if (!file) return false;
+    bool ok = fwrite(data, 1, size, file) == size;
+    return fclose(file) == 0 && ok;
+}
+
+static int test_famicom_network_system(void) {
+    uint8_t *firmware = (uint8_t *)malloc(0x40000);
+    BOARD_CHECK(firmware != NULL);
+    for (size_t i = 0; i < 0x40000; ++i)
+        firmware[i] = (uint8_t)((i & 0xFFu) ^ (i >> 13));
+
+    char firmware_path[128], invalid_path[128];
+    unsigned long stamp = (unsigned long)time(NULL);
+    snprintf(firmware_path, sizeof(firmware_path), "build/fcns-kanji-%lu-%lu.bin",
+             stamp, (unsigned long)clock());
+    snprintf(invalid_path, sizeof(invalid_path), "build/fcns-kanji-invalid-%lu-%lu.bin",
+             stamp, (unsigned long)clock());
+    BOARD_CHECK(write_test_file(firmware_path, firmware, 0x40000));
+    BOARD_CHECK(write_test_file(invalid_path, firmware, 0x100));
+    BOARD_CHECK(rom_set_fcns_kanji_firmware(firmware_path));
+
+    BoardImage image;
+    BOARD_CHECK(board_image_create(&image, 1, 0x40000, 0, true));
+    iNESHeader *header = (iNESHeader *)image.data;
+    header->flags7 = (uint8_t)((header->flags7 & 0xFCu) | 3u);
+    header->zero[2] = 0x0C;
+    header->zero[4] = 0x3B;
+    header->flags6 |= 2;
+    header->flags10 = 0x77; // 8 KiB work RAM plus 8 KiB save RAM.
+    header->zero[0] = 8;    // 16 KiB CHR RAM for the two FCNS banks.
+    BOARD_CHECK(board_image_load(&image) == 0);
+    BOARD_CHECK(rom_mapper_number(&ines_header) == 1);
+    BOARD_CHECK(read_mem(0x8000) == 0 && read_mem(0xC000) == 60);
+    BOARD_CHECK(cart_get_mirroring() == MIRROR_VERTICAL);
+
+    (void)read_mem(0x40B0);
+    BOARD_CHECK(read_mem(0x5000) == firmware[0]);
+    BOARD_CHECK(read_mem(0x5000) == firmware[1]);
+    for (unsigned i = 2; i < 32; ++i) (void)read_mem(0x5000);
+    BOARD_CHECK(read_mem(0x5000) == firmware[0]);
+    write_mem(0x40B0, 1);
+    (void)read_mem(0x40B0);
+    BOARD_CHECK(read_mem(0x5000) == firmware[0x20000]);
+    BOARD_CHECK(read_mem(0x40C0) == 0x80);
+
+    write_mem(0x40AD, 0x80);
+    BOARD_CHECK(cart_get_mirroring() == MIRROR_HORIZONTAL);
+    write_mem(0x40AD, 0);
+    BOARD_CHECK(cart_get_mirroring() == MIRROR_VERTICAL);
+
+    ppu_write(0x0123, 0x35);
+    write_mem(0x40C0, 0x08);
+    BOARD_CHECK(ppu_read(0x0123) == 0);
+    ppu_write(0x0123, 0x46);
+    write_mem(0x40C0, 0);
+    BOARD_CHECK(ppu_read(0x0123) == 0x35);
+    write_mem(0x40C0, 0x08);
+    BOARD_CHECK(ppu_read(0x0123) == 0x46);
+
+    write_mem(0x40C0, 0);
+    write_mem(0x6123, 0x51);
+    write_mem(0x40C0, 1);
+    write_mem(0x6123, 0x62);
+    write_mem(0x40AE, 0);
+    BOARD_CHECK(read_mem(0x6123) == 0x51);
+    write_mem(0x40AE, 1);
+    BOARD_CHECK(read_mem(0x6123) == 0x62);
+
+    fcns_serial_write(0xE000, 3);
+    BOARD_CHECK(read_mem(0x8000) == 12 && read_mem(0xC000) == 60);
+    write_mem(0x40C0, 0x09);
+    ppu_write(0x0456, 0x9A);
+    BOARD_CHECK(load_rom_memory(image.data, image.size - 1) < 0);
+    BOARD_CHECK(read_mem(0x8000) == 12 && read_mem(0x6123) == 0x62);
+    BOARD_CHECK(ppu_read(0x0456) == 0x9A);
+
+    BOARD_CHECK(!rom_set_fcns_kanji_firmware(invalid_path));
+    BOARD_CHECK(board_image_load(&image) == 0);
+    (void)read_mem(0x40B0);
+    BOARD_CHECK(read_mem(0x5000) == firmware[0]);
+
+    BoardImage ordinary;
+    BOARD_CHECK(board_image_create(&ordinary, 0, 0x8000, 0x2000, true));
+    ordinary.data[15] = 1;
+    BOARD_CHECK(board_image_load(&ordinary) == 0);
+    BOARD_CHECK(read_mem(0x8000) == 0 && ppu_read(0x0000) == 0);
+    board_image_free(&ordinary);
+    board_image_free(&image);
+    BOARD_CHECK(rom_set_fcns_kanji_firmware(NULL));
+    BOARD_CHECK(remove(firmware_path) == 0 && remove(invalid_path) == 0);
+    free(firmware);
+    return 0;
+}
+
 static int test_board_power_on_ram_case(unsigned mapper) {
     BoardImage image;
     BOARD_CHECK(board_image_create(&image, mapper, 0x8000, 0, false));
@@ -446,8 +550,9 @@ int test_board_accuracy(void) {
     failures += test_bandai_karaoke_banking_and_input();
     failures += test_bandai_karaoke_page_sizes();
     failures += test_bandai_karaoke_saves();
+    failures += test_famicom_network_system();
     failures += test_board_power_on_ram();
     unload_rom();
-    printf("Board accuracy: 8 groups, %d failures\n", failures);
+    printf("Board accuracy: 9 groups, %d failures\n", failures);
     return failures;
 }

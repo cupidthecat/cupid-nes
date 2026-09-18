@@ -56,6 +56,7 @@ extern uint8_t   *prg_rom;
 extern uint8_t   *chr_rom;
 
 int load_rom(const char *filename);
+bool rom_set_fcns_kanji_firmware(const char *path);
 int load_fds(const char *disk_path, const char *bios_path, bool write_protected);
 // Eject the cartridge and release loader-owned buffers; false preserves dirty FDS media
 // when its pending disk image cannot be flushed.

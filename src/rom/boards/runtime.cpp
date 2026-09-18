@@ -28,6 +28,20 @@ extern "C" {
 
 namespace cupid::boards {
 
+static std::vector<uint8_t> fcnsKanjiFirmware;
+
+const std::vector<uint8_t> &FcnsKanjiFirmware() { return fcnsKanjiFirmware; }
+
+bool SetFcnsKanjiFirmware(const uint8_t *data, size_t size) {
+    if (!data && !size) {
+        fcnsKanjiFirmware.clear();
+        return true;
+    }
+    if (!data || size != 0x40000) return false;
+    fcnsKanjiFirmware.assign(data, data + size);
+    return true;
+}
+
 bool Board::AlignedRange(uint16_t first, uint16_t last) {
     return !(first & 0xFF) && (last & 0xFF) == 0xFF && last > first;
 }
@@ -485,7 +499,9 @@ CartridgeBoard *board_create(const iNESHeader *header, uint8_t *prg, size_t prgB
     if (!header) return nullptr;
     try {
         auto board = std::make_unique<CartridgeBoard>();
-        board->instance = cupid::boards::CreateBoard(static_cast<unsigned>(rom_mapper_number(header)));
+        board->instance = board_is_fcns_header(header)
+            ? cupid::boards::CreateFcnsBoard()
+            : cupid::boards::CreateBoard(static_cast<unsigned>(rom_mapper_number(header)));
         if (!board->instance) return nullptr;
         board->instance->Initialize(*header, prg, prgBytes, chr, chrBytes);
         return board.release();
@@ -519,6 +535,9 @@ void board_irq_ack(CartridgeBoard *board) { if (board) board->instance->Acknowle
 float board_audio(const CartridgeBoard *board) { return board ? board->instance->AudioOutput() : 0.0f; }
 bool board_set_mapper_input(CartridgeBoard *board, unsigned input, bool pressed) {
     return board && board->instance->SetMapperInput(input, pressed);
+}
+bool board_set_fcns_kanji_firmware(const uint8_t *data, size_t size) {
+    return cupid::boards::SetFcnsKanjiFirmware(data, size);
 }
 Mirroring board_mirroring(const CartridgeBoard *board) {
     return board ? board->instance->MirroringMode() : MIRROR_HORIZONTAL;

@@ -6945,12 +6945,13 @@ int mapper_init_from_header(const iNESHeader *h,
                             uint8_t *prg, size_t prg_sz,
                             uint8_t *chr, size_t chr_sz)
 {
-    if (h && board_handles_mapper((unsigned)rom_mapper_number(h))) {
+    if (h && board_handles_header(h)) {
         CartridgeBoard *prepared = board_create(h, prg, prg_sz, chr, chr_sz);
         if (!prepared) return -1;
         mapper_shutdown();
         active_board = prepared;
-        C.mapper_no = (uint16_t)rom_mapper_number(h);
+        C.mapper_no = board_is_fcns_header(h) ? BOARD_FCNS_MAPPER_ID
+                                              : (uint16_t)rom_mapper_number(h);
         C.prg = prg; C.prg_sz = prg_sz;
         C.chr = chr; C.chr_sz = chr_sz;
         C.mirr_base = board_mirroring(active_board);

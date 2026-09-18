@@ -61,6 +61,16 @@ NES 2.0 console selector 3 with extended subtype 4 enables EPSM sound. The devic
 ./cupid-nes --epsm-adpcm "ymf288_adpcm_rom.bin" "epsm-game.nes"
 ```
 
+## Famicom Network System firmware
+
+NES 2.0 extended console subtype `0x0C` selects the Famicom Network System cartridge hardware. `--fcns-kanji FILE` supplies its 256 KiB character ROM. The file must contain exactly 262,144 bytes. If the option is omitted, the character-ROM window reads zero-filled data.
+
+```sh
+./cupid-nes --fcns-kanji "lh5323m1.bin" "fcns.nes"
+```
+
+The emulator models the local cartridge, character-ROM interface, RAM banking, and controller. It does not connect to or reproduce the original network service.
+
 ## Controllers and expansion devices
 
 | Option | Accepted value | Default |
@@ -68,14 +78,14 @@ NES 2.0 console selector 3 with extended subtype 4 enables EPSM sound. The devic
 | `--adapter TYPE` | `none`, `four-score`, `famicom-2`, `famicom-4` | `none` |
 | `--port1 DEVICE` | `pad`, `none`, `arkanoid`, `power-pad-a`, `power-pad-b`, `zapper`, `snes-pad`, `snes-mouse`, `ntt-keypad`, `virtual-boy` | `pad` |
 | `--port2 DEVICE` | `pad`, `none`, `arkanoid`, `power-pad-a`, `power-pad-b`, `zapper`, `subor-mouse`, `snes-pad`, `snes-mouse`, `ntt-keypad`, `virtual-boy` | `pad` |
-| `--expansion DEVICE` | `none`, `arkanoid`, `family-trainer-a`, `family-trainer-b`, `zapper`, `family-basic`, `turbo-file`, `battle-box`, `subor-keyboard`, `hori-track`, `konami-hyper-shot`, `bandai-hyper-shot`, `party-tap`, `pachinko`, `exciting-boxing`, `jissen-mahjong`, `barcode-battler`, `oeka-kids-tablet` | `none` |
+| `--expansion DEVICE` | `none`, `arkanoid`, `family-trainer-a`, `family-trainer-b`, `zapper`, `family-basic`, `turbo-file`, `battle-box`, `subor-keyboard`, `hori-track`, `konami-hyper-shot`, `bandai-hyper-shot`, `party-tap`, `pachinko`, `exciting-boxing`, `jissen-mahjong`, `barcode-battler`, `oeka-kids-tablet`, `fcns` | `none` |
 | `--zapper-radius PIXELS` | Decimal integer from `0` through `255` | `0` |
 
 A Four Score requires both normal ports to stay set to `pad`. The `famicom-2` and `famicom-4` adapters use the expansion connector, so they cannot be combined with another `--expansion` device. An invalid combination exits before loading the image with `An adapter and another device cannot share the same connector`. Four Score validation only reserves the two normal controller ports; it does not reserve the expansion-device setting.
 
 The supported Subor keyboard and mouse combination uses `--expansion subor-keyboard --port2 subor-mouse`. The mouse is accepted only on port 2, but the parser does not require the keyboard and mouse to be selected together.
 
-The SNES controller, SNES mouse, NTT Data keypad, and Virtual Boy controller are accepted on either normal controller port. `snes-pad`, `snes-mouse`, `ntt-keypad`, and `virtual-boy` select them explicitly. NES 2.0 default-input value `0x2B` also selects two SNES controllers when the corresponding command-line fields have not been overridden. The NES 2.0 SNES-mouse value `0x29` is not auto-connected; use `--port1 snes-mouse` or `--port2 snes-mouse` for that device.
+The SNES controller, SNES mouse, NTT Data keypad, and Virtual Boy controller are accepted on either normal controller port. `snes-pad`, `snes-mouse`, `ntt-keypad`, and `virtual-boy` select them explicitly. NES 2.0 default-input value `0x2B` also selects two SNES controllers when the corresponding command-line fields have not been overridden. Default-input value `0x3B` selects the FCNS controller on the expansion connector. The NES 2.0 SNES-mouse value `0x29` is not auto-connected; use `--port1 snes-mouse` or `--port2 snes-mouse` for that device.
 
 `--console` and the input-device options are independent. Selecting an expansion device does not switch the console model to `famicom`, and selecting `famicom` does not choose an expansion device. Supported ordinary NES 2.0 default-input metadata supplies automatic controller defaults, while an explicit `--adapter`, `--port1`, `--port2`, or `--expansion` value keeps control of that field. The selected console model also determines whether ordinary Zapper metadata uses controller port 2 or the Famicom expansion connector; Dendy timing does not replace that wiring choice. Unsupported ordinary input values leave the current controller configuration in place and print a diagnostic. Supported VS headers use their separate cabinet input decoder for standard, swapped, swapped-A/B, or serial light-gun wiring. A zero VS input code falls back to standard wiring.
 

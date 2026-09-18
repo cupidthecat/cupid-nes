@@ -114,7 +114,7 @@ bool vs_decode_header(const iNESHeader *header, int mapper, size_t prg_bytes,
     unsigned console = header->flags7 & 3u;
     if (nes2) {
         unsigned subtype = header->zero[2] & 0x0Fu;
-        if (console == 0 || (console == 3 && (subtype == 0 || subtype == 4))) return true;
+        if (console == 0 || (console == 3 && (subtype == 0 || subtype == 4 || subtype == 0x0C))) return true;
         bool extended_vs = console == 3 && (header->zero[2] & 0x0Fu) == 1;
         if (console != 1 && !extended_vs) {
             set_reason(reason, reason_size, "unsupported NES 2.0 console type");

@@ -205,6 +205,9 @@ public:
 };
 
 std::unique_ptr<Board> CreateBoard(unsigned mapper);
+std::unique_ptr<Board> CreateFcnsBoard();
+const std::vector<uint8_t> &FcnsKanjiFirmware();
+bool SetFcnsKanjiFirmware(const uint8_t *data, size_t size);
 
 } // namespace cupid::boards
 #endif
