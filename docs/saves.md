@@ -18,7 +18,7 @@ The cartridge loader derives save paths from the image path. It removes the fina
 
 Only devices present in the loaded board configuration get persistence paths. Volatile PRG RAM and ordinary CHR RAM are not written to disk just because a game changes them. Bandai/Datach boards can expose serial EEPROM independently of ordinary battery-backed RAM.
 
-Existing save data is read when the cartridge is loaded. Short PRG, CHR, or EEPROM files leave the unread portion of the allocated device zero-filled. The save size follows the board and NES 2.0 metadata, so `.sav` is not always an 8 KiB file.
+Existing save data overlays initialized cartridge memory when the image is loaded. Trainer bytes are installed first, so save bytes take precedence wherever the two overlap. A missing or short save leaves the remaining initialization intact, including trainer bytes beyond the portion read. The save size follows the board and NES 2.0 metadata, so `.sav` is not always an 8 KiB file.
 
 Taito X1-005/X1-017 boards use fixed cartridge-RAM allocations instead of taking a zero NES 2.0 RAM declaration literally. Mappers 80 and 207 allocate a 256-byte mirrored RAM image, and mapper 82 allocates 5 KiB. With the battery flag set, those bytes use the ordinary `.sav` path; without it, the same RAM is volatile.
 

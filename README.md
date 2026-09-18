@@ -33,7 +33,8 @@ Device selection and timing follow the ROM header and
 [command-line options](docs/configuration.md). Supported mapper families can still
 reject unsupported submappers or memory layouts. The
 [hardware guide](docs/hardware.md#reading-accuracy-results) records remaining
-limits, including optional Jaleco speech, RP2C03G, and MMC5 auxiliary I/O/timers.
+limits, including optional Jaleco speech, a distinct RP2C03G palette, and MMC5
+auxiliary I/O/timers. VS images requesting RP2C03G use the documented 2C03 fallback.
 
 ## Build and run
 

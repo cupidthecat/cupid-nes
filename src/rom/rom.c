@@ -260,8 +260,8 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
     chr_size = new_chr_size;
     vs_commit_config(&vs_config);
     epsm_activate(new_epsm);
-    cart_battery_configure(filename, filename && (header.flags6 & 0x02));
     if (trainer) cart_apply_trainer(trainer);
+    cart_battery_configure(filename, filename && (header.flags6 & 0x02));
     mirroring_mode = (int)cart_get_mirroring();
     nes_set_region(rom_region(&header));
     fds_loaded = 0;

@@ -56,7 +56,8 @@ Common loader messages describe different problems:
 | `Truncated PRG-ROM or CHR-ROM payload` | Image is incomplete or its header sizes do not match the payload |
 | `Unsupported mapper` or `Unsupported mapper/submapper` | That board selector is not implemented |
 | `Unsupported ROM size`, `Unsupported ROM/RAM size`, or `Unsupported cartridge layout` | Mapper exists, but this image declares a layout the implementation rejects |
-| `Unsupported VS System configuration: ...` | VS metadata requests unsupported mapper, timing, PPU, controller wiring, protection type, or layout |
+| `Unsupported VS System configuration: ...` | VS metadata requests unsupported mapper, timing, controller wiring, protection type, or layout |
+| `VS PPU code 1 is not modeled separately; using 2C03 behavior` or `Unknown VS PPU code ...; using 2C03 behavior` | The image loads with the ordinary 2C03 profile. Its requested palette is not implemented separately; see [VS hardware](hardware.md#vs-system) |
 
 See [hardware](hardware.md) for the supported board families and [accuracy](accuracy.md) for current implementation limits. A mapper family appearing in the project does not imply every submapper and ROM/RAM size is accepted.
 

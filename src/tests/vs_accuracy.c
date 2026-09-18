@@ -112,18 +112,18 @@ static int test_vs_metadata_transaction(void) {
     unload_rom();
     CHECK(load_vs_program(VS_TYPE_DEFAULT, 0, VS_INPUT_STANDARD, loop, sizeof(loop)) == 0);
     CHECK(vs_enabled() && !vs_dual_system() && vs_ppu_model() == VS_PPU_2C03);
+
+    iNESHeader fallback = nes20_vs_header(0, 2, 1, VS_TYPE_DEFAULT, 13, VS_INPUT_STANDARD);
+    size_t image_size;
+    uint8_t *image = build_image(&fallback, 0x8000, 0x2000, &image_size);
+    CHECK(image != NULL);
+    CHECK(load_rom_memory(image, image_size) == 0);
+    free(image);
+    CHECK(vs_enabled() && vs_ppu_model() == VS_PPU_2C03);
     Mapper *previous = cart;
     uint8_t *previous_prg = prg_rom;
 
-    iNESHeader invalid = nes20_vs_header(0, 2, 1, VS_TYPE_DEFAULT, 13, VS_INPUT_STANDARD);
-    size_t image_size;
-    uint8_t *image = build_image(&invalid, 0x8000, 0x2000, &image_size);
-    CHECK(image != NULL);
-    CHECK(load_rom_memory(image, image_size) == -1);
-    free(image);
-    CHECK(cart == previous && prg_rom == previous_prg && vs_enabled());
-
-    invalid = nes20_vs_header(3, 2, 1, VS_TYPE_DEFAULT, 0, VS_INPUT_STANDARD);
+    iNESHeader invalid = nes20_vs_header(3, 2, 1, VS_TYPE_DEFAULT, 0, VS_INPUT_STANDARD);
     image = build_image(&invalid, 0x8000, 0x2000, &image_size);
     CHECK(image != NULL);
     CHECK(load_rom_memory(image, image_size) == -1);
@@ -186,10 +186,17 @@ static int test_vs_extended_console_header(void) {
     CHECK(load_rom_memory(image, image_size) == -1);
     CHECK(cart == previous && prg_rom == previous_prg);
     h.flags6 = 0;
-    h.flags7 = 0x09; // A direct VS descriptor still treats one as the unsupported PPU.
+    h.flags7 = 0x09;
     memcpy(image, &h, sizeof(h));
-    CHECK(load_rom_memory(image, image_size) == -1);
-    CHECK(cart == previous && prg_rom == previous_prg);
+    CHECK(load_rom_memory(image, image_size) == 0);
+    CHECK(vs_system_type() == VS_TYPE_DEFAULT && vs_ppu_model() == VS_PPU_2C03);
+    static const uint8_t fallback_ppu_codes[] = {13, 14, 15};
+    for (size_t i = 0; i < sizeof(fallback_ppu_codes); ++i) {
+        h.zero[2] = fallback_ppu_codes[i];
+        memcpy(image, &h, sizeof(h));
+        CHECK(load_rom_memory(image, image_size) == 0);
+        CHECK(vs_system_type() == VS_TYPE_DEFAULT && vs_ppu_model() == VS_PPU_2C03);
+    }
     h.zero[2] = (VS_TYPE_RBI_BASEBALL << 4) | 3;
     memcpy(image, &h, sizeof(h));
     CHECK(load_rom_memory(image, image_size) == 0);
@@ -293,7 +300,7 @@ static int test_vs_rgb_frame_timing(void) {
 }
 
 static int test_vs_dual_rendered_frame_timing(void) {
-    iNESHeader h = nes20_vs_header(99, 4, 4, VS_TYPE_DUAL, 0, VS_INPUT_STANDARD);
+    iNESHeader h = nes20_vs_header(99, 4, 4, VS_TYPE_DUAL, 1, VS_INPUT_STANDARD);
     size_t image_size;
     uint8_t *image = build_image(&h, 0x10000, 0x8000, &image_size);
     CHECK(image != NULL);
@@ -308,6 +315,7 @@ static int test_vs_dual_rendered_frame_timing(void) {
     }
     CHECK(load_rom_memory(image, image_size) == 0);
     free(image);
+    CHECK(vs_dual_system() && vs_ppu_model() == VS_PPU_2C03);
     power_main();
     vs_power_on_secondary();
     vs_start_frame();

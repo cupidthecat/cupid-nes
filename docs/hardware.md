@@ -43,7 +43,7 @@ PRG is the cartridge memory read by the CPU; CHR holds graphics patterns read by
 | 7 | AxROM | 32 KiB PRG banking and single-screen mirroring |
 | 9 | MMC2 | PRG banking and pattern-fetch CHR latches |
 | 10 | MMC4 | PRG banking and pattern-fetch CHR latches |
-| 11 | Color Dreams | PRG/CHR bank selection and bus conflicts |
+| 11, 144 | Color Dreams | Four-bit PRG/CHR bank selection and bus conflicts; mapper 144 takes D0 from the ROM |
 | 13 | CPROM | Banked CHR RAM |
 | 15 | 100-in-1 | Address-selected PRG banking and mirroring |
 | 16, 153, 157, 159 | Bandai FCG / LZ93D50 / Datach | Bank wiring, IRQs, serial EEPROM, outer PRG selection, and barcode signals |
@@ -68,10 +68,12 @@ PRG is the cartridge memory read by the CPU; CHR holds graphics patterns read by
 | 75, 151 | VRC1 | Three switchable 8 KiB PRG windows, two 4 KiB CHR banks, and board mirroring |
 | 76, 88, 95, 154, 206 | Namco 108 family | Variant-specific PRG/CHR banking, hardwired or register-controlled nametables, and no mapper IRQ source |
 | 77 | Irem LROG017 | 32 KiB PRG banking with bus conflicts, cartridge RAM, banked 2 KiB CHR ROM, fixed 6 KiB CHR RAM, and four-screen nametables |
+| 79, 113, 146 | NINA-03/06 variants | 32 KiB PRG and 8 KiB CHR banks, partially decoded expansion registers, cartridge RAM, and mapper 113's extra bank bits and mirroring control |
 | 80, 82, 207 | Taito X1-005 / X1-017 | PRG/CHR banking, protected fixed-size cartridge RAM, CHR mode selection, and mapper 207 nametable routing |
 | 85 | VRC7 | PRG/CHR banking, IRQs, RAM control, and six-channel FM audio |
 | 89, 93, 184 | Sunsoft discrete boards | Board-specific PRG/CHR selection, single-screen wiring, CHR access control, and paired 4 KiB CHR banks |
 | 90, 209, 211 | JY Company | PRG/CHR modes, register arithmetic, mapper-specific nametable routing, latches, and selectable IRQ clock sources |
+| 94, 180 | UxROM variants | Mapper 94 uses D2-D4 to select the lower 16 KiB PRG bank; mapper 180 switches the upper bank and fixes the lower bank at zero |
 | 96 | Oeka Kids | 32 KiB PRG selection, cartridge RAM, banked CHR RAM, PPU-address-driven inner CHR selection, and ROM bus conflicts |
 | 97 | Irem TAM-S1 | Fixed lower 16 KiB PRG, switchable upper 16 KiB PRG, cartridge RAM, fixed CHR, and four mirroring modes |
 | 99 | VS System | Cabinet PRG/CHR selection, shared RAM permissions, and single/dual layouts |
@@ -93,6 +95,14 @@ Jaleco 72/78/92, Irem 77/97, and mapper 96 expose their mapped PRG RAM for CPU r
 Mapper 77 always exposes 6 KiB of fixed CHR RAM at PPU `$0800-$1FFF`; the lower 2 KiB is banked CHR ROM. NES 2.0 images for this mixed layout must declare 8 KiB of volatile CHR RAM, which is the header size accepted by the loader for the board.
 
 Mapper 185 submapper 0 keeps the legacy compatibility rule: CHR is enabled when the low nibble is nonzero except for latch value `0x13`. NES 2.0 submappers 4 through 7 use bits 0 and 1 as an exact enable value from 0 through 3.
+
+Mappers 79 and 146 accept bank writes at `$4100-$5FFF` only when address bit A8 is high. Mapper 113 uses the same register decoding, with three PRG bank bits, four CHR bank bits, and vertical/horizontal mirroring selected by D7. These registers are write-only; reads retain open bus. All three boards keep ordinary RAM reads and writes at `$6000-$7FFF`. Their bank registers survive CPU soft reset.
+
+Mappers 94 and 180 retain a fixed CHR window and header-selected mirroring. Mapper 94 uses three bits to select the lower PRG bank and fixes the upper window to the last available bank. Mapper 180 uses all eight bank bits for its upper window and starts with bank zero in both CPU windows. Mappers 79, 94, 113, 144, 146, and 180 select their wiring by mapper number and ignore the NES 2.0 submapper field.
+
+Larger ROM images retain the board's implemented bank-selection bits. Bank numbers wrap across complete available pages; trailing partial pages do not add selectable banks. Small ROMs map their available pages, and uncovered addresses retain open bus. The RAM layout checks remain separate: these six variants reject simultaneous volatile and nonvolatile RAM declarations or CHR ROM combined with separate CHR RAM. Failed loads preserve the active cartridge.
+
+Color Dreams writes resolve ROM bus conflicts before selecting banks. Both mapper 11 and mapper 144 retain all four PRG selection bits. Mapper 144 then takes D0 from the byte in the previously mapped ROM bank, so a CPU write of zero can still select an odd PRG bank.
 
 ## What the cartridge header controls
 
@@ -172,11 +182,11 @@ The supported VS configurations use mappers 0, 1, 2, 75, 99, or 151 with NTSC ti
 
 The PPU choices include the 2C03 RGB palette, four 2C04 palettes, and the implemented 2C05 register/status variants. Cabinet handling includes DIP switches, coin and service inputs, controller routing, and the implemented protection-read sequences.
 
-NES 2.0 console selector 3 with extended subtype 1 also selects VS hardware. That encoding uses the existing 2C03 profile as a compatibility fallback because its subtype occupies the direct descriptor's PPU field. It retains the cabinet type and input metadata. This fallback does not add RP2C03G emulation; direct VS descriptors keep their existing PPU selection and validation.
+NES 2.0 console selector 3 with extended subtype 1 also selects VS hardware. That encoding uses the existing 2C03 profile as a compatibility fallback because its subtype occupies the direct descriptor's PPU field. It retains the cabinet type and input metadata. Direct VS descriptors with PPU code 1 (RP2C03G) or unknown codes 13 through 15 also use 2C03 behavior and print a diagnostic. Other defined PPU codes select their corresponding RGB profile.
 
 Dual mode maintains independent CPU, PPU, APU, internal RAM, input, and DMA state. The boards share cartridge RAM with ownership controlled by the hardware signal. Cross-CPU interrupts and synchronized stepping support communication between the two sides. Both screens are presented and both APUs feed mono output.
 
-RP2C03G and unimplemented combinations of console, mapper, memory, or PPU metadata are rejected. NES 2.0 VS Zapper metadata selects the serial gun report on the first controller port. The [VS tests](../src/tests/vs_accuracy.c) cover supported paths, including real CPU programs that communicate through shared RAM and produce separate video and audio.
+There is no distinct RP2C03G palette or hardware model. The 2C03 fallback allows those images to load; it does not establish their palette accuracy. Unsupported console, mapper, memory, cabinet, and controller combinations are still rejected. NES 2.0 VS Zapper metadata selects the serial gun report on the first controller port. The [VS tests](../src/tests/vs_accuracy.c) cover the fallback and supported RGB profiles, including real CPU programs that communicate through shared RAM and produce separate video and audio.
 
 ## Reading accuracy results
 

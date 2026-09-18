@@ -111,6 +111,10 @@ bool vs_decode_header(const iNESHeader *header, int mapper, size_t prg_bytes,
         config->dual = type == VS_TYPE_DUAL;
         switch (ppu) {
             case 0: case 6: case 7: config->ppu_model = VS_PPU_2C03; break;
+            case 1:
+                fprintf(stderr, "VS PPU code 1 is not modeled separately; using 2C03 behavior\n");
+                config->ppu_model = VS_PPU_2C03;
+                break;
             case 2: config->ppu_model = VS_PPU_2C04_0001; break;
             case 3: config->ppu_model = VS_PPU_2C04_0002; break;
             case 4: config->ppu_model = VS_PPU_2C04_0003; break;
@@ -121,8 +125,9 @@ bool vs_decode_header(const iNESHeader *header, int mapper, size_t prg_bytes,
             case 11: config->ppu_model = VS_PPU_2C05_04; break;
             case 12: config->ppu_model = VS_PPU_2C05_05; break;
             default:
-                set_reason(reason, reason_size, "unsupported VS PPU model");
-                return false;
+                fprintf(stderr, "Unknown VS PPU code %u; using 2C03 behavior\n", (unsigned)ppu);
+                config->ppu_model = VS_PPU_2C03;
+                break;
         }
         uint8_t input = header->zero[4] & 0x3F;
         if (input == 0) input = VS_INPUT_STANDARD;
