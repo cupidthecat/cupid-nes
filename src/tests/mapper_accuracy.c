@@ -8283,6 +8283,89 @@ static int test_jaleco_discrete_ram_cpu_paths(void) {
     return 0;
 }
 
+static int test_jaleco_intercepted_ram_reads_and_soft_reset(void) {
+    static const struct {
+        unsigned mapper;
+        size_t prg_bytes;
+        size_t chr_bytes;
+        uint8_t register_value;
+        uint8_t expected_chr_bank;
+        uint8_t expected_prg_bank;
+    } cases[] = {
+        {87,  0x08000, 0x08000, 0x01, 2, 0},
+        {101, 0x08000, 0x80000, 0x05, 5, 0},
+        {140, 0x20000, 0x20000, 0x23, 3, 2}
+    };
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+        for (unsigned nes2 = 0; nes2 < 2; ++nes2) {
+            iNESHeader h = header_for(cases[i].mapper, cases[i].prg_bytes, false);
+            h.flags6 |= 0x04; // Trainer seeds work RAM before the CPU starts.
+            h.chr_rom_chunks = (uint8_t)(cases[i].chr_bytes / 0x2000u);
+            if (nes2) {
+                h.flags7 |= 0x08;
+                h.flags10 = 7;
+            }
+
+            size_t image_size;
+            uint8_t *image = image_for(&h, cases[i].prg_bytes, cases[i].chr_bytes, &image_size);
+            CHECK(image != NULL);
+            const size_t trainer_offset = sizeof(h);
+            const size_t prg_offset = trainer_offset + 512;
+            const size_t chr_offset = prg_offset + cases[i].prg_bytes;
+            const uint8_t ram_value = (uint8_t)(0xA7u + nes2);
+            image[trainer_offset + 0x123] = ram_value;
+            for (size_t bank = 0; bank < cases[i].chr_bytes / 0x2000u; ++bank)
+                memset(image + chr_offset + bank * 0x2000u, (int)bank, 0x2000u);
+            if (cases[i].mapper == 140) {
+                for (size_t bank = 0; bank < cases[i].prg_bytes / 0x8000u; ++bank)
+                    memset(image + prg_offset + bank * 0x8000u, (int)(0x40u + bank), 0x8000u);
+            }
+            CHECK(load_rom_memory(image, image_size) == 0);
+            free(image);
+
+            nes_set_region(NES_REGION_NTSC);
+            ppu_power_on(&ppu);
+            apu_power_on(&apu);
+            CHECK(cpu_power_on(&cpu));
+
+            const uint8_t program[] = {
+                0xA9, cases[i].register_value,
+                0x8D, 0x23, 0x71,
+                0xAD, 0x23, 0x71
+            };
+            for (size_t j = 0; j < sizeof(program); ++j)
+                write_mem((uint16_t)(0x0200u + j), program[j]);
+            cpu.pc = 0x0200;
+            CHECK(cpu_step(&cpu) == 2);
+            CHECK(cpu_step(&cpu) == 4);
+            CHECK(cpu_step(&cpu) == 4 && cpu.a == ram_value);
+            CHECK(cart_ppu_read(0) == cases[i].expected_chr_bank);
+            if (cases[i].mapper == 140)
+                CHECK(cart_cpu_read(0x8000) == (uint8_t)(0x40u + cases[i].expected_prg_bank));
+
+            // A console soft reset leaves both the mapper latch and work RAM live.
+            cpu_soft_reset(&cpu);
+            CHECK(cart_ppu_read(0) == cases[i].expected_chr_bank);
+            if (cases[i].mapper == 140)
+                CHECK(cart_cpu_read(0x8000) == (uint8_t)(0x40u + cases[i].expected_prg_bank));
+            write_mem(0x0300, 0xAD);
+            write_mem(0x0301, 0x23);
+            write_mem(0x0302, 0x71);
+            cpu.pc = 0x0300;
+            CHECK(cpu_step(&cpu) == 4 && cpu.a == ram_value);
+
+            // The mapper's own reset clears its latch but still does not clear RAM.
+            cart->reset();
+            CHECK(cart_ppu_read(0) == 0);
+            if (cases[i].mapper == 140) CHECK(cart_cpu_read(0x8000) == 0x40);
+            cpu.pc = 0x0300;
+            CHECK(cpu_step(&cpu) == 4 && cpu.a == ram_value);
+        }
+    }
+    return 0;
+}
+
 static int test_jaleco_discrete_loader_validation(void) {
     const unsigned mappers[] = {72, 78, 87, 92, 101, 140};
     for (size_t i = 0; i < sizeof(mappers) / sizeof(mappers[0]); ++i) {
@@ -8594,6 +8677,7 @@ int test_mapper_accuracy(void) {
         test_jaleco78_banking_and_submapper_mirroring,
         test_jaleco87_101_140_banks_and_register_ranges,
         test_jaleco_discrete_ram_cpu_paths,
+        test_jaleco_intercepted_ram_reads_and_soft_reset,
         test_jaleco_discrete_loader_validation,
         test_cnrom185_submapper_latches_and_ppu_bus,
         test_cnrom185_cpu_bus_conflict_control,
