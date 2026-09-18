@@ -36,6 +36,27 @@ static bool chr8_is(unsigned bank) {
         && ppu_read(1) == (uint8_t)(bank >> 5);
 }
 
+static bool cpu_write_abs(uint16_t address, uint8_t value) {
+    write_mem(0x0200, 0xA9);
+    write_mem(0x0201, value);
+    write_mem(0x0202, 0x8D);
+    write_mem(0x0203, (uint8_t)address);
+    write_mem(0x0204, (uint8_t)(address >> 8));
+    cpu.pc = 0x0200;
+    return cpu_step(&cpu) == 2 && cpu_step(&cpu) == 4;
+}
+
+static bool cpu_nop(void) {
+    write_mem(0x0200, 0xEA);
+    cpu.pc = 0x0200;
+    return cpu_step(&cpu) == 2;
+}
+
+static void ppu_bus_address(uint16_t address, uint64_t total_cycle) {
+    ppu.total_cycles = total_cycle;
+    (void)ppu_read(address);
+}
+
 static int test_162_164(void) {
     BoardImage image;
     BOARD_CHECK(board_image_create(&image, 162, 0x200000, 0x2000, false));
@@ -66,8 +87,8 @@ static int test_176_fk23c(void) {
     BOARD_CHECK(prg8_is(0x8000, 0x40) && prg8_is(0xA000, 0x41));
     BOARD_CHECK(prg8_is(0xC000, 0x7E) && prg8_is(0xE000, 0x7F));
 
-    write_mem(0x8000, 6);
-    write_mem(0x8001, 5);
+    BOARD_CHECK(cpu_write_abs(0x8000, 6));
+    BOARD_CHECK(cpu_write_abs(0x8001, 5));
     BOARD_CHECK(prg8_is(0x8000, 0x45));
     write_mem(0xA000, 1);
     BOARD_CHECK(cart_get_mirroring() == MIRROR_HORIZONTAL);
@@ -91,22 +112,19 @@ static int test_176_fk23c(void) {
     write_mem(0x8001, 9);
     BOARD_CHECK(prg8_is(0xC000, 0x49));
 
-    write_mem(0xC000, 1);
-    write_mem(0xC001, 0);
-    write_mem(0xE001, 0);
-    cart_notify_ppu_address(0x0000, 100);
-    cart_notify_ppu_address(0x1000, 109);
-    cart_notify_ppu_address(0x0000, 200);
-    cart_notify_ppu_address(0x1000, 210);
+    BOARD_CHECK(cpu_write_abs(0xC000, 1));
+    BOARD_CHECK(cpu_write_abs(0xC001, 0));
+    BOARD_CHECK(cpu_write_abs(0xE001, 0));
+    ppu_bus_address(0x0000, 100);
+    ppu_bus_address(0x1000, 109);
+    ppu_bus_address(0x0000, 200);
+    ppu_bus_address(0x1000, 210);
     BOARD_CHECK(!cart_irq_pending());
-    cart_notify_ppu_address(0x0000, 300);
-    cart_notify_ppu_address(0x1000, 310);
+    ppu_bus_address(0x0000, 89335);
+    ppu_bus_address(0x1000, 89345);
     BOARD_CHECK(!cart_irq_pending());
-    cart_clock_cpu_cycle(false);
-    BOARD_CHECK(!cart_irq_pending());
-    cart_clock_cpu_cycle(false);
-    BOARD_CHECK(cart_irq_pending());
-    write_mem(0xE000, 0);
+    BOARD_CHECK(cpu_nop() && cart_irq_pending());
+    BOARD_CHECK(cpu_write_abs(0xE000, 0));
     BOARD_CHECK(!cart_irq_pending());
 
     board_image_free(&image);
@@ -146,8 +164,8 @@ static int test_252(void) {
     BoardImage image;
     BOARD_CHECK(board_image_create(&image, 252, 0x40000, 0x40000, false));
     BOARD_CHECK(board_image_load(&image) == 0);
-    write_mem(0x8000, 3);
-    write_mem(0xA000, 4);
+    BOARD_CHECK(cpu_write_abs(0x8000, 3));
+    BOARD_CHECK(cpu_write_abs(0xA000, 4));
     BOARD_CHECK(prg8_is(0x8000, 3) && prg8_is(0xA000, 4));
     write_mem(0xB000, 5);
     write_mem(0xB004, 2);
@@ -155,14 +173,11 @@ static int test_252(void) {
     ppu_write(0, 0xA5);
     BOARD_CHECK(ppu_read(0) == 0xA5);
 
-    write_mem(0xF000, 0x0E);
-    write_mem(0xF004, 0x0F);
-    write_mem(0xF008, 0x06);
-    cart_clock_cpu_cycle(false);
-    BOARD_CHECK(!cart_irq_pending());
-    cart_clock_cpu_cycle(false);
-    BOARD_CHECK(cart_irq_pending());
-    write_mem(0xF00C, 0);
+    BOARD_CHECK(cpu_write_abs(0xF000, 0x0E));
+    BOARD_CHECK(cpu_write_abs(0xF004, 0x0F));
+    BOARD_CHECK(cpu_write_abs(0xF008, 0x06));
+    BOARD_CHECK(cpu_nop() && cart_irq_pending());
+    BOARD_CHECK(cpu_write_abs(0xF00C, 0));
     BOARD_CHECK(!cart_irq_pending());
     board_image_free(&image);
     return 0;
@@ -185,14 +200,14 @@ static int test_253(void) {
     write_mem(0xB004, 8);
     BOARD_CHECK(chr1_is(0, 0x88));
 
-    write_mem(0xF000, 0x0E);
-    write_mem(0xF004, 0x0F);
-    write_mem(0xF008, 2);
-    for (unsigned i = 0; i < 114; ++i) cart_clock_cpu_cycle(false);
+    BOARD_CHECK(cpu_write_abs(0xF000, 0x0E));
+    BOARD_CHECK(cpu_write_abs(0xF004, 0x0F));
+    BOARD_CHECK(cpu_write_abs(0xF008, 2));
+    for (unsigned i = 0; i < 57; ++i) BOARD_CHECK(cpu_nop());
     BOARD_CHECK(!cart_irq_pending());
-    for (unsigned i = 0; i < 114; ++i) cart_clock_cpu_cycle(false);
+    for (unsigned i = 0; i < 57; ++i) BOARD_CHECK(cpu_nop());
     BOARD_CHECK(cart_irq_pending());
-    write_mem(0xF000, 0);
+    BOARD_CHECK(cpu_write_abs(0xF000, 0));
     BOARD_CHECK(!cart_irq_pending());
     board_image_free(&image);
     return 0;

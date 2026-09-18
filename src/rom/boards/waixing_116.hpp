@@ -14,6 +14,8 @@
 #define CUPID_BOARDS_WAIXING_116_HPP
 
 #include "runtime.hpp"
+#include "a12_watcher.hpp"
+#include "vrc_irq.hpp"
 #include <cstring>
 
 namespace cupid::boards {
@@ -117,8 +119,7 @@ class Fk23C final : public Board {
     uint8_t _cnromChrReg = 0;
     uint8_t _mmc3Registers[12]{};
     uint8_t _irqDelay = 0;
-    uint32_t _a12LastCycle = 0;
-    uint32_t _a12CyclesDown = 0;
+    A12Watcher _a12;
 
     uint16_t GetPrgPageSize() override { return 0x2000; }
     uint16_t GetChrPageSize() override { return 0x0400; }
@@ -128,25 +129,6 @@ class Fk23C final : public Board {
     uint32_t GetWorkRamPageSize() override { return 0x2000; }
     bool EnableCpuClockHook() override { return true; }
     bool EnableVramAddressHook() override { return true; }
-
-    bool A12Rise(uint16_t address) {
-        uint32_t cycle = static_cast<uint32_t>(PpuClock());
-        if (_a12CyclesDown) {
-            if (_a12LastCycle > cycle)
-                _a12CyclesDown += (89342u - _a12LastCycle) + cycle;
-            else
-                _a12CyclesDown += cycle - _a12LastCycle;
-        }
-        bool rise = false;
-        if (!(address & 0x1000)) {
-            if (!_a12CyclesDown) _a12CyclesDown = 1;
-        } else {
-            rise = _a12CyclesDown > 10;
-            _a12CyclesDown = 0;
-        }
-        _a12LastCycle = cycle;
-        return rise;
-    }
 
     void SelectChrPage(uint16_t slot, uint16_t page,
                        ChrMemoryType = ChrMemoryType::Default) override {
@@ -271,8 +253,7 @@ class Fk23C final : public Board {
         _irqReloadValue = _irqCounter = _irqDelay = 0;
         _irqReload = _irqEnabled = false;
         _mirroringReg = _cnromChrReg = 0;
-        _a12LastCycle = 0;
-        _a12CyclesDown = 0;
+        _a12 = {};
         const uint8_t initial[12] = {0, 2, 4, 5, 6, 7, 0, 1, 0xFE, 0xFF, 0xFF, 0xFF};
         std::memcpy(_mmc3Registers, initial, sizeof(initial));
         AddRegisterRange(0x5000, 0x5FFF, MemoryOperation::Write);
@@ -379,7 +360,7 @@ public:
     }
 
     void NotifyVramAddressChange(uint16_t address) override {
-        if (!A12Rise(address)) return;
+        if (!_a12.Rising(address, static_cast<uint32_t>(PpuClock() % 89342u))) return;
         if (_irqCounter == 0 || _irqReload) _irqCounter = _irqReloadValue;
         else --_irqCounter;
         if (_irqCounter == 0 && _irqEnabled) _irqDelay = 2;
@@ -451,46 +432,9 @@ class Waixing242 final : public Board {
     }
 };
 
-class VrcIrqUnit {
-    uint8_t _reload = 0;
-    uint8_t _counter = 0;
-    int16_t _prescaler = 0;
-    bool _enabled = false;
-    bool _enabledAfterAck = false;
-    bool _cycleMode = false;
-
-public:
-    bool ClockAndCheck() {
-        if (!_enabled) return false;
-        _prescaler -= 3;
-        if (!_cycleMode && _prescaler > 0) return false;
-        bool fire = _counter == 0xFF;
-        _counter = fire ? _reload : static_cast<uint8_t>(_counter + 1);
-        _prescaler += 341;
-        return fire;
-    }
-
-    void SetReloadNibble(uint8_t value, bool high) {
-        if (high) _reload = static_cast<uint8_t>((_reload & 0x0F) | ((value & 0x0F) << 4));
-        else _reload = static_cast<uint8_t>((_reload & 0xF0) | (value & 0x0F));
-    }
-
-    void Control(uint8_t value) {
-        _enabledAfterAck = (value & 1) != 0;
-        _enabled = (value & 2) != 0;
-        _cycleMode = (value & 4) != 0;
-        if (_enabled) {
-            _counter = _reload;
-            _prescaler = 341;
-        }
-    }
-
-    void Acknowledge() { _enabled = _enabledAfterAck; }
-};
-
 class Waixing252 final : public Board {
     uint8_t _chrRegs[8]{};
-    VrcIrqUnit _irq;
+    VrcIrq _irq;
 
     uint16_t GetPrgPageSize() override { return 0x2000; }
     uint16_t GetChrPageSize() override { return 0x0400; }
@@ -505,13 +449,13 @@ class Waixing252 final : public Board {
 
     void InitMapper() override {
         std::memset(_chrRegs, 0, sizeof(_chrRegs));
-        _irq = VrcIrqUnit{};
+        _irq = VrcIrq{};
         SelectPrgPage(2, static_cast<uint16_t>(-2));
         SelectPrgPage(3, static_cast<uint16_t>(-1));
     }
 
     void ProcessCpuClock() override {
-        if (_irq.ClockAndCheck()) SetIrq(true);
+        if (_irq.Clock()) SetIrq(true);
     }
 
     void WriteRegister(uint16_t address, uint8_t value) override {
@@ -530,7 +474,7 @@ class Waixing252 final : public Board {
             switch (address & 0xF00C) {
                 case 0xF000: _irq.SetReloadNibble(value, false); break;
                 case 0xF004: _irq.SetReloadNibble(value, true); break;
-                case 0xF008: _irq.Control(value); SetIrq(false); break;
+                case 0xF008: _irq.SetControl(value); SetIrq(false); break;
                 case 0xF00C: _irq.Acknowledge(); SetIrq(false); break;
             }
         }
