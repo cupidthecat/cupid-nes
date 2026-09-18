@@ -27,6 +27,7 @@
 #include "../rom/mapper.h"
 #include "../system/hardware.h"
 #include "../system/timing.h"
+#include "../video/ntsc_composite.h"
 #include "../../include/globals.h"
 #include <stdio.h>
 #include <string.h>
@@ -40,6 +41,9 @@ static uint16_t pattern_addresses[128];
 static uint64_t pattern_clocks[128];
 static unsigned pattern_reads;
 static uint8_t (*pattern_reader)(uint16_t);
+static uint16_t composite_fixture[SCREEN_WIDTH * SCREEN_HEIGHT];
+static uint32_t composite_phase0[NTSC_COMPOSITE_WIDTH * NTSC_COMPOSITE_HEIGHT];
+static uint32_t composite_phase1[NTSC_COMPOSITE_WIDTH * NTSC_COMPOSITE_HEIGHT];
 
 #define CHECK(name, condition) do { \
     checks++; \
@@ -79,6 +83,96 @@ static void reset_video_region(unsigned mapper, NesRegion region) {
 
 static void reset_video(unsigned mapper) {
     reset_video_region(mapper, NES_REGION_NTSC);
+}
+
+static uint64_t composite_hash(const uint32_t *pixels) {
+    uint64_t hash = UINT64_C(1469598103934665603);
+    for (size_t i = 0; i < (size_t)NTSC_COMPOSITE_WIDTH * NTSC_COMPOSITE_HEIGHT; ++i) {
+        uint32_t pixel = pixels[i];
+        for (unsigned byte = 0; byte < 4; ++byte) {
+            hash ^= (uint8_t)(pixel >> (byte * 8));
+            hash *= UINT64_C(1099511628211);
+        }
+    }
+    return hash;
+}
+
+static void test_ntsc_composite_video(void) {
+    CHECK("NTSC composite filter is available for ordinary NTSC output",
+          ntsc_composite_supported(NES_REGION_NTSC, false));
+    CHECK("PAL keeps the direct renderer when NTSC composite is requested",
+          !ntsc_composite_supported(NES_REGION_PAL, false));
+    CHECK("Dendy keeps the direct renderer when NTSC composite is requested",
+          !ntsc_composite_supported(NES_REGION_DENDY, false));
+    CHECK("VS RGB hardware keeps its native direct renderer",
+          !ntsc_composite_supported(NES_REGION_NTSC, true));
+
+    static const uint8_t colors[4] = {0x16, 0x27, 0x30, 0x0D};
+    for (unsigned y = 0; y < SCREEN_HEIGHT; ++y) {
+        for (unsigned x = 0; x < SCREEN_WIDTH; ++x) {
+            unsigned band = (x / 32u + y / 40u) & 7u;
+            uint16_t color = colors[(x / 64u + y / 60u) & 3u];
+            composite_fixture[y * SCREEN_WIDTH + x] = color | (uint16_t)(band << 6);
+        }
+    }
+    ntsc_composite_filter_frame(composite_fixture, 0, composite_phase0);
+    ntsc_composite_filter_frame(composite_fixture, 1, composite_phase1);
+    uint64_t phase0_hash = composite_hash(composite_phase0);
+    uint64_t phase1_hash = composite_hash(composite_phase1);
+    CHECK("phase-zero composite fixture has stable decoded output",
+          phase0_hash == UINT64_C(0x1294327F4F883767));
+    CHECK("phase-one composite fixture has stable decoded output",
+          phase1_hash == UINT64_C(0x13C66FEFCD8EA1EB));
+    CHECK("two-times composite output duplicates each decoded source row",
+          memcmp(composite_phase0, composite_phase0 + NTSC_COMPOSITE_WIDTH,
+                 NTSC_COMPOSITE_WIDTH * sizeof(uint32_t)) == 0);
+
+    // This frame covers all palette/emphasis values, starting with hue 12.
+    // Its hashes come from the independently compiled signal decoder.
+    for (unsigned y = 0; y < SCREEN_HEIGHT; ++y)
+        for (unsigned x = 0; x < SCREEN_WIDTH; ++x)
+            composite_fixture[y * SCREEN_WIDTH + x] = (uint16_t)((x * 29u + y * 67u + 12u) & 511u);
+    static const uint64_t signal_hashes[3] = {
+        UINT64_C(0xA645DCD5E139059F), UINT64_C(0xCA5E00539D7CD747),
+        UINT64_C(0x6CA5D1B39F66106F)
+    };
+    for (uint8_t phase = 0; phase < 3; ++phase) {
+        ntsc_composite_filter_frame(composite_fixture, phase, composite_phase0);
+        CHECK("all signal levels retain the decoder's initial carrier phase",
+              composite_hash(composite_phase0) == signal_hashes[phase]);
+    }
+
+    reset_video(0);
+    ppu.scanline = 0;
+    ppu.dot = 1;
+    ppu.v = 0x3F05;
+    ppu_write(0x3F05, 0x2A);
+    ppu.mask = 0x21;
+    ppu.rendering_enabled = false;
+    ppu.fetches_enabled = false;
+    ppu_step_dots(1);
+    CHECK("PPU captures raw palette index separately from composite metadata",
+          ppu.pixel_indices[0] == 0x2A && ppu.pixel_signal[0] == 0x60);
+    ppu.mask = 0xC0;
+    ppu_step_dots(1);
+    CHECK("PPU captures emphasis independently for the following pixel",
+          ppu.pixel_indices[1] == 0x2A && ppu.pixel_signal[1] == 0x1AA);
+
+    uint8_t saved_status = ppu.status;
+    uint8_t saved_mask = ppu.mask;
+    int saved_scanline = ppu.scanline;
+    int saved_dot = ppu.dot;
+    uint64_t saved_clocks = ppu.total_cycles;
+    uint32_t saved_direct_pixel = framebuffer[0];
+    uint16_t saved_brightness = ppu_pixel_brightness(0, 0);
+    ntsc_composite_filter_frame(ppu.pixel_signal, ppu.completed_video_phase, composite_phase0);
+    CHECK("composite presentation leaves PPU timing and registers unchanged",
+          ppu.status == saved_status && ppu.mask == saved_mask
+          && ppu.scanline == saved_scanline && ppu.dot == saved_dot
+          && ppu.total_cycles == saved_clocks);
+    CHECK("composite presentation leaves direct framebuffer and light-sensor pixels unchanged",
+          framebuffer[0] == saved_direct_pixel && ppu.pixel_indices[0] == 0x2A
+          && ppu_pixel_brightness(0, 0) == saved_brightness);
 }
 
 typedef struct {
@@ -1456,6 +1550,8 @@ int test_ppu_accuracy(void) {
     CHECK("even rendered frame has not ended after 89341 clocks", !ppu.frame_complete);
     ppu_step_dots(1);
     CHECK("even rendered frame lasts 89342 clocks", ppu.frame_complete && ppu.scanline == 0 && ppu.dot == 0);
+    CHECK("completed even frame retains its starting NTSC carrier phase",
+          ppu.completed_video_phase == 0 && ppu.frame_video_phase == 2);
     start_frame();
     CHECK("host frame start does not toggle hardware parity", ppu.odd_frame);
     ppu_step_dots(89340);
@@ -1463,6 +1559,8 @@ int test_ppu_accuracy(void) {
     ppu_step_dots(1);
     CHECK("odd rendered frame skips pre-render clock 340", ppu.frame_complete && ppu.scanline == 0 && ppu.dot == 0);
     CHECK("PPU clock counter remains monotonic across frame skip", ppu.total_cycles == 89342u + 89341u);
+    CHECK("odd-frame skipped clock advances the next carrier phase from executed clocks",
+          ppu.completed_video_phase == 2 && ppu.frame_video_phase == 0);
     reset_video(0);
     ppu.scanline = 0;
     ppu.odd_frame = true;
@@ -1536,6 +1634,7 @@ int test_ppu_accuracy(void) {
     test_power_on_ram_profiles();
     test_sprite_shifters();
     test_late_register_reads();
+    test_ntsc_composite_video();
     printf("PPU: %d checks, %d failures\n", checks, failures);
     return failures;
 }

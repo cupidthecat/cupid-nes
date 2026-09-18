@@ -57,7 +57,7 @@ $coreSources = @('src/system/timing.c', 'src/system/hardware.c', 'src/system/vs_
                  'src/rom/vrc7_audio.c', 'src/rom/emu2413.c',
                  'src/rom/eeprom.c', 'src/rom/namco163.c', 'src/rom/sunsoft5b.c',
                  'src/joypad/joypad.c', 'src/joypad/family_basic.c', 'src/joypad/special_peripherals.c',
-                 'src/apu/apu.c', 'src/third_party/blip_buf.c', 'src/ui/palette_tool.c')
+                 'src/apu/apu.c', 'src/third_party/blip_buf.c', 'src/video/ntsc_composite.c', 'src/ui/palette_tool.c')
 $cppSources = @('src/apu/epsm.cpp', 'src/third_party/ymfm/ymfm_opn.cpp',
                 'src/third_party/ymfm/ymfm_ssg.cpp', 'src/third_party/ymfm/ymfm_adpcm.cpp',
                 'src/rom/boards/runtime.cpp', 'src/rom/boards/factory.cpp')

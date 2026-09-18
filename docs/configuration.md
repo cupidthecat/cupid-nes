@@ -27,6 +27,7 @@ On Windows, replace `./cupid-nes` with `.\build\windows\cupid-nes.exe`. Supply o
 | `--ppu-startup-restriction` | No value | Off | Enables the protected PPU register-write interval after power-on and soft reset |
 | `--ppu-oam-decay` | No value | Off | Enables OAM row refresh and decay tracking |
 | `--ppu-reset-suppression` | No value | Off | Preserves PPU registers, scrolling, and rendering state during a CPU soft reset |
+| `--video-filter` | `direct`, `ntsc-composite` | `direct` | Selects direct RGB output or NTSC composite reconstruction for ordinary NTSC hardware |
 | `--mmc3-revision REVISION` | `standard`, `a` | `standard` | Selects the MMC3 IRQ counter revision for compatible MMC3-family cartridges |
 | `--cart-dip VALUE` | Integer from 0 through 255 | `0` | Sets cartridge-board DIP inputs, including mapper 105 competition timing |
 
@@ -39,6 +40,8 @@ The `default` RAM profile clears CPU and nametable RAM and fills primary and sec
 `--power-on-seed` sets a separate random source from `--startup-seed`; it may be supplied once. Repeating the same seed, image, and options reproduces the startup state. RAM initialization occurs on hard power-on or cartridge insertion, depending on the memory's owner. Soft reset preserves RAM. `--random-vblank` can be used with any RAM profile and remains off unless supplied.
 
 `--ppu-reset-suppression` leaves the PPU running across the R-key soft reset. CPU, APU, cartridge reset signals, and VS controls still follow their normal reset paths. The PPU retains its registers, scroll latches, raster position, and rendering state; its standalone clock remainder and OAM decay timestamps are cleared. Both screens follow this policy in a dual VS system. Hard power-on still initializes the PPU.
+
+`--video-filter ntsc-composite` reconstructs a 512 by 480 image from the PPU's per-pixel palette, grayscale, emphasis, and frame-phase data. Each decoded line is repeated once vertically. The filter runs after the emulated frame completes, so CPU/PPU timing and the light-gun brightness inputs stay unchanged. PAL, Dendy, and VS hardware retain direct output and report that fallback at startup. The composite path uses the PPU signal rather than an edited RGB palette.
 
 `--cpu-test-mode` enables the read-only channel-output diagnostics at `$4018-$401A`. It does not add writable CPU test registers. The selection, CPU revision, PPU revision, and optional PPU profiles stay selected across the R-key soft reset.
 

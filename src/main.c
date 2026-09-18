@@ -45,12 +45,14 @@
 #include "system/timing.h"
 #include "system/hardware.h"
 #include "system/vs_system.h"
+#include "video/ntsc_composite.h"
 
 #define AUDIO_SAMPLE_RATE 44100
 #define AUDIO_BUFFER_SAMPLES 1024
 
 // SDL presents the framebuffer that the PPU fills.
 uint32_t framebuffer[SCREEN_WIDTH * SCREEN_HEIGHT];
+static uint32_t composite_framebuffer[NTSC_COMPOSITE_WIDTH * NTSC_COMPOSITE_HEIGHT];
 
 Joypad pad1 = {0}, pad2 = {0};
 
@@ -356,6 +358,7 @@ int main(int argc, char *argv[]) {
     bool power_on_seed_set = false;
     uint32_t power_on_seed = 0;
     const char *epsm_adpcm_path = NULL;
+    bool ntsc_composite_requested = false;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--console") == 0) {
             if (++i == argc || !nes_set_console_model_name(argv[i])) {
@@ -453,6 +456,19 @@ int main(int argc, char *argv[]) {
             ppu_set_oam_decay(true);
         } else if (strcmp(argv[i], "--ppu-reset-suppression") == 0) {
             ppu_set_reset_suppression(true);
+        } else if (strcmp(argv[i], "--video-filter") == 0) {
+            if (++i == argc) {
+                fprintf(stderr, "Video filter must be direct or ntsc-composite\n");
+                return 1;
+            }
+            if (strcmp(argv[i], "direct") == 0) {
+                ntsc_composite_requested = false;
+            } else if (strcmp(argv[i], "ntsc-composite") == 0) {
+                ntsc_composite_requested = true;
+            } else {
+                fprintf(stderr, "Video filter must be direct or ntsc-composite\n");
+                return 1;
+            }
         } else if (strcmp(argv[i], "--mmc3-revision") == 0) {
             if (++i == argc || !cart_set_mmc3_revision_name(argv[i])) {
                 fprintf(stderr, "MMC3 revision must be standard or a\n");
@@ -573,6 +589,7 @@ int main(int argc, char *argv[]) {
                "[--ram-power-on STATE] [--power-on-seed SEED] [--random-vblank] "
                "[--ppu-revision REVISION] [--ppu-oam-row-corruption] "
                "[--ppu-startup-restriction] [--ppu-oam-decay] [--ppu-reset-suppression] "
+               "[--video-filter direct|ntsc-composite] "
                "[--mmc3-revision REVISION] [--cart-dip VALUE] "
                "[--adapter TYPE] [--port1 DEVICE] [--port2 DEVICE] "
                "[--expansion DEVICE] [--barcode DIGITS] [--barcode-battler DIGITS] "
@@ -630,6 +647,12 @@ int main(int argc, char *argv[]) {
         if (!epsm_has_adpcm_rom())
             fprintf(stderr, "EPSM percussion uses zero-filled data without --epsm-adpcm FILE\n");
     }
+    bool ntsc_composite_active = ntsc_composite_requested
+        && ntsc_composite_supported(nes_timing()->region, vs_enabled());
+    if (ntsc_composite_requested && !ntsc_composite_active)
+        printf("Video filter: direct (NTSC composite is unavailable for this hardware)\n");
+    else
+        printf("Video filter: %s\n", ntsc_composite_active ? "ntsc-composite" : "direct");
     if (startup_phase_set && !cpu_set_startup_alignment(startup_cpu_offset, startup_ppu_phase)) {
         fprintf(stderr, "Startup phase must be CPU 0..%u and PPU 0..%u for this image\n",
                 (unsigned)nes_timing()->cpu_divider - 1, (unsigned)nes_timing()->ppu_divider - 1);
@@ -755,9 +778,12 @@ int main(int argc, char *argv[]) {
         SDL_PauseAudioDevice(audio_dev, 0);
     }
 
-    int video_width = (int)vs_video_width();
+    int video_width = ntsc_composite_active ? NTSC_COMPOSITE_WIDTH : (int)vs_video_width();
+    int video_height = ntsc_composite_active ? NTSC_COMPOSITE_HEIGHT : SCREEN_HEIGHT;
+    int window_width = (int)vs_video_width() * 2;
+    int window_height = SCREEN_HEIGHT * 2;
     SDL_Window *window = SDL_CreateWindow("Cupid NES Emulator",
-        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, video_width * 2, SCREEN_HEIGHT * 2, SDL_WINDOW_SHOWN);
+        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, window_width, window_height, SDL_WINDOW_SHOWN);
     if(!window) {
         fprintf(stderr, "SDL_CreateWindow Error: %s\n", SDL_GetError());
         return 1;
@@ -768,7 +794,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     SDL_Texture *texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
-        SDL_TEXTUREACCESS_STREAMING, video_width, SCREEN_HEIGHT);
+        SDL_TEXTUREACCESS_STREAMING, video_width, video_height);
     if(!texture) {
         fprintf(stderr, "SDL_CreateTexture Error: %s\n", SDL_GetError());
         return 1;
@@ -954,8 +980,15 @@ int main(int argc, char *argv[]) {
             vs_cpu_step();
         }
 
-        // Present the frame, then draw the palette UI on top.
-        SDL_UpdateTexture(texture, NULL, vs_video_framebuffer(), video_width * sizeof(uint32_t));
+        // Presentation filters consume captured PPU signal data after emulation has
+        // finished the frame, so they cannot change beam timing or light-sensor input.
+        const uint32_t *presented_frame = vs_video_framebuffer();
+        if (ntsc_composite_active) {
+            ntsc_composite_filter_frame(ppu.pixel_signal, ppu.completed_video_phase,
+                                        composite_framebuffer);
+            presented_frame = composite_framebuffer;
+        }
+        SDL_UpdateTexture(texture, NULL, presented_frame, video_width * sizeof(uint32_t));
         SDL_RenderClear(renderer);
         SDL_RenderCopy(renderer, texture, NULL, NULL);
         int ww = 0, hh = 0; SDL_GetRendererOutputSize(renderer, &ww, &hh);

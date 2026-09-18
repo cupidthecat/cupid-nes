@@ -603,6 +603,7 @@ void start_frame(void) {
 void ppu_power_on(PPU *state) {
     memset(state, 0, sizeof(*state));
     memset(state->pixel_indices, 0x0F, sizeof(state->pixel_indices));
+    for (unsigned pixel = 0; pixel < 256u * 240u; ++pixel) state->pixel_signal[pixel] = 0x0F;
     memset(active_ppu_ob_expire, 0, sizeof(main_ppu_ob_expire));
     nes_initialize_power_on_ram(state->oam, sizeof(state->oam), 0xFF);
     nes_initialize_power_on_ram(state->secondary_oam, sizeof(state->secondary_oam), 0xFF);
@@ -647,6 +648,7 @@ void ppu_soft_reset(PPU *state) {
     uint64_t clocks = state->total_cycles;
     memset(state, 0, sizeof(*state));
     memset(state->pixel_indices, 0x0F, sizeof(state->pixel_indices));
+    for (unsigned pixel = 0; pixel < 256u * 240u; ++pixel) state->pixel_signal[pixel] = 0x0F;
     memcpy(state->oam, oam, sizeof(oam));
     memcpy(state->secondary_oam, secondary_oam, sizeof(secondary_oam));
     state->v = v;
@@ -910,6 +912,11 @@ static void ppu_render_dot(int x, int y) {
     else if (background) color = active_ppu_palette[background_palette * 4 + background];
     active_bg_opaque[y * 256 + x] = background != 0;
     ppu.pixel_indices[y * 256 + x] = color & 0x3F;
+    uint16_t signal = color & ((ppu.mask & 1u) ? 0x30u : 0x3Fu);
+    if (ppu.mask & 0x20u) signal |= 0x40u;
+    if (ppu.mask & 0x40u) signal |= 0x80u;
+    if (ppu.mask & 0x80u) signal |= 0x100u;
+    ppu.pixel_signal[y * 256 + x] = signal;
     active_framebuffer[y * 256 + x] = get_color(color);
 }
 
@@ -1061,6 +1068,8 @@ void ppu_step_dots(int ppu_cycles) {
             ppu.dot = 0;
             if (++ppu.scanline == (int)nes_timing()->scanlines) {
                 ppu.scanline = 0;
+                ppu.completed_video_phase = ppu.frame_video_phase;
+                ppu.frame_video_phase = (uint8_t)(ppu.total_cycles % 3u);
                 ppu.odd_frame = !ppu.odd_frame;
                 ppu.frame_complete = true;
                 ppu.frame_count++;
