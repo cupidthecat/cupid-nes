@@ -307,6 +307,125 @@ static int test_mmc3_irq_edges(void) {
     return 0;
 }
 
+static int test_mmc3_revision_a_irq(void) {
+    iNESHeader h = header_for(4, 0x20000, false);
+    size_t image_size = 0;
+    uint8_t *image = image_for(&h, 0x20000, 0x2000, &image_size);
+    CHECK(image != NULL);
+
+    CHECK(cart_set_mmc3_revision_name("standard"));
+    CHECK(load_rom_memory(image, image_size) == 0);
+    cart_cpu_write(0xC000, 0);
+    cart_cpu_write(0xC001, 0);
+    cart_cpu_write(0xE001, 0);
+    a12_pulse(0);
+    CHECK(cart_irq_pending());
+    cart_cpu_write(0xE000, 0);
+    cart_cpu_write(0xE001, 0);
+    a12_pulse(18);
+    CHECK(cart_irq_pending());
+
+    CHECK(cart_set_mmc3_revision_name("a"));
+    CHECK(load_rom_memory(image, image_size) == 0);
+    free(image);
+    cart_cpu_write(0xC000, 0);
+    cart_cpu_write(0xC001, 0);
+    cart_cpu_write(0xE001, 0);
+    a12_pulse(0);
+    CHECK(cart_irq_pending());
+    cart_cpu_write(0xE000, 0);
+    cart_cpu_write(0xE001, 0);
+    a12_pulse(18);
+    CHECK(!cart_irq_pending());
+
+    cart_cpu_write(0xC000, 1);
+    cart_cpu_write(0xC001, 0);
+    a12_pulse(36);
+    CHECK(!cart_irq_pending());
+    a12_pulse(54);
+    CHECK(cart_irq_pending());
+    cart_cpu_write(0xE000, 0);
+    a12_pulse(72);
+    CHECK(!cart_irq_pending());
+    cart_cpu_write(0xE001, 0);
+    a12_pulse(90);
+    CHECK(cart_irq_pending());
+    cart_cpu_write(0xE000, 0);
+    cart_cpu_write(0xE001, 0);
+    a12_pulse(108);
+    CHECK(!cart_irq_pending());
+
+    CHECK(!cart_set_mmc3_revision_name("unknown"));
+    CHECK(strcmp(cart_mmc3_revision_name(), "a") == 0);
+
+    h.flags7 |= 0x08;
+    h.prg_ram_size = 0x10;
+    h.flags10 = 4;
+    CHECK(fixture_with_header(&h, 0x20000, 0x2000) == 4);
+    cart_cpu_write(0xC000, 0);
+    cart_cpu_write(0xC001, 0);
+    cart_cpu_write(0xE001, 0);
+    a12_pulse(126);
+    CHECK(cart_irq_pending());
+    cart_cpu_write(0xE000, 0);
+    cart_cpu_write(0xE001, 0);
+    a12_pulse(144);
+    CHECK(cart_irq_pending()); // MMC6 retains repeated zero-counter IRQs under profile A.
+
+    h.prg_ram_size = 0x30;
+    h.flags10 = 0;
+    CHECK(fixture_with_header(&h, 0x20000, 0x2000) == 4);
+    cart_cpu_write(0xC000, 0);
+    cart_cpu_write(0xC001, 0);
+    cart_cpu_write(0xE001, 0);
+    cart_notify_ppu_address(0x1000, 0);
+    cart_notify_ppu_address(0x2000, 1);
+    CHECK(cart_irq_pending());
+    cart_cpu_write(0xE000, 0);
+    cart_cpu_write(0xE001, 0);
+    for (uint64_t edge = 1; edge <= 8; ++edge) {
+        cart_notify_ppu_address(0x1000, edge * 2);
+        cart_notify_ppu_address(0x2000, edge * 2 + 1);
+        CHECK(cart_irq_pending() == (edge == 8));
+    }
+    CHECK(cart_set_mmc3_revision_name("standard"));
+    return 0;
+}
+
+static int test_mmc3_revision_a_cpu_irq(void) {
+    CHECK(cart_set_mmc3_revision_name("a"));
+    CHECK(fixture(4, 0x20000, 0x2000, false) == 4);
+    fixture_prg[0x1FFFC] = 0;
+    fixture_prg[0x1FFFD] = 2;
+    fixture_prg[0x1FFFE] = 0;
+    fixture_prg[0x1FFFF] = 3;
+    nes_set_region(NES_REGION_NTSC);
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    CHECK(cpu_power_on(&cpu));
+    cart->reset();
+    for (unsigned i = 0; i < 16; ++i) write_mem((uint16_t)(0x200 + i), 0xEA);
+    cpu.status &= (uint8_t)~INTERRUPT_FLAG;
+    cart_cpu_write(0xC000, 0);
+    cart_cpu_write(0xC001, 0);
+    cart_cpu_write(0xE001, 0);
+    uint64_t edge = ppu.total_cycles;
+    cart_notify_ppu_address(0x2000, edge);
+    cart_notify_ppu_address(0x1000, edge + 6);
+    CHECK(!cart_irq_pending());
+    CHECK(cpu_step(&cpu) == 2 && cpu.pc == 0x201);
+    edge = ppu.total_cycles;
+    cart_notify_ppu_address(0x2000, edge);
+    cart_notify_ppu_address(0x1000, edge + 9);
+    CHECK(cart_irq_pending());
+    CHECK(cpu_step(&cpu) == 9 && cpu.pc == 0x300);
+    CHECK(read_mem(0x1FC) == 0x02); // IRQ follows the NOP's final polling cycle.
+    cart_cpu_write(0xE000, 0);
+    CHECK(!cart_irq_pending());
+    CHECK(cart_set_mmc3_revision_name("standard"));
+    return 0;
+}
+
 static int test_mmc3_render_trace(void) {
     CHECK(fixture(4, 0x20000, 0x2000, false) == 4);
     cart_cpu_write(0xC000, 1);
@@ -5752,7 +5871,8 @@ int test_mapper_accuracy(void) {
         test_mmc1a_ram_revision, test_mmc1a_cpu_serial_writes, test_mmc1a_ram_layouts_and_loader,
         test_mmc1_outer_and_fixed_banks, test_mmc2_banks_and_latches,
         test_mmc4_latches_and_chr_ram, test_mmc3_banks_and_protection,
-        test_mmc3_irq_edges, test_mmc3_render_trace, test_tqrom_mixed_chr_memory,
+        test_mmc3_irq_edges, test_mmc3_revision_a_irq, test_mmc3_revision_a_cpu_irq,
+        test_mmc3_render_trace, test_tqrom_mixed_chr_memory,
         test_mcacc_irq_divider, test_mcacc_irq_reload_and_enable,
         test_mcacc_banks_ram_and_loader, test_mcacc_cpu_ppu_irq_path,
         test_taito_banks_aliases_and_mirroring, test_taito48_irq, test_taito_loader_transaction,

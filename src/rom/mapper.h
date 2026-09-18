@@ -71,6 +71,11 @@ float   cart_expansion_audio(void);
 // Scan an EAN-8 or EAN-13 code through the connected Datach reader.
 bool    cart_set_barcode(const char *digits);
 
+// Select the MMC3 IRQ counter revision used by compatible MMC3-family boards.
+// MMC6 and MC-ACC keep their board-specific IRQ behavior.
+bool        cart_set_mmc3_revision_name(const char *name);
+const char *cart_mmc3_revision_name(void);
+
 // Mapper-aware nametable access ($2000-$2FFF decoded by PPU)
 uint8_t cart_nt_read (uint16_t addr, uint8_t *nt_ram);
 void    cart_nt_write(uint16_t addr, uint8_t v, uint8_t *nt_ram);

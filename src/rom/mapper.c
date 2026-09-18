@@ -80,6 +80,7 @@ Mapper *cart = NULL;
 static bool mapper_irq_line = false;
 static uint8_t cart_cpu_bus_input = 0xFF;
 static CartPpuFetchSource cart_ppu_fetch_source = CART_PPU_FETCH_CPU;
+static bool mmc3_revision_a_profile = false;
 static void mmc3_irq_clock(void);
 static size_t namco_chr_bank(uint8_t bank);
 static float vrc7_expansion_output(void);
@@ -549,6 +550,21 @@ void mapper_shutdown(void) {
 static inline Mirroring base_mirr(void) { return C.mirr_base; }
 Mirroring cart_get_mirroring(void) { return cart && cart->get_mirroring ? cart->get_mirroring() : base_mirr(); }
 void cart_set_mirroring(Mirroring m) { C.mirr_base = m; }
+bool cart_set_mmc3_revision_name(const char *name) {
+    if (!name) return false;
+    if (strcmp(name, "standard") == 0) {
+        mmc3_revision_a_profile = false;
+        return true;
+    }
+    if (strcmp(name, "a") == 0) {
+        mmc3_revision_a_profile = true;
+        return true;
+    }
+    return false;
+}
+const char *cart_mmc3_revision_name(void) {
+    return mmc3_revision_a_profile ? "a" : "standard";
+}
 uint8_t cart_cpu_read(uint16_t a) {
     if (cart == &mapper_fds) return fds_cpu_read_bus(a, 0xFF);
     return cart ? cart->cpu_read(a) : 0xFF;
@@ -816,6 +832,7 @@ static struct {
     uint64_t a12_low_cycle;
     bool mcacc_a12_high;
     uint8_t mcacc_divider;
+    bool revision_a;
 } mmc3;
 static uint8_t txsrom_nt[4];
 
@@ -914,17 +931,21 @@ void cart_notify_ppu_address(uint16_t addr, uint64_t ppu_cycle) {
 }
 
 static void mmc3_irq_clock(void) {
-    if (mmc3.irq_counter == 0 || mmc3.irq_reload) {
+    uint8_t previous_counter = mmc3.irq_counter;
+    bool explicit_reload = mmc3.irq_reload;
+    if (previous_counter == 0 || explicit_reload) {
         mmc3.irq_counter = mmc3.irq_latch;
-        mmc3.irq_reload = false;
     } else {
         mmc3.irq_counter--;
     }
 
-    if (mmc3.irq_counter == 0 && mmc3.irq_enabled) {
+    bool qualified = mmc3.irq_counter == 0;
+    if (mmc3.revision_a) qualified = qualified && (previous_counter != 0 || explicit_reload);
+    if (qualified && mmc3.irq_enabled) {
         mapper_irq_line = true;
-        MMC3_LOG("irq assert latch=%02X reload=%d", mmc3.irq_latch, mmc3.irq_reload ? 1 : 0);
+        MMC3_LOG("irq assert latch=%02X reload=%d", mmc3.irq_latch, explicit_reload ? 1 : 0);
     }
+    mmc3.irq_reload = false;
 }
 
 static uint8_t mmc3_cpu_read(uint16_t a) {
@@ -1108,6 +1129,8 @@ static void mmc3_reset(void) {
     const uint8_t initial_banks[8] = {0, 2, 4, 5, 6, 7, 0, 1};
     memcpy(mmc3.banks, initial_banks, sizeof(initial_banks));
     mmc3.mirr = C.mirr_base;
+    mmc3.revision_a = mmc3_revision_a_profile
+                   && !(C.mapper_no == 4 && (C.submapper == 1 || C.submapper == 3));
     if (C.submapper == 3 && C.mirr_base != MIRROR_FOUR) mmc3.mirr = MIRROR_VERTICAL;
     mapper_irq_line = false;
 }

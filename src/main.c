@@ -277,6 +277,11 @@ int main(int argc, char *argv[]) {
             ppu_set_startup_write_restriction(true);
         } else if (strcmp(argv[i], "--ppu-oam-decay") == 0) {
             ppu_set_oam_decay(true);
+        } else if (strcmp(argv[i], "--mmc3-revision") == 0) {
+            if (++i == argc || !cart_set_mmc3_revision_name(argv[i])) {
+                fprintf(stderr, "MMC3 revision must be standard or a\n");
+                return 1;
+            }
         } else if (strcmp(argv[i], "--adapter") == 0) {
             if (++i == argc || !joypad_set_adapter_name(argv[i])) {
                 fprintf(stderr, "Adapter must be none, four-score, famicom-2, or famicom-4\n");
@@ -368,6 +373,7 @@ int main(int argc, char *argv[]) {
                "[--startup-phase CPU:PPU | --startup-seed SEED] "
                "[--ppu-revision REVISION] [--ppu-oam-row-corruption] "
                "[--ppu-startup-restriction] [--ppu-oam-decay] "
+               "[--mmc3-revision REVISION] "
                "[--adapter TYPE] [--port1 DEVICE] [--port2 DEVICE] "
                "[--expansion DEVICE] [--barcode DIGITS] "
                "[--zapper-radius PIXELS] [--vs-dip VALUE] [--tape-play FILE | --tape-record FILE] "
@@ -398,6 +404,7 @@ int main(int argc, char *argv[]) {
     printf("PPU startup write restriction: %s\n",
            ppu_startup_write_restriction_enabled() ? "enabled" : "compatibility");
     printf("PPU OAM decay: %s\n", ppu_oam_decay_enabled() ? "enabled" : "compatibility");
+    printf("MMC3 revision: %s\n", cart_mmc3_revision_name());
     printf("Input adapter: %s\n", joypad_adapter_name());
     printf("Loading ROM: %s\n", rom_path);
     int load_result = fds_bios_path

@@ -36,7 +36,7 @@ PRG is the cartridge memory read by the CPU; CHR holds graphics patterns read by
 | 1 | MMC1 / SxROM | Serial banking, consecutive-write filtering, mirroring, outer PRG selection, and supported SOROM/SXROM RAM layouts |
 | 2 | UxROM | Switchable 16 KiB PRG bank and fixed upper bank |
 | 3 | CNROM | CHR bank selection |
-| 4 | MMC3 / MMC6 | PRG/CHR banking, filtered PPU A12 IRQ clocks, and RAM protection; submapper 1 selects MMC6 |
+| 4 | MMC3 / MMC6 | PRG/CHR banking, filtered PPU A12 IRQ clocks, selectable MMC3 revision-A IRQ qualification, and RAM protection; submapper 1 selects MMC6 |
 | 4, submapper 3 | MC-ACC | Falling-edge A12 filtering and IRQ timing |
 | 5 | MMC5, partial | PRG/CHR banking, banked RAM, ExRAM/fill nametables, extended attributes, vertical split, multiplication, PPU-read-driven scanline IRQs, and pulse/PCM audio |
 | 7 | AxROM | 32 KiB PRG banking and single-screen mirroring |
