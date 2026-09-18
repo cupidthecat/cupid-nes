@@ -96,6 +96,7 @@ PRG is the cartridge memory read by the CPU; CHR holds graphics patterns read by
 | 137, 138, 139, 141 | Sachen 8259 | Four CHR wiring variants, normal and simple bank modes, PRG selection, and nametable routing |
 | 150 | Sachen 74LS374 | PRG/CHR registers, nametable routing, register readback, and DIP-controlled D2 wiring |
 | 243 | Sachen 74LS374 variant | Separate CHR address wiring across registers 2, 4, and 6; register readback and nametable routing |
+| 35, 91 | JY Company | Separate PRG/CHR registers, partially decoded register aliases, and board-specific A12 interrupt counters |
 | 513 | Sachen 9602 | MMC3 bank and IRQ registers, outer PRG bits written through CHR registers, fixed first-block banks, and battery-backed CHR RAM |
 | 56, 142, 171, 175, 302, 303, 305, 306, 307, 312, 346 | Kaiser | Board-specific address decoding, small PRG windows, delayed bank latches, RAM/ROM selection, mirroring, and CPU-clocked one-shot IRQs |
 | 105 | NES-EVENT | MMC1 serial control, competition PRG modes, fixed CHR RAM, cartridge RAM, and DIP-selected timer IRQ |
@@ -157,6 +158,10 @@ Kaiser 302 and 305 expose four independent 2 KiB ROM windows at `$6000-$7FFF`. M
 Mapper 243 shares the indexed register interface and nametable controls of mapper 150, but its CHR address uses register 2 bit zero, register 4 bit zero, and register 6 bits zero and one. Cartridge DIP settings do not affect mapper 243. Its registers survive CPU soft reset.
 
 Sachen 9602, mapper 513, uses MMC3 banking and qualified A12 IRQs. Writing a CHR register also selects an outer PRG block with the data's upper two bits; CHR selection uses the low five bits. The two fixed PRG banks remain banks 62 and 63 of the first ROM block even when the switchable banks move to another block. PRG mode changes move fixed bank 62 between `$8000` and `$C000`. The CHR RAM chip is battery-backed in full, including when a NES 2.0 header declares both volatile and nonvolatile CHR memory. Its `.chr.sav` contains the full allocated chip, and its bank registers survive CPU soft reset.
+
+JY mapper 35 starts with only the final 8 KiB PRG bank mapped. Its four PRG and eight CHR registers decode the low address bits within `$8000-$8FFF` and `$9000-$9FFF`. It counts A12 rises after a sufficiently long low interval measured with the PPU frame counter. Its 8-bit IRQ counter decrements, including wrapping from zero, and disables itself when it reaches zero. `$C002` acknowledges and disables the IRQ, `$C003` enables it, and `$C005` writes the counter. `$D001` controls mirroring.
+
+JY mapper 91 starts with the last two PRG banks mapped and preserves header mirroring. Writes at `$6000-$6FFF` select four 2 KiB CHR banks; `$7000` and `$7001` select the two lower PRG banks using four data bits. `$7003` arms an MMC3 counter with reload value seven, so an IRQ occurs on the eighth qualified A12 rise. `$7002` acknowledges and disables it. Those low cartridge writes control registers while reads still access declared RAM; they do not overwrite that RAM. Both JY boards preserve bank and IRQ registers on CPU soft reset, and their CHR ROM starts unmapped until a bank write.
 
 The mapper 72 and 92 cartridge banking and latch behavior is implemented. Optional speech hardware on those boards is not currently emulated.
 

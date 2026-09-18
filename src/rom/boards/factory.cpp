@@ -22,6 +22,7 @@
 #include "taito.hpp"
 #include "sachen.hpp"
 #include "kaiser.hpp"
+#include "jy_small.hpp"
 
 namespace cupid::boards {
 
@@ -79,6 +80,8 @@ std::unique_ptr<Board> CreateBoard(unsigned mapper) {
         case 307: return std::make_unique<Kaiser7037>();
         case 312: return std::make_unique<Kaiser7013B>();
         case 346: return std::make_unique<Kaiser7012>();
+        case 35: return std::make_unique<Jy35>();
+        case 91: return std::make_unique<Jy91>();
         default: return nullptr;
     }
 }
@@ -93,6 +96,7 @@ bool board_handles_mapper(unsigned mapper) {
         case 133: case 136: case 137: case 138: case 139: case 141:
         case 143: case 145: case 147: case 148: case 149: case 150: return true;
         case 243: case 513: return true;
+        case 35: case 91: return true;
         case 56: case 142: case 171: case 175: case 302: case 303:
         case 305: case 306: case 307: case 312: case 346: return true;
         case 41: case 63: case 112: case 174: case 193: case 221: case 290: case 298: return true;
