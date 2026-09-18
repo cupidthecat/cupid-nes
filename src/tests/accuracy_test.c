@@ -68,6 +68,7 @@ int test_board_unlicensed_115_accuracy(void);
 int test_rom_database_defaults_accuracy(void);
 int test_unif_accuracy(void);
 int test_board_waixing_116_accuracy(void);
+int test_board_whirlwind_117_accuracy(void);
 int test_bandai_accuracy(void);
 int test_fds_accuracy(void);
 int test_studybox_accuracy(void);
@@ -161,6 +162,7 @@ int main(int argc, char **argv) {
     failures += test_rom_database_defaults_accuracy();
     failures += test_unif_accuracy();
     failures += test_board_waixing_116_accuracy();
+    failures += test_board_whirlwind_117_accuracy();
     failures += test_bandai_accuracy();
     failures += test_fds_accuracy();
     failures += test_studybox_accuracy();

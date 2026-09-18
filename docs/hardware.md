@@ -51,6 +51,7 @@ PRG is the cartridge memory read by the CPU; CHR holds graphics patterns read by
 | 36, 61, 132, 172, 173, 189, 299 | TXC boards | TXC/JV001 accumulator and inverter registers, open-bus protection reads, PRG/CHR banking, mirroring, reset banking, and MMC3 IRQs on mapper 189 |
 | 60, 62, 83, 103, 106, 107, 108, 116, 117, 120, 156, 163 | Unlicensed boards | Reset-selected and address-selected banks, multicart/DIP registers, CPU and A12 IRQs, VRC2/MMC3/MMC1 mode switching, ROM/RAM overlays, protection reads, and scanline-driven CHR switching |
 | 162, 164, 176, 178, 242, 252, 253, 286 | Waixing boards | Multicart outer banking, MMC3 and CNROM modes, banked work/CHR RAM, address-selected banks, VRC-style and scanline IRQs, DIP-selected writes, and mirroring control |
+| 40, 125, 304, 309, 522 | Whirlwind boards | Fixed and switchable PRG windows, low-address ROM overlays, work RAM windows, address-decoded bank control, mirroring, and CPU-cycle IRQ counters |
 | 5 | MMC5, partial | PRG/CHR banking, banked RAM, ExRAM/fill nametables, extended attributes, vertical split, multiplication, PPU-read-driven scanline IRQs, and pulse/PCM audio |
 | 7 | AxROM | 32 KiB PRG banking and single-screen mirroring |
 | 9 | MMC2 | PRG banking and pattern-fetch CHR latches |

@@ -40,6 +40,7 @@
 #include "unif.hpp"
 #include "../unif.h"
 #include "waixing_116.hpp"
+#include "whirlwind_117.hpp"
 
 namespace cupid::boards {
 
@@ -47,6 +48,7 @@ std::unique_ptr<Board> CreateBoard(unsigned mapper) {
     switch (mapper) {
         case 29: return std::make_unique<SealieComputing>();
         case 36: return std::make_unique<Txc22000>();
+        case 40: return std::make_unique<Whirlwind40>();
         case 60: return std::make_unique<Unl60>();
         case 41: return std::make_unique<Caltron41>();
         case 61: return std::make_unique<TxcMapper61>();
@@ -61,6 +63,7 @@ std::unique_ptr<Board> CreateBoard(unsigned mapper) {
         case 116: return std::make_unique<Unl116>();
         case 117: return std::make_unique<Unl117>();
         case 120: return std::make_unique<Unl120>();
+        case 125: return std::make_unique<Lh32>();
         case 132: return std::make_unique<Txc22211A>();
         case 156: return std::make_unique<Unl156>();
         case 162: return std::make_unique<Waixing162>();
@@ -82,6 +85,9 @@ std::unique_ptr<Board> CreateBoard(unsigned mapper) {
         case 290: return std::make_unique<NtdecNtd03>();
         case 298: return std::make_unique<Tf1201>();
         case 299: return std::make_unique<Bmc11160>();
+        case 304: return std::make_unique<Smb2j>();
+        case 309: return std::make_unique<Lh51>();
+        case 522: return std::make_unique<Lh10>();
         case 6: case 8: case 17: return std::make_unique<FrontFareast>();
         case 31: return std::make_unique<NsfCartridge>();
         case 12: return std::make_unique<Mmc3_12>();
@@ -251,6 +257,7 @@ bool board_handles_mapper(unsigned mapper) {
     switch (mapper) {
         case 29: return true;
         case 36: case 61: case 132: case 172: case 173: case 189: case 299: return true;
+        case 40: case 125: case 304: case 309: case 522: return true;
         case 60: case 62: case 83: case 103: case 106: case 107: case 108:
         case 116: case 117: case 120: case 156: case 163: return true;
         case 162: case 164: case 176: case 178: case 242: case 252: case 253: case 286: return true;
