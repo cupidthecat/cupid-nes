@@ -1,6 +1,7 @@
 # Cupid NES Emulator
 
-Cupid is an NES emulator written in C11. It uses SDL2 for video, audio, and
+Cupid is an NES emulator with a C11 core and a C++17 expansion-sound engine.
+It uses SDL2 for video, audio, and
 controllers, and runs NES/Famicom cartridges, Famicom Disk System images with a
 supplied BIOS, and supported VS System arcade images.
 
@@ -28,7 +29,7 @@ cd cupid-nes
 
 ### Linux
 
-Install a C11 compiler, Make, and the SDL2 development libraries. On Ubuntu:
+Install C11 and C++17 compilers, Make, and the SDL2 development libraries. On Ubuntu:
 
 ```sh
 sudo apt install build-essential libsdl2-dev
@@ -125,12 +126,14 @@ AccuracyCoin.
 
 The [accuracy workflow](.github/workflows/accuracy.yml) builds with strict GCC
 and Clang sanitizer settings and runs the pinned suites. Test results apply to
-the checked commit and configuration. Analog output, arbitrary power-on phases,
-and every possible DMA/register alignment remain outside the tested model.
+the checked commit and configuration. Startup phases can be selected or generated
+from a reproducible seed. Analog output and every possible DMA/register alignment
+remain outside the tested model.
 
 ## License and credits
 
 Cupid is GPL-3.0-or-later; see [LICENSE](LICENSE). The bundled emu2413 component
-retains its [MIT license](src/rom/emu2413.LICENSE). See
+retains its [MIT license](src/rom/emu2413.LICENSE), and ymfm retains its
+[BSD 3-Clause license](src/third_party/ymfm/LICENSE). See
 [credits and references](docs/credits.md) for component attribution, test
 sources, and hardware documentation.

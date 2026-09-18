@@ -20,7 +20,7 @@ make clean
 make -j2 CC=gcc CFLAGS='-std=c11 -Wall -Wextra -Werror -O2' all test
 ```
 
-The application is `./cupid-nes` and the runner is `build/accuracy-tests`. Running the test executable without arguments executes CPU/controller, APU, PPU, mapper, Bandai, disk, input, and VS groups and returns failure if any group fails.
+The application is `./cupid-nes` and the runner is `build/accuracy-tests`. Running the test executable without arguments executes CPU/controller, APU, PPU, mapper, Bandai, disk, input, VS, and EPSM groups and returns failure if any group fails. The C core uses C11; the EPSM wrapper and ymfm engine use C++17. Make selects the matching `g++` or `clang++` linker unless `CXX` is supplied. Its C++ flags inherit the warning and sanitizer flags from `CFLAGS` while changing the language standard.
 
 On Windows:
 
@@ -28,7 +28,7 @@ On Windows:
 .\scripts\test-windows.ps1 -SdlRoot 'C:\dependencies\SDL2-2.32.10'
 ```
 
-The script builds both executables and runs the hardware suite. Its output is under `build/windows`. Supplying `-Compiler` changes the Clang executable; the SDL library path remains the x64 VC SDK layout.
+The script builds both executables and runs the hardware suite. Its output is under `build/windows`. Supplying `-Compiler` changes the C compiler; the script selects its matching C++ driver. Supply `-CxxCompiler` when using a compiler with a different executable name. The SDL library path remains the x64 VC SDK layout. Warning and sanitizer flags apply to both languages and the final link.
 
 Tests use the device code listed in [Makefile](../Makefile) and [test-windows.ps1](../scripts/test-windows.ps1). Add any new production or test source to both lists. The older `src/tests/cpu_test.c` harness is excluded because its writable-ROM assumptions do not match the cartridge bus.
 
@@ -166,6 +166,7 @@ The focused suites live in `src/tests`:
 | [fds_accuracy.c](../src/tests/fds_accuracy.c) | Disk memory, controller, media, persistence, and audio |
 | [input_accuracy.c](../src/tests/input_accuracy.c) | Controller wiring, adapters, and peripherals |
 | [vs_accuracy.c](../src/tests/vs_accuracy.c) | VS metadata, machine contexts, input, DMA, shared RAM, video, and audio |
+| [epsm_accuracy.c](../src/tests/epsm_accuracy.c) | EPSM metadata, delayed OUT-pin protocol, direct writes, timers, firmware, reset, and stereo audio |
 
 Run the focused hardware regression first. After each implemented accuracy issue, run the complete pinned AccuracyCoin suite and retain the exact commit and result. Changes to the shared core also need the canonical trace, diagnostic collection, and sanitizer checks. The complete final CI result belongs to the final pushed revision.
 

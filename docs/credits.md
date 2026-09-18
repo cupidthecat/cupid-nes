@@ -18,6 +18,12 @@ history.
 The component's [MIT license](../src/rom/emu2413.LICENSE) is retained alongside
 the source. Its notice is separate from Cupid's project license.
 
+## EPSM sound engine
+
+EPSM uses Aaron Giles's ymfm YMF288 implementation. The bundled OPN, SSG, and ADPCM sources retain their copyright notices and [BSD 3-Clause license](../src/third_party/ymfm/LICENSE). The [component notes](../src/third_party/ymfm/README.md) describe the local build edits. Cupid supplies the CPU-bus, timer, firmware, and stereo-output integration in [epsm.cpp](../src/apu/epsm.cpp).
+
+The YMF288 percussion ROM is not included. [Configuration](configuration.md#epsm-sound) explains how to supply an existing 8 KiB file.
+
 ## SDL2
 
 Cupid links against SDL2 for windows, rendering, controller events, and audio.

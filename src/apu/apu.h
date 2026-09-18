@@ -177,10 +177,12 @@ typedef struct {
     float lp14k_prev_out;
     float last_output_sample;
     float last_read_sample;  // Owned by the audio consumer; used during underruns.
+    float last_read_side;
 
     // Lockless ring buffer (very simple)
     #define APU_RING_CAP 8192
     float    ring[APU_RING_CAP];
+    float    ring_side[APU_RING_CAP];
     _Atomic uint32_t ring_w;
     _Atomic uint32_t ring_r;
 } APU;
@@ -197,6 +199,7 @@ APU *apu_active_state(void);
 void apu_audio_init(int sample_rate);
 void apu_audio_init_state(APU *state, int sample_rate);
 void apu_audio_pull(APU *state, float *samples, int count);
+void apu_audio_pull_stereo(APU *state, float *samples, int frames);
 // Select the DMC CPU timing model. The selection persists across APU resets.
 bool apu_set_cpu_revision(ApuCpuRevision revision);
 ApuCpuRevision apu_get_cpu_revision(void);
@@ -223,5 +226,6 @@ void apu_dmc_dma_complete(APU *a, uint8_t value);
 
 // SDL glue
 void apu_sdl_audio_callback(void *userdata, uint8_t *stream, int len);
+void apu_sdl_stereo_callback(void *userdata, uint8_t *stream, int len);
 
 #endif

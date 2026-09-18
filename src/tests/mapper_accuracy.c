@@ -3166,7 +3166,7 @@ static int test_loader_region_and_console_type(void) {
     Mapper *previous_cart = cart;
     uint8_t *previous_prg = prg_rom;
 
-    h.flags7 = 0x09; // VS System is not implemented by the console core.
+    h.flags7 = 0x09; // VS hardware requires NTSC rather than the current Dendy region.
     image = image_for(&h, 0x4000, 0x2000, &size);
     CHECK(image != NULL);
     loaded = load_rom_memory(image, size);
@@ -3175,7 +3175,7 @@ static int test_loader_region_and_console_type(void) {
     CHECK(nes_timing()->region == NES_REGION_DENDY);
 
     h.flags7 = 0x0B;
-    h.zero[2] = 4; // An extended-console expansion not provided by this core.
+    h.zero[2] = 5; // An extended console subtype not provided by this core.
     image = image_for(&h, 0x4000, 0x2000, &size);
     CHECK(image != NULL);
     loaded = load_rom_memory(image, size);

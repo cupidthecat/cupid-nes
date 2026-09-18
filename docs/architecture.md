@@ -2,7 +2,7 @@
 
 [Documentation index](README.md) | [Hardware reference](hardware.md)
 
-Cupid is a C11 emulator with an SDL frontend. The application and hardware test executable link the same device implementations. The production core has global cartridge and timing state; the explicit machine contexts currently support the two VS sides, not arbitrary concurrent emulator instances.
+Cupid has a C11 core, an SDL frontend, and a C++17 EPSM sound implementation. The application and hardware test executable link the same device implementations. The production core has global cartridge and timing state; the explicit machine contexts currently support the two VS sides, not arbitrary concurrent emulator instances.
 
 ## Source layout
 
@@ -12,6 +12,7 @@ Cupid is a C11 emulator with an SDL frontend. The application and hardware test 
 | [src/cpu](../src/cpu) | Instruction execution, CPU bus cycles, interrupt polling, and DMA arbitration |
 | [src/ppu](../src/ppu) | Register behavior, rendering pipeline, sprite evaluation, PPU memory, and framebuffer writes |
 | [src/apu](../src/apu) | Audio channels, frame sequencer, DMC requests, sample production, and ring buffers |
+| [src/apu/epsm.cpp](../src/apu/epsm.cpp), [src/third_party/ymfm](../src/third_party/ymfm) | EPSM bus, clock, firmware ownership, and YMF288 sound engine |
 | [src/rom/rom.c](../src/rom/rom.c) | Image parsing, allocation, validation, and cartridge replacement |
 | [src/rom/mapper.c](../src/rom/mapper.c) | Board selection, banking, cartridge RAM, nametables, interrupts, and persistence |
 | [src/rom/fds.c](../src/rom/fds.c) | Disk image ownership, transport, registers, media writes, and disk audio |
@@ -67,6 +68,7 @@ The cartridge bus API distinguishes a real byte from floating data lines. `cart_
 | Secondary VS CPU/PPU/APU and framebuffer | Static secondary machine storage in `vs_system.c` |
 | Host player button state | Controller layer, updated by frontend events |
 | Audio producer/consumer positions | Atomic indices inside each APU ring buffer |
+| EPSM chip, protocol, and copied ADPCM ROM | Active `EpsmDevice`, prepared before cartridge activation |
 
 The loader validates sizes and supported combinations before replacing the active cartridge. `load_rom_memory()` copies the supplied image bytes. Lower-level mapper initialization leaves the caller responsible for the PRG/CHR buffers it was given. A prepared disk image transfers ownership when activation succeeds.
 
@@ -93,6 +95,8 @@ Video composition copies the two completed 256-by-240 images into a 512-by-240 i
 The emulation thread generates samples into each APU's ring. Mapper expansion sound enters the APU sample path through `cart_expansion_audio()` before post-filtering. The SDL callback consumes samples using atomic read/write indices. In dual mode, the callback averages samples from stable main and secondary APU storage; it never selects a CPU machine context.
 
 Both APUs are initialized to the opened audio device's sample rate. Underruns use the last sample consumed by that callback, held in consumer-owned state. This avoids reading the producer's changing filter output as a fallback.
+
+EPSM runs on the emulation thread from CPU master-clock advances. It generates YMF288 samples every 144 chip clocks and interpolates them into the APU's sample cadence. Its left/right output enters the ring as middle and side values, published together through the same atomic write index. The stereo callback reconstructs each pair without accessing chip state. Ordinary NES and dual VS output remain mono.
 
 The frontend locks the audio device while resetting APU state and closes it before unloading the machine. Any future frontend that replaces a running machine must likewise stop callback access before changing its storage or configuration. Source links: [APU output](../src/apu/apu.c), [VS audio coordination](../src/system/vs_system.c), and [frontend lifecycle](../src/main.c).
 

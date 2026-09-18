@@ -2,7 +2,7 @@
 
 [Documentation index](README.md)
 
-Cupid builds an SDL2 emulator application and a separate hardware test program. Building from source requires a C11 compiler, Make on Linux, and SDL2 development files. Python 3 is used by the external diagnostic workflow described in [development](development.md), not by the emulator itself.
+Cupid builds an SDL2 emulator application and a separate hardware test program. Building from source requires C11 and C++17 compilers, Make on Linux, and SDL2 development files. The C++ compiler builds the EPSM sound engine. Python 3 is used by the external diagnostic workflow described in [development](development.md), not by the emulator itself.
 
 ## Get the source
 
@@ -15,7 +15,7 @@ Run the remaining commands from the repository root. The build does not download
 
 ## Linux
 
-Ubuntu and the Linux CI job use the normal Makefile build. Install GCC, Make, and the SDL2 development package:
+Ubuntu and the Linux CI job use the normal Makefile build. Install GCC/G++, Make, and the SDL2 development package:
 
 ```sh
 sudo apt update
@@ -62,7 +62,7 @@ build/windows/accuracy-tests.exe
 build/windows/SDL2.dll
 ```
 
-`-Compiler` selects another Clang executable. `-Sanitize` writes the binaries to `build/windows-sanitized` and also requires Clang's Windows AddressSanitizer runtime. See [development](development.md) for test and sanitizer workflows. This checkout has no dedicated macOS build script or CI job.
+`-Compiler` selects the C compiler, with the matching C++ driver chosen automatically. Use `-CxxCompiler` for an explicitly named C++ executable. `-Sanitize` writes the binaries to `build/windows-sanitized` and also requires Clang's Windows AddressSanitizer runtime. See [development](development.md) for test and sanitizer workflows. This checkout has no dedicated macOS build script or CI job.
 
 ## Open a cartridge
 

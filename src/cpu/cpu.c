@@ -29,6 +29,7 @@
 #include "cpu.h"
 #include "../ppu/ppu.h"
 #include "../apu/apu.h"
+#include "../apu/epsm.h"
 #include "../rom/mapper.h"
 #include "../joypad/joypad.h"
 #include "../system/timing.h"
@@ -156,6 +157,7 @@ void cpu_select_machine(CpuMachineContext *context) {
 
 static void clock_ppu_master(unsigned clocks) {
     const NesTiming *timing = nes_timing();
+    epsm_clock_master(clocks, (uint32_t)(timing->cpu_hz * timing->cpu_divider));
     unsigned phase = ppu_master_phase + clocks;
     ppu_step_dots((int)(phase / timing->ppu_divider));
     ppu_master_phase = (uint8_t)(phase % timing->ppu_divider);
@@ -170,6 +172,7 @@ static void begin_cpu_cycle(bool read) {
     if (cart && cart->clock) cart->clock(1);
     apu_step(apu_active_state(), 1);
     if (joypad_write_pending && --joypad_write_pending == 0) {
+        epsm_write_4016(cpu_external_bus, joypad_write_value);
         joypad_write_ports(joypad_write_value);
     }
 }
@@ -184,6 +187,7 @@ static void end_cpu_cycle(bool read) {
     cpu_nmi_previous_line = cpu_nmi_line;
     cpu_irq_ready = cpu_irq_polled;
     cpu_irq_polled = (apu_irq_pending(apu_active_state()) || cart_irq_pending()
+                      || epsm_irq_pending()
                       || vs_external_irq_pending()) &&
                      !(running_cpu->status & INTERRUPT_FLAG);
     in_bus_cycle = false;
@@ -300,6 +304,7 @@ bool cpu_power_on(CPU* cpu) {
     cpu->sp = 0;
     cpu->status = INTERRUPT_FLAG | UNUSED_FLAG;
     cpu->halted = false;
+    epsm_power_on();
     // The default starts the PPU one clock before reset. Optional CPU offset
     // adds master clocks before the same seven bus accesses; no CPU cycle is skipped.
     clock_ppu_master(nes_timing()->ppu_divider + alignment.cpu_offset);
@@ -430,6 +435,7 @@ static void write_bus(uint16_t addr, uint8_t value) {
                 return;
             }
             if (!running_cpu || !in_bus_cycle) {
+                epsm_write_4016(value, value);
                 joypad_write_ports(value);
                 joypad_write_pending = 0;
             } else {
@@ -444,6 +450,7 @@ static void write_bus(uint16_t addr, uint8_t value) {
         return;
     }
 
+    if (addr >= 0x401C && addr <= 0x401F) epsm_write_port(addr, value);
     if (addr >= 0x4020) cart_cpu_write(addr, value);
 }
 

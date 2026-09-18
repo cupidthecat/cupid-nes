@@ -33,6 +33,16 @@ Choose either `--startup-phase` or `--startup-seed`. The CPU offset delays reset
 
 `--mmc3-revision a` selects the earlier IRQ qualification rule. MMC6 and MC-ACC keep their own board-specific IRQ behavior.
 
+## EPSM sound
+
+NES 2.0 console selector 3 with extended subtype 4 enables EPSM sound. The device runs a YMF288 at 8 MHz and uses stereo output. Ordinary NES and VS images do not enable it.
+
+`--epsm-adpcm FILE` supplies the chip's 8 KiB percussion ROM. The file must contain exactly 8,192 bytes; it is separate from the game image. Cupid does not include this firmware. Without the option, FM and SSG sound remain available, but percussion uses zero-filled data and will be incorrect. The startup log reports this condition.
+
+```sh
+./cupid-nes --epsm-adpcm "ymf288_adpcm_rom.bin" "epsm-game.nes"
+```
+
 ## Controllers and expansion devices
 
 | Option | Accepted value | Default |

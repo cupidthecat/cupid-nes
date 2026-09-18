@@ -24,6 +24,7 @@
  */
 
 #include "apu.h"
+#include "epsm.h"
 #include "../rom/mapper.h"
 #include "../cpu/cpu.h"
 #include "../system/timing.h"
@@ -116,11 +117,12 @@ static void dmc_clock_output(APU* a);
 
 // Audio ring buffer.
 static inline uint32_t rb_next(uint32_t v){ return (v+1) & (APU_RING_CAP-1); }
-static inline bool rb_push(APU* a, float s){
+static inline bool rb_push(APU* a, float s, float side){
     uint32_t w = atomic_load_explicit(&a->ring_w, memory_order_relaxed);
     uint32_t n = rb_next(w);
     if (n == atomic_load_explicit(&a->ring_r, memory_order_acquire)) return false;
     a->ring[w] = s;
+    a->ring_side[w] = side;
     atomic_store_explicit(&a->ring_w, n, memory_order_release);
     return true;
 }
@@ -129,6 +131,7 @@ static inline int rb_pull(APU* a, float* out, int n){
     uint32_t r = atomic_load_explicit(&a->ring_r, memory_order_relaxed);
     while (got < n && r != atomic_load_explicit(&a->ring_w, memory_order_acquire)) {
         out[got++] = a->ring[r];
+        a->last_read_side = a->ring_side[r];
         r = rb_next(r);
         atomic_store_explicit(&a->ring_r, r, memory_order_release);
     }
@@ -348,6 +351,7 @@ void apu_audio_init_state(APU *state, int sample_rate) {
     state->cycles_per_sample = nes_timing()->cpu_hz / state->sample_rate;
     state->sample_accum = 0.0;
     state->last_read_sample = 0.0f;
+    state->last_read_side = 0.0f;
     atomic_store_explicit(&state->ring_w, 0, memory_order_relaxed);
     atomic_store_explicit(&state->ring_r, 0, memory_order_relaxed);
     apu_init_filter_coeffs(state);
@@ -780,11 +784,19 @@ void apu_step(APU *a, int cpu_cycles){
             s += cart_expansion_audio();
             s = apu_post_filter(a, s);
 
-            if (s > 1.0f) s = 1.0f;
-            if (s < -1.0f) s = -1.0f;
-            a->last_output_sample = s;
+            float epsm_left = 0, epsm_right = 0;
+            if (a == main_apu) epsm_sample_stereo(&epsm_left, &epsm_right);
+            float left = s + epsm_left;
+            float right = s + epsm_right;
+            if (left > 1.0f) left = 1.0f;
+            if (left < -1.0f) left = -1.0f;
+            if (right > 1.0f) right = 1.0f;
+            if (right < -1.0f) right = -1.0f;
+            float middle = (left + right) * 0.5f;
+            float side = (left - right) * 0.5f;
+            a->last_output_sample = middle;
 
-            rb_push(a, s);
+            rb_push(a, middle, side);
         }
 
         a->cpu_cycle_odd = !a->cpu_cycle_odd;
@@ -804,4 +816,35 @@ void apu_sdl_audio_callback(void *userdata, uint8_t *stream, int len){
     float *out = (float*)stream;
     int frames = len / sizeof(float);
     apu_audio_pull(main_apu, out, frames);
+}
+
+void apu_audio_pull_stereo(APU *state, float *samples, int frames) {
+    if (!state || !samples || frames <= 0) return;
+    uint32_t read_index = atomic_load_explicit(&state->ring_r, memory_order_relaxed);
+    int frame = 0;
+    while (frame < frames
+           && read_index != atomic_load_explicit(&state->ring_w, memory_order_acquire)) {
+        float middle = state->ring[read_index];
+        float side = state->ring_side[read_index];
+        samples[frame * 2] = middle + side;
+        samples[frame * 2 + 1] = middle - side;
+        state->last_read_sample = middle;
+        state->last_read_side = side;
+        ++frame;
+        read_index = rb_next(read_index);
+        atomic_store_explicit(&state->ring_r, read_index, memory_order_release);
+    }
+    for (; frame < frames; ++frame) {
+        samples[frame * 2] = state->last_read_sample + state->last_read_side;
+        samples[frame * 2 + 1] = state->last_read_sample - state->last_read_side;
+    }
+}
+
+void apu_sdl_stereo_callback(void *userdata, uint8_t *stream, int len) {
+    (void)userdata;
+    if (!stream || len <= 0) return;
+    int frames = len / (int)(2 * sizeof(float));
+    apu_audio_pull_stereo(main_apu, (float *)stream, frames);
+    size_t bytes = (size_t)frames * 2 * sizeof(float);
+    if (bytes < (size_t)len) memset(stream + bytes, 0, (size_t)len - bytes);
 }

@@ -17,9 +17,11 @@ jobs:
         include:
           - name: GCC
             compiler: gcc
+            cpp_compiler: g++
             flags: -std=c11 -Wall -Wextra -Werror -O2
           - name: Clang with sanitizers
             compiler: clang
+            cpp_compiler: clang++
             flags: -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer
     name: ${{ matrix.name }}
     env:
@@ -47,7 +49,7 @@ jobs:
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y build-essential clang libsdl2-dev
       - name: Build emulator and run hardware regressions
-        run: make -j2 CC='${{ matrix.compiler }}' CFLAGS='${{ matrix.flags }}' all test
+        run: make -j2 CC='${{ matrix.compiler }}' CXX='${{ matrix.cpp_compiler }}' CFLAGS='${{ matrix.flags }}' all test
       - name: Check CPU trace and diagnostic ROMs
         run: python3 scripts/run-diagnostics.py build/accuracy-tests build/diagnostic-roms
       - name: Check all 144 AccuracyCoin tests

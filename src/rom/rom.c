@@ -34,6 +34,7 @@
 #include "../system/timing.h"
 #include "../system/vs_system.h"
 #include "../cpu/cpu.h"
+#include "../apu/epsm.h"
 
 #define PRG_ROM_BANK_SIZE 0x4000  // 16KB
 #define CHR_ROM_BANK_SIZE 0x2000  // 8KB
@@ -66,8 +67,9 @@ static int rom_console_supported(const iNESHeader *h) {
     if (is_nes20(h)) {
         unsigned console = h->flags7 & 0x03u;
         if (console == 0 || console == 1) return 1;
-        // Extended subtypes 0 and 1 identify NES/Famicom and VS hardware.
-        return console == 3 && (h->zero[2] & 0x0Fu) <= 1;
+        // Extended subtypes identify NES/Famicom, VS, and EPSM hardware.
+        unsigned subtype = h->zero[2] & 0x0Fu;
+        return console == 3 && (subtype <= 1 || subtype == 4);
     }
     // Archaic headers have unreliable byte 7 contents.  Only clean iNES headers
     // use its low bits as the VS/PlayChoice console selector.
@@ -229,9 +231,19 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
         return -1;
     }
 
+    bool has_epsm = is_nes20(&header) && (header.flags7 & 3u) == 3
+                 && (header.zero[2] & 0x0Fu) == 4;
+    EpsmDevice *new_epsm = has_epsm ? epsm_create() : NULL;
+    if (has_epsm && !new_epsm) {
+        fprintf(stderr, "EPSM allocation failed\n");
+        free(new_prg);
+        free(new_chr);
+        return -1;
+    }
     int mapper_no = mapper_init_from_header(&header, new_prg, new_prg_size,
                                             new_chr, new_chr_size);
     if (mapper_no < 0) {
+        epsm_destroy(new_epsm);
         free(new_prg);
         free(new_chr);
         return -1;
@@ -246,6 +258,7 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
     prg_size = new_prg_size;
     chr_size = new_chr_size;
     vs_commit_config(&vs_config);
+    epsm_activate(new_epsm);
     cart_battery_configure(filename, filename && (header.flags6 & 0x02));
     if (trainer) cart_apply_trainer(trainer);
     mirroring_mode = (int)cart_get_mirroring();
@@ -295,6 +308,7 @@ int load_fds_memory(const uint8_t *disk, size_t disk_size,
     chr_size = 0;
     memset(&ines_header, 0, sizeof(ines_header));
     vs_clear_config();
+    epsm_activate(NULL);
     mirroring_mode = (int)cart_get_mirroring();
     nes_set_region(NES_REGION_NTSC);
     fds_loaded = 1;
@@ -318,6 +332,7 @@ bool unload_rom(void) {
     mirroring_mode = 0;
     fds_loaded = 0;
     vs_clear_config();
+    epsm_activate(NULL);
     nes_set_region(NES_REGION_NTSC);
     return true;
 }

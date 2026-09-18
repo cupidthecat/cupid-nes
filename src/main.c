@@ -37,6 +37,7 @@
 #include "joypad/family_basic.h"
 #include "../include/globals.h"
 #include "apu/apu.h"
+#include "apu/epsm.h"
 #include <time.h>
 #include "rom/mapper.h"
 #include <math.h>
@@ -209,6 +210,7 @@ int main(int argc, char *argv[]) {
     bool startup_seed_set = false;
     unsigned startup_cpu_offset = 0, startup_ppu_phase = 0;
     uint32_t startup_seed = 0;
+    const char *epsm_adpcm_path = NULL;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--console") == 0) {
             if (++i == argc || !nes_set_console_model_name(argv[i])) {
@@ -230,6 +232,12 @@ int main(int argc, char *argv[]) {
             }
         } else if (strcmp(argv[i], "--cpu-test-mode") == 0) {
             cpu_set_test_mode(true);
+        } else if (strcmp(argv[i], "--epsm-adpcm") == 0) {
+            if (++i == argc) {
+                fprintf(stderr, "--epsm-adpcm requires an 8 KiB YMF288 ADPCM ROM file\n");
+                return 1;
+            }
+            epsm_adpcm_path = argv[i];
         } else if (strcmp(argv[i], "--startup-phase") == 0) {
             if (++i == argc || startup_phase_set || startup_seed_set) {
                 fprintf(stderr, "Choose one startup phase CPU:PPU or startup seed\n");
@@ -370,6 +378,7 @@ int main(int argc, char *argv[]) {
     if (!rom_path) {
         printf("Usage: %s [--console MODEL] [--cpu-revision REVISION] "
                "[--cpu-test-mode] "
+               "[--epsm-adpcm FILE] "
                "[--startup-phase CPU:PPU | --startup-seed SEED] "
                "[--ppu-revision REVISION] [--ppu-oam-row-corruption] "
                "[--ppu-startup-restriction] [--ppu-oam-decay] "
@@ -407,12 +416,21 @@ int main(int argc, char *argv[]) {
     printf("MMC3 revision: %s\n", cart_mmc3_revision_name());
     printf("Input adapter: %s\n", joypad_adapter_name());
     printf("Loading ROM: %s\n", rom_path);
+    if (epsm_adpcm_path && !epsm_load_adpcm_file(epsm_adpcm_path)) {
+        fprintf(stderr, "Could not load the 8 KiB YMF288 ADPCM ROM: %s\n", epsm_adpcm_path);
+        return 1;
+    }
     int load_result = fds_bios_path
         ? load_fds(rom_path, fds_bios_path, fds_start_write_protected)
         : load_rom(rom_path);
     if(load_result != 0) {
         fprintf(stderr, "Failed to load ROM\n");
         return 1;
+    }
+    if (epsm_enabled()) {
+        printf("EPSM: 8 MHz YMF288, stereo output\n");
+        if (!epsm_has_adpcm_rom())
+            fprintf(stderr, "EPSM percussion uses zero-filled data without --epsm-adpcm FILE\n");
     }
     if (startup_phase_set && !cpu_set_startup_alignment(startup_cpu_offset, startup_ppu_phase)) {
         fprintf(stderr, "Startup phase must be CPU 0..%u and PPU 0..%u for this image\n",
@@ -510,10 +528,10 @@ int main(int argc, char *argv[]) {
     memset(&want, 0, sizeof want);
     memset(&have, 0, sizeof have);
     want.freq = AUDIO_SAMPLE_RATE;
-    want.format = AUDIO_F32;     // float32 mono
-    want.channels = 1;
+    want.format = AUDIO_F32;
+    want.channels = epsm_enabled() ? 2 : 1;
     want.samples = AUDIO_BUFFER_SAMPLES;
-    want.callback = vs_audio_callback;
+    want.callback = epsm_enabled() ? apu_sdl_stereo_callback : vs_audio_callback;
 
     audio_dev = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
     if (!audio_dev) {
