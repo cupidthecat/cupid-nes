@@ -3126,6 +3126,118 @@ static int test_tqrom_mixed_chr_memory(void) {
     return 0;
 }
 
+static int test_mmc3_mixed_chr_variants(void) {
+    static const struct {
+        unsigned mapper;
+        uint8_t first_ram_bank;
+        uint8_t last_ram_bank;
+        uint8_t ram_shift;
+        unsigned ram_pages;
+    } cases[] = {
+        {74,  0x08, 0x09, 5, 2},
+        {191, 0x80, 0xFF, 5, 2},
+        {192, 0x08, 0x0B, 6, 4},
+        {194, 0x00, 0x01, 5, 2},
+        {195, 0x00, 0x03, 6, 4}
+    };
+    const size_t chr_bytes = 0x40000;
+
+    for (size_t n = 0; n < sizeof(cases) / sizeof(cases[0]); ++n) {
+        iNESHeader h = header_for(cases[n].mapper, 0x20000, false);
+        h.flags7 |= 0x08;
+        h.flags10 = 7;
+        h.zero[0] = cases[n].ram_shift;
+        h.chr_rom_chunks = (uint8_t)(chr_bytes / 0x2000);
+        size_t image_size;
+        uint8_t *image = tqrom_image(&h, chr_bytes, &image_size);
+        CHECK(image != NULL && load_rom_memory(image, image_size) == 0);
+
+        cart_cpu_write(0x8000, 6);
+        cart_cpu_write(0x8001, 3);
+        CHECK(cart_cpu_read(0x8000) == 3 && cart_cpu_read(0xC000) == 14);
+        cart_cpu_write(0xA001, 0x80);
+        cart_cpu_write(0x6000, (uint8_t)(0x50 + n));
+        CHECK(cart_cpu_read(0x6000) == 0x50 + n);
+
+        uint8_t rom_bank = cases[n].first_ram_bank
+                         ? (uint8_t)(cases[n].first_ram_bank - 1)
+                         : (uint8_t)(cases[n].last_ram_bank + 1);
+        cart_cpu_write(0x8000, 2);
+        cart_cpu_write(0x8001, rom_bank);
+        CHECK(cart_ppu_read(0x1000) == rom_bank);
+        cart_ppu_write(0x1000, 0xEE);
+        CHECK(cart_ppu_read(0x1000) == rom_bank);
+
+        if (cases[n].last_ram_bank < 0xFF) {
+            uint8_t following = (uint8_t)(cases[n].last_ram_bank + 1);
+            cart_cpu_write(0x8001, following);
+            CHECK(cart_ppu_read(0x1000) == following);
+            cart_ppu_write(0x1000, 0xEE);
+            CHECK(cart_ppu_read(0x1000) == following);
+        }
+
+        cart_cpu_write(0x8001, cases[n].first_ram_bank);
+        cart_ppu_write(0x1000, (uint8_t)(0xA0 + n));
+        CHECK(cart_ppu_read(0x1000) == 0xA0 + n);
+        cart_cpu_write(0x8001, cases[n].last_ram_bank);
+        cart_ppu_write(0x1000, (uint8_t)(0xB0 + n));
+        CHECK(cart_ppu_read(0x1000) == 0xB0 + n);
+        cart_cpu_write(0x8001, cases[n].first_ram_bank);
+        CHECK(cart_ppu_read(0x1000) == 0xA0 + n);
+
+        if ((unsigned)(cases[n].last_ram_bank - cases[n].first_ram_bank + 1) > cases[n].ram_pages) {
+            cart_cpu_write(0x8001, (uint8_t)(cases[n].first_ram_bank + cases[n].ram_pages));
+            CHECK(cart_ppu_read(0x1000) == 0xA0 + n);
+        }
+
+        cart_cpu_write(0x8000, 0);
+        cart_cpu_write(0x8001, cases[n].first_ram_bank);
+        cart_ppu_write(0x0000, (uint8_t)(0xC0 + n));
+        cart_ppu_write(0x0400, (uint8_t)(0xD0 + n));
+        CHECK(cart_ppu_read(0x0000) == 0xC0 + n && cart_ppu_read(0x0400) == 0xD0 + n);
+
+        cart_cpu_write(0x8000, 0x82);
+        cart_cpu_write(0x8001, cases[n].first_ram_bank);
+        cart_ppu_write(0x0000, (uint8_t)(0xE0 + n));
+        CHECK(cart_ppu_read(0x0000) == 0xE0 + n);
+
+        cart_cpu_write(0xC000, 0);
+        cart_cpu_write(0xC001, 0);
+        cart_cpu_write(0xE001, 0);
+        a12_pulse((uint64_t)n * 30);
+        CHECK(cart_irq_pending());
+        cart_cpu_write(0xE000, 0);
+
+        cart->reset();
+        cart_cpu_write(0x8000, 2);
+        cart_cpu_write(0x8001, cases[n].first_ram_bank);
+        CHECK(cart_ppu_read(0x1000) == 0xE0 + n);
+
+        uint8_t *previous_prg = prg_rom;
+        uint8_t *previous_chr = chr_rom;
+        h.zero[0] = 0;
+        uint8_t *invalid = tqrom_image(&h, chr_bytes, &image_size);
+        CHECK(invalid != NULL && load_rom_memory(invalid, image_size) == -1);
+        free(invalid);
+        CHECK(prg_rom == previous_prg && chr_rom == previous_chr);
+        cart_cpu_write(0x8000, 2);
+        cart_cpu_write(0x8001, cases[n].first_ram_bank);
+        CHECK(cart_ppu_read(0x1000) == 0xE0 + n);
+
+        iNESHeader legacy = header_for(cases[n].mapper, 0x20000, false);
+        legacy.chr_rom_chunks = (uint8_t)(chr_bytes / 0x2000);
+        uint8_t *legacy_image = tqrom_image(&legacy, chr_bytes, &image_size);
+        CHECK(legacy_image != NULL && load_rom_memory(legacy_image, image_size) == 0);
+        free(legacy_image);
+        cart_cpu_write(0x8000, 2);
+        cart_cpu_write(0x8001, cases[n].first_ram_bank);
+        cart_ppu_write(0x1000, 0x69);
+        CHECK(cart_ppu_read(0x1000) == 0x69);
+        free(image);
+    }
+    return 0;
+}
+
 static uint8_t *txsrom_image(size_t *size) {
     const size_t prg_bytes = 0x20000, chr_bytes = 0x40000;
     iNESHeader h = header_for(118, prg_bytes, false);
@@ -6967,6 +7079,7 @@ int test_mapper_accuracy(void) {
         test_mmc4_latches_and_chr_ram, test_mmc3_banks_and_protection,
         test_mmc3_irq_edges, test_mmc3_revision_a_irq, test_mmc3_revision_a_cpu_irq,
         test_mmc3_render_trace, test_tqrom_mixed_chr_memory,
+        test_mmc3_mixed_chr_variants,
         test_mcacc_irq_divider, test_mcacc_irq_reload_and_enable,
         test_mcacc_banks_ram_and_loader, test_mcacc_cpu_ppu_irq_path,
         test_taito_banks_aliases_and_mirroring, test_taito48_irq, test_taito_loader_transaction,

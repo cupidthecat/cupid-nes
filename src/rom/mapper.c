@@ -154,7 +154,10 @@ static RamBlock prg_work_ram, prg_save_ram;
 static bool prg_ram_dirty = false;
 static bool chr_ram_dirty = false;
 static uint8_t mmc5_exram[0x400];
-static uint8_t tqrom_chr_ram[CHR_BANK_8K];
+static uint8_t mmc3_mixed_chr_ram[CHR_BANK_8K];
+static size_t mmc3_mixed_chr_first_bank;
+static size_t mmc3_mixed_chr_last_bank;
+static size_t mmc3_mixed_chr_ram_size;
 static bool mmc5_exram_dirty = false;
 static bool battery_enabled = false;
 static char *battery_save_path = NULL;
@@ -545,7 +548,10 @@ void mapper_shutdown(void) {
     mapper_irq_line = false;
     cart_ppu_fetch_source = CART_PPU_FETCH_CPU;
     memset(mmc5_exram, 0, sizeof(mmc5_exram));
-    memset(tqrom_chr_ram, 0, sizeof(tqrom_chr_ram));
+    memset(mmc3_mixed_chr_ram, 0, sizeof(mmc3_mixed_chr_ram));
+    mmc3_mixed_chr_first_bank = 0;
+    mmc3_mixed_chr_last_bank = 0;
+    mmc3_mixed_chr_ram_size = 0;
     memset(bandai_eeprom, 0, sizeof(bandai_eeprom));
     mmc5_exram_dirty = false;
     unrom512_four_screen_chr = false;
@@ -1797,19 +1803,22 @@ static void mmc3_ppu_write(uint16_t a, uint8_t v) {
     chr_ram_write(bank * CHR_BANK_1K + (a & 0x03FF), v);
 }
 
-static bool tqrom_chr_uses_ram(size_t bank) {
-    return bank >= 0x40 && bank <= 0x7F;
+static bool mmc3_mixed_chr_uses_ram(size_t bank) {
+    return mmc3_mixed_chr_ram_size
+        && bank >= mmc3_mixed_chr_first_bank && bank <= mmc3_mixed_chr_last_bank;
 }
 
-static size_t tqrom_chr_ram_offset(uint16_t a, size_t bank) {
-    size_t ram_bank = (bank - 0x40) % (sizeof(tqrom_chr_ram) / CHR_BANK_1K);
+static size_t mmc3_mixed_chr_ram_offset(uint16_t a, size_t bank) {
+    size_t ram_bank = (bank - mmc3_mixed_chr_first_bank)
+                    % (mmc3_mixed_chr_ram_size / CHR_BANK_1K);
     return ram_bank * CHR_BANK_1K + (a & 0x03FF);
 }
 
-static uint8_t tqrom_ppu_read(uint16_t a) {
+static uint8_t mmc3_mixed_chr_ppu_read(uint16_t a) {
     a &= 0x1FFF;
     size_t bank = mmc3_chr_bank(a);
-    if (tqrom_chr_uses_ram(bank)) return tqrom_chr_ram[tqrom_chr_ram_offset(a, bank)];
+    if (mmc3_mixed_chr_uses_ram(bank))
+        return mmc3_mixed_chr_ram[mmc3_mixed_chr_ram_offset(a, bank)];
 
     size_t chr_1k_banks = C.chr_sz / CHR_BANK_1K;
     if (chr_1k_banks == 0) return 0;
@@ -1817,11 +1826,34 @@ static uint8_t tqrom_ppu_read(uint16_t a) {
     return C.chr[bank * CHR_BANK_1K + (a & 0x03FF)];
 }
 
-static void tqrom_ppu_write(uint16_t a, uint8_t v) {
+static void mmc3_mixed_chr_ppu_write(uint16_t a, uint8_t v) {
     a &= 0x1FFF;
     size_t bank = mmc3_chr_bank(a);
-    if (!tqrom_chr_uses_ram(bank)) return;
-    tqrom_chr_ram[tqrom_chr_ram_offset(a, bank)] = v;
+    if (!mmc3_mixed_chr_uses_ram(bank)) return;
+    mmc3_mixed_chr_ram[mmc3_mixed_chr_ram_offset(a, bank)] = v;
+}
+
+static size_t mmc3_mixed_chr_expected_ram(int mapper_no) {
+    switch (mapper_no) {
+        case 74: case 191: case 194: return 0x0800;
+        case 192: case 195: return 0x1000;
+        case 119: return 0x2000;
+        default: return 0;
+    }
+}
+
+static bool mmc3_mixed_chr_configure(int mapper_no) {
+    mmc3_mixed_chr_ram_size = mmc3_mixed_chr_expected_ram(mapper_no);
+    switch (mapper_no) {
+        case 74:  mmc3_mixed_chr_first_bank = 0x08; mmc3_mixed_chr_last_bank = 0x09; break;
+        case 119: mmc3_mixed_chr_first_bank = 0x40; mmc3_mixed_chr_last_bank = 0x7F; break;
+        case 191: mmc3_mixed_chr_first_bank = 0x80; mmc3_mixed_chr_last_bank = 0xFF; break;
+        case 192: mmc3_mixed_chr_first_bank = 0x08; mmc3_mixed_chr_last_bank = 0x0B; break;
+        case 194: mmc3_mixed_chr_first_bank = 0x00; mmc3_mixed_chr_last_bank = 0x01; break;
+        case 195: mmc3_mixed_chr_first_bank = 0x00; mmc3_mixed_chr_last_bank = 0x03; break;
+        default: return false;
+    }
+    return true;
 }
 
 static Mirroring mmc3_mirr(void) { return mmc3.mirr; }
@@ -5737,9 +5769,10 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         return false;
     }
 
-    if (mapper_no == 119) {
+    size_t mixed_chr_ram = mmc3_mixed_chr_expected_ram(mapper_no);
+    if (mixed_chr_ram) {
         if (chr_is_ram || chr_sz == 0) return false;
-        if (nes2 && (ram->chr_ram != sizeof(tqrom_chr_ram) || ram->chr_nvram != 0)) return false;
+        if (nes2 && (ram->chr_ram != mixed_chr_ram || ram->chr_nvram != 0)) return false;
     } else {
         // Other supported boards do not select separate CHR ROM/RAM or two RAM chips.
         if ((!chr_is_ram && chr_total) || (ram->chr_ram && ram->chr_nvram)) return false;
@@ -5767,7 +5800,9 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         case 76: chr_limit = 0x80000; break;
         case 88: case 154: chr_limit = 0x20000; break;
         case 85: chr_limit = 0x40000; break;
-        case 119: chr_limit = sizeof(tqrom_chr_ram); break;
+        case 74: case 191: case 194: chr_limit = 0x0800; break;
+        case 192: case 195: chr_limit = 0x1000; break;
+        case 119: chr_limit = 0x2000; break;
         default: chr_limit = 0x2000; break;
     }
     return chr_total <= chr_limit;
@@ -5813,13 +5848,13 @@ int mapper_init_from_header(const iNESHeader *h,
     uint8_t submapper = nes2 ? h->prg_ram_size >> 4 : 0;
     switch (mapper_no) {
         case 0: case 1: case 2: case 3: case 4: case 5:
-        case 7: case 9: case 10: case 11: case 13: case 15: case 28: case 30: case 118: case 119: case 155:
+        case 7: case 9: case 10: case 11: case 13: case 15: case 28: case 30: case 74: case 118: case 119: case 155:
         case 16: case 153: case 157: case 159:
         case 18: case 32: case 33: case 34: case 48: case 64: case 65: case 158:
         case 21: case 22: case 23: case 24: case 25: case 26: case 27: case 183:
         case 19: case 66: case 67: case 68: case 69: case 71: case 73: case 75: case 76: case 80: case 82: case 85:
         case 88: case 89: case 93: case 95: case 99: case 105: case 151: case 154: case 184: case 206: case 207: case 210:
-        case 232:
+        case 191: case 192: case 194: case 195: case 232:
             break;
         default:
             fprintf(stderr, "Unsupported mapper: %d\n", mapper_no);
@@ -5898,8 +5933,10 @@ int mapper_init_from_header(const iNESHeader *h,
         fprintf(stderr, "Unsupported ROM size for mapper 118\n");
         return -1;
     }
-    if (mapper_no == 119 && (chr_is_ram || chr_sz > 0x40000 || (chr_sz % CHR_BANK_1K) != 0)) {
-        fprintf(stderr, "Unsupported ROM size for mapper 119\n");
+    if (mmc3_mixed_chr_expected_ram(mapper_no)
+        && (prg_sz > 0x200000 || (prg_sz % PRG_BANK_8K) != 0
+            || chr_is_ram || chr_sz > 0x40000 || (chr_sz % CHR_BANK_1K) != 0)) {
+        fprintf(stderr, "Unsupported ROM size for mapper %d\n", mapper_no);
         return -1;
     }
     if (mapper_no == 28 && ((prg_sz % PRG_BANK_16K) != 0 || prg_sz > 0x800000
@@ -6351,9 +6388,11 @@ int mapper_init_from_header(const iNESHeader *h,
             mapper_m105.clock = m105_clock;
             cart = &mapper_m105;
             break;
-        case 119:
+        case 74: case 119: case 191: case 192: case 194: case 195:
+            if (!mmc3_mixed_chr_configure(mapper_no)) return -1;
             build_mapper(&mapper_tqrom, mmc3_cpu_read, mmc3_cpu_write,
-                        tqrom_ppu_read, tqrom_ppu_write, mmc3_reset, mmc3_mirr);
+                        mmc3_mixed_chr_ppu_read, mmc3_mixed_chr_ppu_write,
+                        mmc3_reset, mmc3_mirr);
             cart = &mapper_tqrom;
             break;
         case 16: case 153: case 157: case 159:
