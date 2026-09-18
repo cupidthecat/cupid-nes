@@ -14,6 +14,7 @@
 #define CUPID_BOARDS_SACHEN_HPP
 #include "runtime.hpp"
 #include "txc_chip.hpp"
+#include "mmc3.hpp"
 
 namespace cupid::boards {
 
@@ -213,6 +214,40 @@ class Sachen74LS374 final : public Board {
                 UpdateState();
                 break;
         }
+    }
+};
+
+class Sachen9602 final : public Mmc3 {
+    uint8_t _selected = 0, _outerPrg = 0;
+    bool ForceChrBattery() override { return true; }
+    uint32_t GetChrRamSize() override { return 0x8000; }
+
+    void InitMapper() override {
+        _selected = _outerPrg = 0;
+        // The cartridge supplies battery power to the entire CHR RAM chip.
+        _saveChrRamSize = _chrRamSize;
+        Mmc3::InitMapper();
+    }
+
+    void SelectPrgPage(uint16_t slot, uint16_t page,
+                       PrgMemoryType = PrgMemoryType::PrgRom) override {
+        Mmc3::SelectPrgPage(slot, (page & 0x3F) | (_outerPrg << 6));
+        Mmc3::SelectPrgPage(_prgMode ? 0 : 2, 0x3E);
+        Mmc3::SelectPrgPage(3, 0x3F);
+    }
+
+    void WriteRegister(uint16_t address, uint8_t value) override {
+        switch (address & 0xE001) {
+            case 0x8000: _selected = value; break;
+            case 0x8001:
+                if ((_selected & 7) < 6) {
+                    _outerPrg = value >> 6;
+                    value &= 0x1F;
+                    UpdatePrgMapping();
+                }
+                break;
+        }
+        Mmc3::WriteRegister(address, value);
     }
 };
 

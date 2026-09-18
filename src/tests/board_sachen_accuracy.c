@@ -305,7 +305,7 @@ static int test_sachen150(void) {
 }
 
 static int test_sachen_geometry_and_replacement(void) {
-    const unsigned ids[] = {133, 136, 137, 138, 139, 141, 143, 145, 147, 148, 149, 150};
+    const unsigned ids[] = {133, 136, 137, 138, 139, 141, 143, 145, 147, 148, 149, 150, 243};
     for (unsigned i = 0; i < sizeof(ids) / sizeof(ids[0]); ++i) {
         BoardImage image;
         BOARD_CHECK(board_image_create(&image, ids[i], 0x6000, 0x2800, true));
@@ -336,7 +336,7 @@ static int test_sachen_geometry_and_replacement(void) {
 }
 
 static int test_sachen_persistence(void) {
-    const unsigned ids[] = {133, 136, 137, 138, 139, 141, 143, 145, 147, 148, 149, 150};
+    const unsigned ids[] = {133, 136, 137, 138, 139, 141, 143, 145, 147, 148, 149, 150, 243};
     for (unsigned i = 0; i < sizeof(ids) / sizeof(ids[0]); ++i) {
         BoardImage image;
         BOARD_CHECK(board_image_create(&image, ids[i], 0x10000, 0, true));
@@ -367,13 +367,13 @@ static int test_sachen_persistence(void) {
         BOARD_CHECK(load_rom(path) == 0);
         ppu_power_on(&ppu);
         BOARD_CHECK(cpu_power_on(&cpu));
-        if (ids[i] != 150) BOARD_CHECK(read_mem(0x7000) == 0x9A);
+        if (ids[i] != 150 && ids[i] != 243) BOARD_CHECK(read_mem(0x7000) == 0x9A);
         write_mem(0x7000, 0x5E);
         ppu_write(0x0023, 0x6F);
         BOARD_CHECK(unload_rom());
         BOARD_CHECK(load_rom(path) == 0 && ppu_read(0x0023) == 0x6F);
         bool writable = ids[i] == 136 || ids[i] == 143 || ids[i] == 147 || ids[i] == 148 || ids[i] == 149;
-        if (ids[i] != 150) BOARD_CHECK(read_mem(0x7000) == (writable ? 0x5E : 0x9A));
+        if (ids[i] != 150 && ids[i] != 243) BOARD_CHECK(read_mem(0x7000) == (writable ? 0x5E : 0x9A));
         BOARD_CHECK(unload_rom());
         file = fopen(save, "rb");
         BOARD_CHECK(file != NULL);

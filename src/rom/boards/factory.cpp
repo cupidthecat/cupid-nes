@@ -67,7 +67,8 @@ std::unique_ptr<Board> CreateBoard(unsigned mapper) {
         case 138: return std::make_unique<Sachen8259>(Sachen8259Variant::B);
         case 139: return std::make_unique<Sachen8259>(Sachen8259Variant::C);
         case 141: return std::make_unique<Sachen8259>(Sachen8259Variant::A);
-        case 150: return std::make_unique<Sachen74LS374>();
+        case 150: case 243: return std::make_unique<Sachen74LS374>();
+        case 513: return std::make_unique<Sachen9602>();
         case 56: case 142: return std::make_unique<Kaiser202>();
         case 171: return std::make_unique<Kaiser7058>();
         case 175: return std::make_unique<Kaiser7022>();
@@ -91,6 +92,7 @@ bool board_handles_mapper(unsigned mapper) {
         case 552: return true;
         case 133: case 136: case 137: case 138: case 139: case 141:
         case 143: case 145: case 147: case 148: case 149: case 150: return true;
+        case 243: case 513: return true;
         case 56: case 142: case 171: case 175: case 302: case 303:
         case 305: case 306: case 307: case 312: case 346: return true;
         case 41: case 63: case 112: case 174: case 193: case 221: case 290: case 298: return true;

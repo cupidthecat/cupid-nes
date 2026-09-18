@@ -95,6 +95,8 @@ PRG is the cartridge memory read by the CPU; CHR holds graphics patterns read by
 | 136, 147 | Sachen JV001 | Accumulator, inversion and output latches, board-specific data-bit wiring, and protection reads |
 | 137, 138, 139, 141 | Sachen 8259 | Four CHR wiring variants, normal and simple bank modes, PRG selection, and nametable routing |
 | 150 | Sachen 74LS374 | PRG/CHR registers, nametable routing, register readback, and DIP-controlled D2 wiring |
+| 243 | Sachen 74LS374 variant | Separate CHR address wiring across registers 2, 4, and 6; register readback and nametable routing |
+| 513 | Sachen 9602 | MMC3 bank and IRQ registers, outer PRG bits written through CHR registers, fixed first-block banks, and battery-backed CHR RAM |
 | 56, 142, 171, 175, 302, 303, 305, 306, 307, 312, 346 | Kaiser | Board-specific address decoding, small PRG windows, delayed bank latches, RAM/ROM selection, mirroring, and CPU-clocked one-shot IRQs |
 | 105 | NES-EVENT | MMC1 serial control, competition PRG modes, fixed CHR RAM, cartridge RAM, and DIP-selected timer IRQ |
 | 111 | GTROM | 32 KiB PRG flash banking, two CHR-RAM banks, banked cartridge nametable RAM, register-read latching, and flash persistence |
@@ -151,6 +153,10 @@ Kaiser 56 and 142 use indexed 8 KiB PRG registers, a fixed last bank, and a nibb
 Kaiser 175 applies pending PRG and CHR banks when the CPU reads `$FFFC`; that read returns data from the newly selected bank. Soft reset clears the pending bank and selects bank zero. The other Kaiser boards retain their bank registers on CPU soft reset. Mapper 171 independently selects two 4 KiB CHR windows. Mapper 346 changes its 32 KiB PRG bank only at the exact write addresses `$E0A0` and `$EE36`, while mapper 312 selects a lower 16 KiB bank through writes at `$6000-$7FFF` and controls mirroring with upper writes.
 
 Kaiser 302 and 305 expose four independent 2 KiB ROM windows at `$6000-$7FFF`. Mapper 302 uses nibble registers and fixed upper PRG banks; mapper 305 maps its upper ROM in reverse 2 KiB order. Mapper 306 decodes write-address bits to select an 8 KiB ROM window below its fixed upper banks. Mapper 307 splits work RAM between `$6000-$6FFF` and `$B000-$BFFF`, selects two PRG pairs, and routes all four nametables independently. Its trainer bytes appear in the second work-RAM window. RAM and ROM access permissions remain distinct from register-write interception on all of these boards.
+
+Mapper 243 shares the indexed register interface and nametable controls of mapper 150, but its CHR address uses register 2 bit zero, register 4 bit zero, and register 6 bits zero and one. Cartridge DIP settings do not affect mapper 243. Its registers survive CPU soft reset.
+
+Sachen 9602, mapper 513, uses MMC3 banking and qualified A12 IRQs. Writing a CHR register also selects an outer PRG block with the data's upper two bits; CHR selection uses the low five bits. The two fixed PRG banks remain banks 62 and 63 of the first ROM block even when the switchable banks move to another block. PRG mode changes move fixed bank 62 between `$8000` and `$C000`. The CHR RAM chip is battery-backed in full, including when a NES 2.0 header declares both volatile and nonvolatile CHR memory. Its `.chr.sav` contains the full allocated chip, and its bank registers survive CPU soft reset.
 
 The mapper 72 and 92 cartridge banking and latch behavior is implemented. Optional speech hardware on those boards is not currently emulated.
 
