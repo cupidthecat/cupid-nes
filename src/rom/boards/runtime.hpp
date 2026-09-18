@@ -39,7 +39,7 @@ struct BoardInfo {
     bool HasBattery = false;
     bool HasChrRam = false;
     struct { uint8_t Byte6 = 0; } Header;
-    struct { std::string Chip; } DatabaseInfo;
+    struct { std::string Chip, Board; } DatabaseInfo;
 };
 
 class Board {

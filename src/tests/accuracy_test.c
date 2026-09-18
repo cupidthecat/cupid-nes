@@ -42,6 +42,7 @@ int test_board_magic_floor_accuracy(void);
 int test_board_jaleco_accuracy(void);
 int test_board_nsf_cart_accuracy(void);
 int test_board_ffe_accuracy(void);
+int test_board_farid_accuracy(void);
 int test_bandai_accuracy(void);
 int test_fds_accuracy(void);
 int test_input_accuracy(void);
@@ -108,6 +109,7 @@ int main(int argc, char **argv) {
     failures += test_board_jaleco_accuracy();
     failures += test_board_nsf_cart_accuracy();
     failures += test_board_ffe_accuracy();
+    failures += test_board_farid_accuracy();
     failures += test_bandai_accuracy();
     failures += test_fds_accuracy();
     failures += test_input_accuracy();

@@ -15,6 +15,7 @@
 #include "homebrew.hpp"
 #include "jaleco.hpp"
 #include "ffe.hpp"
+#include "farid.hpp"
 
 namespace cupid::boards {
 
@@ -27,6 +28,8 @@ std::unique_ptr<Board> CreateBoard(unsigned mapper) {
         case 104: return std::make_unique<GoldenFive>();
         case 152: return std::make_unique<Bandai74161>(true);
         case 218: return std::make_unique<MagicFloor>();
+        case 323: return std::make_unique<FaridSlrom>();
+        case 324: return std::make_unique<FaridUnrom>();
         default: return nullptr;
     }
 }
@@ -36,6 +39,7 @@ std::unique_ptr<Board> CreateBoard(unsigned mapper) {
 bool board_handles_mapper(unsigned mapper) {
     switch (mapper) {
         case 6: case 8: case 17: return true;
+        case 323: case 324: return true;
         case 31: case 70: case 86: case 104: case 152: case 218: return true;
         default: return false;
     }
