@@ -66,8 +66,8 @@ NES 2.0 console selector 3 with extended subtype 4 enables EPSM sound. The devic
 | Option | Accepted value | Default |
 | --- | --- | --- |
 | `--adapter TYPE` | `none`, `four-score`, `famicom-2`, `famicom-4` | `none` |
-| `--port1 DEVICE` | `pad`, `none`, `arkanoid`, `power-pad-a`, `power-pad-b`, `zapper` | `pad` |
-| `--port2 DEVICE` | `pad`, `none`, `arkanoid`, `power-pad-a`, `power-pad-b`, `zapper`, `subor-mouse` | `pad` |
+| `--port1 DEVICE` | `pad`, `none`, `arkanoid`, `power-pad-a`, `power-pad-b`, `zapper`, `snes-pad`, `snes-mouse`, `ntt-keypad`, `virtual-boy` | `pad` |
+| `--port2 DEVICE` | `pad`, `none`, `arkanoid`, `power-pad-a`, `power-pad-b`, `zapper`, `subor-mouse`, `snes-pad`, `snes-mouse`, `ntt-keypad`, `virtual-boy` | `pad` |
 | `--expansion DEVICE` | `none`, `arkanoid`, `family-trainer-a`, `family-trainer-b`, `zapper`, `family-basic`, `turbo-file`, `battle-box`, `subor-keyboard`, `hori-track`, `konami-hyper-shot`, `bandai-hyper-shot`, `party-tap`, `pachinko`, `exciting-boxing`, `jissen-mahjong`, `barcode-battler`, `oeka-kids-tablet` | `none` |
 | `--zapper-radius PIXELS` | Decimal integer from `0` through `255` | `0` |
 
@@ -75,7 +75,9 @@ A Four Score requires both normal ports to stay set to `pad`. The `famicom-2` an
 
 The supported Subor keyboard and mouse combination uses `--expansion subor-keyboard --port2 subor-mouse`. The mouse is accepted only on port 2, but the parser does not require the keyboard and mouse to be selected together.
 
-`--console` and the input-device options are independent. Selecting an expansion device does not automatically switch the console model to `famicom`, and selecting `famicom` does not choose an expansion device. Ordinary NES 2.0 input-device metadata is not used to fill these options. VS System metadata is the exception: supported VS headers select standard, swapped, swapped-A/B, or serial light-gun cabinet wiring inside the VS implementation. A zero VS input code falls back to standard wiring. Extended VS subtype 1 also uses the documented 2C03 compatibility fallback while keeping its cabinet and input metadata.
+The SNES controller, SNES mouse, NTT Data keypad, and Virtual Boy controller are accepted on either normal controller port. `snes-pad`, `snes-mouse`, `ntt-keypad`, and `virtual-boy` select them explicitly. NES 2.0 default-input value `0x2B` also selects two SNES controllers when the corresponding command-line fields have not been overridden. The NES 2.0 SNES-mouse value `0x29` is not auto-connected; use `--port1 snes-mouse` or `--port2 snes-mouse` for that device.
+
+`--console` and the input-device options are independent. Selecting an expansion device does not switch the console model to `famicom`, and selecting `famicom` does not choose an expansion device. Supported ordinary NES 2.0 default-input metadata supplies automatic controller defaults, while an explicit `--adapter`, `--port1`, `--port2`, or `--expansion` value keeps control of that field. The selected console model also determines whether ordinary Zapper metadata uses controller port 2 or the Famicom expansion connector; Dendy timing does not replace that wiring choice. Unsupported ordinary input values leave the current controller configuration in place and print a diagnostic. Supported VS headers use their separate cabinet input decoder for standard, swapped, swapped-A/B, or serial light-gun wiring. A zero VS input code falls back to standard wiring.
 
 Examples:
 
@@ -83,6 +85,8 @@ Examples:
 ./cupid-nes --adapter four-score "four-player.nes"
 ./cupid-nes --console famicom --adapter famicom-2 "multiplayer.nes"
 ./cupid-nes --port2 zapper "light-gun.nes"
+./cupid-nes --port1 snes-pad "snes-controller-game.nes"
+./cupid-nes --port2 snes-mouse "mouse-game.nes"
 ./cupid-nes --console famicom --expansion arkanoid "paddle.nes"
 ```
 

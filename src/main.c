@@ -57,7 +57,6 @@ static uint32_t composite_framebuffer[NTSC_COMPOSITE_WIDTH * NTSC_COMPOSITE_HEIG
 Joypad pad1 = {0}, pad2 = {0};
 
 static SDL_GameController *controllers[NES_INPUT_PLAYERS];
-
 static void open_controller(int device) {
     if (!SDL_IsGameController(device)) return;
     SDL_JoystickID id = SDL_JoystickGetDeviceInstanceID(device);
@@ -86,9 +85,26 @@ static void controller_event(const SDL_Event *event) {
             SDL_GameControllerClose(controllers[player]);
             controllers[player] = NULL;
             joypad_player(player)->buttons = 0;
+            if (player < 2) {
+                NesPortDevice device = joypad_port_device(player);
+                if (device == NES_PORT_SNES_CONTROLLER || device == NES_PORT_NTT_KEYPAD) {
+                    joypad_set_snes_button(player, SNES_BUTTON_X, false);
+                    joypad_set_snes_button(player, SNES_BUTTON_Y, false);
+                    joypad_set_snes_button(player, SNES_BUTTON_L, false);
+                    joypad_set_snes_button(player, SNES_BUTTON_R, false);
+                } else if (device == NES_PORT_VIRTUAL_BOY) {
+                    joypad_set_virtual_boy_button(player, VB_BUTTON_DOWN1, false);
+                    joypad_set_virtual_boy_button(player, VB_BUTTON_LEFT1, false);
+                    joypad_set_virtual_boy_button(player, VB_BUTTON_RIGHT1, false);
+                    joypad_set_virtual_boy_button(player, VB_BUTTON_UP1, false);
+                    joypad_set_virtual_boy_button(player, VB_BUTTON_L, false);
+                    joypad_set_virtual_boy_button(player, VB_BUTTON_R, false);
+                }
+            }
         } else if ((event->type == SDL_CONTROLLERBUTTONDOWN || event->type == SDL_CONTROLLERBUTTONUP)
                    && event->cbutton.which == id) {
-            int button;
+            bool down = event->type == SDL_CONTROLLERBUTTONDOWN;
+            int button = -1;
             switch (event->cbutton.button) {
                 case SDL_CONTROLLER_BUTTON_A: button = BTN_A; break;
                 case SDL_CONTROLLER_BUTTON_B: button = BTN_B; break;
@@ -98,11 +114,100 @@ static void controller_event(const SDL_Event *event) {
                 case SDL_CONTROLLER_BUTTON_DPAD_DOWN: button = BTN_DOWN; break;
                 case SDL_CONTROLLER_BUTTON_DPAD_LEFT: button = BTN_LEFT; break;
                 case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: button = BTN_RIGHT; break;
-                default: continue;
+                default: break;
             }
-            joypad_set_player(player, button, event->type == SDL_CONTROLLERBUTTONDOWN);
+            if (button >= 0) joypad_set_player(player, button, down);
+            if (player < 2) {
+                NesPortDevice device = joypad_port_device(player);
+                if (device == NES_PORT_SNES_CONTROLLER || device == NES_PORT_NTT_KEYPAD) {
+                    if (event->cbutton.button == SDL_CONTROLLER_BUTTON_X)
+                        joypad_set_snes_button(player, SNES_BUTTON_X, down);
+                    else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_Y)
+                        joypad_set_snes_button(player, SNES_BUTTON_Y, down);
+                    else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER)
+                        joypad_set_snes_button(player, SNES_BUTTON_L, down);
+                    else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)
+                        joypad_set_snes_button(player, SNES_BUTTON_R, down);
+                } else if (device == NES_PORT_VIRTUAL_BOY) {
+                    if (event->cbutton.button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER)
+                        joypad_set_virtual_boy_button(player, VB_BUTTON_L, down);
+                    else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)
+                        joypad_set_virtual_boy_button(player, VB_BUTTON_R, down);
+                }
+            }
+        } else if (event->type == SDL_CONTROLLERAXISMOTION && event->caxis.which == id
+                   && player < 2 && joypad_port_device(player) == NES_PORT_VIRTUAL_BOY) {
+            const int deadzone = 16000;
+            if (event->caxis.axis == SDL_CONTROLLER_AXIS_RIGHTX) {
+                joypad_set_virtual_boy_button(player, VB_BUTTON_LEFT1, event->caxis.value < -deadzone);
+                joypad_set_virtual_boy_button(player, VB_BUTTON_RIGHT1, event->caxis.value > deadzone);
+            } else if (event->caxis.axis == SDL_CONTROLLER_AXIS_RIGHTY) {
+                joypad_set_virtual_boy_button(player, VB_BUTTON_UP1, event->caxis.value < -deadzone);
+                joypad_set_virtual_boy_button(player, VB_BUTTON_DOWN1, event->caxis.value > deadzone);
+            }
         }
     }
+}
+
+static bool extended_port_key_event(const SDL_KeyboardEvent *event) {
+    if (!event) return false;
+    bool down = event->type == SDL_KEYDOWN;
+    NesPortDevice device = joypad_port_device(0);
+    NttKey keypad_key;
+    bool keypad_event = true;
+    switch (event->keysym.scancode) {
+        case SDL_SCANCODE_KP_0: keypad_key = NTT_KEY_0; break;
+        case SDL_SCANCODE_KP_1: keypad_key = NTT_KEY_1; break;
+        case SDL_SCANCODE_KP_2: keypad_key = NTT_KEY_2; break;
+        case SDL_SCANCODE_KP_3: keypad_key = NTT_KEY_3; break;
+        case SDL_SCANCODE_KP_4: keypad_key = NTT_KEY_4; break;
+        case SDL_SCANCODE_KP_5: keypad_key = NTT_KEY_5; break;
+        case SDL_SCANCODE_KP_6: keypad_key = NTT_KEY_6; break;
+        case SDL_SCANCODE_KP_7: keypad_key = NTT_KEY_7; break;
+        case SDL_SCANCODE_KP_8: keypad_key = NTT_KEY_8; break;
+        case SDL_SCANCODE_KP_9: keypad_key = NTT_KEY_9; break;
+        case SDL_SCANCODE_KP_MULTIPLY: keypad_key = NTT_KEY_STAR; break;
+        case SDL_SCANCODE_KP_DIVIDE: keypad_key = NTT_KEY_POUND; break;
+        case SDL_SCANCODE_KP_PERIOD: keypad_key = NTT_KEY_PERIOD; break;
+        case SDL_SCANCODE_C: keypad_key = NTT_KEY_C; break;
+        case SDL_SCANCODE_E: keypad_key = NTT_KEY_END; break;
+        default: keypad_event = false; break;
+    }
+    if (keypad_event) {
+        bool handled = false;
+        for (unsigned port = 0; port < 2; ++port) {
+            if (joypad_port_device(port) == NES_PORT_NTT_KEYPAD) {
+                handled |= joypad_set_ntt_key(port, keypad_key, down);
+            }
+        }
+        if (handled) return true;
+    }
+
+    if (device == NES_PORT_SNES_CONTROLLER || device == NES_PORT_NTT_KEYPAD) {
+        SnesButton button;
+        switch (event->keysym.scancode) {
+            case SDL_SCANCODE_A: button = SNES_BUTTON_Y; break;
+            case SDL_SCANCODE_S: button = SNES_BUTTON_X; break;
+            case SDL_SCANCODE_Q: button = SNES_BUTTON_L; break;
+            case SDL_SCANCODE_W: button = SNES_BUTTON_R; break;
+            default: return false;
+        }
+        return joypad_set_snes_button(0, button, down);
+    }
+    if (device == NES_PORT_VIRTUAL_BOY) {
+        VirtualBoyButton button;
+        switch (event->keysym.scancode) {
+            case SDL_SCANCODE_I: button = VB_BUTTON_UP1; break;
+            case SDL_SCANCODE_K: button = VB_BUTTON_DOWN1; break;
+            case SDL_SCANCODE_J: button = VB_BUTTON_LEFT1; break;
+            case SDL_SCANCODE_L: button = VB_BUTTON_RIGHT1; break;
+            case SDL_SCANCODE_Q: button = VB_BUTTON_L; break;
+            case SDL_SCANCODE_E: button = VB_BUTTON_R; break;
+            default: return false;
+        }
+        return joypad_set_virtual_boy_button(0, button, down);
+    }
+    return false;
 }
 
 static bool mat_key_event(const SDL_KeyboardEvent *event) {
@@ -496,7 +601,7 @@ int main(int argc, char *argv[]) {
         } else if (strcmp(argv[i], "--port1") == 0 || strcmp(argv[i], "--port2") == 0) {
             unsigned port = argv[i][6] == '2' ? 1 : 0;
             if (++i == argc || !joypad_set_port_device_name(port, argv[i])) {
-                fprintf(stderr, "Port device must be pad, none, arkanoid, power-pad-a, power-pad-b, zapper, or subor-mouse (port 2 only)\n");
+                fprintf(stderr, "Port device must be pad, none, arkanoid, power-pad-a, power-pad-b, zapper, subor-mouse (port 2 only), snes-pad, snes-mouse, ntt-keypad, or virtual-boy\n");
                 return 1;
             }
             input_overrides |= port ? NES_INPUT_OVERRIDE_PORT2 : NES_INPUT_OVERRIDE_PORT1;
@@ -840,6 +945,13 @@ int main(int argc, char *argv[]) {
                     joypad_set_subor_mouse_buttons((buttons & SDL_BUTTON_LMASK) != 0,
                                                    (buttons & SDL_BUTTON_RMASK) != 0);
                 }
+                for (unsigned port = 0; port < 2; ++port) {
+                    if (joypad_port_device(port) != NES_PORT_SNES_MOUSE) continue;
+                    if (e.type == SDL_MOUSEMOTION)
+                        joypad_add_snes_mouse_motion(port, e.motion.xrel, e.motion.yrel);
+                    joypad_set_snes_mouse_buttons(port, (buttons & SDL_BUTTON_LMASK) != 0,
+                                                  (buttons & SDL_BUTTON_RMASK) != 0);
+                }
                 if (e.type == SDL_MOUSEMOTION
                     && joypad_expansion_device() == NES_EXPANSION_HORI_TRACK)
                     joypad_add_hori_track_motion(e.motion.xrel, e.motion.yrel);
@@ -876,6 +988,9 @@ int main(int argc, char *argv[]) {
             if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
                 && e.key.windowID == SDL_GetWindowID(window)
                 && jissen_key_event(&e.key)) continue;
+            if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
+                && e.key.windowID == SDL_GetWindowID(window)
+                && extended_port_key_event(&e.key)) continue;
             palette_tool_handle_event(&e, renderer);
             
             if (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP) {
@@ -923,14 +1038,14 @@ int main(int argc, char *argv[]) {
                     case SDLK_8: if (vs_dual_system()) vs_set_coin(3, down != 0); break;
                     case SDLK_F1: if (vs_enabled()) vs_set_service(0, down != 0); break;
                     case SDLK_F2: if (vs_dual_system()) vs_set_service(1, down != 0); break;
-                    case SDLK_z:        joypad_set(&pad1, BTN_A,      down); break;
-                    case SDLK_x:        joypad_set(&pad1, BTN_B,      down); break;
-                    case SDLK_RSHIFT:   joypad_set(&pad1, BTN_SELECT, down); break;
-                    case SDLK_RETURN:   joypad_set(&pad1, BTN_START,  down); break;
-                    case SDLK_UP:       joypad_set(&pad1, BTN_UP,     down); break;
-                    case SDLK_DOWN:     joypad_set(&pad1, BTN_DOWN,   down); break;
-                    case SDLK_LEFT:     joypad_set(&pad1, BTN_LEFT,   down); break;
-                    case SDLK_RIGHT:    joypad_set(&pad1, BTN_RIGHT,  down); break;
+                    case SDLK_z:        joypad_set_player(0, BTN_A,      down); break;
+                    case SDLK_x:        joypad_set_player(0, BTN_B,      down); break;
+                    case SDLK_RSHIFT:   joypad_set_player(0, BTN_SELECT, down); break;
+                    case SDLK_RETURN:   joypad_set_player(0, BTN_START,  down); break;
+                    case SDLK_UP:       joypad_set_player(0, BTN_UP,     down); break;
+                    case SDLK_DOWN:     joypad_set_player(0, BTN_DOWN,   down); break;
+                    case SDLK_LEFT:     joypad_set_player(0, BTN_LEFT,   down); break;
+                    case SDLK_RIGHT:    joypad_set_player(0, BTN_RIGHT,  down); break;
                     case SDLK_m:        joypad_set_microphone(down != 0); break;
                     default: break;
                 }

@@ -51,8 +51,65 @@ typedef enum {
     NES_PORT_POWER_PAD_A,
     NES_PORT_POWER_PAD_B,
     NES_PORT_ZAPPER,
-    NES_PORT_SUBOR_MOUSE
+    NES_PORT_SUBOR_MOUSE,
+    NES_PORT_SNES_CONTROLLER,
+    NES_PORT_SNES_MOUSE,
+    NES_PORT_NTT_KEYPAD,
+    NES_PORT_VIRTUAL_BOY
 } NesPortDevice;
+
+typedef enum {
+    SNES_BUTTON_A,
+    SNES_BUTTON_B,
+    SNES_BUTTON_X,
+    SNES_BUTTON_Y,
+    SNES_BUTTON_L,
+    SNES_BUTTON_R,
+    SNES_BUTTON_SELECT,
+    SNES_BUTTON_START,
+    SNES_BUTTON_UP,
+    SNES_BUTTON_DOWN,
+    SNES_BUTTON_LEFT,
+    SNES_BUTTON_RIGHT,
+    SNES_BUTTON_COUNT
+} SnesButton;
+
+typedef enum {
+    NTT_KEY_0,
+    NTT_KEY_1,
+    NTT_KEY_2,
+    NTT_KEY_3,
+    NTT_KEY_4,
+    NTT_KEY_5,
+    NTT_KEY_6,
+    NTT_KEY_7,
+    NTT_KEY_8,
+    NTT_KEY_9,
+    NTT_KEY_STAR,
+    NTT_KEY_POUND,
+    NTT_KEY_PERIOD,
+    NTT_KEY_C,
+    NTT_KEY_END,
+    NTT_KEY_COUNT
+} NttKey;
+
+typedef enum {
+    VB_BUTTON_DOWN1,
+    VB_BUTTON_LEFT1,
+    VB_BUTTON_SELECT,
+    VB_BUTTON_START,
+    VB_BUTTON_UP0,
+    VB_BUTTON_DOWN0,
+    VB_BUTTON_LEFT0,
+    VB_BUTTON_RIGHT0,
+    VB_BUTTON_RIGHT1,
+    VB_BUTTON_UP1,
+    VB_BUTTON_L,
+    VB_BUTTON_R,
+    VB_BUTTON_B,
+    VB_BUTTON_A,
+    VB_BUTTON_COUNT
+} VirtualBoyButton;
 
 typedef enum {
     NES_EXPANSION_NONE,
@@ -162,6 +219,11 @@ bool    joypad_set_zapper_radius(unsigned radius);
 bool    joypad_set_subor_key(SuborKey key, bool pressed);
 bool    joypad_add_subor_mouse_motion(int dx, int dy);
 bool    joypad_set_subor_mouse_buttons(bool left, bool right);
+bool    joypad_set_snes_button(unsigned port, SnesButton button, bool pressed);
+bool    joypad_add_snes_mouse_motion(unsigned port, int dx, int dy);
+bool    joypad_set_snes_mouse_buttons(unsigned port, bool left, bool right);
+bool    joypad_set_ntt_key(unsigned port, NttKey key, bool pressed);
+bool    joypad_set_virtual_boy_button(unsigned port, VirtualBoyButton button, bool pressed);
 bool    joypad_add_hori_track_motion(int dx, int dy);
 bool    joypad_set_party_tap_button(unsigned button, bool pressed);
 bool    joypad_set_pachinko_controls(bool press, bool release);

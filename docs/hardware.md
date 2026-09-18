@@ -168,6 +168,7 @@ Device selection changes the signals that CPU reads and writes see at `$4016` an
 | Connection | Devices | Implemented behavior |
 | --- | --- | --- |
 | Controller ports | Gamepads, Four Score, Arkanoid, Power Pad, Zapper | Serial reports, adapter signatures, paddle positions, mat wiring and beam-aware light sensing |
+| Controller ports | SNES controller and mouse, NTT Data keypad, Virtual Boy controller | Device-specific serial packets, latch/strobe behavior, mouse sensitivity and both Virtual Boy D-pads |
 | VS controller wiring | VS Zapper | Metadata-selected serial gun report, trigger state and beam timing |
 | Famicom expansion | Two- and four-player adapters, Arkanoid, Family Trainer, Zapper | Expansion-line routing with separate ordinary controller bits |
 | Famicom expansion | Family BASIC and Subor keyboards | Scanned key matrices; Family BASIC also supplies the data-recorder signal |

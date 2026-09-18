@@ -31,17 +31,20 @@ Cupid opens devices that SDL recognizes through its GameController interface. At
 
 The first controller is player 1, the second is player 2, the third is player 3, and the fourth is player 4. The input layer has six player slots so the Famicom four-player adapter can expose players 5 and 6 as well.
 
-| Host controller button | Emulated button |
+| Host controller input | Emulated input |
 | --- | --- |
 | A | A |
 | B | B |
 | Back | Select |
 | Start | Start |
 | D-pad | Up, Down, Left, Right |
+| X / Y | SNES X / Y when an SNES controller or NTT Data keypad is selected |
+| Left / right shoulder | SNES L / R, or Virtual Boy L / R, for those device types |
+| Right analog stick | Virtual Boy second D-pad |
 
-Analog sticks are not mapped by the frontend. The keyboard writes player 1's button state, so player 1 can be driven by both the keyboard and the first controller. They update the same button state; avoid using both devices for the same button at once.
+The keyboard writes player 1's button state, so player 1 can be driven by both the keyboard and the first controller. They update the same button state; avoid using both devices for the same button at once.
 
-Which player slots reach the game depends on the emulated wiring. Ordinary NES 2.0 input metadata does not automatically choose these frontend devices; use the command-line input options for ordinary NES and Famicom images. Supported VS metadata is decoded separately inside the VS cabinet model.
+Which player slots reach the game depends on the emulated wiring. Supported NES 2.0 default-input metadata can select ordinary devices automatically, and explicit command-line input options override the corresponding automatic fields. Supported VS metadata is decoded separately inside the VS cabinet model.
 
 | Configuration | Player routing |
 | --- | --- |
@@ -52,6 +55,16 @@ Which player slots reach the game depends on the emulated wiring. Ordinary NES 2
 | Dual VS System | Players 1/2 on the main side and players 3/4 on the secondary side |
 
 Each cartridge still decides which reports it reads. More detail about the emulated adapters is in [hardware](hardware.md).
+
+## SNES, NTT Data, and Virtual Boy port devices
+
+Use `snes-pad`, `snes-mouse`, `ntt-keypad`, or `virtual-boy` with `--port1` or `--port2`. The SNES controller reports B, Y, Select, Start, D-pad, A, X, L, and R followed by four zero bits. Reads after those 16 bits return one. The NTT Data keypad extends that serial report with its keypad signature and numeric/function keys. The Virtual Boy controller reports both D-pads, Select, Start, L/R, B/A, and its signature bit.
+
+For player 1 on the keyboard, A/S drive SNES Y/X and Q/W drive SNES L/R. With a Virtual Boy controller selected, I/K/J/L drive its second D-pad and Q/E drive L/R. The common Z/X, Right Shift, Enter, and arrow-key mappings still drive the device's A/B, Select/Start, and first D-pad where those controls exist.
+
+The NTT Data keypad uses the numeric keypad digits for 0 through 9, keypad `*` for Star, keypad `/` for Pound, keypad decimal for Period, C for C, and E for End Communication. Those keys are handled before normal application shortcuts while the keypad is selected.
+
+The SNES mouse uses relative host-mouse movement and the left/right mouse buttons. The emulated mouse keeps the packet's direction flags, clamps each latched axis magnitude to seven bits, and cycles through its three sensitivity levels when software reads while strobe is high.
 
 ## Arkanoid paddle
 
