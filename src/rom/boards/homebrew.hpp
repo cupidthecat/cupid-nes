@@ -16,6 +16,22 @@
 
 namespace cupid::boards {
 
+class NsfCartridge final : public Board {
+    uint16_t RegisterStartAddress() override { return 0x5000; }
+    uint16_t RegisterEndAddress() override { return 0x5FFF; }
+    uint16_t GetPrgPageSize() override { return 0x1000; }
+    uint16_t GetChrPageSize() override { return 0x2000; }
+
+    void InitMapper() override {
+        WriteRegister(0x5FFF, 0xFF);
+        SelectChrPage(0, 0);
+    }
+
+    void WriteRegister(uint16_t address, uint8_t value) override {
+        SelectPrgPage(address & 7, value);
+    }
+};
+
 class MagicFloor final : public Board {
     uint16_t GetPrgPageSize() override { return 0x8000; }
     uint16_t GetChrPageSize() override { return 0x2000; }
