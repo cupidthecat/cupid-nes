@@ -180,11 +180,11 @@ The supported VS configurations use mappers 0, 1, 2, 75, 99, or 151 with NTSC ti
 
 The PPU choices include the 2C03 RGB palette, four 2C04 palettes, and the implemented 2C05 register/status variants. Cabinet handling includes DIP switches, coin and service inputs, controller routing, and the implemented protection-read sequences.
 
-NES 2.0 console selector 3 with extended subtype 1 also selects VS hardware. That encoding uses the existing 2C03 profile as a compatibility fallback because its subtype occupies the direct descriptor's PPU field. It retains the cabinet type and input metadata. This fallback does not add RP2C03G emulation; direct VS descriptors keep their existing PPU selection and validation.
+NES 2.0 console selector 3 with extended subtype 1 also selects VS hardware. That encoding uses the existing 2C03 profile as a compatibility fallback because its subtype occupies the direct descriptor's PPU field. It retains the cabinet type and input metadata. Direct VS descriptors with PPU code 1 (RP2C03G) or unknown codes 13 through 15 also use 2C03 behavior and print a diagnostic. Other defined PPU codes select their corresponding RGB profile.
 
 Dual mode maintains independent CPU, PPU, APU, internal RAM, input, and DMA state. The boards share cartridge RAM with ownership controlled by the hardware signal. Cross-CPU interrupts and synchronized stepping support communication between the two sides. Both screens are presented and both APUs feed mono output.
 
-RP2C03G and unimplemented combinations of console, mapper, memory, or PPU metadata are rejected. NES 2.0 VS Zapper metadata selects the serial gun report on the first controller port. The [VS tests](../src/tests/vs_accuracy.c) cover supported paths, including real CPU programs that communicate through shared RAM and produce separate video and audio.
+There is no distinct RP2C03G palette or hardware model. The 2C03 fallback allows those images to load; it does not establish their palette accuracy. Unsupported console, mapper, memory, cabinet, and controller combinations are still rejected. NES 2.0 VS Zapper metadata selects the serial gun report on the first controller port. The [VS tests](../src/tests/vs_accuracy.c) cover the fallback and supported RGB profiles, including real CPU programs that communicate through shared RAM and produce separate video and audio.
 
 ## Reading accuracy results
 
