@@ -93,6 +93,13 @@ typedef struct {
 
 static KonamiHyperShot konami_hyper_shot = {true, true};
 
+typedef struct {
+    uint8_t state;
+    bool strobe;
+} BandaiHyperShot;
+
+static BandaiHyperShot bandai_hyper_shot;
+
 enum { SUBOR_NONE = 0xFF };
 static const uint8_t subor_matrix[104] = {
     SUBOR_KEY_4, SUBOR_KEY_G, SUBOR_KEY_F, SUBOR_KEY_C,
@@ -573,4 +580,21 @@ uint8_t konami_hyper_shot_read(unsigned port, uint8_t player1, uint8_t player2) 
         if (player2 & (1u << BTN_B)) value |= 0x10;
     }
     return value;
+}
+
+void bandai_hyper_shot_reset(void) {
+    memset(&bandai_hyper_shot, 0, sizeof(bandai_hyper_shot));
+}
+
+void bandai_hyper_shot_write(uint8_t value, uint8_t buttons) {
+    bool strobe = (value & 1u) != 0;
+    if (bandai_hyper_shot.strobe && !strobe) bandai_hyper_shot.state = buttons;
+    bandai_hyper_shot.strobe = strobe;
+}
+
+uint8_t bandai_hyper_shot_read(uint8_t buttons) {
+    if (bandai_hyper_shot.strobe) bandai_hyper_shot.state = buttons;
+    uint8_t output = (uint8_t)((bandai_hyper_shot.state & 1u) << 1);
+    bandai_hyper_shot.state >>= 1;
+    return output;
 }

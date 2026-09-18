@@ -1572,6 +1572,65 @@ static int konami_hyper_shot_signals(void) {
     return 0;
 }
 
+static int bandai_hyper_shot_signals(void) {
+    input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+    CHECK(joypad_set_expansion_device_name("bandai-hyper-shot"));
+    CHECK(joypad_expansion_device() == NES_EXPANSION_BANDAI_HYPER_SHOT);
+    pad1.buttons = 0xA5;
+    latch_controllers();
+    for (unsigned bit = 0; bit < 8; ++bit) {
+        write_mem(0x4018, 0);
+        uint8_t value = read_mem(0x4016);
+        uint8_t expected = (uint8_t)((0xA5u >> bit) & 1u);
+        CHECK((value & 1u) == expected);
+        CHECK(((value >> 1) & 1u) == expected);
+    }
+    write_mem(0x4018, 0);
+    CHECK((read_mem(0x4016) & 3u) == 1u);
+
+    write_mem(0x4016, 1);
+    pad1.buttons = 1u << BTN_A;
+    write_mem(0x4018, 0);
+    CHECK((read_mem(0x4016) & 3u) == 3u);
+    pad1.buttons = 0;
+    write_mem(0x4018, 0);
+    CHECK((read_mem(0x4016) & 3u) == 0);
+    write_mem(0x4016, 0);
+
+    CHECK(joypad_set_zapper(2, 32, 20, false));
+    ppu.scanline = 20;
+    ppu.dot = 33;
+    write_mem(0x4018, 0);
+    CHECK((read_mem(0x4017) & 0x18) == 0x08);
+    sensor_pixel(32, 20, 0x20);
+    write_mem(0x4018, 0);
+    CHECK((read_mem(0x4017) & 0x18) == 0);
+    CHECK(joypad_set_zapper(2, 32, 20, true));
+    write_mem(0x4018, 0);
+    CHECK((read_mem(0x4017) & 0x18) == 0x10);
+    CHECK(joypad_set_zapper(2, -1, -1, true));
+    write_mem(0x4018, 0);
+    CHECK((read_mem(0x4017) & 0x18) == 0x18);
+
+    CHECK(joypad_set_zapper(2, 40, 30, false));
+    sensor_pixel(40, 30, 0x20);
+    ppu.scanline = 30;
+    ppu.dot = 40;
+    CHECK((read_mem(0x4017) & 0x08) == 0x08);
+    ppu.dot = 42;
+    CHECK((read_mem(0x4017) & 0x08) == 0);
+
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_NONE));
+    write_mem(0x4018, 0);
+    CHECK((read_mem(0x4017) & 0x18) == 0);
+    CHECK((read_mem(0x4016) & 2u) == 0);
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_BANDAI_HYPER_SHOT));
+    pad1.buttons = 1;
+    latch_controllers();
+    CHECK((read_mem(0x4016) & 3u) == 3u);
+    return 0;
+}
+
 int test_input_accuracy(void) {
     static int (*const tests[])(void) = {
         console_open_bus, console_read_clocks, console_strobe_timing,
@@ -1586,7 +1645,8 @@ int test_input_accuracy(void) {
         family_basic_recording_and_media, turbo_file_protocol,
         turbo_file_persistence, turbo_file_failed_save, battle_box_protocol,
         battle_box_persistence, battle_box_failed_save, subor_keyboard_matrix,
-        subor_mouse_packets, hori_track_reports, konami_hyper_shot_signals
+        subor_mouse_packets, hori_track_reports, konami_hyper_shot_signals,
+        bandai_hyper_shot_signals
     };
     NesConsoleModel saved_model = nes_console_model();
     NesRegion saved_region = nes_timing()->region;

@@ -122,6 +122,10 @@ Mouse motion uses SDL relative movement. Left and right mouse buttons map to the
 
 `--console famicom --expansion konami-hyper-shot` connects the two-player Hyper Shot controller. Player one and player two use each controller's A button for jump and B button for run. Games control the two active-low player-enable lines through `$4016`.
 
+## Bandai Hyper Shot
+
+`--console famicom --expansion bandai-hyper-shot` connects the combined controller and light gun. Player-one buttons are serialized on expansion `$4016 D1`. Mouse aiming and trigger input use the same beam-aware light detection as the normal Zapper and appear on `$4017 D3-D4`.
+
 ## ASCII Turbo File
 
 `--console famicom --expansion turbo-file` connects the 8 KiB serial storage device. Games control its reset, clock, data, and read lines through the Famicom expansion connector. The contents are loaded and saved automatically next to the ROM; there is no host key for manually advancing the device.

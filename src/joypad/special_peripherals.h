@@ -51,4 +51,8 @@ void konami_hyper_shot_reset(void);
 void konami_hyper_shot_write(uint8_t value);
 uint8_t konami_hyper_shot_read(unsigned port, uint8_t player1, uint8_t player2);
 
+void bandai_hyper_shot_reset(void);
+void bandai_hyper_shot_write(uint8_t value, uint8_t buttons);
+uint8_t bandai_hyper_shot_read(uint8_t buttons);
+
 #endif

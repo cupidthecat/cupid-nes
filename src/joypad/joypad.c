@@ -48,7 +48,8 @@ static const char *const port_device_names[] = {
 };
 static const char *const expansion_device_names[] = {
     "none", "arkanoid", "family-trainer-a", "family-trainer-b", "zapper", "family-basic",
-    "turbo-file", "battle-box", "subor-keyboard", "hori-track", "konami-hyper-shot"
+    "turbo-file", "battle-box", "subor-keyboard", "hori-track", "konami-hyper-shot",
+    "bandai-hyper-shot"
 };
 
 typedef struct {
@@ -239,6 +240,8 @@ uint8_t joypad_read_port(Joypad *jp, unsigned port) {
         value |= hori_track_read(pad1.buttons);
     else if (expansion_device == NES_EXPANSION_KONAMI_HYPER_SHOT)
         value |= konami_hyper_shot_read(port, pad1.buttons, pad2.buttons);
+    else if (expansion_device == NES_EXPANSION_BANDAI_HYPER_SHOT)
+        value |= port == 0 ? bandai_hyper_shot_read(pad1.buttons) : read_zapper(2);
     // The second built-in controller's microphone reaches $4016 D2.
     if (port == 0 && nes_console_model() == NES_CONSOLE_HVC001 && microphone_active)
         value |= 0x04;
@@ -306,6 +309,8 @@ void joypad_write_ports(uint8_t value) {
         hori_track_write(value, pad1.buttons);
     else if (expansion_device == NES_EXPANSION_KONAMI_HYPER_SHOT)
         konami_hyper_shot_write(value);
+    else if (expansion_device == NES_EXPANSION_BANDAI_HYPER_SHOT)
+        bandai_hyper_shot_write(value, pad1.buttons);
 }
 
 NesInputAdapter joypad_adapter(void) {
@@ -366,7 +371,7 @@ NesExpansionDevice joypad_expansion_device(void) {
 }
 
 bool joypad_set_expansion_device(NesExpansionDevice device) {
-    if ((unsigned)device > NES_EXPANSION_KONAMI_HYPER_SHOT) return false;
+    if ((unsigned)device > NES_EXPANSION_BANDAI_HYPER_SHOT) return false;
     expansion_device = device;
     paddles[2].strobe = paddles[2].shift = 0;
     family_trainer_rows = 0;
@@ -376,6 +381,7 @@ bool joypad_set_expansion_device(NesExpansionDevice device) {
     subor_keyboard_reset();
     hori_track_reset();
     konami_hyper_shot_reset();
+    bandai_hyper_shot_reset();
     return true;
 }
 
