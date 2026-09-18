@@ -390,6 +390,23 @@ static void fcns_serial_write(uint16_t address, uint8_t value) {
     }
 }
 
+static int fcns_cpu_store(uint16_t address, uint8_t value) {
+    const uint8_t program[] = {0xA9, value, 0x8D, (uint8_t)address, (uint8_t)(address >> 8)};
+    for (unsigned byte = 0; byte < sizeof(program); ++byte)
+        write_mem((uint16_t)(0x0200 + byte), program[byte]);
+    cpu.pc = 0x0200;
+    BOARD_CHECK(cpu_step(&cpu) == 2 && cpu_step(&cpu) == 4);
+    return 0;
+}
+
+static int fcns_cpu_serial_bits(uint16_t address, uint8_t value,
+                                unsigned first_bit, unsigned count) {
+    BOARD_CHECK(first_bit <= 5 && count <= 5 - first_bit);
+    for (unsigned bit = first_bit; bit < first_bit + count; ++bit)
+        BOARD_CHECK(fcns_cpu_store(address, (uint8_t)((value >> bit) & 1u)) == 0);
+    return 0;
+}
+
 static bool write_test_file(const char *path, const uint8_t *data, size_t size) {
     FILE *file = fopen(path, "wb");
     if (!file) return false;
@@ -486,6 +503,109 @@ static int test_famicom_network_system(void) {
     return 0;
 }
 
+static int test_famicom_network_system_cpu_serial(void) {
+    BoardImage image;
+    BOARD_CHECK(board_image_create(&image, 1, 0x40000, 0, true));
+    iNESHeader *header = (iNESHeader *)image.data;
+    header->flags7 = (uint8_t)((header->flags7 & 0xFCu) | 3u);
+    header->zero[2] = 0x0C;
+    header->flags10 = 7;
+    header->zero[0] = 8;
+    uint8_t *prg = image.data + sizeof(iNESHeader);
+    prg[0x3E000] = 1;    // INC $E000 writes 1 then 2 on consecutive CPU cycles.
+    prg[0x3C000] = 0x7F; // INC $C000 writes $7F then reset value $80.
+    BOARD_CHECK(board_image_load(&image) == 0);
+
+    const uint8_t rmw_bank[] = {0xEE, 0x00, 0xE0};
+    for (unsigned byte = 0; byte < sizeof(rmw_bank); ++byte)
+        write_mem((uint16_t)(0x0300 + byte), rmw_bank[byte]);
+    cpu.pc = 0x0300;
+    BOARD_CHECK(cpu_step(&cpu) == 6);
+    // The dummy write contributes bit zero. The adjacent final RMW write is ignored.
+    BOARD_CHECK(fcns_cpu_serial_bits(0xE000, 3, 1, 4) == 0);
+    BOARD_CHECK(read_mem(0x8000) == 12 && read_mem(0xC000) == 0x7F);
+
+    BOARD_CHECK(fcns_cpu_store(0xE000, 1) == 0);
+    const uint8_t rmw_reset[] = {0xEE, 0x00, 0xC0};
+    for (unsigned byte = 0; byte < sizeof(rmw_reset); ++byte)
+        write_mem((uint16_t)(0x0300 + byte), rmw_reset[byte]);
+    cpu.pc = 0x0300;
+    BOARD_CHECK(cpu_step(&cpu) == 6);
+    // The final $80 write must reset the serial buffer even though it follows the dummy write.
+    BOARD_CHECK(fcns_cpu_serial_bits(0xE000, 2, 0, 5) == 0);
+    BOARD_CHECK(read_mem(0x8000) == 8);
+
+    BOARD_CHECK(fcns_cpu_store(0x8000, 0x80) == 0);
+    BOARD_CHECK(fcns_cpu_serial_bits(0xE000, 5, 0, 2) == 0);
+    cpu_soft_reset(&cpu);
+    BOARD_CHECK(read_mem(0x8000) == 8); // Soft reset retains committed PRG state.
+    BOARD_CHECK(fcns_cpu_serial_bits(0xE000, 5, 2, 3) == 0);
+    BOARD_CHECK(read_mem(0x8000) == 20); // The partly shifted word also survived reset.
+
+    board_image_free(&image);
+    return 0;
+}
+
+static int test_famicom_network_system_storage(void) {
+    BoardImage image;
+    BOARD_CHECK(board_image_create(&image, 1, 0x40000, 0, true));
+    iNESHeader *header = (iNESHeader *)image.data;
+    header->flags7 = (uint8_t)((header->flags7 & 0xFCu) | 3u);
+    header->zero[2] = 0x0C;
+    header->flags6 |= 2;
+    header->flags10 = 0x77; // Separate 8 KiB volatile and battery-backed PRG RAM.
+    header->zero[0] = 0x77; // Separate 8 KiB volatile and battery-backed CHR RAM.
+    BOARD_CHECK(board_image_add_trainer(&image, 0x4C));
+
+    char path[128], save[128], chr_save[128];
+    unsigned long stamp = (unsigned long)time(NULL);
+    snprintf(path, sizeof(path), "build/board-fcns-storage-%lu-%lu.nes",
+             stamp, (unsigned long)clock());
+    memcpy(save, path, strlen(path) + 1);
+    memcpy(chr_save, path, strlen(path) + 1);
+    strcpy(strrchr(save, '.'), ".sav");
+    strcpy(strrchr(chr_save, '.'), ".chr.sav");
+    BOARD_CHECK(write_test_file(path, image.data, image.size));
+    BOARD_CHECK(nes_set_ram_power_on_state(NES_RAM_POWER_ZERO));
+    BOARD_CHECK(load_rom(path) == 0);
+
+    write_mem(0x40C0, 1); // Work RAM and volatile CHR bank.
+    BOARD_CHECK(read_mem(0x7000) == 0x4C && read_mem(0x71FF) == 0x4C);
+    write_mem(0x6123, 0xA1);
+    ppu_write(0x0123, 0xC3);
+    write_mem(0x40C0, 0); // Save RAM, volatile CHR bank.
+    write_mem(0x6123, 0xB2);
+    BOARD_CHECK(read_mem(0x6123) == 0xB2);
+    write_mem(0x40C0, 0x09); // Work RAM and battery-backed CHR bank.
+    ppu_write(0x0123, 0xD4);
+    BOARD_CHECK(ppu_read(0x0123) == 0xD4);
+    cart_battery_flush();
+    BOARD_CHECK(unload_rom());
+
+    BOARD_CHECK(load_rom(path) == 0);
+    BOARD_CHECK(read_mem(0x6123) == 0xB2); // Save socket is selected after insertion.
+    write_mem(0x40C0, 1);
+    BOARD_CHECK(read_mem(0x6123) == 0 && read_mem(0x7000) == 0x4C);
+    BOARD_CHECK(ppu_read(0x0123) == 0); // Volatile CHR bank was reinitialized.
+    write_mem(0x40C0, 0x09);
+    BOARD_CHECK(ppu_read(0x0123) == 0xD4); // The second CHR bank came from .chr.sav.
+    BOARD_CHECK(unload_rom());
+
+    FILE *file = fopen(save, "rb");
+    BOARD_CHECK(file != NULL && fseek(file, 0, SEEK_END) == 0);
+    long save_length = ftell(file);
+    BOARD_CHECK(fclose(file) == 0 && save_length == 0x2000);
+    file = fopen(chr_save, "rb");
+    BOARD_CHECK(file != NULL && fseek(file, 0, SEEK_END) == 0);
+    long chr_length = ftell(file);
+    BOARD_CHECK(fclose(file) == 0 && chr_length == 0x2000);
+
+    BOARD_CHECK(remove(save) == 0 && remove(chr_save) == 0 && remove(path) == 0);
+    BOARD_CHECK(nes_set_ram_power_on_state(NES_RAM_POWER_DEFAULT));
+    board_image_free(&image);
+    return 0;
+}
+
 static int test_board_power_on_ram_case(unsigned mapper) {
     BoardImage image;
     BOARD_CHECK(board_image_create(&image, mapper, 0x8000, 0, false));
@@ -551,8 +671,10 @@ int test_board_accuracy(void) {
     failures += test_bandai_karaoke_page_sizes();
     failures += test_bandai_karaoke_saves();
     failures += test_famicom_network_system();
+    failures += test_famicom_network_system_cpu_serial();
+    failures += test_famicom_network_system_storage();
     failures += test_board_power_on_ram();
     unload_rom();
-    printf("Board accuracy: 9 groups, %d failures\n", failures);
+    printf("Board accuracy: 11 groups, %d failures\n", failures);
     return failures;
 }
