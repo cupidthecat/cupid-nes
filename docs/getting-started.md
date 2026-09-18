@@ -11,7 +11,7 @@ git clone https://github.com/cupidthecat/cupid-nes.git
 cd cupid-nes
 ```
 
-Run the remaining commands from the repository root. The build does not download SDL2, game images, an FDS BIOS, or diagnostic ROM collections.
+Run the remaining commands from the repository root. The build does not download SDL2, game images, an FDS BIOS, the optional EPSM ADPCM ROM, or diagnostic ROM collections.
 
 ## Linux
 
@@ -24,7 +24,7 @@ make
 ./cupid-nes "path/to/game.nes"
 ```
 
-`make` writes the emulator to `./cupid-nes`. `make test` additionally builds `build/accuracy-tests` and runs the production hardware regression suite.
+`make` writes the emulator to `./cupid-nes`. `make test` additionally builds `build/accuracy-tests` and runs the production hardware regression suite. The default Makefile uses GCC for C11 and G++ for C++17. If `CC=clang` is supplied and `CXX` has not been overridden, it selects `clang++` automatically.
 
 Clang is supported through the Makefile as well. On Ubuntu:
 
@@ -38,7 +38,7 @@ Use `make clean` before switching compiler families or compiler flags because th
 
 ## Windows
 
-The repository includes a PowerShell build script for x64 Windows. Install Clang plus the Windows SDK/MSVC build tools, then extract the SDL2 VC development package. The directory passed to `-SdlRoot` must contain:
+The repository includes a PowerShell build script for x64 Windows. It defaults to Clang and clang++, so install Clang plus the Windows SDK/MSVC build tools, then extract the SDL2 VC development package. The directory passed to `-SdlRoot` must contain:
 
 ```text
 SDL2-directory/
@@ -62,7 +62,7 @@ build/windows/accuracy-tests.exe
 build/windows/SDL2.dll
 ```
 
-`-Compiler` selects the C compiler, with the matching C++ driver chosen automatically. Use `-CxxCompiler` for an explicitly named C++ executable. `-Sanitize` writes the binaries to `build/windows-sanitized` and also requires Clang's Windows AddressSanitizer runtime. See [development](development.md) for test and sanitizer workflows. This checkout has no dedicated macOS build script or CI job.
+`-Compiler gcc` selects `g++` automatically. The default `clang` selects `clang++`; any other compiler basename needs an explicit `-CxxCompiler`. Normal builds use C11 or C++17 with `-Wall -Wextra -Werror -O2`. `-Sanitize` writes the binaries to `build/windows-sanitized`, changes the optimization/debug flags, enables AddressSanitizer and UndefinedBehaviorSanitizer, and requires Clang's Windows AddressSanitizer runtime. See [development](development.md) for the exact flags and test workflows. This checkout has no dedicated macOS build script or CI job.
 
 ## Open a cartridge
 
@@ -75,6 +75,14 @@ On Windows, use `.\build\windows\cupid-nes.exe` in place of `./cupid-nes`. Cupid
 The application accepts one image path per launch. Paths with spaces need quotes. Starting `cupid-nes` without an image prints its usage and exits with status 1; there is no `--help` switch. Command-line hardware selection is covered in [configuration](configuration.md).
 
 The startup log prints the selected console and CPU/PPU profiles, cartridge metadata, mapper information, and audio device details. Cartridge metadata chooses NTSC, PAL, or Dendy timing. The supported boards and current hardware limits are listed in [hardware](hardware.md) and [accuracy](accuracy.md).
+
+EPSM cartridges can use an external 8 KiB YMF288 ADPCM ROM for percussion:
+
+```sh
+./cupid-nes --epsm-adpcm "ymf288_adpcm_rom.bin" "epsm-game.nes"
+```
+
+The file must be exactly 8,192 bytes. Cupid does not provide it. An EPSM image still loads without the option, but percussion reads zero-filled data while FM and SSG audio remain available. An unreadable or incorrectly sized file is rejected before the cartridge is loaded. See [configuration](configuration.md#epsm-sound) for the hardware selector and option details.
 
 Player 1 can use the keyboard immediately: Z/X are A/B, Right Shift and Enter are Select/Start, and the arrow keys are the D-pad. [Controls](controls.md) covers game controllers and special peripherals.
 

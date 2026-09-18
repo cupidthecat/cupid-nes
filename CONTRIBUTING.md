@@ -23,7 +23,7 @@ Fix the device or bus behavior that causes the failure. Do not add per-game succ
 
 Keep the hardware change and the evidence for it together. A new helper, declaration, or test-only path does not implement a device in the application. When a feature needs normal frontend access, verify that inputs and outputs can reach it, as with both screens and both APUs of a dual VS system.
 
-A new C source file must be included in both [Makefile](Makefile) and [the Windows build script](scripts/test-windows.ps1). Use the surrounding C11 style and the existing source/header organization. Run a strict build before treating a patch as ready for review.
+A new C or C++ source file must be included in both [Makefile](Makefile) and [the Windows build script](scripts/test-windows.ps1). The C core is built as C11, while the EPSM wrapper and bundled ymfm sources are built as C++17. Use the surrounding source/header organization and language style. Run a strict build before treating a code patch as ready for review.
 
 ## Regression coverage
 
@@ -31,7 +31,7 @@ Choose a test that would fail for the original defect and exercise the real impl
 
 After each implemented accuracy issue, require the pinned AccuracyCoin suite to pass **144/144 with zero skipped or unfinished tests**. Record the exact tested commit and command. Later integration changes must retain that result.
 
-Before an accuracy patch is ready for review, the final revision needs the production hardware suite, canonical 8,991-state trace, all 91 pinned diagnostic ROMs, full AccuracyCoin, and the strict GCC and Clang-with-sanitizers CI jobs. Preserve ROM revisions, hashes, pass thresholds, result protocols, and explicit setup for legacy diagnostics.
+Before an accuracy patch is ready for review, the final revision needs the production hardware suite, canonical 8,991-state trace, all 91 pinned diagnostic ROMs, full AccuracyCoin, and the strict GCC and Clang-with-sanitizers CI jobs. Preserve ROM revisions, hashes, pass thresholds, result protocols, and explicit setup for legacy diagnostics. The diagnostic script checks files and group counts, not the external checkout's Git revision, and the AccuracyCoin runner does not verify the ROM hash; those pins must be checked separately as shown in the test guide and CI workflow.
 
 Report a failed or unfinished check accurately. Do not reduce coverage to make CI pass. The [test guide](docs/development.md) contains commands and the [accuracy notes](docs/accuracy.md) explain what each result establishes.
 

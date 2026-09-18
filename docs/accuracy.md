@@ -4,6 +4,8 @@
 
 The hardware targets use NTSC, PAL, or Dendy timing with the cartridge and input devices listed in the [hardware reference](hardware.md). Disk and VS systems use NTSC timing. The tests below exercise the production core. They do not establish compatibility with every cartridge or hardware revision.
 
+`make test` and the Windows build script run the synthetic hardware suite without external ROMs. The canonical trace and 91-ROM collection use `scripts/run-diagnostics.py`; AccuracyCoin is a separate runner mode. The [development guide](development.md) covers fixture setup, and [combined validation](accuracy-checkpoints.md#combined-validation) links a tested implementation to its CI results.
+
 ## Timing model
 
 Each CPU read or write advances the PPU, APU, and cartridge. Reads and writes place the bus operation at different phases of the CPU clock. Fractional PPU clocks carry across CPU accesses. Interrupt lines are sampled at the CPU cycle boundaries used by instruction polling.
@@ -38,7 +40,9 @@ Secondary OAM keeps its address and increment-freeze state across rendering chan
 
 Power-on and soft reset are distinct operations. The default startup alignment lets the PPU run one clock before the CPU begins its seven reset bus cycles. `--startup-phase CPU:PPU` selects another legal regional alignment; `--startup-seed SEED` generates repeatable choices on power-on. The applied CPU offset, PPU divider remainder, and supplied seed are recorded at startup. These options change divider alignment, not initial RAM contents. The canonical trace, pinned diagnostics, and AccuracyCoin gates use the unchanged default alignment.
 
-`--ppu-startup-restriction` models the initial interval where writes to `$2000`, `$2001`, `$2005`, and `$2006` charge the PPU I/O latch but do not change their protected state. The restriction begins on both power-on and soft reset and ends when the PPU enters the next pre-render scanline, so the regional frame length determines the interval. The default keeps the established unrestricted startup behavior. CPU reset reads the current PC twice, reads three stack locations while decrementing SP, and reads the reset vector. Soft reset preserves the running divider phase, CPU registers and RAM, PPU palette/nametable/OAM memory, and mapper state. PPU bus timestamps remain monotonic through reset.
+`--ppu-startup-restriction` models the initial interval where writes to `$2000`, `$2001`, `$2005`, and `$2006` charge the PPU I/O latch but do not change their protected state. The restriction begins on both power-on and soft reset and ends when the PPU enters the next pre-render scanline, so the regional frame length determines the interval. The default keeps the established unrestricted startup behavior.
+
+CPU reset reads the current PC twice, reads three stack locations while decrementing SP, and reloads PC from the reset vector. Soft reset preserves A, X, Y, CPU RAM, and the running divider phase; it updates the interrupt, unused, and break status bits. The frontend separately resets the PPU and APU. PPU palette/nametable/OAM memory and mapper state survive that operation, and PPU bus timestamps remain monotonic. [Architecture](architecture.md#power-on-and-reset) describes the reset entry points.
 
 MMC5 detects scanline boundaries from repeated nametable reads and leaves the frame state after three CPU clocks without a PPU read. Address-only notifications do not count as reads. Extended attributes consume the next three physical reads after a qualifying nametable fetch, including reads that cross between the nametable and CHR ports. The mapper also supplies vertical-split tile data, separate CHR banking for large sprites, ExRAM permissions and persistence, and expansion pulse/PCM output. NMI-vector reads clear its frame IRQ state. PCM status follows the documented MMC5A revision, including its revision bit.
 
@@ -53,6 +57,14 @@ The keyboard uses letter, number, arrow, modifier, and F1 through F8 keys. On a 
 Choose a raw tape with `--tape-play program.tap`, or a recording destination with `--tape-record program.tap`. Press F10 when BASIC is ready to read or write the tape; F11 stops playback or saves the recording. A recording also saves when the application exits. Tape files pack samples least-significant bit first at one sample per 88 emulated CPU cycles. Recording omits a partial final byte. This is a digital signal model; it does not decode WAV audio or model analog cassette noise.
 
 The regression cases scan distinct simultaneous key patterns through all ten rows, run CPU loads across tape transitions, preserve controller and microphone signals, and round-trip a recorded byte through a file. A failed tape load leaves the current tape intact, and save replacement occurs only after the temporary file has been written and closed.
+
+## Cartridge RAM and device regressions
+
+The mapper tests distinguish mapped RAM, open bus, and write-register interception. Irem 77/97 and the applicable Jaleco boards execute CPU stores and loads under legacy RAM defaults and explicit NES 2.0 layouts. Jaleco 87/101/140 and Sunsoft 184 also load nonzero trainer or save data: a CPU write in their RAM-read window must change bank selection while a later read still returns the stored byte. Mapper 96 covers legacy RAM, CHR latch edges, reset, and battery persistence.
+
+These cases use production loading and CPU bus paths in [mapper_accuracy.c](../src/tests/mapper_accuracy.c). The [input regressions](../src/tests/input_accuracy.c) include the combined mapper 96/tablet fixture and separate Turbo File/BattleBox protocols and persistence. [EPSM regressions](../src/tests/epsm_accuracy.c) cover CPU writes, delayed output-pin transitions, timer IRQs, regional clocks, firmware validation, reset, and stereo output.
+
+The [CPU diagnostic tests](../src/tests/cpu_accuracy.c) execute `$4015` disable and `$4018/$4019` read instructions before and after pulse/noise timer edges. This checks the output latches consumed by both diagnostic reads and the mixer. A correct packed value from manually seeded state alone would not cover that timing transition.
 
 ## Regression coverage
 
@@ -90,7 +102,9 @@ The canonical `nestest` comparison checks 8,991 PC/register/status/stack/cycle s
 | Sprite-zero hit | 11 |
 | Sprite overflow | 5 |
 
-The script runs 91 diagnostic ROMs and fails if expected files are missing. The runner waits for a final result and returns a nonzero exit code for failure, timeout, or a missing result protocol. It honors `$6000=$81` reset requests after at least 100 milliseconds of emulated time, once per request, with a maximum of sixteen resets. The total frame limit still applies. A 7,200-frame limit accommodates the read-buffer test, which takes more than 1,200 frames.
+The script checks each collection's expected file count and fails if files are missing. It reports four groups: 60 ordinary diagnostic ROMs, five MMC3 ROMs, ten PAL APU ROMs, and 16 sprite ROMs. A final line of `Diagnostic ROMs: 16 passed` describes only the last group; the complete run must also pass the CPU trace and the preceding groups.
+
+The runner waits for a final result and returns a nonzero exit code for failure, timeout, or a missing result protocol. It honors `$6000=$81` reset requests after at least 100 milliseconds of emulated time, once per request, with a maximum of sixteen resets. The total frame limit still applies. A 7,200-frame limit accommodates the read-buffer test, which takes more than 1,200 frames. The other three diagnostic groups use 1,200 frames per ROM.
 
 The separate `--accuracycoin` mode runs the 144-test cartridge at commit `9bc42d1e3acbeeaea215b1011d58f4ce72a8a49e`. Its ROM has SHA-256 `7e25ac08d2e7ed14c9b1f16bd853148fef09a824452164f8e0d69fd2bd96176c`. The runner reads the cartridge's test descriptors, presses Start through the controller, and waits for the complete result screen. It checks every stored result against the cartridge's final pass tally and requires all 144 tests to pass. Success codes for documented hardware variants count as passes; skipped tests do not. The optional PPM output contains the rendered framebuffer.
 
@@ -98,12 +112,13 @@ The recorded baseline passes all 144 AccuracyCoin tests with zero skipped or unf
 
 ## Reproducing checks
 
-On Linux:
+Prepare the pinned checkouts described in [development and testing](development.md) before running these commands. On Linux:
 
 ```sh
 make clean
-make CFLAGS='-std=c11 -Wall -Wextra -Werror -O2' all test
+make CC=gcc CXX=g++ CFLAGS='-std=c11 -Wall -Wextra -Werror -O2' all test
 python3 scripts/run-diagnostics.py build/accuracy-tests build/diagnostic-roms
+echo '7e25ac08d2e7ed14c9b1f16bd853148fef09a824452164f8e0d69fd2bd96176c  build/accuracycoin/AccuracyCoin.nes' | sha256sum --check --strict
 build/accuracy-tests --accuracycoin 12000 build/accuracycoin/AccuracyCoin.nes build/accuracycoin.ppm
 ```
 
@@ -111,14 +126,16 @@ For memory and undefined-behavior checks:
 
 ```sh
 make clean
-make CC=clang CFLAGS='-std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer' all test
-ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 python3 scripts/run-diagnostics.py build/accuracy-tests build/diagnostic-roms
-ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 build/accuracy-tests --accuracycoin 12000 build/accuracycoin/AccuracyCoin.nes
+export ASAN_OPTIONS=detect_leaks=1:halt_on_error=1
+export UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1
+make CC=clang CXX=clang++ CFLAGS='-std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer' all test
+python3 scripts/run-diagnostics.py build/accuracy-tests build/diagnostic-roms
+build/accuracy-tests --accuracycoin 12000 build/accuracycoin/AccuracyCoin.nes
 ```
 
 On Windows, the PowerShell build script accepts `-Sanitize` and writes the test executable to `build/windows-sanitized/accuracy-tests.exe`. Windows AddressSanitizer does not provide the Linux leak check. The Linux workflow enables leak detection explicitly.
 
-The diagnostic ROMs are a separate checkout; the build does not download them. The workflow pins both the test collection and its checkout action. See [development and testing](development.md) for setup commands.
+The workflow pins both test collections and its checkout action. It runs on pushes and pull requests without a documentation-path exclusion. Each GCC and Clang job builds the application and test executable, runs the hardware suite, checks the trace and all 91 ROMs, verifies the AccuracyCoin ROM hash, and runs all 144 AccuracyCoin tests. Documentation commits therefore receive the same CI checks as source commits.
 
 ## Interpreting other ROMs
 

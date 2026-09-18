@@ -2,7 +2,7 @@
 
 [Documentation index](README.md)
 
-Each commit below passed the production hardware regressions and the full pinned AccuracyCoin cartridge: **144/144 passed, zero skipped, and zero unfinished**. These are the commits tested after integrating each issue. Later fixes require their own checks, and the final pull-request commit must pass the complete CI workflow.
+Each issue or review checkpoint below passed the production hardware regressions and the full pinned AccuracyCoin cartridge: 144/144 passed, zero skipped, and zero unfinished. These records identify the commits tested after integration. Later fixes require their own checks, and the final pull-request commit must pass the complete CI workflow.
 
 AccuracyCoin is pinned to revision `9bc42d1e3acbeeaea215b1011d58f4ce72a8a49e`. The ROM SHA-256 is `7e25ac08d2e7ed14c9b1f16bd853148fef09a824452164f8e0d69fd2bd96176c`. Each recorded run completed 4,182 frames and agreed with the cartridge's own 144/144 tally. The result checks and ROM pins were retained throughout the work.
 
@@ -116,6 +116,14 @@ Additional review checkpoints passed the same hardware and AccuracyCoin requirem
 The RAM regressions execute CPU loads and stores across legacy defaults, declared RAM and explicit no-RAM layouts. Nonzero trainer and save data distinguish readable RAM from open bus or a constant return value. Writes to Jaleco 87/101/140 and Sunsoft 184 continue selecting banks without changing that RAM. The APU regression executes channel-disable and diagnostic-read instructions on both sides of a DAC timer edge.
 
 The JY integration also prevents advanced nametable reads from exposing CHR RAM through a ROM-only path. The Subor integration uses unsigned keyboard shifts to avoid undefined behavior. Both corrections are included in their issue checkpoints above. Every combined revision must pass the GCC and Clang sanitizer CI runs, the 8,991-state trace, all 91 diagnostic ROMs, and AccuracyCoin; earlier checkpoints do not replace those checks.
+
+## Combined validation
+
+Implementation revision `b214e3b3c41757086773dbeca46ce27becc0aef7` includes issues #41 through #74 and the review corrections above. Its [push workflow](https://github.com/cupidthecat/cupid-nes/actions/runs/35349695056) and [pull-request workflow](https://github.com/cupidthecat/cupid-nes/actions/runs/35349723644) both passed. Each workflow's GCC and Clang sanitizer jobs passed the production hardware suite, 8,991-state CPU trace, all 91 diagnostic ROMs, and AccuracyCoin 144/144 with zero skipped or unfinished tests. The Clang jobs also enabled Linux leak detection.
+
+The same revision passed local strict Windows builds, Windows AddressSanitizer/UndefinedBehaviorSanitizer, and Linux GCC and Clang sanitizer runs. Separate frontend harnesses exercised Oeka click/contact handling, paired Subor modifiers, and the application's default/enabled CPU test mode across a frontend reset.
+
+These are historical results for the named revision. A later documentation or source commit needs its own CI result; consult the pull request's checks for that revision. The frontend harnesses were separate review tools, while the tracked CI suite is defined in [the workflow](../.github/workflows/accuracy.yml).
 
 ## Reproducing a checkpoint
 

@@ -8,7 +8,7 @@ Cupid reads application settings from command-line arguments at startup. There i
 ./cupid-nes [options] "game.nes"
 ```
 
-On Windows, replace `./cupid-nes` with `.\build\windows\cupid-nes.exe`. Supply one image path. Option values are separate arguments, so use `--port2 zapper`, not `--port2=zapper`. Names are case sensitive. Unknown options and a second image path are errors.
+On Windows, replace `./cupid-nes` with `.\build\windows\cupid-nes.exe`. Supply one image path. Option values are separate arguments, so use `--port2 zapper`, not `--port2=zapper`. Names are case sensitive. Unknown options and a second image path are errors. Options are processed from left to right. Repeating a normal selector such as `--console`, `--port2`, or `--vs-dip` leaves the last value in effect. `--startup-phase` and `--startup-seed` are mutually exclusive and cannot be repeated; the tape options follow the same one-choice rule.
 
 ## Console and CPU/PPU profiles
 
@@ -29,6 +29,8 @@ On Windows, replace `./cupid-nes` with `.\build\windows\cupid-nes.exe`. Supply o
 The ROM header selects the timing region. `--console famicom` changes console wiring and does not force NTSC, PAL, or Dendy timing. There is no application `--region` option.
 
 The three optional PPU profiles are compatibility models with documented assumptions. Their timing and limits are in [accuracy](accuracy.md).
+
+`--cpu-test-mode` enables the read-only channel-output diagnostics at `$4018-$401A`. It does not add writable CPU test registers. The selection, CPU revision, PPU revision, and optional PPU profiles stay selected across the R-key soft reset.
 
 Choose either `--startup-phase` or `--startup-seed`. The CPU offset delays reset release in master clocks; the PPU phase selects the initial divider remainder. NTSC accepts CPU `0..11` and PPU `0..3`, PAL accepts `0..15` and `0..4`, and Dendy accepts `0..14` and `0..4`. The startup log records the applied pair and any supplied seed. For example, `--startup-phase 0:3` selects the default NTSC alignment. Soft reset retains the running phase. A seeded dual VS cabinet draws an alignment for each CPU in main-then-secondary order.
 
@@ -56,9 +58,11 @@ NES 2.0 console selector 3 with extended subtype 4 enables EPSM sound. The devic
 | `--expansion DEVICE` | `none`, `arkanoid`, `family-trainer-a`, `family-trainer-b`, `zapper`, `family-basic`, `turbo-file`, `battle-box`, `subor-keyboard`, `hori-track`, `konami-hyper-shot`, `bandai-hyper-shot`, `party-tap`, `pachinko`, `exciting-boxing`, `jissen-mahjong`, `barcode-battler`, `oeka-kids-tablet` | `none` |
 | `--zapper-radius PIXELS` | Decimal integer from `0` through `255` | `0` |
 
-A Four Score requires both normal ports to stay set to `pad`. The `famicom-2` and `famicom-4` adapters use the expansion connector, so they cannot be combined with another `--expansion` device. An invalid combination exits before loading the image with `An adapter and another device cannot share the same connector`.
+A Four Score requires both normal ports to stay set to `pad`. The `famicom-2` and `famicom-4` adapters use the expansion connector, so they cannot be combined with another `--expansion` device. An invalid combination exits before loading the image with `An adapter and another device cannot share the same connector`. Four Score validation only reserves the two normal controller ports; it does not reserve the expansion-device setting.
 
-The supported Subor keyboard and mouse combination uses `--expansion subor-keyboard --port2 subor-mouse`. The mouse is not accepted on port 1.
+The supported Subor keyboard and mouse combination uses `--expansion subor-keyboard --port2 subor-mouse`. The mouse is accepted only on port 2, but the parser does not require the keyboard and mouse to be selected together.
+
+`--console` and the input-device options are independent. Selecting an expansion device does not automatically switch the console model to `famicom`, and selecting `famicom` does not choose an expansion device. Ordinary NES 2.0 input-device metadata is not used to fill these options. VS System metadata is the exception: supported VS headers select standard, swapped, swapped-A/B, or serial light-gun cabinet wiring inside the VS implementation. A zero VS input code falls back to standard wiring. Extended VS subtype 1 also uses the documented 2C03 compatibility fallback while keeping its cabinet and input metadata.
 
 Examples:
 
@@ -89,7 +93,7 @@ Barcode Battler uses a separate input option and device state:
 | --- | --- | --- |
 | `--barcode-battler DIGITS` | Exactly 8 or 13 decimal digits | No Barcode Battler scan |
 
-Use it with `--console famicom --expansion barcode-battler`. The configured scan begins after reset and F8 restarts it. This reader is independent of cartridge barcode hardware.
+Use it with `--console famicom --expansion barcode-battler`. The configured stream is queued at CPU cycle zero before the initial power-on reset sequence. F8 restarts it later while the game is running. This reader is independent of cartridge barcode hardware.
 
 ## Family BASIC tape
 

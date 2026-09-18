@@ -15,11 +15,11 @@ make clean
 make
 ```
 
-The Makefile requires a C11 compiler and links `-lSDL2 -lm`. If you switch from GCC to Clang, clean the existing object files first and then run `make CC=clang`.
+The Makefile requires C11 and C++17 compilers and links `-lSDL2 -lm`. It defaults to GCC/G++, and `make CC=clang` selects `clang++` automatically when `CXX` has not been overridden. If you supply custom `CXX` or `CXXFLAGS`, the Makefile keeps them. Clean the existing object files before changing compiler families or flag sets.
 
 ## Windows build errors
 
-`scripts/test-windows.ps1` expects an x64 Clang environment with the Windows SDK/MSVC libraries available. `-SdlRoot` must point to the extracted SDL2 VC development package, not a directory containing only the runtime DLL.
+`scripts/test-windows.ps1` defaults to x64 Clang/clang++ with the Windows SDK/MSVC libraries available. `-Compiler gcc` selects `g++`; another compiler basename must be paired with `-CxxCompiler` or the script stops with `Specify -CxxCompiler for this C compiler`. `-SdlRoot` must point to the extracted SDL2 VC development package, not a directory containing only the runtime DLL.
 
 The script checks for these files before compiling:
 
@@ -30,6 +30,8 @@ lib/x64/SDL2.dll
 ```
 
 An error such as `Missing SDL2 VC SDK file` means the supplied root does not match that layout. A compiler or linker error about Windows runtime libraries usually means the Windows SDK/MSVC build environment is not available to the Clang invocation. See [getting started](getting-started.md) for the expected output directories.
+
+The normal script uses C11 or C++17 with `-Wall -Wextra -Werror -O2`. `-Sanitize` switches to `-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer` and requires the Clang AddressSanitizer runtime reported by `-print-resource-dir`.
 
 ## `Unexpected argument`
 
@@ -84,7 +86,13 @@ The tape file is raw packed signal data rather than WAV audio. See [saves and me
 
 ## Audio is disabled
 
-If SDL cannot open the requested audio device, Cupid prints `Warning: audio disabled (...)` and continues with video and input. Check the host audio device and SDL environment first. The emulator requests 44.1 kHz, mono, floating-point audio with a 1024-sample buffer and prints the format SDL actually opened when audio succeeds.
+If SDL cannot open the requested audio device, Cupid prints `Warning: audio disabled (...)` and continues with video and input. Check the host audio device and SDL environment first. The emulator requests 44.1 kHz floating-point audio with a 1024-sample buffer. It requests one channel for the normal NES/VS path and two channels when EPSM is active. The startup log prints the sample rate and buffer size SDL actually opened.
+
+## EPSM percussion firmware is rejected or missing
+
+`--epsm-adpcm` accepts one external YMF288 ADPCM ROM that is exactly 8,192 bytes. If the path cannot be read or the file has any other size, startup stops with `Could not load the 8 KiB YMF288 ADPCM ROM: ...` before the cartridge is loaded.
+
+An EPSM cartridge does not require the file to start. Without it, Cupid reports `EPSM percussion uses zero-filled data without --epsm-adpcm FILE`; FM and SSG audio continue, but percussion data is not present. The firmware is separate from the game image and is not included with Cupid.
 
 ## SDL window or renderer errors
 
@@ -114,8 +122,10 @@ F6 restores the built-in palette if an experiment looks wrong. VS System renderi
 
 ## Diagnostic test failures
 
-The diagnostic script requires the pinned checkout and expected number of ROMs in each group. A missing file or wrong group count fails the run. Verify the checkout revision and AccuracyCoin hash using [development](development.md) before interpreting a result.
+The project workflow requires the pinned diagnostic checkout. `run-diagnostics.py` itself verifies the required paths and expected number of ROMs in each group, but it does not inspect the checkout's Git revision. A missing file or wrong group count fails the run. Verify the revision separately before interpreting a result. AccuracyCoin is also a separate run; verify its pinned SHA-256 before launching it.
 
 The ordinary runner expects a known result protocol. Some older ROMs report only on screen, assume writable cartridge RAM without enabling it, or have incorrect timing metadata. Use the documented mode for that collection. A missing signature, timeout, or skipped result is not a pass; the [accuracy notes](accuracy.md#interpreting-other-roms) describe the supported conventions.
+
+The standalone `accuracy-tests` executable prints its usage and returns status 2 for an unknown mode. A malformed or out-of-range frame count prints `Frame count must be between 1 and 100000` and returns 2. The render and AccuracyCoin modes also return 2 when their positional argument counts are wrong.
 
 For a CI failure, record the job, commit, command, and assertion. Reproduce its compiler flags and data pins. A Linux sanitizer failure can expose a defect that a normal Windows build does not exercise.

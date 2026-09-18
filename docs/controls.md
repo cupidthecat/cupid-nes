@@ -13,15 +13,15 @@ Select emulated input hardware with the options in [configuration](configuration
 | Right Shift | Player 1 Select |
 | Enter | Player 1 Start |
 | Arrow keys | Player 1 D-pad |
-| R | Soft reset |
+| R | Soft reset the emulated CPU, PPU, APU, and VS control state |
 | M, held | Original Famicom controller 2 microphone signal |
 | F6 | Restore the built-in palette |
 | F7 | Toggle the palette editor |
 | Ctrl+V | Paste palette text |
 
-Close the window for normal shutdown. The M key supplies the emulated microphone line only; Cupid does not capture a host microphone.
+Close the window for normal shutdown. The M key supplies the emulated microphone line only; Cupid does not capture a host microphone. Soft reset keeps the selected console, CPU/APU and PPU profiles, current CPU/PPU clock alignment, controller configuration, and persistent peripheral contents. It does not rerun command-line setup or reconnect host controllers.
 
-Family BASIC and mat devices consume their matching keyboard events before the normal shortcuts. Their exceptions are listed below.
+Keyboard peripherals are handled before the normal application shortcuts. Family BASIC consumes every keyboard event while selected. Subor, Party Tap, Exciting Boxing, Jissen Mahjong, and mat handlers consume the keys they map, so an overlapping key acts on the selected peripheral instead of the later shortcut. For example, R is a mat key and a Subor letter key, and the number keys used by Party Tap or Boxing take priority over VS coin shortcuts.
 
 ## Game controllers and player slots
 
@@ -39,7 +39,7 @@ The first controller is player 1, the second is player 2, the third is player 3,
 
 Analog sticks are not mapped by the frontend. The keyboard writes player 1's button state, so player 1 can be driven by both the keyboard and the first controller. They update the same button state; avoid using both devices for the same button at once.
 
-Which player slots reach the game depends on the emulated wiring:
+Which player slots reach the game depends on the emulated wiring. Ordinary NES 2.0 input metadata does not automatically choose these frontend devices; use the command-line input options for ordinary NES and Famicom images. Supported VS metadata is decoded separately inside the VS cabinet model.
 
 | Configuration | Player routing |
 | --- | --- |
@@ -110,7 +110,9 @@ With `--tape-play FILE`, F10 starts playback. With `--tape-record FILE`, F10 sta
 
 ## Subor keyboard and mouse
 
-`--console famicom --expansion subor-keyboard --port2 subor-mouse` connects the supported keyboard-and-mouse arrangement. The keyboard routes letters, number row keys, F1 through F12, navigation keys, punctuation, modifiers, and numeric keypad keys into the 13-row matrix. Keyboard input is consumed before normal application shortcuts while this device is selected.
+`--console famicom --expansion subor-keyboard --port2 subor-mouse` connects the supported keyboard-and-mouse arrangement. The keyboard routes letters, number row keys, F1 through F12, navigation keys, punctuation, modifiers, and numeric keypad keys into the 13-row matrix. Mapped Subor keys are consumed before normal application shortcuts, so keys such as R, F6, F7, and F8 act on the keyboard while it is selected.
+
+Left and right Ctrl map to the same emulated Ctrl key; left and right Shift share Shift, and left and right Alt share Alt. Releasing one side keeps the emulated modifier pressed while the other side is still held.
 
 Mouse motion uses SDL relative movement. Left and right mouse buttons map to the two Subor mouse buttons. Small movement uses the one-byte report; larger movement is split across the three-byte report and each axis is bounded to 31 units per packet.
 
@@ -181,7 +183,7 @@ Changing or ejecting a side does not flush the disk image. Follow the game's dis
 
 ## Oeka Kids tablet
 
-`--console famicom --expansion oeka-kids-tablet` connects the drawing tablet. Move the mouse over the game window to position the pen. Holding the left mouse button reports both click and pen contact, including in the upper area or outside the screen. Hovering over the lower tablet area, starting at NES Y coordinate 48, also reports contact. Games latch the position and buttons through `$4016`, then clock the report from `$4017 D2-D3`.
+`--console famicom --expansion oeka-kids-tablet` connects the drawing tablet. Move the mouse over the game window to position the pen. Holding the left mouse button always reports both click and pen contact, including above NES Y coordinate 48 or when the pointer position is off screen. Without the left button, contact is reported only in the on-screen lower area, NES Y coordinates 48 through 239. Games latch the position and buttons through `$4016`, then clock the report from `$4017 D2-D3`.
 
 ## Palette controls
 
