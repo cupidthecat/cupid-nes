@@ -388,6 +388,13 @@ bool joypad_set_zapper(unsigned slot, int x, int y, bool trigger) {
     return true;
 }
 
+uint8_t joypad_zapper_serial_report(unsigned slot) {
+    if (slot >= 3) return 0;
+    return (uint8_t)(0x10
+        | (zapper_light(&zappers[slot]) ? 0x40 : 0)
+        | (zappers[slot].trigger ? 0x80 : 0));
+}
+
 unsigned joypad_zapper_radius(void) {
     return zapper_radius;
 }

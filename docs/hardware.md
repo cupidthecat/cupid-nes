@@ -118,7 +118,7 @@ NES 2.0 console selector 3 with extended subtype 1 also selects VS hardware. Tha
 
 Dual mode maintains independent CPU, PPU, APU, internal RAM, input, and DMA state. The boards share cartridge RAM with ownership controlled by the hardware signal. Cross-CPU interrupts and synchronized stepping support communication between the two sides. Both screens are presented and both APUs feed mono output.
 
-RP2C03G, VS Zapper input wiring, and unimplemented combinations of console, mapper, memory, or PPU metadata are rejected. The [VS tests](../src/tests/vs_accuracy.c) cover supported paths, including real CPU programs that communicate through shared RAM and produce separate video and audio.
+RP2C03G and unimplemented combinations of console, mapper, memory, or PPU metadata are rejected. NES 2.0 VS Zapper metadata selects the serial gun report on the first controller port. The [VS tests](../src/tests/vs_accuracy.c) cover supported paths, including real CPU programs that communicate through shared RAM and produce separate video and audio.
 
 ## Reading accuracy results
 

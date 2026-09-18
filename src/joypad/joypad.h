@@ -92,6 +92,7 @@ bool    joypad_set_paddle(unsigned slot, int position, bool fire);
 bool    joypad_set_mat_pad(unsigned slot, unsigned pad, bool pressed);
 enum { NES_ZAPPER_MAX_RADIUS = 255 };
 bool    joypad_set_zapper(unsigned slot, int x, int y, bool trigger);
+uint8_t joypad_zapper_serial_report(unsigned slot);
 unsigned joypad_zapper_radius(void);
 bool    joypad_set_zapper_radius(unsigned radius);
 

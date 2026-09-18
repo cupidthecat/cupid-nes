@@ -376,6 +376,122 @@ static int test_vs_inputs_and_protection(void) {
     return 0;
 }
 
+static void vs_sensor_pixel(unsigned x, unsigned y, uint8_t color) {
+    ppu.scanline = (int)y;
+    ppu.dot = (int)x + 1;
+    ppu.mask = 0;
+    ppu.rendering_enabled = false;
+    ppu.fetches_enabled = false;
+    ppu.v = 0;
+    ppu_write(0x3F00, color);
+    ppu_step_dots(1);
+}
+
+static uint8_t read_vs_serial_byte(unsigned port) {
+    uint8_t value = 0;
+    for (unsigned bit = 0; bit < 8; ++bit)
+        value |= (uint8_t)((vs_read_controller_port(port) & 1u) << bit);
+    return value;
+}
+
+static int test_vs_zapper_serial(void) {
+    static const uint8_t loop[] = {0x4C, 0x00, 0x80};
+    CHECK(load_vs_program(VS_TYPE_DEFAULT, 0, VS_INPUT_ZAPPER, loop, sizeof(loop)) == 0);
+    power_main();
+    CHECK(vs_set_dip_switches(0x00A5));
+    CHECK(vs_set_coin(0, true));
+    CHECK(vs_set_service(0, true));
+    CHECK(joypad_set_zapper(0, 32, 20, false));
+
+    vs_write_4016(1);
+    vs_write_4016(0);
+    CHECK(read_vs_serial_byte(0) == 0x10);
+    CHECK((vs_read_controller_port(0) & 1u) == 0);
+
+    CHECK(joypad_set_zapper(0, 32, 20, true));
+    vs_write_4016(1);
+    vs_write_4016(0);
+    CHECK(read_vs_serial_byte(0) == 0x90);
+
+    vs_sensor_pixel(32, 20, 0x20);
+    CHECK(joypad_set_zapper(0, 32, 20, false));
+    vs_write_4016(1);
+    vs_write_4016(0);
+    CHECK(read_vs_serial_byte(0) == 0x50);
+
+    CHECK(joypad_set_zapper(0, 32, 20, true));
+    vs_write_4016(1);
+    vs_write_4016(0);
+    uint8_t first = vs_read_controller_port(0);
+    CHECK((first & 0xFCu) == 0x2Cu);
+    uint8_t rest = 0;
+    for (unsigned bit = 1; bit < 8; ++bit)
+        rest |= (uint8_t)((vs_read_controller_port(0) & 1u) << bit);
+    CHECK((uint8_t)((first & 1u) | rest) == 0xD0);
+
+    CHECK(joypad_set_zapper(0, -1, -1, true));
+    vs_write_4016(1);
+    vs_write_4016(0);
+    CHECK(read_vs_serial_byte(0) == 0x90);
+
+    CHECK(joypad_set_zapper(0, 40, 30, false));
+    vs_sensor_pixel(40, 30, 0x20);
+    ppu.scanline = 30;
+    ppu.dot = 40;
+    vs_write_4016(1);
+    vs_write_4016(0);
+    CHECK(read_vs_serial_byte(0) == 0x10);
+    ppu.dot = 42;
+    vs_write_4016(1);
+    vs_write_4016(0);
+    CHECK(read_vs_serial_byte(0) == 0x50);
+
+    joypad_player(1)->buttons = 0xA3;
+    vs_write_4016(1);
+    vs_write_4016(0);
+    CHECK(read_vs_serial_byte(1) == 0xA3);
+    unload_rom();
+
+    CHECK(load_vs_program(VS_TYPE_DEFAULT, 0, VS_INPUT_STANDARD, loop, sizeof(loop)) == 0);
+    Mapper *previous = cart;
+    uint8_t *previous_prg = prg_rom;
+    iNESHeader invalid = nes20_vs_header(0, 2, 1, VS_TYPE_DEFAULT, 0, 8);
+    size_t image_size;
+    uint8_t *image = build_image(&invalid, 0x8000, 0x2000, &image_size);
+    CHECK(image != NULL);
+    CHECK(load_rom_memory(image, image_size) == -1);
+    free(image);
+    CHECK(cart == previous && prg_rom == previous_prg && vs_enabled());
+    unload_rom();
+    return 0;
+}
+
+static int test_vs_zapper_cpu_port(void) {
+    static const uint8_t program[] = {
+        0xA9, 0x01, 0x8D, 0x16, 0x40, // Strobe high.
+        0xA9, 0x00, 0x8D, 0x16, 0x40, // Latch the report.
+        0xA2, 0x00,
+        0xAD, 0x16, 0x40, 0x29, 0x01, 0x95, 0x10,
+        0xE8, 0xE0, 0x0A, 0xD0, 0xF4, 0x02
+    };
+    CHECK(load_vs_program(VS_TYPE_DEFAULT, 0, VS_INPUT_ZAPPER,
+                          program, sizeof(program)) == 0);
+    power_main();
+    CHECK(joypad_set_zapper(0, -1, -1, true));
+    for (unsigned instruction = 0; instruction < 100 && !cpu.halted; ++instruction)
+        cpu_step(&cpu);
+    CHECK(cpu.halted);
+    static const uint8_t expected[] = {0, 0, 0, 0, 1, 0, 0, 1, 0, 0};
+    CHECK(memcmp(ram + 0x10, expected, sizeof(expected)) == 0);
+    write_mem(0x4016, 1);
+    for (unsigned read = 0; read < 12; ++read) CHECK((read_mem(0x4016) & 1u) == 0);
+    CHECK(joypad_set_zapper(0, -1, -1, false));
+    write_mem(0x4016, 0);
+    CHECK(read_vs_serial_byte(0) == 0x10);
+    CHECK(unload_rom());
+    return 0;
+}
+
 static int test_mapper99_banks(void) {
     iNESHeader h = nes20_vs_header(99, 0x36, 2, VS_TYPE_DEFAULT, 0, VS_INPUT_STANDARD);
     h.flags9 = 0x0F; // Exponent/multiplier encoding: 5 * 8192 = 40 KiB PRG.
@@ -628,6 +744,8 @@ int test_vs_accuracy(void) {
         test_vs_rgb_frame_timing,
         test_vs_dual_rendered_frame_timing,
         test_vs_inputs_and_protection,
+        test_vs_zapper_serial,
+        test_vs_zapper_cpu_port,
         test_mapper99_banks,
         test_vs_dual_execution,
         test_vs_reset_and_declared_ram,

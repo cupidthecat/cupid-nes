@@ -67,9 +67,7 @@ For a standard NES light gun configuration:
 
 Move the mouse over the game window to aim. Left click fires on screen. Right click holds the trigger while treating the aim position as off screen, which supports games that use off-screen shots for reload behavior.
 
-The default light-sampling radius is zero. `--zapper-radius N` expands the sampled area up to 255 pixels. The Famicom expansion version uses `--console famicom --expansion zapper`.
-
-VS Zapper controller wiring is not implemented in the current VS input path. See [accuracy](accuracy.md) for current device limits.
+The default light-sampling radius is zero. `--zapper-radius N` expands the sampled area up to 255 pixels. The Famicom expansion version uses `--console famicom --expansion zapper`. VS images whose NES 2.0 metadata selects the VS Zapper use the same mouse aiming and trigger controls.
 
 ## Power Pad and Family Trainer
 

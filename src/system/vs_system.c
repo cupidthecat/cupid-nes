@@ -124,7 +124,7 @@ bool vs_decode_header(const iNESHeader *header, int mapper, size_t prg_bytes,
         }
         uint8_t input = header->zero[4] & 0x3F;
         if (input == 0) input = VS_INPUT_STANDARD;
-        if (input < VS_INPUT_STANDARD || input > VS_INPUT_SWAP_AB) {
+        if (input < VS_INPUT_STANDARD || input > VS_INPUT_ZAPPER) {
             set_reason(reason, reason_size, "unsupported VS controller wiring");
             return false;
         }
@@ -334,7 +334,8 @@ static void remapped_buttons(unsigned side, uint8_t out[2]) {
 static void latch_controllers(unsigned side) {
     uint8_t buttons[2];
     remapped_buttons(side, buttons);
-    vs.shift[side][0] = buttons[0];
+    vs.shift[side][0] = vs.config.input_type == VS_INPUT_ZAPPER && side == 0
+        ? joypad_zapper_serial_report(0) : buttons[0];
     vs.shift[side][1] = buttons[1];
 }
 
@@ -358,12 +359,19 @@ uint8_t vs_read_controller_port(unsigned port) {
     unsigned side = vs.active_side;
     uint8_t bit;
     if (vs.strobe[side]) {
-        uint8_t buttons[2];
-        remapped_buttons(side, buttons);
-        bit = buttons[port] & 1u;
+        if (vs.config.input_type == VS_INPUT_ZAPPER && side == 0 && port == 0) {
+            bit = joypad_zapper_serial_report(0) & 1u;
+        } else {
+            uint8_t buttons[2];
+            remapped_buttons(side, buttons);
+            bit = buttons[port] & 1u;
+        }
     } else {
         bit = vs.shift[side][port] & 1u;
-        vs.shift[side][port] = (vs.shift[side][port] >> 1) | 0x80;
+        if (vs.config.input_type == VS_INPUT_ZAPPER && side == 0 && port == 0)
+            vs.shift[side][port] >>= 1;
+        else
+            vs.shift[side][port] = (vs.shift[side][port] >> 1) | 0x80;
     }
     if (port == 0) {
         unsigned coin = side * 2;
