@@ -87,6 +87,7 @@ PRG is the cartridge memory read by the CPU; CHR holds graphics patterns read by
 | 86 | Jaleco JF-13 | 32 KiB PRG and 8 KiB CHR selection through `$6000-$6FFF`; speech is not emulated |
 | 218 | Magic Floor | Fixed PRG and shared pattern-table/nametable CIRAM with four header-selected address wirings |
 | 323, 324 | Farid multicarts | Serial MMC1 or UNROM inner banks, outer-bank locking, board-specific reset latches, and mapper 324 ROM bus conflicts |
+| 41, 63, 112, 174, 193, 221, 290, 298 | NTDEC | Address and data bank registers, board-specific open-bus windows and resets, and TF1201 CPU-clocked IRQs |
 | 105 | NES-EVENT | MMC1 serial control, competition PRG modes, fixed CHR RAM, cartridge RAM, and DIP-selected timer IRQ |
 | 111 | GTROM | 32 KiB PRG flash banking, two CHR-RAM banks, banked cartridge nametable RAM, register-read latching, and flash persistence |
 | 118 | TKSROM / TLSROM | MMC3 banking and IRQs with CHR-register-controlled nametable routing |
@@ -115,6 +116,10 @@ Front Fareast mappers 6 and 8 use a combined PRG/CHR register in the upper CPU a
 Farid mapper 323 adds an outer latch at `$6000-$7FFF` to serial MMC1 banking. That latch can be locked and follows the MMC1 RAM-disable control. Soft reset clears the outer latch and lock while retaining the MMC1 registers and partially written serial word. Its 32 KiB paired-page PRG mode and fixed-PRG submapper bypass the outer PRG transform. Mapper 324 latches outer-bank and lock bits on a rising D7 write edge, after ROM bus conflicts are applied. Its soft reset clears the outer and lock bits without immediately remapping PRG; the next bank write applies the resulting state. Mapper 324 takes mirroring from the header.
 
 Mapper 29 starts with the last PRG bank at `$C000-$FFFF` and open bus below it until the first bank write. Writes throughout `$8000-$FFFF` select the lower 16 KiB PRG bank with D2-D4 and an 8 KiB CHR bank with D0-D1. The board retains these mappings on CPU soft reset. Legacy images receive 32 KiB of CHR RAM; NES 2.0 declarations control the actual allocation. The `$6000-$7FFF` window selects work RAM when present, so writes there do not modify a separate save chip. Mirroring follows the header.
+
+The NTDEC boards keep their separate register layouts. Caltron 41 permits inner CHR selection only while PRG bank 4 through 7 is selected, and resets to bank zero. Mapper 63 can disconnect its lower PRG window; resetting its latch leaves that window disconnected until the next bank write. Mapper 112 combines paired CHR pages with four independent outer CHR bits. TC112 (193) leaves the lower PRG window and CHR ROM unmapped until their registers are written. Mapper 221 selects mirrored 16 KiB, paired 32 KiB, or fixed-upper-bank modes from address bits. NTD03 (290) resets its PRG, CHR, and mirroring selection.
+
+Mapper 174 follows documented address wiring, but that wiring has not been verified against hardware. TF1201 (298) uses a CPU-driven prescaler and an incrementing IRQ counter; the implementation retains the known uncertainty in that timing model. Its IRQ acknowledgement clears the line without stopping or reloading the counter, while the enable register reloads both counter and prescaler. These two boards should not be treated as hardware-verified solely because the regression suite passes.
 
 The mapper 72 and 92 cartridge banking and latch behavior is implemented. Optional speech hardware on those boards is not currently emulated.
 
