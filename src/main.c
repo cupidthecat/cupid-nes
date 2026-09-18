@@ -190,6 +190,25 @@ static bool family_basic_key_event(const SDL_KeyboardEvent *event,
     return true;
 }
 
+static bool subor_modifier_event(SDL_Scancode scancode, bool down) {
+    static bool sides[3][2];
+    static const SuborKey keys[] = {SUBOR_KEY_CTRL, SUBOR_KEY_SHIFT, SUBOR_KEY_ALT};
+    unsigned key;
+    unsigned side;
+    switch (scancode) {
+        case SDL_SCANCODE_LCTRL: key = 0; side = 0; break;
+        case SDL_SCANCODE_RCTRL: key = 0; side = 1; break;
+        case SDL_SCANCODE_LSHIFT: key = 1; side = 0; break;
+        case SDL_SCANCODE_RSHIFT: key = 1; side = 1; break;
+        case SDL_SCANCODE_LALT: key = 2; side = 0; break;
+        case SDL_SCANCODE_RALT: key = 2; side = 1; break;
+        default: return false;
+    }
+    sides[key][side] = down;
+    joypad_set_subor_key(keys[key], sides[key][0] || sides[key][1]);
+    return true;
+}
+
 static bool subor_key_event(const SDL_KeyboardEvent *event) {
     if (!event || joypad_expansion_device() != NES_EXPANSION_SUBOR_KEYBOARD) return false;
     static const SDL_Scancode keys[SUBOR_KEY_COUNT] = {
@@ -237,8 +256,7 @@ static bool subor_key_event(const SDL_KeyboardEvent *event) {
         [SUBOR_KEY_LEFT_BRACKET] = SDL_SCANCODE_LEFTBRACKET,
         [SUBOR_KEY_RIGHT_BRACKET] = SDL_SCANCODE_RIGHTBRACKET,
         [SUBOR_KEY_CAPSLOCK] = SDL_SCANCODE_CAPSLOCK, [SUBOR_KEY_PAUSE] = SDL_SCANCODE_PAUSE,
-        [SUBOR_KEY_CTRL] = SDL_SCANCODE_LCTRL, [SUBOR_KEY_SHIFT] = SDL_SCANCODE_LSHIFT,
-        [SUBOR_KEY_ALT] = SDL_SCANCODE_LALT, [SUBOR_KEY_SPACE] = SDL_SCANCODE_SPACE,
+        [SUBOR_KEY_SPACE] = SDL_SCANCODE_SPACE,
         [SUBOR_KEY_BACKSPACE] = SDL_SCANCODE_BACKSPACE, [SUBOR_KEY_TAB] = SDL_SCANCODE_TAB,
         [SUBOR_KEY_ESCAPE] = SDL_SCANCODE_ESCAPE, [SUBOR_KEY_ENTER] = SDL_SCANCODE_RETURN,
         [SUBOR_KEY_END] = SDL_SCANCODE_END, [SUBOR_KEY_HOME] = SDL_SCANCODE_HOME,
@@ -248,23 +266,12 @@ static bool subor_key_event(const SDL_KeyboardEvent *event) {
         [SUBOR_KEY_LEFT] = SDL_SCANCODE_LEFT, [SUBOR_KEY_RIGHT] = SDL_SCANCODE_RIGHT
     };
     bool down = event->type == SDL_KEYDOWN;
+    if (subor_modifier_event(event->keysym.scancode, down)) return true;
     for (unsigned key = 0; key < SUBOR_KEY_COUNT; ++key) {
         if (keys[key] != SDL_SCANCODE_UNKNOWN && event->keysym.scancode == keys[key]) {
             joypad_set_subor_key((SuborKey)key, down);
             return true;
         }
-    }
-    if (event->keysym.scancode == SDL_SCANCODE_RCTRL) {
-        joypad_set_subor_key(SUBOR_KEY_CTRL, down);
-        return true;
-    }
-    if (event->keysym.scancode == SDL_SCANCODE_RSHIFT) {
-        joypad_set_subor_key(SUBOR_KEY_SHIFT, down);
-        return true;
-    }
-    if (event->keysym.scancode == SDL_SCANCODE_RALT) {
-        joypad_set_subor_key(SUBOR_KEY_ALT, down);
-        return true;
     }
     return false;
 }
