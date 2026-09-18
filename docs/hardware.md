@@ -98,6 +98,7 @@ PRG is the cartridge memory read by the CPU; CHR holds graphics patterns read by
 | 150 | Sachen 74LS374 | PRG/CHR registers, nametable routing, register readback, and DIP-controlled D2 wiring |
 | 243 | Sachen 74LS374 variant | Separate CHR address wiring across registers 2, 4, and 6; register readback and nametable routing |
 | 35, 91 | JY Company | Separate PRG/CHR registers, partially decoded register aliases, and board-specific A12 interrupt counters |
+| 284 | Drip Game | Two PCM FIFOs, CPU-clocked IRQ timer, per-tile extended attributes, PRG/CHR banks, and work-RAM protection |
 | 513 | Sachen 9602 | MMC3 bank and IRQ registers, outer PRG bits written through CHR registers, fixed first-block banks, and battery-backed CHR RAM |
 | 56, 142, 171, 175, 302, 303, 305, 306, 307, 312, 346 | Kaiser | Board-specific address decoding, small PRG windows, delayed bank latches, RAM/ROM selection, mirroring, and CPU-clocked one-shot IRQs |
 | 105 | NES-EVENT | MMC1 serial control, competition PRG modes, fixed CHR RAM, cartridge RAM, and DIP-selected timer IRQ |
@@ -163,6 +164,12 @@ Sachen 9602, mapper 513, uses MMC3 banking and qualified A12 IRQs. Writing a CHR
 JY mapper 35 starts with only the final 8 KiB PRG bank mapped. Its four PRG and eight CHR registers decode the low address bits within `$8000-$8FFF` and `$9000-$9FFF`. It counts A12 rises after a sufficiently long low interval measured with the PPU frame counter. Its 8-bit IRQ counter decrements, including wrapping from zero, and disables itself when it reaches zero. `$C002` acknowledges and disables the IRQ, `$C003` enables it, and `$C005` writes the counter. `$D001` controls mirroring.
 
 JY mapper 91 starts with the last two PRG banks mapped and preserves header mirroring. Writes at `$6000-$6FFF` select four 2 KiB CHR banks; `$7000` and `$7001` select the two lower PRG banks using four data bits. `$7003` arms an MMC3 counter with reload value seven, so an IRQ occurs on the eighth qualified A12 rise. `$7002` acknowledges and disables it. Those low cartridge writes control registers while reads still access declared RAM; they do not overwrite that RAM. Both JY boards preserve bank and IRQ registers on CPU soft reset, and their CHR ROM starts unmapped until a bank write.
+
+Drip Game, mapper 284, starts with its final 16 KiB PRG bank mapped. Writes below `$C000` select the lower PRG bank, four 2 KiB CHR banks, mirroring, and work-RAM protection through aliases of `$8000-$800F`. Its identification register at `$4800-$4FFF` returns `$64`, with DIP bit zero supplying the top bit. The 15-bit IRQ counter counts every CPU bus cycle, including writes, DMA, and reset cycles. Writing its high byte arms or disables it and acknowledges the interrupt; writing its low-byte latch does not disturb a running counter.
+
+The board's two 256-byte PCM FIFOs have separate period, volume, reset, and status registers. Filling, draining, and overwriting a full FIFO preserve the circular pointer behavior. Period changes affect the next reload, volume changes affect a playing sample immediately, and an empty FIFO holds its output until another sample or reset changes it. The outputs feed the timestamped audio reconstruction path. The FIFO timers and registers survive CPU soft reset.
+
+Drip Game also has two volatile 1 KiB extended-attribute planes. CPU writes at `$C000-$FFFF` select a plane and byte through address aliases while reads still access PRG ROM. During rendering, a nametable fetch selects the attribute byte for the following attribute fetch. Mirroring selects the plane, and its low two bits supply the tile's palette. CPU VRAM reads bypass this substitution. The attribute planes use the configured power-on RAM state and are separate from both cartridge work RAM and battery saves.
 
 The mapper 72 and 92 cartridge banking and latch behavior is implemented. Optional speech hardware on those boards is not currently emulated.
 
