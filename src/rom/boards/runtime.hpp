@@ -116,6 +116,7 @@ protected:
     uint8_t GetOpenBus(uint8_t mask = 0xFF) const { return _openBus & mask; }
     uint64_t CpuClock() const;
     uint64_t FrameCount() const;
+    void WriteCpuBus(uint16_t address, uint8_t value);
     uint32_t PpuFrameCycle() const;
     uint64_t PpuClock() const { return _ppuClock; }
     bool CpuWriteCycle() const { return _writeCycle; }

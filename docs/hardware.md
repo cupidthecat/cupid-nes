@@ -73,6 +73,8 @@ PRG is the cartridge memory read by the CPU; CHR holds graphics patterns read by
 | 213, 214, 216, 225, 227, 228, 229 | Address-latched multicarts | Separate address/data bank bits, outer PRG and CHR selection, chip-select aliases, and board-specific nametable wiring |
 | 222 | Filtered PPU interrupt board | Two programmable and two fixed PRG banks, eight CHR banks, and an IRQ counter clocked by qualified A12 rises |
 | 226, 230, 231, 233 | Reset-sensitive multicarts | Bank-register reset, reset-selected game modes, mirrored or consecutive PRG windows, and retained mirroring where required |
+| 234, 235, 236, 240, 241, 244, 246, 255, 261, 265 | Multicart bank and read latches | Read-triggered bank changes, bus conflicts, DIP-switch reads, chip-select open bus, register overlays, and board-specific reset behavior |
+| 264, 266 | Yoko and City Fighter | PRG/CHR banking, CPU-clocked IRQ counters, nametable wiring, and City Fighter writes to the DMC DAC |
 | 64, 158 | RAMBO-1 | PRG/CHR banks, CPU- or PPU-clocked IRQs, and mapper 158 nametable wiring |
 | 66 | GxROM | Combined PRG/CHR bank selection and bus conflicts |
 | 67 | Sunsoft 3 | 2 KiB CHR banks, switchable 16 KiB PRG, mirroring, and a one-shot CPU IRQ counter |
@@ -212,6 +214,14 @@ Mapper 222 fixes the final two 8 KiB PRG banks at `$C000-$FFFF`. The lower PRG b
 Mapper 225 combines an outer address bit with independent PRG and CHR bank fields. Mapper 227 selects mirrored, consecutive, or fixed-upper PRG windows; it uses the initial CHR RAM mapping and does not select CHR ROM. Mapper 228 combines address and data bits for CHR selection and aliases its fourth PRG chip selection to the third chip. Reset returns it to its initial PRG/CHR banks and vertical mirroring. Mapper 229 selects its first PRG pair when the bank field is zero, including addresses whose low bit is set, and otherwise mirrors a 16 KiB bank.
 
 Mapper 226 resets its two bank registers on CPU soft reset while retaining the current mirroring. Mapper 233 adds a reset-selected outer PRG bit, alternating between game groups on each soft reset. Mapper 230 alternates between its fixed-upper Contra layout and the multicart layout; each mode has distinct bank and mirroring rules. Mapper 231 resets both PRG windows to bank zero without resetting mirroring. RAM contents survive these bank-control resets, and battery data is restored after trainer initialization.
+
+Mapper 234 latches the byte visible in ROM when the CPU reads its bank-register ranges. The read returns the old byte even when it changes the bank. Writes combine the CPU value with the ROM byte through bus conflicts. Its outer latch locks after a nonzero bank selection, while the inner CHR and PRG bits remain writable. Mapper 235 decodes its PRG chip selections according to the image size; selections for missing chips leave the CPU bus undriven until another write or reset restores a bank.
+
+Mapper 236 uses the low address bits for either CHR selection or an outer PRG bank, depending on whether the cartridge has CHR ROM. Its DIP mode substitutes four switch bits for the low address nibble during ROM reads. Reset clears the mode and outer latch without immediately changing the mapped banks. Mappers 240 and 241 use separate low-address and high-address register ranges. Mapper 244 implements the PRG and CHR bank-bit permutations selected by its write value. Mapper 246 reads RAM beneath its bank registers at `$6000-$67FF`; writes there select banks, while writes at `$6800-$7FFF` change RAM. Reset restores only its final PRG window.
+
+Mapper 255 selects an outer PRG/CHR group and mirrored or consecutive PRG banks from the write address. Mapper 261 resets to its initial banks and mirroring. Mapper 265 can lock its outer bank, PRG mode, and mirroring until the cartridge is reloaded; subsequent writes still change the inner bank. These boards retain their ordinary declared RAM and battery storage.
+
+Yoko mapper 264 has a 16-bit CPU counter that stops when it asserts IRQ. Its DIP reads preserve the undriven upper six CPU data bits, and its four extra registers have mirrored addresses. Soft reset clears the bank and mode latches while retaining the mapped windows and interrupt state until the next applicable register write. City Fighter mapper 266 keeps counting after IRQ, including 16-bit wraparound. Its decoded audio writes reach `$4011` on the production CPU bus, set the seven-bit DMC DAC value, and do not add another CPU cycle. Both boards implement their PRG and CHR register aliases and interrupt acknowledgement paths.
 
 The mapper 72 and 92 cartridge banking and latch behavior is implemented. Optional speech hardware on those boards is not currently emulated.
 

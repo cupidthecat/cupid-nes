@@ -226,6 +226,7 @@ uint32_t Board::GetPrgPageCount() const { return _prgPageSize ? _prgSize / _prgP
 uint32_t Board::GetChrRomPageCount() const { return _chrRomPageSize ? _chrRomSize / _chrRomPageSize : 0; }
 uint64_t Board::CpuClock() const { return cpu_get_bus_cycle(); }
 uint64_t Board::FrameCount() const { return ppu.frame_count; }
+void Board::WriteCpuBus(uint16_t address, uint8_t value) { write_mem(address, value); }
 uint32_t Board::PpuFrameCycle() const {
     int line = ppu.scanline == (int)nes_timing()->scanlines - 1 ? -1 : ppu.scanline;
     return static_cast<uint32_t>((line + 1) * 341 + ppu.dot);
