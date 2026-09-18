@@ -39,6 +39,7 @@ int test_mapper_accuracy(void);
 int test_board_accuracy(void);
 int test_board_codemasters_accuracy(void);
 int test_board_magic_floor_accuracy(void);
+int test_board_jaleco_accuracy(void);
 int test_bandai_accuracy(void);
 int test_fds_accuracy(void);
 int test_input_accuracy(void);
@@ -102,6 +103,7 @@ int main(int argc, char **argv) {
     failures += test_board_accuracy();
     failures += test_board_codemasters_accuracy();
     failures += test_board_magic_floor_accuracy();
+    failures += test_board_jaleco_accuracy();
     failures += test_bandai_accuracy();
     failures += test_fds_accuracy();
     failures += test_input_accuracy();

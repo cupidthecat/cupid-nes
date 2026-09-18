@@ -81,6 +81,7 @@ PRG is the cartridge memory read by the CPU; CHR holds graphics patterns read by
 | 97 | Irem TAM-S1 | Fixed lower 16 KiB PRG, switchable upper 16 KiB PRG, cartridge RAM, fixed CHR, and four mirroring modes |
 | 99 | VS System | Cabinet PRG/CHR selection, shared RAM permissions, and single/dual layouts |
 | 104 | Golden Five | Outer PRG block and inner 16 KiB bank selection, fixed bank within the selected block, and CHR RAM |
+| 86 | Jaleco JF-13 | 32 KiB PRG and 8 KiB CHR selection through `$6000-$6FFF`; speech is not emulated |
 | 218 | Magic Floor | Fixed PRG and shared pattern-table/nametable CIRAM with four header-selected address wirings |
 | 105 | NES-EVENT | MMC1 serial control, competition PRG modes, fixed CHR RAM, cartridge RAM, and DIP-selected timer IRQ |
 | 111 | GTROM | 32 KiB PRG flash banking, two CHR-RAM banks, banked cartridge nametable RAM, register-read latching, and flash persistence |
@@ -98,6 +99,8 @@ Bandai 70/152 start with vertical mirroring and accept their shared bank registe
 Golden Five starts with PRG bank 15 at `$C000-$FFFF`; the lower 16 KiB window remains on open bus until a bank write. Writes at `$8000-$9FFF` change the outer block when D3 is set. Writes at `$C000-$FFFF` select the inner bank, and writes at `$A000-$BFFF` have no effect. The registers survive CPU soft reset, and mirroring follows the header. The board uses the default CHR RAM window and does not select CHR ROM. Small PRG images use the shared page-mapping rules.
 
 Magic Floor connects pattern-table addresses to the same two CIRAM pages used by the nametables. Horizontal and vertical header settings select the address wiring. With the four-screen header bit set, the low mirroring bit instead selects single-screen A or B wiring. Changes through either pattern or nametable addresses are visible through their aliases, including CPU accesses through PPUDATA. A CHR ROM declaration does not replace this routing. PRG uses a fixed 32 KiB window, with complete smaller images repeated where they fit.
+
+Jaleco JF-13 starts at PRG bank zero. Writes throughout `$6000-$6FFF` select the 32 KiB PRG bank with D4-D5 and the 8 KiB CHR bank with D0-D1 and D6. CHR ROM remains unmapped until the first bank write. Mirroring follows the header, and bank state survives CPU soft reset. Register writes do not modify underlying PRG RAM. The speech device at `$7000-$7FFF` is not emulated; those writes currently have no effect.
 
 The mapper 72 and 92 cartridge banking and latch behavior is implemented. Optional speech hardware on those boards is not currently emulated.
 
