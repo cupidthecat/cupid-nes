@@ -681,11 +681,13 @@ static size_t mapper_chr_page_size(uint16_t mapper_no) {
 static bool mapper_has_shrinking_chr_window(uint16_t mapper_no) {
     switch (mapper_no) {
         case 0: case 1: case 2: case 3: case 7: case 9: case 10: case 11:
-        case 13: case 15: case 34: case 66: case 67: case 68: case 69: case 71:
-        case 72: case 73: case 75: case 76: case 78: case 79: case 87: case 88:
-        case 89: case 92: case 93: case 94: case 95: case 97: case 101: case 105:
-        case 113: case 140: case 144: case 146: case 151: case 154: case 155:
-        case 180: case 184: case 185: case 206: case 232:
+        case 13: case 15: case 18: case 21: case 22: case 23: case 25: case 27:
+        case 32: case 33: case 34: case 48: case 64: case 65: case 66: case 67:
+        case 68: case 69: case 71: case 72: case 73: case 75: case 76: case 78:
+        case 79: case 80: case 82: case 85: case 87: case 88: case 89: case 92:
+        case 93: case 94: case 95: case 97: case 101: case 105: case 113: case 140:
+        case 144: case 146: case 151: case 154: case 155: case 158: case 180:
+        case 183: case 184: case 185: case 206: case 207: case 232:
             return true;
         default:
             return false;
@@ -1110,6 +1112,23 @@ static void m232_cpu_write(uint16_t a, uint8_t v) {
 static uint8_t m232_ppu_read(uint16_t a) { return discrete_chr8_read(a, 0); }
 static void m232_ppu_write(uint16_t a, uint8_t v) {
     discrete_chr8_write(a, 0, v);
+}
+
+static bool shrunk_chr_slot_geometry(uint16_t address, size_t native_page_size,
+                                     unsigned slot_count, unsigned *slot,
+                                     size_t *page_size, size_t *page_count) {
+    if (!slot || !page_size || !page_count) return false;
+    *page_size = shrunk_chr_page_size(native_page_size);
+    if (!*page_size) return false;
+    *slot = (unsigned)((address & 0x1FFFu) / *page_size);
+    if (*slot >= slot_count) return false;
+    *page_count = C.chr_sz / *page_size;
+    return *page_count != 0;
+}
+
+static size_t shrunk_chr_bank_offset(uint16_t address, size_t page_size,
+                                     size_t page_count, size_t bank) {
+    return (bank % page_count) * page_size + ((address & 0x1FFFu) % page_size);
 }
 static Mirroring m232_mirr(void) { return C.mirr_base; }
 static void m232_reset(void) { memset(&m232, 0, sizeof(m232)); }
@@ -2598,20 +2617,25 @@ static uint8_t taito_cpu_read(const TaitoBankState *state, uint16_t a) {
 
 static uint8_t taito_ppu_read(const TaitoBankState *state, uint16_t a) {
     a &= 0x1FFFu;
-    if (!(state->chr_mapped & (1u << (a >> 10)))) return (uint8_t)a;
-    size_t banks = C.chr_sz / CHR_BANK_1K;
-    if (!banks) return nrom_ppu_read(a);
-    size_t bank = state->chr[a >> 10] % banks;
-    return C.chr[bank * CHR_BANK_1K + (a & 0x03FFu)];
+    unsigned slot;
+    size_t page_size, page_count;
+    if (!shrunk_chr_slot_geometry(a, CHR_BANK_1K, 8, &slot, &page_size, &page_count))
+        return chr_unmapped_read(a);
+    if (!(state->chr_mapped & (1u << slot))) return chr_unmapped_read(a);
+    return C.chr[shrunk_chr_bank_offset(a, page_size, page_count, state->chr[slot])];
 }
 
 static void taito_ppu_write(const TaitoBankState *state, uint16_t a, uint8_t v) {
     if (!C.chr_is_ram) return;
     a &= 0x1FFFu;
-    size_t banks = C.chr_sz / CHR_BANK_1K;
-    if (!banks) { nrom_ppu_write(a, v); return; }
-    size_t bank = state->chr[a >> 10] % banks;
-    chr_ram_write(bank * CHR_BANK_1K + (a & 0x03FFu), v);
+    unsigned slot;
+    size_t page_size, page_count;
+    if (!shrunk_chr_slot_geometry(a, CHR_BANK_1K, 8, &slot, &page_size, &page_count)
+        || !(state->chr_mapped & (1u << slot))) {
+        chr_ram_write(a % C.chr_sz, v);
+        return;
+    }
+    chr_ram_write(shrunk_chr_bank_offset(a, page_size, page_count, state->chr[slot]), v);
 }
 
 static void taito_reset_banks(TaitoBankState *state) {
@@ -2833,23 +2857,26 @@ static void taito_x1005_cpu_write(uint16_t a, uint8_t value) {
 
 static uint8_t taito_x1005_ppu_read(uint16_t a) {
     a &= 0x1FFFu;
-    unsigned slot = a >> 10;
+    unsigned slot;
+    size_t page_size, page_count;
+    if (!shrunk_chr_slot_geometry(a, CHR_BANK_1K, 8, &slot, &page_size, &page_count))
+        return chr_unmapped_read(a);
     if (!(taito_x1005.chr_mapped & (1u << slot)))
-        return C.chr_is_ram ? C.chr[a % C.chr_sz] : (uint8_t)a;
-    size_t bank = taito_x1005.chr[slot] % (C.chr_sz / CHR_BANK_1K);
-    return C.chr[bank * CHR_BANK_1K + (a & 0x03FFu)];
+        return chr_unmapped_read(a);
+    return C.chr[shrunk_chr_bank_offset(a, page_size, page_count, taito_x1005.chr[slot])];
 }
 
 static void taito_x1005_ppu_write(uint16_t a, uint8_t value) {
     if (!C.chr_is_ram) return;
     a &= 0x1FFFu;
-    unsigned slot = a >> 10;
-    if (!(taito_x1005.chr_mapped & (1u << slot))) {
+    unsigned slot;
+    size_t page_size, page_count;
+    if (!shrunk_chr_slot_geometry(a, CHR_BANK_1K, 8, &slot, &page_size, &page_count)
+        || !(taito_x1005.chr_mapped & (1u << slot))) {
         chr_ram_write(a % C.chr_sz, value);
         return;
     }
-    size_t bank = taito_x1005.chr[slot] % (C.chr_sz / CHR_BANK_1K);
-    chr_ram_write(bank * CHR_BANK_1K + (a & 0x03FFu), value);
+    chr_ram_write(shrunk_chr_bank_offset(a, page_size, page_count, taito_x1005.chr[slot]), value);
 }
 
 static Mirroring taito_x1005_mirr(void) { return taito_x1005.mirr; }
@@ -2956,9 +2983,12 @@ static size_t taito_x1017_chr_bank(unsigned slot) {
 static uint8_t taito_x1017_ppu_read(uint16_t a) {
     a &= 0x1FFFu;
     if (!taito_x1017.chr_mapped)
-        return C.chr_is_ram ? C.chr[a % C.chr_sz] : (uint8_t)a;
-    size_t bank = taito_x1017_chr_bank(a >> 10) % (C.chr_sz / CHR_BANK_1K);
-    return C.chr[bank * CHR_BANK_1K + (a & 0x03FFu)];
+        return chr_unmapped_read(a);
+    unsigned slot;
+    size_t page_size, page_count;
+    if (!shrunk_chr_slot_geometry(a, CHR_BANK_1K, 8, &slot, &page_size, &page_count))
+        return chr_unmapped_read(a);
+    return C.chr[shrunk_chr_bank_offset(a, page_size, page_count, taito_x1017_chr_bank(slot))];
 }
 
 static void taito_x1017_ppu_write(uint16_t a, uint8_t value) {
@@ -2968,8 +2998,13 @@ static void taito_x1017_ppu_write(uint16_t a, uint8_t value) {
         chr_ram_write(a % C.chr_sz, value);
         return;
     }
-    size_t bank = taito_x1017_chr_bank(a >> 10) % (C.chr_sz / CHR_BANK_1K);
-    chr_ram_write(bank * CHR_BANK_1K + (a & 0x03FFu), value);
+    unsigned slot;
+    size_t page_size, page_count;
+    if (!shrunk_chr_slot_geometry(a, CHR_BANK_1K, 8, &slot, &page_size, &page_count)) {
+        chr_ram_write(a % C.chr_sz, value);
+        return;
+    }
+    chr_ram_write(shrunk_chr_bank_offset(a, page_size, page_count, taito_x1017_chr_bank(slot)), value);
 }
 
 static Mirroring taito_x1017_mirr(void) { return taito_x1017.mirr; }
@@ -2997,8 +3032,7 @@ static size_t rambo1_prg_bank(uint16_t a) {
     return bank % banks;
 }
 
-static size_t rambo1_chr_bank(uint16_t a) {
-    unsigned physical_slot = (unsigned)((a & 0x1FFFu) >> 10);
+static size_t rambo1_chr_bank(unsigned physical_slot) {
     unsigned slot = physical_slot ^ (rambo1.chr_mode ? 4u : 0u);
     switch (slot) {
         case 0: return rambo1.regs[0];
@@ -3025,19 +3059,23 @@ static uint8_t rambo1_cpu_read(uint16_t a) {
 
 static uint8_t rambo1_ppu_read(uint16_t a) {
     a &= 0x1FFFu;
-    size_t banks = C.chr_sz / CHR_BANK_1K;
-    if (!banks) return nrom_ppu_read(a);
-    size_t bank = rambo1_chr_bank(a) % banks;
-    return C.chr[bank * CHR_BANK_1K + (a & 0x03FFu)];
+    unsigned slot;
+    size_t page_size, page_count;
+    if (!shrunk_chr_slot_geometry(a, CHR_BANK_1K, 8, &slot, &page_size, &page_count))
+        return chr_unmapped_read(a);
+    return C.chr[shrunk_chr_bank_offset(a, page_size, page_count, rambo1_chr_bank(slot))];
 }
 
 static void rambo1_ppu_write(uint16_t a, uint8_t v) {
     if (!C.chr_is_ram) return;
     a &= 0x1FFFu;
-    size_t banks = C.chr_sz / CHR_BANK_1K;
-    if (!banks) { nrom_ppu_write(a, v); return; }
-    size_t bank = rambo1_chr_bank(a) % banks;
-    chr_ram_write(bank * CHR_BANK_1K + (a & 0x03FFu), v);
+    unsigned slot;
+    size_t page_size, page_count;
+    if (!shrunk_chr_slot_geometry(a, CHR_BANK_1K, 8, &slot, &page_size, &page_count)) {
+        chr_ram_write(a % C.chr_sz, v);
+        return;
+    }
+    chr_ram_write(shrunk_chr_bank_offset(a, page_size, page_count, rambo1_chr_bank(slot)), v);
 }
 
 static void rambo1_irq_clock(uint8_t delay) {
@@ -6120,23 +6158,25 @@ static void jaleco18_cpu_write(uint16_t a, uint8_t v) {
 
 static uint8_t jaleco18_ppu_read(uint16_t a) {
     a &= 0x1FFF;
-    if (!(jaleco18.chr_mapped & (1u << (a >> 10))))
-        return C.chr_is_ram ? C.chr[a % C.chr_sz] : (uint8_t)a;
-    size_t banks = C.chr_sz / CHR_BANK_1K;
-    size_t bank = jaleco18.chr_banks[a >> 10] % banks;
-    return C.chr[bank * CHR_BANK_1K + (a & 0x03FFu)];
+    unsigned slot;
+    size_t page_size, page_count;
+    if (!shrunk_chr_slot_geometry(a, CHR_BANK_1K, 8, &slot, &page_size, &page_count)
+        || !(jaleco18.chr_mapped & (1u << slot)))
+        return chr_unmapped_read(a);
+    return C.chr[shrunk_chr_bank_offset(a, page_size, page_count, jaleco18.chr_banks[slot])];
 }
 
 static void jaleco18_ppu_write(uint16_t a, uint8_t v) {
     if (!C.chr_is_ram) return;
     a &= 0x1FFF;
-    if (!(jaleco18.chr_mapped & (1u << (a >> 10)))) {
+    unsigned slot;
+    size_t page_size, page_count;
+    if (!shrunk_chr_slot_geometry(a, CHR_BANK_1K, 8, &slot, &page_size, &page_count)
+        || !(jaleco18.chr_mapped & (1u << slot))) {
         chr_ram_write(a % C.chr_sz, v);
         return;
     }
-    size_t banks = C.chr_sz / CHR_BANK_1K;
-    size_t bank = jaleco18.chr_banks[a >> 10] % banks;
-    chr_ram_write(bank * CHR_BANK_1K + (a & 0x03FFu), v);
+    chr_ram_write(shrunk_chr_bank_offset(a, page_size, page_count, jaleco18.chr_banks[slot]), v);
 }
 
 static void jaleco18_clock(int cpu_cycles) {
@@ -6392,23 +6432,25 @@ static void irem32_cpu_write(uint16_t a, uint8_t v) {
 
 static uint8_t irem32_ppu_read(uint16_t a) {
     a &= 0x1FFF;
-    if (!(irem32.chr_mapped & (1u << (a >> 10))))
-        return C.chr_is_ram ? C.chr[a % C.chr_sz] : (uint8_t)a;
-    size_t banks = C.chr_sz / CHR_BANK_1K;
-    size_t bank = irem32.chr_banks[a >> 10] % banks;
-    return C.chr[bank * CHR_BANK_1K + (a & 0x03FFu)];
+    unsigned slot;
+    size_t page_size, page_count;
+    if (!shrunk_chr_slot_geometry(a, CHR_BANK_1K, 8, &slot, &page_size, &page_count)
+        || !(irem32.chr_mapped & (1u << slot)))
+        return chr_unmapped_read(a);
+    return C.chr[shrunk_chr_bank_offset(a, page_size, page_count, irem32.chr_banks[slot])];
 }
 
 static void irem32_ppu_write(uint16_t a, uint8_t v) {
     if (!C.chr_is_ram) return;
     a &= 0x1FFF;
-    if (!(irem32.chr_mapped & (1u << (a >> 10)))) {
+    unsigned slot;
+    size_t page_size, page_count;
+    if (!shrunk_chr_slot_geometry(a, CHR_BANK_1K, 8, &slot, &page_size, &page_count)
+        || !(irem32.chr_mapped & (1u << slot))) {
         chr_ram_write(a % C.chr_sz, v);
         return;
     }
-    size_t banks = C.chr_sz / CHR_BANK_1K;
-    size_t bank = irem32.chr_banks[a >> 10] % banks;
-    chr_ram_write(bank * CHR_BANK_1K + (a & 0x03FFu), v);
+    chr_ram_write(shrunk_chr_bank_offset(a, page_size, page_count, irem32.chr_banks[slot]), v);
 }
 
 static Mirroring irem32_mirr(void) { return irem32.mirr; }
@@ -6472,23 +6514,25 @@ static void irem65_cpu_write(uint16_t a, uint8_t v) {
 
 static uint8_t irem65_ppu_read(uint16_t a) {
     a &= 0x1FFF;
-    if (!(irem65.chr_mapped & (1u << (a >> 10))))
-        return C.chr_is_ram ? C.chr[a % C.chr_sz] : (uint8_t)a;
-    size_t banks = C.chr_sz / CHR_BANK_1K;
-    size_t bank = irem65.chr_banks[a >> 10] % banks;
-    return C.chr[bank * CHR_BANK_1K + (a & 0x03FFu)];
+    unsigned slot;
+    size_t page_size, page_count;
+    if (!shrunk_chr_slot_geometry(a, CHR_BANK_1K, 8, &slot, &page_size, &page_count)
+        || !(irem65.chr_mapped & (1u << slot)))
+        return chr_unmapped_read(a);
+    return C.chr[shrunk_chr_bank_offset(a, page_size, page_count, irem65.chr_banks[slot])];
 }
 
 static void irem65_ppu_write(uint16_t a, uint8_t v) {
     if (!C.chr_is_ram) return;
     a &= 0x1FFF;
-    if (!(irem65.chr_mapped & (1u << (a >> 10)))) {
+    unsigned slot;
+    size_t page_size, page_count;
+    if (!shrunk_chr_slot_geometry(a, CHR_BANK_1K, 8, &slot, &page_size, &page_count)
+        || !(irem65.chr_mapped & (1u << slot))) {
         chr_ram_write(a % C.chr_sz, v);
         return;
     }
-    size_t banks = C.chr_sz / CHR_BANK_1K;
-    size_t bank = irem65.chr_banks[a >> 10] % banks;
-    chr_ram_write(bank * CHR_BANK_1K + (a & 0x03FFu), v);
+    chr_ram_write(shrunk_chr_bank_offset(a, page_size, page_count, irem65.chr_banks[slot]), v);
 }
 
 static void irem65_clock(int cpu_cycles) {
@@ -6604,10 +6648,10 @@ static uint16_t vrc24_translate(uint16_t addr) {
     return (uint16_t)((addr & 0xFF00u) | (a1 << 1) | a0);
 }
 
-static size_t vrc24_chr_bank(unsigned slot) {
+static size_t vrc24_chr_bank(unsigned slot, size_t page_count) {
     size_t bank = vrc24.chr[slot];
     if (vrc24.variant == VRC2A) bank >>= 1;
-    return bank % (C.chr_sz / CHR_BANK_1K);
+    return bank % page_count;
 }
 
 static uint8_t vrc24_cpu_read(uint16_t a) {
@@ -6681,15 +6725,25 @@ static void vrc24_cpu_write(uint16_t a, uint8_t value) {
 
 static uint8_t vrc24_ppu_read(uint16_t a) {
     a &= 0x1FFF;
-    size_t bank = vrc24_chr_bank(a >> 10);
-    return C.chr[bank * CHR_BANK_1K + (a & 0x03FFu)];
+    unsigned slot;
+    size_t page_size, page_count;
+    if (!shrunk_chr_slot_geometry(a, CHR_BANK_1K, 8, &slot, &page_size, &page_count))
+        return chr_unmapped_read(a);
+    size_t bank = vrc24_chr_bank(slot, page_count);
+    return C.chr[bank * page_size + (a % page_size)];
 }
 
 static void vrc24_ppu_write(uint16_t a, uint8_t value) {
     if (!C.chr_is_ram) return;
     a &= 0x1FFF;
-    size_t bank = vrc24_chr_bank(a >> 10);
-    chr_ram_write(bank * CHR_BANK_1K + (a & 0x03FFu), value);
+    unsigned slot;
+    size_t page_size, page_count;
+    if (!shrunk_chr_slot_geometry(a, CHR_BANK_1K, 8, &slot, &page_size, &page_count)) {
+        chr_ram_write(a % C.chr_sz, value);
+        return;
+    }
+    size_t bank = vrc24_chr_bank(slot, page_count);
+    chr_ram_write(bank * page_size + (a % page_size), value);
 }
 
 static void vrc24_clock(int cpu_cycles) {
@@ -6813,26 +6867,27 @@ static void vrc7_cpu_write(uint16_t addr, uint8_t value) {
     }
 }
 
-static size_t vrc7_chr_bank(unsigned slot) {
-    if (!vrc7.chr_selected[slot])
-        return C.chr_is_ram ? slot % (C.chr_sz / CHR_BANK_1K) : SIZE_MAX;
-    return vrc7.chr[slot] % (C.chr_sz / CHR_BANK_1K);
-}
-
 static uint8_t vrc7_ppu_read(uint16_t addr) {
     addr &= 0x1FFF;
-    unsigned slot = addr >> 10;
-    size_t bank = vrc7_chr_bank(slot);
-    if (bank == SIZE_MAX) return (uint8_t)addr;
-    return C.chr[bank * CHR_BANK_1K + (addr & 0x03FFu)];
+    unsigned slot;
+    size_t page_size, page_count;
+    if (!shrunk_chr_slot_geometry(addr, CHR_BANK_1K, 8, &slot, &page_size, &page_count)
+        || !vrc7.chr_selected[slot])
+        return chr_unmapped_read(addr);
+    return C.chr[shrunk_chr_bank_offset(addr, page_size, page_count, vrc7.chr[slot])];
 }
 
 static void vrc7_ppu_write(uint16_t addr, uint8_t value) {
     if (!C.chr_is_ram) return;
     addr &= 0x1FFF;
-    size_t bank = vrc7_chr_bank(addr >> 10);
-    if (bank == SIZE_MAX) return;
-    chr_ram_write(bank * CHR_BANK_1K + (addr & 0x03FFu), value);
+    unsigned slot;
+    size_t page_size, page_count;
+    if (!shrunk_chr_slot_geometry(addr, CHR_BANK_1K, 8, &slot, &page_size, &page_count)
+        || !vrc7.chr_selected[slot]) {
+        chr_ram_write(addr % C.chr_sz, value);
+        return;
+    }
+    chr_ram_write(shrunk_chr_bank_offset(addr, page_size, page_count, vrc7.chr[slot]), value);
 }
 
 static void vrc7_clock(int cpu_cycles) {
@@ -7203,16 +7258,6 @@ int mapper_init_from_header(const iNESHeader *h,
         fprintf(stderr, "Unsupported cartridge layout for mapper %d\n", mapper_no);
         return -1;
     }
-    if ((mapper_no == 33 || mapper_no == 48)
-        && chr_sz < CHR_BANK_1K) {
-        fprintf(stderr, "Unsupported ROM size for mapper %d\n", mapper_no);
-        return -1;
-    }
-    if ((mapper_no == 80 || mapper_no == 82 || mapper_no == 207)
-        && chr_sz < CHR_BANK_1K) {
-        fprintf(stderr, "Unsupported ROM size for mapper %d\n", mapper_no);
-        return -1;
-    }
     if (mapper_no == 77
         && (chr_is_ram || chr_sz < CHR_BANK_2K
             || ram.chr_nvram || (nes2 && ram.chr_ram != CHR_BANK_8K))) {
@@ -7221,11 +7266,6 @@ int mapper_init_from_header(const iNESHeader *h,
     }
     if (mapper_no == 185 && chr_is_ram) {
         fprintf(stderr, "Unsupported ROM/RAM size for mapper 185\n");
-        return -1;
-    }
-    if ((mapper_no == 64 || mapper_no == 158)
-        && chr_sz < CHR_BANK_1K) {
-        fprintf(stderr, "Unsupported ROM size for mapper %d\n", mapper_no);
         return -1;
     }
     if (mapper_no == 118 && chr_sz < CHR_BANK_1K) {
@@ -7248,20 +7288,6 @@ int mapper_init_from_header(const iNESHeader *h,
         fprintf(stderr, "Unsupported ROM/RAM size for mapper 30\n");
         return -1;
     }
-    if (mapper_no == 18 && chr_sz < CHR_BANK_1K) {
-        fprintf(stderr, "Unsupported ROM size for mapper 18\n");
-        return -1;
-    }
-    if ((mapper_no == 32 || mapper_no == 65)
-        && chr_sz < CHR_BANK_1K) {
-        fprintf(stderr, "Unsupported ROM size for mapper %d\n", mapper_no);
-        return -1;
-    }
-    if (vrc24_submapper_supported(mapper_no, submapper)
-        && chr_sz < CHR_BANK_1K) {
-        fprintf(stderr, "Unsupported ROM size for mapper %d\n", mapper_no);
-        return -1;
-    }
     if ((mapper_no == 19 || mapper_no == 210)
         && chr_sz < CHR_BANK_1K) {
         fprintf(stderr, "Unsupported ROM size for mapper %d\n", mapper_no);
@@ -7274,10 +7300,6 @@ int mapper_init_from_header(const iNESHeader *h,
     }
     if (mapper_no == 68 && (h->flags6 & 0x08)) {
         fprintf(stderr, "Unsupported ROM/RAM size for mapper 68\n");
-        return -1;
-    }
-    if (mapper_no == 85 && chr_sz < CHR_BANK_1K) {
-        fprintf(stderr, "Unsupported ROM size for mapper 85\n");
         return -1;
     }
     if (mapper_no == 96 && (prg_sz != 0x20000 || !chr_is_ram || chr_sz != 0x8000)) {

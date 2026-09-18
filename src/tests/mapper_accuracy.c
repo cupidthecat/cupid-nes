@@ -276,6 +276,24 @@ static int test_mmc_latch_address_notifications(void) {
         CHECK(cart_ppu_read(0) == 8);
         cart_notify_ppu_address(0, cycle++);
         CHECK(cart_ppu_read(0) == 4);
+
+        // A pending latch update is committed by any following PPU address,
+        // including a nametable access. Nametable addresses that alias a latch
+        // after masking to 13 bits must not start another latch transition.
+        CHECK(fixture(mapper, 0x20000, 0x8000, false) == (int)mapper);
+        latch_banks();
+        cycle = 1;
+        cart_notify_ppu_address(0x0FD8, cycle++);
+        cart_notify_ppu_address(0x2FE8, cycle++);
+        CHECK(cart_ppu_read(0) == 4);
+        cart_notify_ppu_address(0, cycle++);
+        CHECK(cart_ppu_read(0) == 4);
+
+        cart_notify_ppu_address(0x1FD8, cycle++);
+        cart_notify_ppu_address(0x3FE8, cycle++);
+        CHECK(cart_ppu_read(0x1000) == 12);
+        cart_notify_ppu_address(0, cycle++);
+        CHECK(cart_ppu_read(0x1000) == 12);
     }
     return 0;
 }
@@ -7864,6 +7882,92 @@ static int test_native_small_chr_bank_windows(void) {
     return 0;
 }
 
+static int test_native_small_chr_1k_families(void) {
+    const unsigned taito_mappers[] = {33, 48};
+    for (size_t i = 0; i < sizeof(taito_mappers) / sizeof(taito_mappers[0]); ++i) {
+        CHECK(fixture(taito_mappers[i], 0x20000, 0x0200, false) == (int)taito_mappers[i]);
+        fixture_chr[0x12] = 0xA6;
+        CHECK(cart_ppu_read(0x0812) == 0x12);
+        cart_cpu_write(0xA000, 7);
+        CHECK(cart_ppu_read(0x0812) == 0xA6);
+        CHECK(cart_ppu_read(0x1012) == 0x12);
+    }
+
+    const unsigned taito_x1_mappers[] = {80, 207};
+    for (size_t i = 0; i < sizeof(taito_x1_mappers) / sizeof(taito_x1_mappers[0]); ++i) {
+        CHECK(fixture(taito_x1_mappers[i], 0x20000, 0x0200, false) == (int)taito_x1_mappers[i]);
+        fixture_chr[0x12] = 0x53;
+        CHECK(cart_ppu_read(0x0812) == 0x12);
+        cart_cpu_write(0x7EF2, 5);
+        CHECK(cart_ppu_read(0x0812) == 0x53);
+        CHECK(cart_ppu_read(0x1012) == 0x12);
+    }
+
+    CHECK(fixture(82, 0x20000, 0x0200, false) == 82);
+    fixture_chr[0x12] = 0x96;
+    CHECK(cart_ppu_read(0x0812) == 0x12);
+    cart_cpu_write(0x7EF2, 3);
+    CHECK(cart_ppu_read(0x0812) == 0x96);
+    CHECK(cart_ppu_read(0x1012) == 0x12);
+
+    const unsigned rambo_mappers[] = {64, 158};
+    for (size_t i = 0; i < sizeof(rambo_mappers) / sizeof(rambo_mappers[0]); ++i) {
+        CHECK(fixture(rambo_mappers[i], 0x20000, 0x0200, false) == (int)rambo_mappers[i]);
+        fixture_chr[0x12] = 0x69;
+        CHECK(cart_ppu_read(0x0812) == 0x69);
+        cart_cpu_write(0x8000, 2);
+        cart_cpu_write(0x8001, 0x35);
+        CHECK(cart_ppu_read(0x0812) == 0x69);
+        CHECK(cart_ppu_read(0x1012) == 0x12);
+    }
+
+    CHECK(fixture(18, 0x20000, 0x0200, false) == 18);
+    fixture_chr[0x12] = 0xC3;
+    CHECK(cart_ppu_read(0x0812) == 0x12);
+    cart_cpu_write(0xC000, 5);
+    cart_cpu_write(0xC001, 3);
+    CHECK(cart_ppu_read(0x0812) == 0xC3);
+    CHECK(cart_ppu_read(0x1012) == 0x12);
+
+    CHECK(fixture(32, 0x20000, 0x0200, false) == 32);
+    fixture_chr[0x12] = 0x5A;
+    CHECK(cart_ppu_read(0x0812) == 0x12);
+    cart_cpu_write(0xB004, 7);
+    CHECK(cart_ppu_read(0x0812) == 0x5A);
+    CHECK(cart_ppu_read(0x1012) == 0x12);
+
+    CHECK(fixture(65, 0x20000, 0x0200, false) == 65);
+    fixture_chr[0x12] = 0x3C;
+    CHECK(cart_ppu_read(0x0812) == 0x12);
+    cart_cpu_write(0xB004, 9);
+    CHECK(cart_ppu_read(0x0812) == 0x3C);
+    CHECK(cart_ppu_read(0x1012) == 0x12);
+
+    const unsigned vrc24_mappers[] = {21, 22, 23, 25, 27, 183};
+    for (size_t i = 0; i < sizeof(vrc24_mappers) / sizeof(vrc24_mappers[0]); ++i) {
+        CHECK(fixture(vrc24_mappers[i], 0x20000, 0x0200, false) == (int)vrc24_mappers[i]);
+        fixture_chr[0x12] = 0x87;
+        CHECK(cart_ppu_read(0x0812) == 0x87);
+        CHECK(cart_ppu_read(0x1012) == 0x12);
+    }
+
+    CHECK(fixture(85, 0x20000, 0x0200, false) == 85);
+    fixture_chr[0x12] = 0xD2;
+    CHECK(cart_ppu_read(0x0812) == 0x12);
+    cart_cpu_write(0xC000, 0x6A);
+    CHECK(cart_ppu_read(0x0812) == 0xD2);
+    CHECK(cart_ppu_read(0x1012) == 0x12);
+
+    CHECK(fixture(85, 0x20000, 0x0200, true) == 85);
+    cart_ppu_write(0x1012, 0x4D);
+    CHECK(cart_ppu_read(0x0012) == 0x4D);
+    CHECK(cart_ppu_read(0x1012) == 0x4D);
+    cart_cpu_write(0xC000, 3);
+    cart_ppu_write(0x0812, 0xB4);
+    CHECK(cart_ppu_read(0x0812) == 0xB4);
+    return 0;
+}
+
 static int test_vrc1_banks_mirroring_and_reset(void) {
     const unsigned mappers[] = {75, 151};
     for (size_t i = 0; i < sizeof(mappers) / sizeof(mappers[0]); ++i) {
@@ -8460,6 +8564,23 @@ static int test_sunsoft_shrunk_chr_pages(void) {
     CHECK(cpu_power_on(&cpu));
     cpu_soft_reset(&cpu);
     CHECK(cart_ppu_read(0x0123) == 0xA5 && cart_ppu_read(0x1F23) == 0x23);
+
+    // With CHR RAM, the base mapper starts with the whole pattern table mapped.
+    // Enabling the Sunsoft slot before any disable only replaces the low slot,
+    // leaving the inherited high aliases in place. A disable removes the full
+    // mapping; re-enabling later restores only the reduced low slot.
+    CHECK(fixture(93, 0x8000, 0x0800, true) == 93);
+    cart_ppu_write(0x0923, 0x53);
+    CHECK(cart_ppu_read(0x0123) == 0x53 && cart_ppu_read(0x0923) == 0x53);
+    cart_cpu_write(0x8000, 0x11);
+    cart_ppu_write(0x0923, 0xA6);
+    CHECK(cart_ppu_read(0x0123) == 0xA6 && cart_ppu_read(0x0923) == 0xA6);
+    cart_cpu_write(0x8000, 0x10);
+    CHECK(cart_ppu_read(0x0123) == 0x23 && cart_ppu_read(0x0923) == 0x23);
+    cart_cpu_write(0x8000, 0x11);
+    CHECK(cart_ppu_read(0x0123) == 0xA6 && cart_ppu_read(0x0923) == 0x23);
+    cart_ppu_write(0x0123, 0x69);
+    CHECK(cart_ppu_read(0x0123) == 0x69 && cart_ppu_read(0x0923) == 0x23);
 
     // Mapper 184 exposes two 4 KiB slots. A 2 KiB image shrinks both to 2 KiB,
     // so a register write maps $0000-$0FFF and leaves $1000-$1FFF open.
@@ -10306,6 +10427,7 @@ int test_mapper_accuracy(void) {
         test_namco108_banks_aliases_and_irq_absence, test_namco108_submapper_loader_and_chr_ram,
         test_namco108_variants, test_namco108_variant_loader_rejection,
         test_namco108_variant_image_loading, test_native_small_chr_bank_windows,
+        test_native_small_chr_1k_families,
         test_sunsoft69_banks_ram_and_startup, test_sunsoft69_legacy_ram_defaults,
         test_sunsoft69_irq_cpu_clock,
         test_sunsoft5b_tone_noise_envelope, test_sunsoft69_persistence_and_loader,
