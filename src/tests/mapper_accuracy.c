@@ -10613,6 +10613,45 @@ static int test_game_database_and_headerless_loading(void) {
     CHECK(looked_up.mapper == 2 && looked_up.submapper_present && looked_up.submapper == 2);
     CHECK(strcmp(looked_up.board, "UOROM") == 0 && looked_up.bus_conflicts == 0);
 
+    /* A database correction does not turn a legacy cartridge into NES 2.0.
+       Mapper 16 accepts the legacy 8 KiB RAM default before resolving its
+       serial-memory device; NES 2.0 interprets that declaration differently. */
+    iNESHeader bandai_header = header_for(0, 0x8000, false);
+    size_t bandai_size = 0;
+    uint8_t *bandai_image = image_for(&bandai_header, 0x8000, 0x2000, &bandai_size);
+    CHECK(bandai_image != NULL);
+    bandai_image[sizeof(bandai_header)] = 0x4B;
+    uint32_t bandai_crc = game_db_crc32(bandai_image + sizeof(bandai_header),
+                                        bandai_size - sizeof(bandai_header));
+    length = snprintf(database, sizeof(database),
+        "%08X,NesNtsc,BANDAI-FCG,,,16,32,8,,,,0,h,1,N,,0,0\n", (unsigned)bandai_crc);
+    CHECK(length > 0 && (size_t)length < sizeof(database));
+    CHECK(rom_database_load_memory(database, (size_t)length));
+    CHECK(load_rom_memory(bandai_image, bandai_size) == 0);
+    CHECK(rom_metadata_source() == ROM_METADATA_DATABASE && rom_mapper_number(&ines_header) == 16);
+    cart_cpu_write(0x8008, 0);
+    CHECK(cart_cpu_read(0x8000) == 0x4B);
+    free(bandai_image);
+
+    /* Native board implementations must still honor explicit validated DB RAM
+       sizes after retaining legacy mapper semantics. */
+    iNESHeader bandai70_header = header_for(0, 0x8000, false);
+    size_t bandai70_size = 0;
+    uint8_t *bandai70_image = image_for(&bandai70_header, 0x8000, 0x2000, &bandai70_size);
+    CHECK(bandai70_image != NULL);
+    uint32_t bandai70_crc = game_db_crc32(bandai70_image + sizeof(bandai70_header),
+                                          bandai70_size - sizeof(bandai70_header));
+    length = snprintf(database, sizeof(database),
+        "%08X,NesNtsc,BANDAI-74161,,,70,32,8,0,0,0,0,v,1,N,0,0,0\n",
+        (unsigned)bandai70_crc);
+    CHECK(length > 0 && (size_t)length < sizeof(database));
+    CHECK(rom_database_load_memory(database, (size_t)length));
+    CHECK(load_rom_memory(bandai70_image, bandai70_size) == 0);
+    CHECK(rom_metadata_source() == ROM_METADATA_DATABASE && rom_mapper_number(&ines_header) == 70);
+    cart_cpu_write(0x6123, 0xA6);
+    CHECK(cart_cpu_read_bus(0x6123, 0x69) == 0x69);
+    free(bandai70_image);
+
     iNESHeader blank_ram_header = header_for(0, 0x4000, false);
     size_t blank_ram_size = 0;
     uint8_t *blank_ram_image = image_for(&blank_ram_header, 0x4000, 0x2000, &blank_ram_size);

@@ -7263,7 +7263,11 @@ int mapper_init_from_header_metadata(const iNESHeader *h,
     }
     if (!h || !prg || !prg_sz || !chr || !chr_sz) return -1;
     int mapper_no = database && database->present ? database->mapper : rom_mapper_number(h);
-    bool nes2 = (h->flags7 & 0x0C) == 0x08;
+    /* Database corrections apply only to legacy/headerless images.  The loader
+       uses a synthesized NES 2.0-shaped header to carry extended mapper and
+       console metadata, but mapper behavior must retain the source image's
+       legacy semantics. */
+    bool nes2 = !(database && database->present) && (h->flags7 & 0x0C) == 0x08;
     uint8_t submapper = database && database->present && database->submapper_present
                       ? database->submapper : nes2 ? h->prg_ram_size >> 4 : 0;
     switch (mapper_no) {

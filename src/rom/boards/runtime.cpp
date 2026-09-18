@@ -380,7 +380,11 @@ void Board::Initialize(const iNESHeader &header, uint8_t *prg, size_t prgBytes,
         throw std::invalid_argument("unsupported cartridge buffer size");
     _romInfo.MapperID = database && database->present
                       ? database->mapper : static_cast<unsigned>(rom_mapper_number(&header));
-    _romInfo.IsNes20Header = (header.flags7 & 0x0C) == 8;
+    /* Database-corrected legacy and headerless images keep legacy mapper
+       semantics even though their synthesized transport header carries the
+       NES 2.0 marker for extended metadata. */
+    _romInfo.IsNes20Header = !(database && database->present)
+                           && (header.flags7 & 0x0C) == 8;
     _romInfo.SubMapperID = database && database->present && database->submapper_present
                          ? database->submapper : IsNes20() ? header.prg_ram_size >> 4 : 0;
     _romInfo.HasBattery = (header.flags6 & 2) != 0;
@@ -405,15 +409,24 @@ void Board::Initialize(const iNESHeader &header, uint8_t *prg, size_t prgBytes,
         if (database->save_ram_override) ram.prg_nvram = database->save_ram;
         if (database->chr_ram_override) ram.chr_ram = database->chr_ram;
     }
-    _saveRamSize = !IsNes20() || ForceSaveRamSize()
-                 ? (HasBattery() || ForceSaveRamSize() ? GetSaveRamSize() : 0)
-                 : static_cast<uint32_t>(ram.prg_nvram);
-    _workRamSize = !IsNes20() || ForceWorkRamSize()
-                 ? (!HasBattery() || ForceWorkRamSize() ? GetWorkRamSize() : 0)
-                 : static_cast<uint32_t>(ram.prg_ram);
-    _saveChrRamSize = IsNes20() ? static_cast<uint32_t>(ram.chr_nvram) : 0;
-    _chrRamSize = IsNes20() ? static_cast<uint32_t>(ram.chr_ram + ram.chr_nvram)
-                : GetChrRamSize() ? GetChrRamSize() : !chrRom ? 0x2000 : 0;
+    if (database && database->present) {
+        _saveRamSize = ForceSaveRamSize() ? GetSaveRamSize()
+                     : static_cast<uint32_t>(ram.prg_nvram);
+        _workRamSize = ForceWorkRamSize() ? GetWorkRamSize()
+                     : static_cast<uint32_t>(ram.prg_ram);
+        _saveChrRamSize = static_cast<uint32_t>(ram.chr_nvram);
+        _chrRamSize = static_cast<uint32_t>(ram.chr_ram + ram.chr_nvram);
+    } else {
+        _saveRamSize = !IsNes20() || ForceSaveRamSize()
+                     ? (HasBattery() || ForceSaveRamSize() ? GetSaveRamSize() : 0)
+                     : static_cast<uint32_t>(ram.prg_nvram);
+        _workRamSize = !IsNes20() || ForceWorkRamSize()
+                     ? (!HasBattery() || ForceWorkRamSize() ? GetWorkRamSize() : 0)
+                     : static_cast<uint32_t>(ram.prg_ram);
+        _saveChrRamSize = IsNes20() ? static_cast<uint32_t>(ram.chr_nvram) : 0;
+        _chrRamSize = IsNes20() ? static_cast<uint32_t>(ram.chr_ram + ram.chr_nvram)
+                    : GetChrRamSize() ? GetChrRamSize() : !chrRom ? 0x2000 : 0;
+    }
     if (!_saveChrRamSize && ForceChrBattery()) _saveChrRamSize = _chrRamSize;
     _mapperRamSize = GetMapperRamSize();
     _nametableCount = GetNametableCount();
