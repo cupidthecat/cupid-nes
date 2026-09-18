@@ -33,6 +33,7 @@
 #include "board.h"
 #include "fds.h"
 #include "../system/timing.h"
+#include "../system/hardware.h"
 #include "../system/vs_system.h"
 #include "../cpu/cpu.h"
 #include "../apu/epsm.h"
@@ -242,6 +243,8 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
     }
     memcpy(new_prg, data + offset, new_prg_size);
     if (rom_chr_size) memcpy(new_chr, data + offset + new_prg_size, rom_chr_size);
+    else if (!board_handles_mapper((unsigned)mapper_number))
+        nes_initialize_power_on_ram(new_chr, new_chr_size, 0);
 
     if (fds_active() && fds_disk_dirty() && !fds_flush()) {
         fprintf(stderr, "Cannot replace the active FDS disk while modified media is unsaved\n");

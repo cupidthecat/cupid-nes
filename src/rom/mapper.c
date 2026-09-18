@@ -41,6 +41,7 @@
 #include "vrc7_audio.h"
 #include "fds.h"
 #include "../system/timing.h"
+#include "../system/hardware.h"
 #include "../system/vs_system.h"
 
 extern uint64_t cpu_total_cycles;
@@ -169,6 +170,8 @@ static struct {
 } m111;
 
 static RamBlock prg_work_ram, prg_save_ram;
+static RamBlock chr_work_ram, chr_save_ram;
+static uint8_t *chr_nvram_data(void);
 static bool prg_ram_dirty = false;
 static bool chr_ram_dirty = false;
 static uint8_t mmc5_exram[0x400];
@@ -253,15 +256,6 @@ void cart_apply_trainer(const uint8_t trainer[512]) {
         return;
     }
     if (!trainer) return;
-    if (cart == &mapper_mmc5) {
-        size_t offset = 0;
-        RamBlock *ram = mmc5_ram_location(0x7000, &offset);
-        if (ram && offset <= ram->size && 512 <= ram->size - offset) {
-            memcpy(ram->data + offset, trainer, 512);
-            if (ram == &prg_save_ram && battery_enabled) prg_ram_dirty = true;
-        }
-        return;
-    }
     RamBlock *ram = prg_work_ram.size >= 0x2000 ? &prg_work_ram : &prg_save_ram;
     if (ram->size >= 0x2000) {
         memcpy(ram->data + 0x1000, trainer, 512);
@@ -451,7 +445,7 @@ void cart_battery_flush(void) {
     else if (cart == &mapper_mmc5) flush_mmc5_battery();
     else if (cart == &mapper_namco) flush_namco_battery();
     else flush_battery(battery_save_path, prg_save_ram.data, prg_save_ram.size, &prg_ram_dirty);
-    flush_battery(chr_save_path, C.chr, C.ram.chr_nvram, &chr_ram_dirty);
+    flush_battery(chr_save_path, chr_nvram_data(), C.ram.chr_nvram, &chr_ram_dirty);
     for (unsigned i = 0; i < 2; ++i)
         flush_battery(eeprom_save_path[i], bandai_eeprom[i].bytes,
                       bandai_eeprom[i].capacity, &bandai_eeprom[i].dirty);
@@ -566,7 +560,7 @@ void cart_battery_configure(const char *rom_path, bool has_battery) {
     else if (cart == &mapper_mmc5) load_mmc5_battery(battery_save_path);
     else if (cart == &mapper_namco) load_namco_battery(battery_save_path);
     else load_battery(battery_save_path, prg_save_ram.data, prg_save_ram.size);
-    load_battery(chr_save_path, C.chr, C.ram.chr_nvram);
+    load_battery(chr_save_path, chr_nvram_data(), C.ram.chr_nvram);
     for (unsigned i = 0; i < 2; ++i)
         load_battery(eeprom_save_path[i], bandai_eeprom[i].bytes, bandai_eeprom[i].capacity);
 }
@@ -579,8 +573,12 @@ void mapper_shutdown(void) {
     if (cart == &mapper_fds) fds_shutdown();
     free(prg_work_ram.data);
     free(prg_save_ram.data);
+    free(chr_work_ram.data);
+    free(chr_save_ram.data);
     prg_work_ram = (RamBlock){0};
     prg_save_ram = (RamBlock){0};
+    chr_work_ram = (RamBlock){0};
+    chr_save_ram = (RamBlock){0};
     cart = NULL;
     memset(&C, 0, sizeof(C));
     mapper_irq_line = false;
@@ -680,6 +678,10 @@ void cart_notify_vblank_start(void) {
 }
 
 // Mapper 0: NROM.
+static uint8_t *chr_nvram_data(void) {
+    return chr_save_ram.size ? chr_save_ram.data : C.chr;
+}
+
 static uint8_t nrom_cpu_read(uint16_t a) {
     if (a >= 0x6000 && a <= 0x7FFF) return prg_ram_read(a);
     if (a >= 0x8000) {
@@ -3492,14 +3494,18 @@ static RamBlock *mmc5_ram_location(uint16_t a, size_t *offset) {
         bank = mmc5.prg_regs[(a - 0x8000) >> 13];
     }
     RamBlock *ram = default_prg_ram();
-    if (C.nes2 && (ram->size == 0x10000 || ram->size == 0x20000)) {
-        bank &= 0x0F; // NES 2.0 can describe a single 64KB/128KB chip.
+    if (C.nes2 && (C.ram.prg_ram >= 0x10000 || C.ram.prg_nvram >= 0x10000)) {
+        // Large NES 2.0 RAM chips use the four-bit selector. A battery-backed
+        // chip remains the selected memory when both work and save RAM exist.
+        if (prg_save_ram.size) ram = &prg_save_ram;
+        else ram = &prg_work_ram;
+        bank &= 0x0F;
     } else {
         bank &= 7;
         if (C.nes2) {
             if (C.ram.prg_ram == 0x2000 && C.ram.prg_nvram == 0x2000) {
                 ram = (bank & 4) ? &prg_work_ram : &prg_save_ram;
-            } else if (bank >= 4) {
+            } else if (C.ram.prg_ram + C.ram.prg_nvram != 0x4000 && bank >= 4) {
                 return NULL; // The second RAM socket is empty.
             }
         }
@@ -6667,18 +6673,22 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
                                    bool chr_is_ram, size_t chr_sz) {
     size_t prg_total = ram->prg_ram + ram->prg_nvram;
     size_t chr_total = ram->chr_ram + ram->chr_nvram;
-    if (mapper_no != 82 && prg_total && (prg_total & (prg_total - 1))) return false;
+    if (mapper_no != 1 && mapper_no != 5 && mapper_no != 82 && mapper_no != 155
+        && prg_total && (prg_total & (prg_total - 1))) return false;
 
-    // Only these boards have implemented selection between separate PRG RAM chips.
     bool split_prg = ram->prg_ram && ram->prg_nvram;
-    if (split_prg && !((mapper_no == 1 || mapper_no == 155 || mapper_no == 5)
-        && ram->prg_ram == 0x2000 && ram->prg_nvram == 0x2000)) return false;
+    if (split_prg && mapper_no != 1 && mapper_no != 5 && mapper_no != 155) return false;
     if (mapper_no == 1 || mapper_no == 105 || mapper_no == 155) {
         if (prg_total > 0x8000) return false;
     } else if (mapper_no == 5) {
         if (nes2) {
-            if (!split_prg && prg_total > 0x2000 && prg_total != 0x8000
-                && prg_total != 0x10000 && prg_total != 0x20000) return false;
+            const size_t supported[] = {0, 0x2000, 0x4000, 0x8000, 0x10000, 0x20000};
+            bool work_ok = false, save_ok = false;
+            for (size_t i = 0; i < sizeof(supported) / sizeof(supported[0]); ++i) {
+                if (ram->prg_ram == supported[i]) work_ok = true;
+                if (ram->prg_nvram == supported[i]) save_ok = true;
+            }
+            if (!work_ok || !save_ok) return false;
         } else if (prg_total > 0x10000) {
             return false; // Legacy bank registers address at most eight 8KB pages.
         }
@@ -6712,8 +6722,10 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         if (ram->chr_nvram) return false;
         if (nes2 && !chr_is_ram && ram->chr_ram != CHR_BANK_8K) return false;
     } else {
-        // Other supported boards do not select separate CHR ROM/RAM or two RAM chips.
-        if ((!chr_is_ram && chr_total) || (ram->chr_ram && ram->chr_nvram)) return false;
+        bool unmapped_chr_storage = !chr_is_ram && chr_total
+            && (mapper_no == 0 || mapper_no == 1 || mapper_no == 5 || mapper_no == 155);
+        if ((!chr_is_ram && chr_total && !unmapped_chr_storage)
+            || (chr_is_ram && ram->chr_ram && ram->chr_nvram)) return false;
     }
     if (nes2 && chr_is_ram && chr_total != chr_sz) return false;
     size_t chr_limit;
@@ -7132,11 +7144,19 @@ int mapper_init_from_header(const iNESHeader *h,
     }
     RamBlock new_work = {NULL, ram.prg_ram};
     RamBlock new_save = {NULL, ram.prg_nvram};
+    RamBlock new_chr_work = {NULL, !chr_is_ram ? ram.chr_ram : 0};
+    RamBlock new_chr_save = {NULL, !chr_is_ram ? ram.chr_nvram : 0};
     if (new_work.size) new_work.data = (uint8_t *)calloc(1, new_work.size);
     if (new_save.size) new_save.data = (uint8_t *)calloc(1, new_save.size);
-    if ((new_work.size && !new_work.data) || (new_save.size && !new_save.data)) {
+    if (new_chr_work.size) new_chr_work.data = (uint8_t *)calloc(1, new_chr_work.size);
+    if (new_chr_save.size) new_chr_save.data = (uint8_t *)calloc(1, new_chr_save.size);
+    if ((new_work.size && !new_work.data) || (new_save.size && !new_save.data)
+        || (new_chr_work.size && !new_chr_work.data)
+        || (new_chr_save.size && !new_chr_save.data)) {
         free(new_work.data);
         free(new_save.data);
+        free(new_chr_work.data);
+        free(new_chr_save.data);
         fprintf(stderr, "Cartridge RAM allocation failed\n");
         return -1;
     }
@@ -7145,14 +7165,23 @@ int mapper_init_from_header(const iNESHeader *h,
     if (mapper_no == 85 && !vrc7_fm_init(&new_fm)) {
         free(new_work.data);
         free(new_save.data);
+        free(new_chr_work.data);
+        free(new_chr_save.data);
         fprintf(stderr, "VRC7 audio allocation failed\n");
         return -1;
     }
+
+    nes_initialize_power_on_ram(new_work.data, new_work.size, 0);
+    nes_initialize_power_on_ram(new_save.data, new_save.size, 0);
+    nes_initialize_power_on_ram(new_chr_work.data, new_chr_work.size, 0);
+    nes_initialize_power_on_ram(new_chr_save.data, new_chr_save.size, 0);
 
     // Finish all fallible setup before releasing the previous cartridge's RAM.
     mapper_shutdown();
     prg_work_ram = new_work;
     prg_save_ram = new_save;
+    chr_work_ram = new_chr_work;
+    chr_save_ram = new_chr_save;
     C.prg = prg; C.prg_sz = prg_sz;
     C.chr = chr; C.chr_sz = chr_sz;
     C.chr_is_ram = chr_is_ram;

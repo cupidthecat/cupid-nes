@@ -4098,8 +4098,8 @@ static int test_loader_trainers_and_sizes(void) {
     cart_ppu_write(0x1000, 0x91);
     CHECK(cart_ppu_read(0) == 0x91);
 
-    // Trainer bytes are loaded at the CPU-visible $7000-$71FF window even on
-    // the two-socket MMC5 RAM layout.
+    // On two-socket MMC5 layouts the trainer initializes volatile RAM before
+    // battery data is loaded into the save socket.
     h = header_for(5, 0x20000, false);
     h.flags7 = 8;
     h.flags6 |= 0x06;
@@ -4108,9 +4108,9 @@ static int test_loader_trainers_and_sizes(void) {
     CHECK(image != NULL);
     loaded = load_rom_memory(image, size);
     free(image);
-    CHECK(loaded == 0 && cart_cpu_read(0x7001) == 1 && cart_cpu_read(0x71FF) == 0xFF);
+    CHECK(loaded == 0 && cart_cpu_read(0x7001) == 0 && cart_cpu_read(0x71FF) == 0);
     cart_cpu_write(0x5113, 4);
-    CHECK(cart_cpu_read(0x7000) == 0 && cart_cpu_read(0x7001) == 0 && cart_cpu_read(0x71FF) == 0);
+    CHECK(cart_cpu_read(0x7000) == 0 && cart_cpu_read(0x7001) == 1 && cart_cpu_read(0x71FF) == 0xFF);
     return 0;
 }
 
@@ -4447,7 +4447,7 @@ static int test_loader_ram_layouts(void) {
         {10, 7, 0, 0}, // More RAM than MMC1 can address.
         {0x99, 7, 0, 2}, // Separate large RAM chips lack board selection.
         {7, 0x77, 0, 2}, // Mixed volatile/nonvolatile CHR chips.
-        {7, 7, 1, 0}, // CHR-ROM plus CHR-RAM is not wired by these mappers.
+        {7, 0x0C, 1, 0}, // Declared CHR-RAM exceeds this board's supported storage.
         {7, 0, 0, 0}, // NES 2.0 explicitly declares no CHR memory.
         {0x70, 7, 0, 0} // NVRAM requires the battery flag.
     };
@@ -4521,6 +4521,137 @@ static int saved_byte(const char *path, long offset) {
     int value = fseek(fp, offset, SEEK_SET) == 0 ? fgetc(fp) : -1;
     fclose(fp);
     return value;
+}
+
+static int test_extended_ram_layouts_and_ownership(void) {
+    SaveFixture paths;
+    CHECK(save_fixture_begin(&paths) == 0);
+
+    uint8_t seeded[0x2000];
+    memset(seeded, 0x5A, sizeof(seeded));
+    FILE *fp = fopen(paths.prg_save, "wb");
+    CHECK(fp != NULL);
+    CHECK(fwrite(seeded, 1, sizeof(seeded), fp) == sizeof(seeded));
+    CHECK(fclose(fp) == 0);
+    memset(seeded, 0x6B, sizeof(seeded));
+    fp = fopen(paths.chr_save, "wb");
+    CHECK(fp != NULL);
+    CHECK(fwrite(seeded, 1, sizeof(seeded), fp) == sizeof(seeded));
+    CHECK(fclose(fp) == 0);
+
+    // MMC1 accepts independent 16 KiB work RAM and 8 KiB save RAM. With a
+    // battery present, non-SOROM layouts select the save chip and leave the
+    // work chip unmapped. Declared CHR RAM/NVRAM beside CHR ROM stays separate.
+    iNESHeader h = header_for(1, 0x20000, false);
+    h.flags7 |= 0x08;
+    h.flags6 |= 0x02;
+    h.flags10 = 0x78;
+    h.zero[0] = 0x77;
+    size_t image_size;
+    uint8_t *image = image_for(&h, 0x20000, 0x2000, &image_size);
+    CHECK(image != NULL);
+    fp = fopen(paths.rom, "wb");
+    CHECK(fp != NULL);
+    CHECK(fwrite(image, 1, image_size, fp) == image_size);
+    CHECK(fclose(fp) == 0);
+    free(image);
+    CHECK(load_rom(paths.rom) == 0);
+    CHECK(cart_cpu_read(0x6000) == 0x5A);
+    CHECK(cart_ppu_read(0) == 0xA5);
+    cart_ppu_write(0, 0x17);
+    CHECK(cart_ppu_read(0) == 0xA5);
+    serial_write(0xA000, 4);
+    cart_cpu_write(0x6000, 0x71);
+    serial_write(0xA000, 0);
+    CHECK(cart_cpu_read(0x6000) == 0x71);
+    cart_battery_flush();
+    CHECK(saved_file_size(paths.prg_save) == 0x2000);
+    CHECK(saved_byte(paths.prg_save, 0) == 0x71);
+    CHECK(saved_file_size(paths.chr_save) == 0x2000);
+    CHECK(saved_byte(paths.chr_save, 0) == 0x6B);
+    CHECK(unload_rom());
+
+    // MMC5 copies a trainer into volatile RAM before loading battery data.
+    // Bank 0 selects the save socket and bank 4 selects the work socket in
+    // the 8 KiB + 8 KiB two-socket layout.
+    CHECK(remove(paths.prg_save) == 0);
+    CHECK(remove(paths.chr_save) == 0);
+    memset(seeded, 0xA6, sizeof(seeded));
+    fp = fopen(paths.prg_save, "wb");
+    CHECK(fp != NULL);
+    CHECK(fwrite(seeded, 1, sizeof(seeded), fp) == sizeof(seeded));
+    CHECK(fclose(fp) == 0);
+    h = header_for(5, 0x20000, true);
+    h.flags7 |= 0x08;
+    h.flags6 |= 0x06;
+    h.flags10 = 0x77;
+    h.zero[0] = 7;
+    image = image_for(&h, 0x20000, 0, &image_size);
+    CHECK(image != NULL);
+    fp = fopen(paths.rom, "wb");
+    CHECK(fp != NULL);
+    CHECK(fwrite(image, 1, image_size, fp) == image_size);
+    CHECK(fclose(fp) == 0);
+    free(image);
+    CHECK(load_rom(paths.rom) == 0);
+    mmc5_unlock_ram();
+    cart_cpu_write(0x5113, 0);
+    CHECK(cart_cpu_read(0x7123) == 0xA6);
+    cart_cpu_write(0x5113, 4);
+    CHECK(cart_cpu_read(0x7123) == 0x23);
+    cart_cpu_write(0x7123, 0x44);
+    cart_cpu_write(0x5113, 0);
+    cart_cpu_write(0x7123, 0x55);
+    cart_battery_flush();
+    CHECK(saved_file_size(paths.prg_save) == 0x2400);
+    CHECK(saved_byte(paths.prg_save, 0x1123) == 0x55);
+    CHECK(unload_rom());
+    CHECK(load_rom(paths.rom) == 0);
+    mmc5_unlock_ram();
+    cart_cpu_write(0x5113, 0);
+    CHECK(cart_cpu_read(0x7123) == 0x55);
+    cart_cpu_write(0x5113, 4);
+    CHECK(cart_cpu_read(0x7123) == 0x23);
+    CHECK(unload_rom());
+
+    // A single 16 KiB MMC5 RAM chip mirrors through all eight low bank
+    // selectors. When either physical chip is 64 KiB or larger and a save
+    // chip exists, the save chip remains selected for the four-bit bank path.
+    h = header_for(5, 0x20000, true);
+    h.flags7 |= 0x08;
+    h.flags10 = 8;
+    h.zero[0] = 7;
+    image = image_for(&h, 0x20000, 0, &image_size);
+    CHECK(image != NULL);
+    CHECK(load_rom_memory(image, image_size) == 0);
+    free(image);
+    mmc5_unlock_ram();
+    cart_cpu_write(0x5113, 0);
+    cart_cpu_write(0x6000, 0x31);
+    cart_cpu_write(0x5113, 1);
+    cart_cpu_write(0x6000, 0x42);
+    cart_cpu_write(0x5113, 2);
+    CHECK(cart_cpu_read(0x6000) == 0x31);
+    cart_cpu_write(0x5113, 7);
+    CHECK(cart_cpu_read(0x6000) == 0x42);
+
+    h.flags6 |= 0x02;
+    h.flags10 = 0x7A; // 64 KiB work RAM plus 8 KiB save RAM.
+    image = image_for(&h, 0x20000, 0, &image_size);
+    CHECK(image != NULL);
+    CHECK(load_rom_memory(image, image_size) == 0);
+    free(image);
+    mmc5_unlock_ram();
+    cart_cpu_write(0x5113, 0);
+    cart_cpu_write(0x6000, 0x19);
+    cart_cpu_write(0x5113, 8);
+    CHECK(cart_cpu_read(0x6000) == 0x19);
+    cart_cpu_write(0x6000, 0x2A);
+    cart_cpu_write(0x5113, 0);
+    CHECK(cart_cpu_read(0x6000) == 0x2A);
+
+    unload_rom();
+    return save_fixture_end(&paths);
 }
 
 static int test_sunsoft184_inherited_ram_reads(void) {
@@ -9359,7 +9490,8 @@ int test_mapper_accuracy(void) {
         test_loader_trainers_and_sizes, test_loader_rejection_preserves_cart,
         test_loader_region_and_console_type,
         test_ram_header_sizes, test_prg_ram_capacity, test_mmc1_banked_ram,
-        test_mmc5_banked_ram, test_loader_ram_layouts, test_prg_nvram_persistence,
+        test_mmc5_banked_ram, test_loader_ram_layouts, test_extended_ram_layouts_and_ownership,
+        test_prg_nvram_persistence,
         test_mapper96_legacy_nvram_persistence,
         test_vs_nvram_persistence,
         test_unrom512_flash_persistence, test_mapper111_flash_persistence,

@@ -144,7 +144,9 @@ Legacy iNES RAM fields are unreliable. Cupid uses board defaults and ignores byt
 
 NES 2.0 RAM declarations are normally explicit, including zero RAM. Taito X1-005/X1-017 boards are fixed-size exceptions: mappers 80 and 207 use a 256-byte cartridge-RAM allocation, while mapper 82 uses 5 KiB. For those boards, the battery flag chooses volatile or nonvolatile storage even when the NES 2.0 RAM-size fields are zero. Unsupported combinations are rejected. Do not change header bytes simply to make the loader accept an image: the resulting bank layout or save format could be wrong. Use the cartridge's board information when correcting a header, and record that correction in a bug report.
 
-Trainer initialization runs before save memory loads and copies the bytes into supported `$7000-$71FF` RAM windows. Existing save bytes take precedence where they overlap the trainer. See [saves and media](saves.md) for save layouts, including MMC5 ExRAM and N163 audio RAM.
+Cartridge RAM keeps separate volatile and persistent allocations. MMC1/MMC1A and MMC5 support the implemented combinations of PRG work and save RAM. In the 8 KiB plus 8 KiB MMC5 layout, bank-select bit 2 chooses the work socket when set and the save socket when clear. A single 16 KiB chip mirrors through the eight low bank selectors. NROM, MMC1/MMC1A, and MMC5 can retain declared CHR RAM alongside CHR ROM without replacing the mapped ROM. Separate CHR ROM/RAM selection still requires a board that implements it; accepted storage does not imply that every allocated chip is CPU- or PPU-addressable.
+
+The RAM power-on profile initializes ordinary cartridge RAM before trainer and save overlays. Trainer initialization prefers a volatile PRG chip of at least 8 KiB, otherwise a persistent chip of at least 8 KiB, and copies at chip offset `$1000`. This placement does not depend on the board's initial bank selection. Existing save bytes take precedence where they overlap the trainer. See [saves and media](saves.md) for save layouts, including MMC5 ExRAM and N163 audio RAM.
 
 ## Cartridge behavior
 

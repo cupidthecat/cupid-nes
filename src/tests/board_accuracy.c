@@ -219,14 +219,18 @@ static int test_bandai_discrete_saves(void) {
     return 0;
 }
 
-static int test_board_power_on_ram(void) {
+static int test_board_power_on_ram_case(unsigned mapper) {
     BoardImage image;
-    BOARD_CHECK(board_image_create(&image, 70, 0x8000, 0, false));
+    BOARD_CHECK(board_image_create(&image, mapper, 0x8000, 0, false));
     BOARD_CHECK(board_image_add_trainer(&image, 0x9A));
     BOARD_CHECK(nes_set_ram_power_on_state(NES_RAM_POWER_ONES));
     BOARD_CHECK(board_image_load(&image) == 0);
     BOARD_CHECK(read_mem(0x6123) == 0xFF && ppu_read(0x1234) == 0xFF);
     BOARD_CHECK(ppu_read(0x2222) == 0xFF && read_mem(0x7000) == 0x9A);
+    if (mapper == 5) {
+        write_mem(0x5102, 2);
+        write_mem(0x5103, 1);
+    }
     write_mem(0x6123, 0x34);
     ppu_write(0x1234, 0x56);
     ppu_write(0x2222, 0x78);
@@ -258,6 +262,16 @@ static int test_board_power_on_ram(void) {
     BOARD_CHECK(nes_set_ram_power_on_state(NES_RAM_POWER_DEFAULT));
     board_image_free(&image);
     return 0;
+}
+
+static int test_board_power_on_ram(void) {
+    const unsigned mappers[] = {0, 1, 5, 155, 70};
+    int failures = 0;
+    for (unsigned board = 0; board < sizeof(mappers) / sizeof(mappers[0]); ++board) {
+        failures += test_board_power_on_ram_case(mappers[board]);
+        BOARD_CHECK(nes_set_ram_power_on_state(NES_RAM_POWER_DEFAULT));
+    }
+    return failures;
 }
 
 int test_board_accuracy(void) {

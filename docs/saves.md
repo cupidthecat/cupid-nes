@@ -20,6 +20,8 @@ Only devices present in the loaded board configuration get persistence paths. Vo
 
 Existing save data overlays initialized cartridge memory when the image is loaded. Trainer bytes are installed first, so save bytes take precedence wherever the two overlap. A missing or short save leaves the remaining initialization intact, including trainer bytes beyond the portion read. The save size follows the board and NES 2.0 metadata, so `.sav` is not always an 8 KiB file.
 
+Work RAM and save RAM retain separate chip ownership. For example, a trainer on an MMC5 image with 8 KiB of each goes into the work chip, while the `.sav` data loads into the save chip. Bank selection determines which chip the CPU sees. CHR NVRAM declared beside CHR ROM also has separate storage: loading its `.chr.sav` never overwrites the ROM image. A board may allocate that storage without mapping it to the PPU.
+
 Taito X1-005/X1-017 boards use fixed cartridge-RAM allocations instead of taking a zero NES 2.0 RAM declaration literally. Mappers 80 and 207 allocate a 256-byte mirrored RAM image, and mapper 82 allocates 5 KiB. With the battery flag set, those bytes use the ordinary `.sav` path; without it, the same RAM is volatile.
 
 A short persistent flash save behaves differently: it replaces only the bytes read from the file, leaving the remaining PRG flash bytes from the loaded image. An incomplete file should not be treated as a verified backup. UNROM 512 gets a flash save path only when the cartridge header has the battery bit set. GTROM exposes persistent PRG flash even when that bit is clear; its CHR and nametable RAM remain volatile.
