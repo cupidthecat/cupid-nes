@@ -627,6 +627,8 @@ bool cart_set_dip_switches(unsigned value) {
 }
 unsigned cart_dip_switches(void) { return cart_dip_value; }
 static uint8_t repeated_prg_window_read(uint16_t address, uint16_t start, size_t window_size);
+static uint8_t discrete_chr8_read(uint16_t address, uint8_t bank);
+static void discrete_chr8_write(uint16_t address, uint8_t bank, uint8_t value);
 
 static size_t mapper_prg_page_size(uint16_t mapper_no) {
     switch (mapper_no) {
@@ -679,9 +681,10 @@ static size_t mapper_chr_page_size(uint16_t mapper_no) {
 static bool mapper_has_shrinking_chr_window(uint16_t mapper_no) {
     switch (mapper_no) {
         case 0: case 1: case 2: case 3: case 7: case 9: case 10: case 11:
-        case 13: case 67: case 68: case 69: case 79: case 89: case 93: case 94:
-        case 105: case 113: case 144: case 146: case 155: case 180: case 184:
-        case 185:
+        case 13: case 66: case 67: case 68: case 69: case 71: case 72: case 78:
+        case 79: case 87: case 89: case 92: case 93: case 94: case 97: case 101:
+        case 105: case 113: case 140: case 144: case 146: case 155: case 180:
+        case 184: case 185: case 232:
             return true;
         default:
             return false;
@@ -1103,9 +1106,9 @@ static void m232_cpu_write(uint16_t a, uint8_t v) {
     }
 }
 
-static uint8_t m232_ppu_read(uint16_t a) { return C.chr[(a & 0x1FFFu) % C.chr_sz]; }
+static uint8_t m232_ppu_read(uint16_t a) { return discrete_chr8_read(a, 0); }
 static void m232_ppu_write(uint16_t a, uint8_t v) {
-    if (C.chr_is_ram) chr_ram_write((a & 0x1FFFu) % C.chr_sz, v);
+    discrete_chr8_write(a, 0, v);
 }
 static Mirroring m232_mirr(void) { return C.mirr_base; }
 static void m232_reset(void) { memset(&m232, 0, sizeof(m232)); }
@@ -4874,18 +4877,11 @@ static void gxrom_cpu_write(uint16_t address, uint8_t value) {
 }
 
 static uint8_t gxrom_ppu_read(uint16_t address) {
-    address &= 0x1FFFu;
-    size_t banks = C.chr_sz / CHR_BANK_8K;
-    size_t bank = banks ? (size_t)gxrom.chr_bank % banks : 0;
-    return C.chr[bank * CHR_BANK_8K + address];
+    return discrete_chr8_read(address, gxrom.chr_bank);
 }
 
 static void gxrom_ppu_write(uint16_t address, uint8_t value) {
-    if (!C.chr_is_ram) return;
-    address &= 0x1FFFu;
-    size_t banks = C.chr_sz / CHR_BANK_8K;
-    size_t bank = banks ? (size_t)gxrom.chr_bank % banks : 0;
-    chr_ram_write(bank * CHR_BANK_8K + address, value);
+    discrete_chr8_write(address, gxrom.chr_bank, value);
 }
 
 static Mirroring gxrom_mirr(void) { return C.mirr_base; }
@@ -4919,11 +4915,11 @@ static void m71_cpu_write(uint16_t address, uint8_t value) {
 }
 
 static uint8_t m71_ppu_read(uint16_t address) {
-    return C.chr[address & 0x1FFFu];
+    return discrete_chr8_read(address, 0);
 }
 
 static void m71_ppu_write(uint16_t address, uint8_t value) {
-    if (C.chr_is_ram) chr_ram_write(address & 0x1FFFu, value);
+    discrete_chr8_write(address, 0, value);
 }
 
 static Mirroring m71_mirr(void) { return m71.mirr; }
@@ -6220,18 +6216,11 @@ static void jaleco_discrete_cpu_write(uint16_t a, uint8_t value) {
 }
 
 static uint8_t jaleco_discrete_ppu_read(uint16_t a) {
-    a &= 0x1FFFu;
-    size_t banks = C.chr_sz / CHR_BANK_8K;
-    size_t bank = jaleco_discrete.chr_bank % banks;
-    return C.chr[bank * CHR_BANK_8K + a];
+    return discrete_chr8_read(a, jaleco_discrete.chr_bank);
 }
 
 static void jaleco_discrete_ppu_write(uint16_t a, uint8_t value) {
-    if (!C.chr_is_ram) return;
-    a &= 0x1FFFu;
-    size_t banks = C.chr_sz / CHR_BANK_8K;
-    size_t bank = jaleco_discrete.chr_bank % banks;
-    chr_ram_write(bank * CHR_BANK_8K + a, value);
+    discrete_chr8_write(a, jaleco_discrete.chr_bank, value);
 }
 
 static Mirroring jaleco_discrete_mirr(void) { return jaleco_discrete.mirr; }
@@ -6320,11 +6309,11 @@ static void irem97_cpu_write(uint16_t a, uint8_t value) {
 }
 
 static uint8_t irem97_ppu_read(uint16_t a) {
-    return C.chr[(a & 0x1FFFu) % C.chr_sz];
+    return discrete_chr8_read(a, 0);
 }
 
 static void irem97_ppu_write(uint16_t a, uint8_t value) {
-    chr_ram_write((a & 0x1FFFu) % C.chr_sz, value);
+    discrete_chr8_write(a, 0, value);
 }
 
 static Mirroring irem97_mirr(void) { return irem97.mirr; }
@@ -7216,26 +7205,6 @@ int mapper_init_from_header(const iNESHeader *h,
         fprintf(stderr, "Unsupported ROM/RAM size for mapper 77\n");
         return -1;
     }
-    if (mapper_no == 97
-        && chr_sz != CHR_BANK_8K) {
-        fprintf(stderr, "Unsupported ROM/RAM size for mapper 97\n");
-        return -1;
-    }
-    if ((mapper_no == 72 || mapper_no == 78 || mapper_no == 92)
-        && chr_sz < CHR_BANK_8K) {
-        fprintf(stderr, "Unsupported ROM/RAM size for mapper %d\n", mapper_no);
-        return -1;
-    }
-    if ((mapper_no == 87 || mapper_no == 101)
-        && chr_sz < CHR_BANK_8K) {
-        fprintf(stderr, "Unsupported ROM/RAM size for mapper %d\n", mapper_no);
-        return -1;
-    }
-    if (mapper_no == 140
-        && chr_sz < CHR_BANK_8K) {
-        fprintf(stderr, "Unsupported ROM/RAM size for mapper 140\n");
-        return -1;
-    }
     if (mapper_no == 185 && chr_is_ram) {
         fprintf(stderr, "Unsupported ROM/RAM size for mapper 185\n");
         return -1;
@@ -7314,16 +7283,6 @@ int mapper_init_from_header(const iNESHeader *h,
             return -1;
         }
     }
-    if (mapper_no == 66
-        && chr_sz < CHR_BANK_8K) {
-        fprintf(stderr, "Unsupported ROM/RAM size for mapper 66\n");
-        return -1;
-    }
-    if (mapper_no == 71
-        && chr_sz != CHR_BANK_8K) {
-        fprintf(stderr, "Unsupported ROM/RAM size for mapper 71\n");
-        return -1;
-    }
     if (mapper_no == 206
         && ((submapper == 1 && prg_sz != PRG_BANK_32K) || chr_sz < CHR_BANK_1K)) {
         fprintf(stderr, "Unsupported ROM/RAM size for mapper 206\n");
@@ -7353,11 +7312,6 @@ int mapper_init_from_header(const iNESHeader *h,
         && (prg_sz > 0x80000 || (prg_sz % PRG_BANK_32K) != 0
             || !chr_is_ram || chr_sz != 0x4000)) {
         fprintf(stderr, "Unsupported ROM/RAM size for mapper 111\n");
-        return -1;
-    }
-    if (mapper_no == 232
-        && chr_sz != CHR_BANK_8K) {
-        fprintf(stderr, "Unsupported ROM/RAM size for mapper 232\n");
         return -1;
     }
     if (!ram_geometry_supported(mapper_no, nes2, &ram, chr_is_ram, chr_sz)

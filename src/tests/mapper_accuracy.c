@@ -6254,8 +6254,12 @@ static int test_mapper71_loader_and_chr_rom(void) {
     invalid.prg_ram_size = 0x20;
     CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x20000, fixture_chr, 0x2000) == -1);
     CHECK(cart == previous && cart_cpu_read(0x8000) == 4);
-    CHECK(mapper_init_from_header(&h, fixture_prg, 0x20000, fixture_chr, 0x4000) == -1);
-    CHECK(cart == previous && cart_cpu_read(0x8000) == 4);
+    fixture_chr[0x0123] = 0x35;
+    fixture_chr[0x2123] = 0x69;
+    CHECK(mapper_init_from_header(&h, fixture_prg, 0x20000, fixture_chr, 0x4000) == 71);
+    CHECK(cart_ppu_read(0x0123) == 0x35);
+    cart_cpu_write(0xC000, 3);
+    CHECK(cart_cpu_read(0x8000) == 6 && cart_ppu_read(0x0123) == 0x35);
     return 0;
 }
 
@@ -8772,8 +8776,13 @@ static int test_irem77_97_loader_validation(void) {
     cart_cpu_write(0x8000, 3);
     previous = cart;
     iNESHeader invalid97 = header_for(97, 0x40000, false);
-    CHECK(mapper_init_from_header(&invalid97, fixture_prg, 0x40000, fixture_chr, 0x4000) == -1);
-    CHECK(cart == previous && cart_cpu_read(0xC000) == 6);
+    fixture_chr[0x0123] = 0x47;
+    fixture_chr[0x2123] = 0x8B;
+    CHECK(mapper_init_from_header(&invalid97, fixture_prg, 0x40000, fixture_chr, 0x4000) == 97);
+    CHECK(cart_ppu_read(0x0123) == 0x47);
+    cart_cpu_write(0x8000, 3);
+    CHECK(cart_cpu_read(0xC000) == 6 && cart_ppu_read(0x0123) == 0x47);
+    previous = cart;
     invalid97.flags7 |= 8;
     invalid97.flags10 = 8;
     CHECK(mapper_init_from_header(&invalid97, fixture_prg, 0x40000, fixture_chr, 0x2000) == -1);
@@ -9659,6 +9668,136 @@ static int test_mapper180_full_prg_range(void) {
     return 0;
 }
 
+static void small_chr_board_bank_write(unsigned mapper) {
+    switch (mapper) {
+        case 66:  cart_cpu_write(0x8000, 0x30); break;
+        case 71:  cart_cpu_write(0xC000, 0x03); break;
+        case 72:  cart_cpu_write(0x8000, 0xC3); break;
+        case 78:  cart_cpu_write(0x8000, 0x53); break;
+        case 87:  cart_cpu_write(0x6000, 0x01); break;
+        case 92:  cart_cpu_write(0x8000, 0xC3); break;
+        case 97:  cart_cpu_write(0x8000, 0x03); break;
+        case 101: cart_cpu_write(0x6000, 0x05); break;
+        case 140: cart_cpu_write(0x6000, 0x23); break;
+        case 232:
+            cart_cpu_write(0x8000, 0x08);
+            cart_cpu_write(0xC000, 0x02);
+            break;
+    }
+}
+
+static int small_chr_board_cpu_bank_check(unsigned mapper) {
+    switch (mapper) {
+        case 66:  return cart_cpu_read(0x8001) == 12;
+        case 71:  return cart_cpu_read(0x8001) == 6;
+        case 72:  return cart_cpu_read(0x8001) == 6;
+        case 78:  return cart_cpu_read(0x8001) == 6;
+        case 87:  return cart_cpu_read(0x8001) == 0;
+        case 92:  return cart_cpu_read(0xC001) == 6;
+        case 97:  return cart_cpu_read(0xC001) == 6;
+        case 101: return cart_cpu_read(0x8001) == 0;
+        case 140: return cart_cpu_read(0x8001) == 8;
+        case 232: return cart_cpu_read(0x8001) == 12 && cart_cpu_read(0xC001) == 14;
+        default:  return 0;
+    }
+}
+
+static int test_native_shrunk_chr8_windows(void) {
+    static const struct {
+        unsigned mapper;
+        size_t prg_bytes;
+    } boards[] = {
+        {66, 0x20000}, {71, 0x20000}, {72, 0x20000}, {78, 0x20000},
+        {87, 0x08000}, {92, 0x40000}, {97, 0x40000}, {101, 0x08000},
+        {140, 0x20000}, {232, 0x40000}
+    };
+
+    for (size_t board = 0; board < sizeof(boards) / sizeof(boards[0]); ++board) {
+        unsigned mapper = boards[board].mapper;
+        size_t prg_bytes = boards[board].prg_bytes;
+        iNESHeader h = header_for(mapper, prg_bytes, false);
+        h.flags7 |= 0x08;
+        h.chr_rom_chunks = 0x30; // NES 2.0 exponent encoding: 4 KiB CHR ROM.
+        h.flags9 = 0xF0;
+
+        size_t size;
+        uint8_t *image = image_for(&h, prg_bytes, 0x1000, &size);
+        CHECK(image != NULL);
+        uint8_t *prg = image + sizeof(h);
+        uint8_t *chr = prg + prg_bytes;
+        for (size_t page = 0; page < prg_bytes / 0x2000; ++page)
+            memset(prg + page * 0x2000, (int)page, 0x2000);
+        memset(chr, 0xC5, 0x1000);
+        if (mapper == 72 || mapper == 78 || mapper == 92) prg[0] = 0xFF;
+
+        CHECK(load_rom_memory(image, size) == 0);
+        free(image);
+        CHECK(rom_mapper_number(&ines_header) == (int)mapper && chr_size == 0x1000);
+        ppu_power_on(&ppu);
+        CHECK(ppu_read(0x0123) == 0xC5);
+        CHECK(ppu_read(0x1123) == 0x23); // Upper half remains open bus.
+        ppu_write(0x0123, 0x5A);
+        CHECK(ppu_read(0x0123) == 0xC5); // CHR ROM remains read-only.
+
+        small_chr_board_bank_write(mapper);
+        CHECK(small_chr_board_cpu_bank_check(mapper));
+        CHECK(ppu_read(0x0123) == 0xC5 && ppu_read(0x1123) == 0x23);
+
+        // A truncated replacement is rejected before activation and leaves the
+        // selected CPU bank and shrunken PPU mapping intact.
+        image = image_for(&h, prg_bytes, 0x1000, &size);
+        CHECK(image != NULL);
+        CHECK(load_rom_memory(image, size - 1) == -1);
+        free(image);
+        CHECK(rom_mapper_number(&ines_header) == (int)mapper);
+        CHECK(small_chr_board_cpu_bank_check(mapper));
+        CHECK(ppu_read(0x0123) == 0xC5 && ppu_read(0x1123) == 0x23);
+
+        // A declared 4 KiB CHR-RAM chip mirrors through the pattern-table
+        // window. Mapper bank writes cannot select storage that is not there.
+        h = header_for(mapper, prg_bytes, true);
+        h.flags7 |= 0x08;
+        h.zero[0] = 6; // 64 << 6 = 4 KiB volatile CHR RAM.
+        image = image_for(&h, prg_bytes, 0, &size);
+        CHECK(image != NULL);
+        prg = image + sizeof(h);
+        for (size_t page = 0; page < prg_bytes / 0x2000; ++page)
+            memset(prg + page * 0x2000, (int)page, 0x2000);
+        if (mapper == 72 || mapper == 78 || mapper == 92) prg[0] = 0xFF;
+        CHECK(load_rom_memory(image, size) == 0);
+        free(image);
+        CHECK(chr_size == 0x1000);
+        ppu_power_on(&ppu);
+        ppu_write(0x0123, 0xA6);
+        CHECK(ppu_read(0x0123) == 0xA6 && ppu_read(0x1123) == 0xA6);
+        small_chr_board_bank_write(mapper);
+        CHECK(ppu_read(0x0123) == 0xA6 && ppu_read(0x1123) == 0xA6);
+        ppu_write(0x1123, 0x69);
+        CHECK(ppu_read(0x0123) == 0x69 && ppu_read(0x1123) == 0x69);
+    }
+
+    // Fixed-CHR boards 71 and 97 accept larger physical images as well. Their
+    // single visible 8 KiB page stays on the first physical page.
+    const unsigned fixed_boards[] = {71, 97};
+    for (size_t i = 0; i < sizeof(fixed_boards) / sizeof(fixed_boards[0]); ++i) {
+        unsigned mapper = fixed_boards[i];
+        size_t prg_bytes = mapper == 71 ? 0x20000 : 0x40000;
+        iNESHeader h = header_for(mapper, prg_bytes, false);
+        h.chr_rom_chunks = 2;
+        size_t size;
+        uint8_t *image = image_for(&h, prg_bytes, 0x4000, &size);
+        CHECK(image != NULL);
+        memset(image + sizeof(h) + prg_bytes, 0x41, 0x2000);
+        memset(image + sizeof(h) + prg_bytes + 0x2000, 0x82, 0x2000);
+        CHECK(load_rom_memory(image, size) == 0);
+        free(image);
+        CHECK(ppu_read(0x0000) == 0x41 && ppu_read(0x1FFF) == 0x41);
+        small_chr_board_bank_write(mapper);
+        CHECK(ppu_read(0x0000) == 0x41 && ppu_read(0x1FFF) == 0x41);
+    }
+    return 0;
+}
+
 static int test_discrete_followup_page_geometry(void) {
     // NES 2.0 exponent sizes: 48 KiB PRG and 12 KiB CHR. Both contain one
     // complete mapper page plus a trailing partial page, which is not selected.
@@ -10059,7 +10198,8 @@ int test_mapper_accuracy(void) {
         test_colordreams_high_banks_and_mapper144, test_unrom94_180_cpu_banks,
         test_nina_cpu_decode_and_mirroring, test_nina_chr_ram_banks,
         test_discrete_followup_loader_and_ram, test_mapper180_full_prg_range,
-        test_discrete_followup_page_geometry, test_discrete_followup_ignored_submappers,
+        test_native_shrunk_chr8_windows, test_discrete_followup_page_geometry,
+        test_discrete_followup_ignored_submappers,
         test_discrete_followup_saves,
         test_trainer_and_existing_saves, test_trainer_volatile_ram_ignores_save,
         test_mapper15_modes, test_action53_banks_and_mirroring,
