@@ -33,6 +33,7 @@
 #include <windows.h>
 #endif
 #include "mapper.h"
+#include "board.h"
 #include "eeprom.h"
 #include "namco163.h"
 #include "sunsoft5b.h"
@@ -79,6 +80,8 @@ static Mapper mapper_vrc1, mapper_vrc3, mapper_vrc6, mapper_vrc24, mapper_vrc7;
 static Mapper mapper_sunsoft3, mapper_sunsoft4, mapper_sunsoft89, mapper_sunsoft93, mapper_sunsoft184;
 static Mapper mapper_sunsoft69, mapper_namco, mapper_m34, mapper_gxrom, mapper_m71, mapper_namco108;
 static Mapper mapper_vs99, mapper_jy, mapper_nina;
+static Mapper mapper_board;
+static CartridgeBoard *active_board = NULL;
 Mapper *cart = NULL;
 static bool mapper_irq_line = false;
 static uint8_t cart_cpu_bus_input = 0xFF;
@@ -245,6 +248,10 @@ static struct {
 } namco108;
 
 void cart_apply_trainer(const uint8_t trainer[512]) {
+    if (active_board) {
+        board_apply_trainer(active_board, trainer);
+        return;
+    }
     if (!trainer) return;
     if (cart == &mapper_mmc5) {
         size_t offset = 0;
@@ -435,6 +442,10 @@ static void flush_flash_battery(void) {
 }
 
 void cart_battery_flush(void) {
+    if (active_board) {
+        board_battery_flush(active_board);
+        return;
+    }
     if (cart_has_flash_storage())
         flush_flash_battery();
     else if (cart == &mapper_mmc5) flush_mmc5_battery();
@@ -448,6 +459,7 @@ void cart_battery_flush(void) {
 
 void cart_battery_shutdown(void) {
     cart_battery_flush();
+    if (active_board) board_battery_configure(active_board, NULL);
     free(battery_save_path);
     free(chr_save_path);
     free(flash_save_path);
@@ -521,6 +533,10 @@ static void load_flash_battery(const char *path) {
 }
 
 void cart_battery_configure(const char *rom_path, bool has_battery) {
+    if (active_board) {
+        board_battery_configure(active_board, rom_path);
+        return;
+    }
     cart_battery_shutdown();
     bool serial_storage = bandai_eeprom[0].capacity || bandai_eeprom[1].capacity;
     bool persistent_flash = cart == &mapper_m111 || (has_battery && cart == &mapper_unrom512);
@@ -557,6 +573,8 @@ void cart_battery_configure(const char *rom_path, bool has_battery) {
 
 void mapper_shutdown(void) {
     cart_battery_shutdown();
+    board_destroy(active_board);
+    active_board = NULL;
     if (cart == &mapper_vrc7) vrc7_shutdown();
     if (cart == &mapper_fds) fds_shutdown();
     free(prg_work_ram.data);
@@ -583,7 +601,10 @@ void mapper_shutdown(void) {
 // Helpers
 static inline Mirroring base_mirr(void) { return C.mirr_base; }
 Mirroring cart_get_mirroring(void) { return cart && cart->get_mirroring ? cart->get_mirroring() : base_mirr(); }
-void cart_set_mirroring(Mirroring m) { C.mirr_base = m; }
+void cart_set_mirroring(Mirroring m) {
+    C.mirr_base = m;
+    if (active_board) board_set_mirroring(active_board, m);
+}
 bool cart_set_mmc3_revision_name(const char *name) {
     if (!name) return false;
     if (strcmp(name, "standard") == 0) {
@@ -606,6 +627,7 @@ bool cart_set_dip_switches(unsigned value) {
 }
 unsigned cart_dip_switches(void) { return cart_dip_value; }
 uint8_t cart_cpu_read(uint16_t a) {
+    if (active_board) return board_cpu_read(active_board, a, 0xFF);
     if (cart == &mapper_fds) return fds_cpu_read_bus(a, 0xFF);
     return cart ? cart->cpu_read(a) : 0xFF;
 }
@@ -635,10 +657,16 @@ void cart_clock_cpu_cycle(bool write_cycle) {
 uint8_t cart_ppu_read(uint16_t a) { return cart ? cart->ppu_read(a) : 0x00; }
 void cart_ppu_write(uint16_t a, uint8_t v) { if (cart) cart->ppu_write(a, v); }
 void cart_set_ppu_fetch_source(CartPpuFetchSource src) { cart_ppu_fetch_source = src; }
-bool cart_irq_pending(void) { return mapper_irq_line || (cart == &mapper_fds && fds_irq_pending()); }
+bool cart_irq_pending(void) {
+    return mapper_irq_line || board_irq_pending(active_board)
+        || (cart == &mapper_fds && fds_irq_pending());
+}
 void cart_irq_ack(void) {
     mapper_irq_line = false;
+    board_irq_ack(active_board);
 }
+void cart_console_reset(bool soft_reset) { board_reset(active_board, soft_reset); }
+void cart_after_console_reset(void) { board_after_reset(active_board); }
 void cart_notify_scanline(void) {
     // MMC3 clocks from qualified PPU A12 edges, not scanline completion.
 }
@@ -2032,6 +2060,10 @@ static void jy_reset(void) {
 }
 
 void cart_notify_ppu_address(uint16_t addr, uint64_t ppu_cycle) {
+    if (active_board) {
+        board_notify_ppu_address(active_board, addr, ppu_cycle);
+        return;
+    }
     if (cart == &mapper_m96) {
         if ((m96.last_ppu_addr & 0x3000u) != 0x2000u && (addr & 0x3000u) == 0x2000u) {
             m96.inner_chr_bank = (uint8_t)((addr >> 8) & 0x03u);
@@ -3056,6 +3088,7 @@ static uint8_t mmc5_pulse_volume(const Mmc5Pulse *pulse) {
 }
 
 float cart_expansion_audio(void) {
+    if (active_board) return board_audio(active_board);
     if (cart == &mapper_fds) return fds_expansion_audio();
     if (cart == &mapper_vrc7) return vrc7_expansion_output();
     if (cart == &mapper_vrc6) {
@@ -3923,6 +3956,7 @@ static void vrc6_reset(void) {
 }
 
 uint8_t cart_nt_read(uint16_t addr, uint8_t *nt_ram) {
+    if (active_board) return board_ppu_read(active_board, addr, cart_ppu_fetch_source);
     if (cart == &mapper_m111) {
         (void)nt_ram;
         uint16_t off = (uint16_t)((addr - 0x2000u) & 0x1FFFu);
@@ -4026,6 +4060,10 @@ uint8_t cart_nt_read(uint16_t addr, uint8_t *nt_ram) {
 }
 
 void cart_nt_write(uint16_t addr, uint8_t v, uint8_t *nt_ram) {
+    if (active_board) {
+        board_ppu_write(active_board, addr, v);
+        return;
+    }
     if (cart == &mapper_m111) {
         (void)nt_ram;
         uint16_t off = (uint16_t)((addr - 0x2000u) & 0x1FFFu);
@@ -6745,10 +6783,44 @@ int mapper_init_fds(FdsImage *image) {
     return 0;
 }
 
+static uint8_t board_mapper_cpu_read(uint16_t addr) {
+    return board_cpu_read(active_board, addr, cart_cpu_bus_input);
+}
+static void board_mapper_cpu_write(uint16_t addr, uint8_t value) {
+    board_cpu_write(active_board, addr, value);
+}
+static uint8_t board_mapper_ppu_read(uint16_t addr) {
+    return board_ppu_read(active_board, addr, cart_ppu_fetch_source);
+}
+static void board_mapper_ppu_write(uint16_t addr, uint8_t value) {
+    board_ppu_write(active_board, addr, value);
+}
+static void board_mapper_reset(void) { board_reset(active_board, true); }
+static void board_mapper_clock(int cycles) {
+    for (int i = 0; i < cycles; ++i) board_clock_cpu(active_board, cart_cpu_cycle_is_write);
+}
+static Mirroring board_mapper_mirroring(void) { return board_mirroring(active_board); }
+
 int mapper_init_from_header(const iNESHeader *h,
                             uint8_t *prg, size_t prg_sz,
                             uint8_t *chr, size_t chr_sz)
 {
+    if (h && board_handles_mapper((unsigned)rom_mapper_number(h))) {
+        CartridgeBoard *prepared = board_create(h, prg, prg_sz, chr, chr_sz);
+        if (!prepared) return -1;
+        mapper_shutdown();
+        active_board = prepared;
+        C.mapper_no = (uint16_t)rom_mapper_number(h);
+        C.prg = prg; C.prg_sz = prg_sz;
+        C.chr = chr; C.chr_sz = chr_sz;
+        C.mirr_base = board_mirroring(active_board);
+        build_mapper(&mapper_board, board_mapper_cpu_read, board_mapper_cpu_write,
+                     board_mapper_ppu_read, board_mapper_ppu_write,
+                     board_mapper_reset, board_mapper_mirroring);
+        mapper_board.clock = board_mapper_clock;
+        cart = &mapper_board;
+        return C.mapper_no;
+    }
     if (!h || !prg || prg_sz < PRG_BANK_16K || !chr || !chr_sz) return -1;
     int mapper_no = rom_mapper_number(h);
     bool nes2 = (h->flags7 & 0x0C) == 0x08;

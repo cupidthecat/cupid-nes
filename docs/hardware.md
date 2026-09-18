@@ -61,6 +61,7 @@ PRG is the cartridge memory read by the CPU; CHR holds graphics patterns read by
 | 67 | Sunsoft 3 | 2 KiB CHR banks, switchable 16 KiB PRG, mirroring, and a one-shot CPU IRQ counter |
 | 68 | Sunsoft 4 | 2 KiB CHR banks, CHR-backed nametables, protected cartridge RAM, and licensed external PRG selection |
 | 69 | FME-7 / Sunsoft 5B | ROM/RAM bank selection, IRQ counter, and three-channel tone/noise/envelope audio |
+| 70, 152 | Bandai 74161/7432 | Shared 16 KiB PRG and 8 KiB CHR bank register, fixed upper PRG bank, cartridge RAM, and single-screen mirroring control |
 | 71 | Codemasters | PRG banking and the single-screen board variant |
 | 72, 78, 87, 92, 101, 140 | Jaleco discrete boards | Board-specific PRG/CHR banking, latch edges, mapper 78 mirroring, and applicable ROM bus conflicts |
 | 73 | VRC3 | Switchable 16 KiB PRG, fixed CHR, and 8- or 16-bit CPU-clocked IRQ counter |
@@ -87,6 +88,8 @@ PRG is the cartridge memory read by the CPU; CHR holds graphics patterns read by
 | 232 | BF9096 | Outer PRG block and inner bank selection with the submapper-1 outer-bit wiring |
 
 NES 2.0 submappers select supported wiring and revisions. Examples include MMC1 submapper 5, MMC6 submapper 1, MC-ACC submapper 3, and VRC register-wiring variants. UxROM, CNROM, and AxROM submapper 2 enable ROM bus conflicts. The loader rejects unsupported submappers and memory geometries even when the mapper family appears above. The complete checks are in [`mapper_init_from_header`](../src/rom/mapper.c).
+
+Bandai 70/152 start with vertical mirroring and accept their shared bank register throughout `$8000-$FFFF`, without ROM bus conflicts. Mapper 152 selects either single-screen page on every write. Mapper 70 retains vertical mirroring until a write sets D7; later writes then select either single-screen page. The register state survives CPU soft reset. Both IDs ignore the NES 2.0 submapper field. Their [board implementation](../src/rom/boards/bandai.hpp) uses complete memory pages, including small and irregular ROM images.
 
 The mapper 72 and 92 cartridge banking and latch behavior is implemented. Optional speech hardware on those boards is not currently emulated.
 
@@ -124,7 +127,7 @@ Legacy iNES RAM fields are unreliable. Cupid uses board defaults and ignores byt
 
 NES 2.0 RAM declarations are normally explicit, including zero RAM. Taito X1-005/X1-017 boards are fixed-size exceptions: mappers 80 and 207 use a 256-byte cartridge-RAM allocation, while mapper 82 uses 5 KiB. For those boards, the battery flag chooses volatile or nonvolatile storage even when the NES 2.0 RAM-size fields are zero. Unsupported combinations are rejected. Do not change header bytes simply to make the loader accept an image: the resulting bank layout or save format could be wrong. Use the cartridge's board information when correcting a header, and record that correction in a bug report.
 
-Trainer initialization runs after save memory loads and copies the bytes into supported `$7000-$71FF` RAM windows. See [saves and media](saves.md) for save layouts, including MMC5 ExRAM and N163 audio RAM.
+Trainer initialization runs before save memory loads and copies the bytes into supported `$7000-$71FF` RAM windows. Existing save bytes take precedence where they overlap the trainer. See [saves and media](saves.md) for save layouts, including MMC5 ExRAM and N163 audio RAM.
 
 ## Cartridge behavior
 

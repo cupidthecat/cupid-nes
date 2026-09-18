@@ -2,7 +2,7 @@
 
 [Documentation index](README.md) | [Hardware reference](hardware.md)
 
-Cupid has a C11 core, an SDL frontend, and a C++17 EPSM sound implementation. The application and hardware test executable link the same device implementations. The production core has global cartridge and timing state; the explicit machine contexts currently support the two VS sides, not arbitrary concurrent emulator instances.
+Cupid has a C11 CPU/PPU core, an SDL frontend, and C++17 cartridge and EPSM sound modules. The application and hardware test executable link the same device implementations. The production core has global cartridge and timing state; the explicit machine contexts currently support the two VS sides, not arbitrary concurrent emulator instances.
 
 ## Source layout
 
@@ -15,6 +15,7 @@ Cupid has a C11 core, an SDL frontend, and a C++17 EPSM sound implementation. Th
 | [src/apu/epsm.cpp](../src/apu/epsm.cpp), [src/third_party/ymfm](../src/third_party/ymfm) | EPSM bus, clock, firmware ownership, and YMF288 sound engine |
 | [src/rom/rom.c](../src/rom/rom.c) | Image parsing, allocation, validation, and cartridge replacement |
 | [src/rom/mapper.c](../src/rom/mapper.c) | Board selection, banking, cartridge RAM, nametables, interrupts, and persistence |
+| [src/rom/boards](../src/rom/boards), [board.h](../src/rom/board.h) | Cartridge board modules with owned RAM, 256-byte bus mappings, register decoding, and console reset hooks |
 | [src/rom/fds.c](../src/rom/fds.c) | Disk image ownership, transport, registers, media writes, and disk audio |
 | [src/rom/eeprom.c](../src/rom/eeprom.c) | Serial EEPROM state and transactions |
 | [src/rom/namco163.c](../src/rom/namco163.c), [sunsoft5b.c](../src/rom/sunsoft5b.c), [vrc7_audio.c](../src/rom/vrc7_audio.c) | Expansion sound implementations and the FM wrapper |
@@ -80,7 +81,7 @@ JY boards can clock IRQs from CPU cycles, CPU writes, PPU A12 edges, or physical
 | Audio producer/consumer positions | Atomic indices inside each APU ring buffer |
 | EPSM chip, protocol, and copied ADPCM ROM | Active `EpsmDevice`, prepared before cartridge activation |
 
-The loader validates sizes and supported combinations before replacing the active cartridge. `load_rom_memory()` copies the supplied image bytes but has no filename from which to derive save paths. `load_rom()` configures cartridge persistence from the image path and applies a trainer after loading save memory. Lower-level mapper initialization leaves the caller responsible for the PRG/CHR buffers it was given. A prepared disk image transfers ownership when activation succeeds.
+The loader validates sizes and supported combinations before replacing the active cartridge. `load_rom_memory()` copies the supplied image bytes but has no filename from which to derive save paths. `load_rom()` installs trainer bytes before loading persistent data from the image's save paths. Lower-level mapper initialization leaves the caller responsible for the PRG/CHR buffers it was given. The C++ board modules own their volatile RAM, nonvolatile RAM, and nametables separately from those ROM buffers. A prepared disk image transfers ownership when activation succeeds.
 
 The frontend configures expansion-device storage separately through `joypad_persistent_configure()` after image loading. It supplies input-device choices explicitly; ordinary NES 2.0 input metadata does not automatically select an expansion controller. VS input metadata has its own decoder. EPSM console metadata prepares a new device, including a copy of the configured percussion ROM, before cartridge activation.
 

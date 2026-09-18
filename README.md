@@ -2,7 +2,8 @@
 
 Cupid runs NES and Famicom cartridges, Famicom Disk System images with a supplied
 BIOS, and supported VS System arcade images. It uses SDL2 for video, audio, and
-controllers. The NES core is C11; EPSM expansion sound uses a C++17 YMF288 engine.
+controllers. The CPU and PPU core is C11; cartridge board modules and the EPSM
+YMF288 sound engine use C++17.
 
 The core implements NTSC, PAL, and Dendy timing. The
 [tested implementation](docs/accuracy-checkpoints.md#combined-validation) passes

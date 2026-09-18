@@ -88,6 +88,9 @@ void    cart_nt_write(uint16_t addr, uint8_t v, uint8_t *nt_ram);
 // Mapper IRQ line helpers (for IRQ-capable mappers such as MMC3)
 bool cart_irq_pending(void);
 void cart_irq_ack(void);
+// Console reset signals are separate from cartridge insertion and RAM allocation.
+void cart_console_reset(bool soft_reset);
+void cart_after_console_reset(void);
 
 // Notify physical PPU bus address changes using monotonic NTSC PPU cycles.
 // MMC3 qualifies A12 after three CPU clocks low; palette RAM is internal.

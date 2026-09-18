@@ -6,6 +6,13 @@ Project files with an author header credit
 and license notices with the files they describe. Imported components retain
 their own notices.
 
+## Cartridge board code
+
+The [cartridge board modules](../src/rom/boards) include page-mapping and board
+logic adapted from work by Sour and contributors, under GPL-3.0-or-later.
+Those files retain their copyright and license notices. Cupid supplies the
+loader, CPU/PPU bus integration, storage ownership, and regression fixtures.
+
 ## Bundled FM synthesis
 
 The VRC7 implementation uses the bundled

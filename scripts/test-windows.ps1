@@ -59,12 +59,13 @@ $coreSources = @('src/system/timing.c', 'src/system/hardware.c', 'src/system/vs_
                  'src/joypad/joypad.c', 'src/joypad/family_basic.c', 'src/joypad/special_peripherals.c',
                  'src/apu/apu.c', 'src/ui/palette_tool.c')
 $cppSources = @('src/apu/epsm.cpp', 'src/third_party/ymfm/ymfm_opn.cpp',
-                'src/third_party/ymfm/ymfm_ssg.cpp', 'src/third_party/ymfm/ymfm_adpcm.cpp')
+                'src/third_party/ymfm/ymfm_ssg.cpp', 'src/third_party/ymfm/ymfm_adpcm.cpp',
+                'src/rom/boards/runtime.cpp', 'src/rom/boards/factory.cpp')
 $testSources = @('src/tests/accuracy_test.c', 'src/tests/cpu_accuracy.c', 'src/tests/cpu_trace.c',
                  'src/tests/apu_accuracy.c', 'src/tests/ppu_accuracy.c', 'src/tests/mapper_accuracy.c',
                  'src/tests/fds_accuracy.c',
                  'src/tests/rom_runner.c', 'src/tests/input_accuracy.c', 'src/tests/bandai_accuracy.c',
-                 'src/tests/vs_accuracy.c', 'src/tests/epsm_accuracy.c')
+                 'src/tests/vs_accuracy.c', 'src/tests/epsm_accuracy.c', 'src/tests/board_accuracy.c')
 $application = Join-Path $outputDirectory 'cupid-nes.exe'
 $testProgram = Join-Path $outputDirectory 'accuracy-tests.exe'
 $objectDirectory = Join-Path $outputDirectory 'objects'

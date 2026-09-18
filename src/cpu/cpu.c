@@ -281,6 +281,7 @@ static void cpu_reset_sequence(CPU* cpu) {
 
 bool cpu_power_on(CPU* cpu) {
     if (!cpu || !cpu_startup_alignment_valid(nes_timing()->region)) return false;
+    cart_console_reset(false);
     CpuStartupAlignment alignment = {0, (uint8_t)(nes_timing()->ppu_divider - 1)};
     if (alignment_mode == ALIGNMENT_EXPLICIT) {
         alignment = configured_alignment;
@@ -309,12 +310,15 @@ bool cpu_power_on(CPU* cpu) {
     // adds master clocks before the same seven bus accesses; no CPU cycle is skipped.
     clock_ppu_master(nes_timing()->ppu_divider + alignment.cpu_offset);
     cpu_reset_sequence(cpu);
+    cart_after_console_reset();
     return true;
 }
 
 void cpu_soft_reset(CPU* cpu) {
+    cart_console_reset(true);
     cpu->status = (cpu->status | INTERRUPT_FLAG | UNUSED_FLAG) & ~BREAK_FLAG;
     cpu_reset_sequence(cpu);
+    cart_after_console_reset();
 }
 
 void cpu_reset(CPU* cpu) {

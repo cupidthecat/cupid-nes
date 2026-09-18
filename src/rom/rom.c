@@ -30,6 +30,7 @@
 #include <limits.h>
 #include "rom.h"
 #include "mapper.h"
+#include "board.h"
 #include "fds.h"
 #include "../system/timing.h"
 #include "../system/vs_system.h"
@@ -174,7 +175,8 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
         new_prg_size = prg_units * PRG_ROM_BANK_SIZE;
         rom_chr_size = (size_t)header.chr_rom_chunks * CHR_ROM_BANK_SIZE;
     }
-    if (new_prg_size < PRG_ROM_BANK_SIZE) {
+    if (!new_prg_size || (new_prg_size < PRG_ROM_BANK_SIZE
+        && !board_handles_mapper((unsigned)rom_mapper_number(&header)))) {
         fprintf(stderr, "Unsupported PRG size: %zu\n", new_prg_size);
         return -1;
     }
@@ -199,7 +201,7 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
         RomRamSizes ram;
         rom_ram_sizes(&header, &ram);
         new_chr_size = ram.chr_ram + ram.chr_nvram;
-        if (!new_chr_size) {
+        if (!new_chr_size && !board_handles_mapper((unsigned)rom_mapper_number(&header))) {
             fprintf(stderr, "Cartridge declares no CHR-ROM or CHR-RAM\n");
             return -1;
         }
@@ -215,7 +217,7 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
     }
 
     uint8_t *new_prg = (uint8_t *)malloc(new_prg_size);
-    uint8_t *new_chr = (uint8_t *)calloc(1, new_chr_size);
+    uint8_t *new_chr = (uint8_t *)calloc(1, new_chr_size ? new_chr_size : 1);
     if (!new_prg || !new_chr) {
         fprintf(stderr, "Cartridge allocation failed\n");
         free(new_prg);
