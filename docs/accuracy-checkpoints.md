@@ -40,8 +40,19 @@ AccuracyCoin is pinned to revision `9bc42d1e3acbeeaea215b1011d58f4ce72a8a49e`. T
 | #36 | Power Pad and Family Trainer | `b03f7c931b066cbf4f142f26989bd086fc6bd17e` |
 | #37 | Family BASIC keyboard and tape | `75e2f0bbfd94cd70939b278588a9a72dd1e3b288` |
 | #38 | Disk-system memory, controller, and audio | `97678f1c9df2772b74d8d555d04f62ee1b30d108` |
+| #39 | VS System CPU/PPU/APU, input, DMA, and cartridge hardware | `9d67e89a7ed704c75702ba78eb8d36a47cffebdc` |
 
 The VRC7 implementation also passed the Windows sanitizer gate at `911884abe7be864a8e470e701a9f6f345e1fb509`. Arithmetic and register-boundary corrections passed ordinary and sanitizer gates at `5c62d5f1c10f236b24e7e92e7524bbcce3d29599`. The reset correction passed the ordinary gate at `3f1ec191ea34644871b89ab0cde384db9ace4ef2`. The GCC register-indexing correction passed the integrated gate at `b4a6d15f631d9c261c6f28976f0e9ef7b5a4edd3` and the Linux GCC and Clang sanitizer CI jobs.
+
+The following review corrections also passed the hardware suite and AccuracyCoin 144/144 with zero skipped or unfinished tests:
+
+| Correction | Tested commit |
+| --- | --- |
+| Preserve the disk controller's state and pending IRQ when media is ejected | `dabbafa08d0a7c5070a7d0ef3e45b60d1393850e` |
+| Use board RAM defaults for legacy headers and accept their 4 MiB zero-count PRG encoding | `c97f47dcf1e9b331740d86844fa8af0256a4e90a` |
+| Present both VS cabinets, mix secondary audio, reset single-system protection, honor declared RAM, and clear VS state on disk loading | `7eb5620bfb21f98bed72240af2d4052304547432` |
+
+The complete hardware suite and AccuracyCoin also passed under Windows AddressSanitizer and UndefinedBehaviorSanitizer at `7eb5620bfb21f98bed72240af2d4052304547432`. The CI workflow separately runs strict GCC and Clang builds, enables Linux leak detection, checks the canonical CPU trace and all 91 diagnostic ROMs, and repeats the full AccuracyCoin gate on the pull-request commit.
 
 ## Reproducing a checkpoint
 

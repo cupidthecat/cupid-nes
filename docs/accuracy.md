@@ -1,6 +1,6 @@
 # NES accuracy checks
 
-The hardware targets use NTSC, PAL, or Dendy timing with the cartridge and input devices listed in the README. Disk-system operation uses NTSC timing. The tests below exercise the production core. They do not establish compatibility with every cartridge or hardware revision.
+The hardware targets use NTSC, PAL, or Dendy timing with the cartridge and input devices listed in the README. Disk and VS systems use NTSC timing. The tests below exercise the production core. They do not establish compatibility with every cartridge or hardware revision.
 
 ## Timing model
 
@@ -57,6 +57,7 @@ The regression cases scan distinct simultaneous key patterns through all ten row
 | Cartridge | Supported bank and nametable wiring, bus conflicts, startup mapping, RAM permissions, IRQ boundaries and CPU delivery, declared memory sizes, malformed images, failed-load preservation, EEPROM transactions, flash commands, and save round trips |
 | Expansion audio | MMC5 pulse/PCM, VRC6 pulse/saw, VRC7 FM, N163 wavetable, and Sunsoft 5B tone/noise/envelope output, including register access, reset, mute, and timing cases |
 | Disk system | BIOS/RAM mapping, timer and transfer IRQs, media insertion and side changes, transfer/CRC timing, disk persistence, failed-save preservation, reset, and wavetable/modulation audio |
+| VS System | Header validation, 2C04 colors, 2C05 registers/status, cabinet inputs and protection reads, mapper 99 banks and declared RAM, dual CPU/PPU/APU execution, independent DMA, shared RAM/IRQs, reset, both video outputs, and secondary audio through the production callback |
 | Input devices | Console wiring, multiplayer adapters, Arkanoid serial reports, Power Pad and Family Trainer matrices, beam-aware Zapper reads, Family BASIC keyboard/tape signals, and Datach barcode timing |
 
 The canonical `nestest` comparison checks 8,991 PC/register/status/stack/cycle states and the diagnostic's result bytes. Its trace contains 225 distinct opcode values. The unit cases execute the remaining opcode values separately; neither number means that every possible operand or interrupt alignment has been exhausted. XAA/ANE and other unstable opcodes use a fixed silicon model.
@@ -126,6 +127,6 @@ The old test labeled `6-MMC6` expects an alternative MMC3 IRQ-counter revision; 
 
 ## Remaining limits
 
-The supported hardware list is explicit in the README. Unsupported console types, mapper numbers, submappers, and RAM geometries are rejected. VS hardware, unlisted peripherals and audio chips, and additional cartridge families remain outside the implemented system. MMC5 coverage does not include its auxiliary I/O or `$5209/$520A` timer registers, every undocumented behavior, or every board revision.
+The supported hardware list is explicit in the README. Unsupported console types, mapper numbers, submappers, and RAM geometries are rejected. Unlisted peripherals and audio chips, additional cartridge families, RP2C03G, and VS Zapper wiring remain outside the implemented system. VS games require valid header metadata; there is no per-game identification database. MMC5 coverage does not include its auxiliary I/O or `$5209/$520A` timer registers, every undocumented behavior, or every board revision.
 
 OAM row corruption and decay are deterministic approximations when their opt-in profiles are selected. The `$2003` corruption path uses a worst-case CPU-bus alignment approximation. The 4500-cycle decay threshold and replacement values provide repeatable behavior for testing, but physical OAM charge loss varies with chip, temperature, and refresh history. The startup restriction uses Cupid's fixed power-on alignment and the next pre-render boundary; it does not simulate random power/reset phase variation between physical consoles. The current checks do not cover analog output effects or every DMA/register interleaving. Register-delay tests cover defined collision cases, not every possible interleaving. A new failure should be reduced to its bus operations and timing, then added as a regression. Avoid per-ROM behavior switches or expected-output substitutions in the core.

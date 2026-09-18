@@ -84,6 +84,7 @@ The loader reads iNES and NES 2.0 headers, checks payload lengths and size overf
 | 69 | FME-7 / Sunsoft 5B | ROM/RAM bank selection, IRQ counter, and three-channel tone/noise/envelope audio |
 | 71 | Codemasters | PRG banking and the single-screen board variant |
 | 85 | VRC7 | PRG/CHR banking, IRQs, RAM control, and six-channel FM audio |
+| 99 | VS System | Cabinet PRG/CHR selection, shared RAM permissions, and single/dual layouts |
 | 118 | TKSROM / TLSROM | MMC3 banking and IRQs with CHR-register-controlled nametable routing |
 | 119 | TQROM | MMC3 banking and IRQs with mixed CHR ROM and RAM |
 | 155 | MMC1A | MMC1 banking with the earlier revision's RAM-enable behavior |
@@ -102,6 +103,16 @@ The disk loader accepts headered and raw disk images with an explicitly supplied
 The device provides 32 KiB work RAM, 8 KiB CHR RAM, BIOS mapping, timer and transfer interrupts, disk transport and block timing, CRC handling, and wavetable/modulation audio. `--fds-side N` selects a side starting at 1. `--fds-eject` starts without media inserted, and `--fds-write-protect` blocks disk writes. During execution, F8 inserts or ejects the selected side, F9 changes sides, and F10 changes write protection.
 
 Modified disk data is saved separately from the original image. A failed save keeps the modified media loaded and reports the error. Changing cartridges or closing the application must not discard those writes.
+
+### VS System
+
+VS images select their console, PPU, protection, and controller wiring through the NES 2.0 header. Legacy mapper 99 images use the board's single/dual size convention. The supported VS boards use mappers 0, 1, 2, or 99 and NTSC timing. A valid header matters: the loader does not identify individual games from a database.
+
+Dual cabinets run separate CPUs, PPUs, APUs, controller ports, and DMA state. Their CPU clocks stay synchronized, with shared-memory ownership and interrupt lines between the two sides. Both 256×240 screens appear beside each other; their audio is combined into the mono device output. Players 3 and 4 use the third and fourth connected controllers.
+
+The PPU models include the 2C03 RGB palette, all four 2C04 palettes, and the 2C05 register swaps and status signatures. The protected-system models handle their security reads and restore the protection state on reset. Mapper 99 honors explicit NES 2.0 work/save memory, including absent RAM, instead of replacing every declaration with the legacy 2 KiB work chip.
+
+`--vs-dip VALUE` sets the DIP switches; the low byte belongs to the main cabinet and the high byte to the second. Keys 5 and 6 operate the main coin slots, 7 and 8 operate the second cabinet's slots, and F1/F2 are the service inputs. RP2C03G, VS Zapper wiring, and unsupported cartridge layouts are rejected explicitly.
 
 ### Console wiring and input devices
 
@@ -140,7 +151,7 @@ A battery-backed cartridge uses files beside its ROM:
 
 Only declared nonvolatile memory is persisted. Save sizes follow the supported cartridge layout; the previous 8 KiB PRG save format remains usable for 8 KiB cartridges. Saves load when a cartridge opens and flush when it is replaced or the emulator exits normally.
 
-For most iNES boards, a zero PRG-RAM size means the conventional 8 KiB default. An unspecified legacy MMC5 board defaults to 64 KiB. Its battery save appends the 1 KiB ExRAM contents after PRG NVRAM; a shorter existing save leaves the remaining memory zero-filled. NES 2.0 declares volatile and nonvolatile RAM separately. The memory-loading API used by diagnostic tests does not create save files.
+Legacy iNES headers use the board's RAM defaults; byte 8 does not override them. Most boards default to 8 KiB, MMC5 to 64 KiB, FME-7 to 32 KiB, and a VS board's volatile work chip to 2 KiB. An MMC5 battery save appends the 1 KiB ExRAM contents after PRG NVRAM; a shorter existing save leaves the remaining memory zero-filled. NES 2.0 declares volatile and nonvolatile RAM separately. The memory-loading API used by diagnostic tests does not create save files unless the caller supplies a persistence path.
 
 ## Controls
 
@@ -201,7 +212,7 @@ GitHub Actions builds the emulator and tests with GCC and with Clang sanitizers,
 
 ## Scope
 
-The implemented systems use NTSC, PAL, or Dendy timing with the cartridge families and input devices listed above. Disk-system operation uses NTSC timing. VS hardware, unlisted input devices, and additional mapper families remain unsupported. MMC5 PCM status models the MMC5A revision. Its auxiliary I/O and `$5209/$520A` timer registers remain unimplemented; earlier revision differences and undocumented behavior are not fully covered.
+The implemented systems use NTSC, PAL, or Dendy timing with the cartridge families and input devices listed above. Disk and VS systems use NTSC timing. Unlisted input devices, VS variants outside the supported metadata, and additional mapper families remain unsupported. MMC5 PCM status models the MMC5A revision. Its auxiliary I/O and `$5209/$520A` timer registers remain unimplemented; earlier revision differences and undocumented behavior are not fully covered.
 
 Passing the listed tests does not establish complete hardware equivalence. OAM charge loss, arbitrary startup alignment, analog output, and every possible DMA/register interaction are outside the tested model. Unstable undocumented opcodes use a fixed silicon model. [Per-issue checkpoints](docs/accuracy-checkpoints.md) record the commits that passed the required baseline during this hardware work.
 
