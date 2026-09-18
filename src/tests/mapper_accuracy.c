@@ -6512,25 +6512,129 @@ static int test_irregular_native_page_safety(void) {
     sunsoft69_command(0, 1);
     CHECK(cart_ppu_read(0x0123) == 0x7B && cart_ppu_read(0x0323) == 0x23);
 
-    // Fixed-page implementations do not yet shrink their CHR bank slots.
-    // Reject sub-page CHR ROM before any bank write can divide by a zero page
-    // count, and keep the active cartridge transactional.
-    Mapper *previous = cart;
-    uint8_t *previous_prg = prg_rom;
-    const unsigned fixed_chr_boards[] = {10};
-    for (size_t i = 0; i < sizeof(fixed_chr_boards) / sizeof(fixed_chr_boards[0]); ++i) {
-        h = header_for(fixed_chr_boards[i], 0x8000, false);
+    return 0;
+}
+
+static int test_nintendo_shrunk_chr_pages(void) {
+    size_t size;
+    iNESHeader h;
+    uint8_t *image;
+    uint8_t *chr;
+
+    // MMC1's two 4 KiB CHR slots shrink with the physical image. A 1 KiB ROM
+    // therefore occupies $0000-$07FF after the two selected slots are mapped;
+    // the rest of the pattern table remains open bus.
+    h = header_for(1, 0x8000, false);
+    h.flags7 |= 0x08;
+    h.chr_rom_chunks = 0x28; // 1 KiB.
+    h.flags9 = 0xF0;
+    image = image_for(&h, 0x8000, 0x0400, &size);
+    CHECK(image != NULL);
+    chr = image + sizeof(h) + 0x8000;
+    memset(chr, 0x61, 0x0400);
+    CHECK(load_rom_memory(image, size) == 0);
+    free(image);
+    CHECK(cart_ppu_read(0x0123) == 0x61 && cart_ppu_read(0x0523) == 0x61);
+    CHECK(cart_ppu_read(0x0923) == 0x23);
+    serial_write(0x8000, 0x1F);
+    serial_write(0xA000, 7);
+    serial_write(0xC000, 6);
+    CHECK(cart_get_mirroring() == MIRROR_HORIZONTAL);
+    CHECK(cart_ppu_read(0x0123) == 0x61 && cart_ppu_read(0x0523) == 0x61);
+    CHECK(cart_ppu_read(0x1123) == 0x23);
+
+    // MMC2 and MMC4 start with their CHR slots unmapped. Register writes map
+    // two shrunken 2 KiB slots at the bottom of PPU space; latch addresses may
+    // still change the selected page even when those addresses are uncovered.
+    const unsigned latch_boards[] = {9, 10};
+    for (size_t i = 0; i < sizeof(latch_boards) / sizeof(latch_boards[0]); ++i) {
+        h = header_for(latch_boards[i], 0x8000, false);
         h.flags7 |= 0x08;
-        h.chr_rom_chunks = 0x2C; // 1 * 2^11 = 2 KiB, below the 4 KiB page.
+        h.chr_rom_chunks = 0x2C; // 2 KiB.
         h.flags9 = 0xF0;
         image = image_for(&h, 0x8000, 0x0800, &size);
         CHECK(image != NULL);
-        CHECK(load_rom_memory(image, size) == -1);
+        chr = image + sizeof(h) + 0x8000;
+        memset(chr, (int)(0x72 + i), 0x0800);
+        CHECK(load_rom_memory(image, size) == 0);
         free(image);
-        CHECK(cart == previous && prg_rom == previous_prg);
-        sunsoft69_command(0, 0);
-        CHECK(cart_ppu_read(0x0123) == 0x7B);
+        CHECK(cart_ppu_read(0x0123) == 0x23);
+        cart_cpu_write(0xB000, 3);
+        cart_cpu_write(0xD000, 5);
+        CHECK(cart_ppu_read(0x0123) == (uint8_t)(0x72 + i));
+        CHECK(cart_ppu_read(0x0923) == (uint8_t)(0x72 + i));
+        CHECK(cart_ppu_read(0x1123) == 0x23);
+        (void)cart_ppu_read(0x0FD8);
+        cart_cpu_write(0xC000, 7);
+        CHECK(cart_ppu_read(0x0123) == (uint8_t)(0x72 + i));
+        cart_cpu_write(0xF000, 1);
+        CHECK(cart_get_mirroring() == MIRROR_HORIZONTAL);
     }
+
+    // CNROM's single 8 KiB slot shrinks to the image. Bank writes wrap over
+    // the complete-page count without mirroring data into the uncovered area.
+    h = header_for(3, 0x8000, false);
+    h.flags7 |= 0x08;
+    h.chr_rom_chunks = 0x2C;
+    h.flags9 = 0xF0;
+    image = image_for(&h, 0x8000, 0x0800, &size);
+    CHECK(image != NULL);
+    memset(image + sizeof(h), 0xFF, 0x8000);
+    memset(image + sizeof(h) + 0x8000, 0x84, 0x0800);
+    CHECK(load_rom_memory(image, size) == 0);
+    free(image);
+    CHECK(cart_ppu_read(0x0123) == 0x84 && cart_ppu_read(0x0923) == 0x23);
+    cart_cpu_write(0x8000, 0xFF);
+    CHECK(cart_ppu_read(0x0123) == 0x84 && cart_ppu_read(0x1123) == 0x23);
+
+    // Protected CNROM uses the same shrinking slot and then applies its D0
+    // pull-up behavior when the protection latch disables CHR output.
+    h = header_for(185, 0x8000, false);
+    h.flags7 |= 0x08;
+    h.chr_rom_chunks = 0x2C;
+    h.flags9 = 0xF0;
+    image = image_for(&h, 0x8000, 0x0800, &size);
+    CHECK(image != NULL);
+    memset(image + sizeof(h), 0xFF, 0x8000);
+    memset(image + sizeof(h) + 0x8000, 0x95, 0x0800);
+    CHECK(load_rom_memory(image, size) == 0);
+    free(image);
+    CHECK(cart_ppu_read(0x0123) == 0x95 && cart_ppu_read(0x0923) == 0x23);
+    cart_cpu_write(0x8000, 0);
+    CHECK(cart_ppu_read(0x0122) == 0x23 && cart_ppu_read(0x1122) == 0x23);
+
+    // AxROM selects CHR page zero once at initialization. Its existing NROM
+    // read path already exposes a short page followed by open bus.
+    h = header_for(7, 0x8000, false);
+    h.flags7 |= 0x08;
+    h.chr_rom_chunks = 0x2C;
+    h.flags9 = 0xF0;
+    image = image_for(&h, 0x8000, 0x0800, &size);
+    CHECK(image != NULL);
+    memset(image + sizeof(h) + 0x8000, 0xA6, 0x0800);
+    CHECK(load_rom_memory(image, size) == 0);
+    free(image);
+    CHECK(cart_ppu_read(0x0123) == 0xA6 && cart_ppu_read(0x0923) == 0x23);
+    cart_cpu_write(0x8000, 0x10);
+    CHECK(cart_get_mirroring() == MIRROR_SINGLE1);
+
+    // CPROM maps one fixed and one switchable 4 KiB slot. With a 2 KiB ROM,
+    // the fixed slot occupies $0000-$07FF and the switchable slot appears at
+    // $0800-$0FFF only after the board register is written.
+    h = header_for(13, 0x8000, false);
+    h.flags7 |= 0x08;
+    h.chr_rom_chunks = 0x2C;
+    h.flags9 = 0xF0;
+    image = image_for(&h, 0x8000, 0x0800, &size);
+    CHECK(image != NULL);
+    memset(image + sizeof(h), 0xFF, 0x8000);
+    memset(image + sizeof(h) + 0x8000, 0xB7, 0x0800);
+    CHECK(load_rom_memory(image, size) == 0);
+    free(image);
+    CHECK(cart_ppu_read(0x0123) == 0xB7 && cart_ppu_read(0x0923) == 0x23);
+    cart_cpu_write(0x8000, 3);
+    CHECK(cart_ppu_read(0x0923) == 0xB7 && cart_ppu_read(0x1123) == 0x23);
+    CHECK(cart_get_mirroring() == MIRROR_VERTICAL);
     return 0;
 }
 
@@ -9896,7 +10000,7 @@ int test_mapper_accuracy(void) {
         test_sunsoft69_banks_ram_and_startup, test_sunsoft69_legacy_ram_defaults,
         test_sunsoft69_irq_cpu_clock,
         test_sunsoft5b_tone_noise_envelope, test_sunsoft69_persistence_and_loader,
-        test_irregular_native_page_safety,
+        test_irregular_native_page_safety, test_nintendo_shrunk_chr_pages,
         test_jaleco18_banks_ram_and_mirroring, test_jaleco18_irq_and_cpu_clock,
         test_jaleco18_irq_width_transitions,
         test_jaleco18_loader_validation,
