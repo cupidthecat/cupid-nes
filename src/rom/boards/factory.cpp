@@ -21,6 +21,7 @@ namespace cupid::boards {
 
 std::unique_ptr<Board> CreateBoard(unsigned mapper) {
     switch (mapper) {
+        case 29: return std::make_unique<SealieComputing>();
         case 6: case 8: case 17: return std::make_unique<FrontFareast>();
         case 31: return std::make_unique<NsfCartridge>();
         case 70: return std::make_unique<Bandai74161>(false);
@@ -38,6 +39,7 @@ std::unique_ptr<Board> CreateBoard(unsigned mapper) {
 
 bool board_handles_mapper(unsigned mapper) {
     switch (mapper) {
+        case 29: return true;
         case 6: case 8: case 17: return true;
         case 323: case 324: return true;
         case 31: case 70: case 86: case 104: case 152: case 218: return true;

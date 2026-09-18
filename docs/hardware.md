@@ -82,6 +82,7 @@ PRG is the cartridge memory read by the CPU; CHR holds graphics patterns read by
 | 99 | VS System | Cabinet PRG/CHR selection, shared RAM permissions, and single/dual layouts |
 | 104 | Golden Five | Outer PRG block and inner 16 KiB bank selection, fixed bank within the selected block, and CHR RAM |
 | 31 | NSF cartridge | Eight independent 4 KiB PRG windows selected through `$5000-$5FFF`, with fixed CHR mapping |
+| 29 | Sealie Computing | Switchable lower 16 KiB PRG bank, fixed last bank, four 8 KiB CHR RAM banks, and a work-RAM window |
 | 6, 8, 17 | Front Fareast | Board-specific PRG/CHR banking, 32 KiB legacy CHR RAM, mirroring registers, and a CPU-clocked 16-bit IRQ counter |
 | 86 | Jaleco JF-13 | 32 KiB PRG and 8 KiB CHR selection through `$6000-$6FFF`; speech is not emulated |
 | 218 | Magic Floor | Fixed PRG and shared pattern-table/nametable CIRAM with four header-selected address wirings |
@@ -112,6 +113,8 @@ Mapper 31 selects eight 4 KiB PRG windows with the low three address bits of wri
 Front Fareast mappers 6 and 8 use a combined PRG/CHR register in the upper CPU address range. Mapper 6 fixes the upper PRG window to banks 14 and 15; mapper 8 retains its initial upper banks 2 and 3. Mapper 17 instead exposes four independent 8 KiB PRG registers and eight 1 KiB CHR registers. All three provide horizontal, vertical, and single-screen mirroring controls. Their 16-bit counter advances on every CPU cycle, including writes and DMA, raises an IRQ when it wraps, and stops until rearmed. Bank and counter state survive CPU soft reset. Legacy images receive 32 KiB of CHR RAM; NES 2.0 declarations determine the actual RAM allocation. On mapper 6, a CHR-only register mode is available when the board has no CHR RAM.
 
 Farid mapper 323 adds an outer latch at `$6000-$7FFF` to serial MMC1 banking. That latch can be locked and follows the MMC1 RAM-disable control. Soft reset clears the outer latch and lock while retaining the MMC1 registers and partially written serial word. Its 32 KiB paired-page PRG mode and fixed-PRG submapper bypass the outer PRG transform. Mapper 324 latches outer-bank and lock bits on a rising D7 write edge, after ROM bus conflicts are applied. Its soft reset clears the outer and lock bits without immediately remapping PRG; the next bank write applies the resulting state. Mapper 324 takes mirroring from the header.
+
+Mapper 29 starts with the last PRG bank at `$C000-$FFFF` and open bus below it until the first bank write. Writes throughout `$8000-$FFFF` select the lower 16 KiB PRG bank with D2-D4 and an 8 KiB CHR bank with D0-D1. The board retains these mappings on CPU soft reset. Legacy images receive 32 KiB of CHR RAM; NES 2.0 declarations control the actual allocation. The `$6000-$7FFF` window selects work RAM when present, so writes there do not modify a separate save chip. Mirroring follows the header.
 
 The mapper 72 and 92 cartridge banking and latch behavior is implemented. Optional speech hardware on those boards is not currently emulated.
 

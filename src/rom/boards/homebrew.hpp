@@ -16,6 +16,23 @@
 
 namespace cupid::boards {
 
+class SealieComputing final : public Board {
+    uint16_t GetPrgPageSize() override { return 0x4000; }
+    uint16_t GetChrPageSize() override { return 0x2000; }
+    uint32_t GetWorkRamSize() override { return 0x2000; }
+    uint32_t GetChrRamSize() override { return 0x8000; }
+
+    void InitMapper() override {
+        SelectPrgPage(1, static_cast<uint16_t>(-1));
+        SetCpuMemoryMapping(0x6000, 0x7FFF, 0, PrgMemoryType::WorkRam, ReadWrite);
+    }
+
+    void WriteRegister(uint16_t, uint8_t value) override {
+        SelectChrPage(0, value & 3);
+        SelectPrgPage(0, (value >> 2) & 7);
+    }
+};
+
 class NsfCartridge final : public Board {
     uint16_t RegisterStartAddress() override { return 0x5000; }
     uint16_t RegisterEndAddress() override { return 0x5FFF; }
