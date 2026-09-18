@@ -1860,6 +1860,14 @@ static iNESHeader m111_header(void) {
     return h;
 }
 
+static iNESHeader m96_header(void) {
+    iNESHeader h = header_for(96, 0x20000, true);
+    h.flags7 |= 0x08;
+    h.flags10 = 0;
+    h.zero[0] = 9; // 32 KiB CHR RAM.
+    return h;
+}
+
 static void m111_flash_command(uint8_t command) {
     cart_cpu_write(0xD555, 0xAA);
     cart_cpu_write(0xAAAA, 0x55);
@@ -2264,6 +2272,117 @@ static int test_mapper111_cpu_soft_reset_preserves_state(void) {
     cart_cpu_write(0x8123, 0x04);
     CHECK(cart_cpu_read(0x8123) == 0x04);
     CHECK(cart_cpu_read(0x8000) == 12);
+    return 0;
+}
+
+static int test_mapper96_banks_latch_and_loader(void) {
+    iNESHeader legacy = header_for(96, 0x20000, true);
+    RomRamSizes ram;
+    CHECK(rom_ram_sizes(&legacy, &ram) == 0);
+    CHECK(ram.prg_ram == 0 && ram.prg_nvram == 0 && ram.chr_ram == 0x8000 && ram.chr_nvram == 0);
+    CHECK(fixture_with_header(&legacy, 0x20000, 0x8000) == 96);
+
+    nes_set_region(NES_REGION_NTSC);
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    cpu_power_on(&cpu);
+    CHECK(cart_cpu_read(0x8000) == 0 && cart_cpu_read(0xE000) == 3);
+    CHECK(cart_ppu_read(0x0000) == 0 && cart_ppu_read(0x1000) == 4);
+
+    // The board has ROM bus conflicts. Bank 0 drives $03 at $E000, so a
+    // write of $07 reaches the mapper as $03 and cannot set the outer CHR bit.
+    cart_cpu_write(0xE000, 0x07);
+    CHECK(cart_cpu_read(0x8000) == 12);
+    CHECK(cart_ppu_read(0x0000) == 0 && cart_ppu_read(0x1000) == 12);
+
+    // Permit explicit register values at one test address while keeping the
+    // tagged bank starts intact for PRG selection checks.
+    for (unsigned bank = 0; bank < 4; ++bank)
+        fixture_prg[bank * 0x8000u + 0x7FFEu] = 0xFF;
+    for (unsigned bank = 0; bank < 4; ++bank) {
+        cart_cpu_write(0xFFFE, (uint8_t)bank);
+        CHECK(cart_cpu_read(0x8000) == bank * 4);
+    }
+
+    // Bit 2 selects the outer group. The upper pattern-table half stays on
+    // outer|3 while the lower half follows the nametable-entry latch.
+    cart_cpu_write(0xFFFE, 0x04);
+    CHECK(cart_cpu_read(0x8000) == 0);
+    CHECK(cart_ppu_read(0x0000) == 16 && cart_ppu_read(0x1000) == 28);
+    cart_ppu_write(0x0123, 0xA1);
+    cart_ppu_write(0x1123, 0xC3);
+
+    (void)ppu_read(0x1000);
+    (void)ppu_read(0x2200);
+    CHECK(cart_ppu_read(0x0000) == 24);
+    cart_ppu_write(0x0123, 0xB2);
+    CHECK(cart_ppu_read(0x0123) == 0xB2 && cart_ppu_read(0x1123) == 0xC3);
+
+    (void)ppu_read(0x2300); // Staying in $2xxx does not relatch inner bank 3.
+    CHECK(cart_ppu_read(0x0123) == 0xB2);
+    (void)ppu_read(0x3000);
+    (void)ppu_read(0x2000);
+    CHECK(cart_ppu_read(0x0123) == 0xA1 && cart_ppu_read(0x1123) == 0xC3);
+
+    // A normal console soft reset preserves mapper state.
+    cart_cpu_write(0xFFFE, 0x06);
+    (void)ppu_read(0x3000);
+    (void)ppu_read(0x2300);
+    CHECK(cart_cpu_read(0x8000) == 8 && cart_ppu_read(0x0000) == 28);
+    ppu_soft_reset(&ppu);
+    apu_soft_reset(&apu);
+    cpu_soft_reset(&cpu);
+    CHECK(cart_cpu_read(0x8000) == 8 && cart_ppu_read(0x0000) == 28);
+
+    // Both legacy iNES and NES 2.0 normal loading allocate the board's 32 KiB CHR RAM.
+    size_t image_size;
+    uint8_t *image = image_for(&legacy, 0x20000, 0, &image_size);
+    CHECK(image != NULL && load_rom_memory(image, image_size) == 0);
+    free(image);
+    CHECK(rom_mapper_number(&ines_header) == 96 && chr_size == 0x8000);
+
+    iNESHeader h = m96_header();
+    image = image_for(&h, 0x20000, 0, &image_size);
+    CHECK(image != NULL && load_rom_memory(image, image_size) == 0);
+    free(image);
+    uint8_t *previous_prg = prg_rom;
+    uint8_t *previous_chr = chr_rom;
+
+    iNESHeader invalid = h;
+    invalid.zero[0] = 8;
+    image = image_for(&invalid, 0x20000, 0, &image_size);
+    CHECK(image != NULL && load_rom_memory(image, image_size) == -1);
+    free(image);
+    CHECK(prg_rom == previous_prg && chr_rom == previous_chr);
+
+    invalid = h;
+    invalid.flags10 = 7;
+    image = image_for(&invalid, 0x20000, 0, &image_size);
+    CHECK(image != NULL && load_rom_memory(image, image_size) == -1);
+    free(image);
+    CHECK(prg_rom == previous_prg && chr_rom == previous_chr);
+
+    invalid = h;
+    invalid.prg_ram_size = 0x10;
+    image = image_for(&invalid, 0x20000, 0, &image_size);
+    CHECK(image != NULL && load_rom_memory(image, image_size) == -1);
+    free(image);
+    CHECK(prg_rom == previous_prg && chr_rom == previous_chr);
+
+    invalid = h;
+    invalid.prg_rom_chunks = 4;
+    image = image_for(&invalid, 0x10000, 0, &image_size);
+    CHECK(image != NULL && load_rom_memory(image, image_size) == -1);
+    free(image);
+    CHECK(prg_rom == previous_prg && chr_rom == previous_chr);
+
+    invalid = h;
+    invalid.chr_rom_chunks = 1;
+    invalid.zero[0] = 0;
+    image = image_for(&invalid, 0x20000, 0x2000, &image_size);
+    CHECK(image != NULL && load_rom_memory(image, image_size) == -1);
+    free(image);
+    CHECK(prg_rom == previous_prg && chr_rom == previous_chr && rom_mapper_number(&ines_header) == 96);
     return 0;
 }
 
@@ -7968,6 +8087,7 @@ int test_mapper_accuracy(void) {
         test_unrom512_banks_flash_and_mirroring, test_mmc5_memory_windows,
         test_unrom512_physical_flash_address, test_unrom512_cpu_flash,
         test_mapper111_banks_flash_and_nametables, test_mapper111_cpu_soft_reset_preserves_state,
+        test_mapper96_banks_latch_and_loader,
         test_mmc5_exram_and_irq, test_mmc5_chr_fetch_modes, test_mmc5_extended_rendering,
         test_mmc5_rendered_ppu_paths, test_mmc5_audio_and_pcm, test_header_and_mapper_rejection,
         test_loader_trainers_and_sizes, test_loader_rejection_preserves_cart,
