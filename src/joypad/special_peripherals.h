@@ -42,4 +42,9 @@ void subor_mouse_write(uint8_t value);
 void subor_mouse_add_motion(int dx, int dy);
 void subor_mouse_set_buttons(bool left, bool right);
 
+void hori_track_reset(void);
+void hori_track_add_motion(int dx, int dy);
+void hori_track_write(uint8_t value, uint8_t buttons);
+uint8_t hori_track_read(uint8_t buttons);
+
 #endif

@@ -1483,6 +1483,55 @@ static int subor_mouse_packets(void) {
     return 0;
 }
 
+static uint32_t hori_track_report(void) {
+    latch_controllers();
+    uint32_t value = 0;
+    for (unsigned bit = 0; bit < 24; ++bit) {
+        write_mem(0x4018, 0);
+        value |= (uint32_t)(((read_mem(0x4016) >> 1) & 1u) << bit);
+    }
+    return value;
+}
+
+static int hori_track_reports(void) {
+    input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+    CHECK(joypad_set_expansion_device_name("hori-track"));
+    CHECK(joypad_expansion_device() == NES_EXPANSION_HORI_TRACK);
+    pad1.buttons = 0xA5;
+    CHECK(hori_track_report() == 0x09FFA5u);
+
+    CHECK(joypad_add_hori_track_motion(1, -1));
+    CHECK(hori_track_report() == 0x0970A5u);
+    CHECK(joypad_add_hori_track_motion(-99, 99));
+    CHECK(hori_track_report() == 0x09E1A5u);
+
+    CHECK(joypad_add_hori_track_motion(2, 3));
+    latch_controllers();
+    uint32_t report = 0;
+    for (unsigned bit = 0; bit < 8; ++bit) {
+        write_mem(0x4018, 0);
+        report |= (uint32_t)(((read_mem(0x4016) >> 1) & 1u) << bit);
+    }
+    CHECK(joypad_add_hori_track_motion(7, 7));
+    for (unsigned bit = 8; bit < 24; ++bit) {
+        write_mem(0x4018, 0);
+        report |= (uint32_t)(((read_mem(0x4016) >> 1) & 1u) << bit);
+    }
+    CHECK(report == 0x09B3A5u);
+    CHECK(hori_track_report() == 0x0911A5u);
+
+    write_mem(0x4016, 1);
+    write_mem(0x4018, 0);
+    uint8_t first = read_mem(0x4016) & 2u;
+    write_mem(0x4018, 0);
+    CHECK((read_mem(0x4016) & 2u) == first);
+    write_mem(0x4016, 0);
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_NONE));
+    CHECK(!joypad_add_hori_track_motion(1, 1));
+    CHECK((read_mem(0x4016) & 2u) == 0);
+    return 0;
+}
+
 int test_input_accuracy(void) {
     static int (*const tests[])(void) = {
         console_open_bus, console_read_clocks, console_strobe_timing,
@@ -1497,7 +1546,7 @@ int test_input_accuracy(void) {
         family_basic_recording_and_media, turbo_file_protocol,
         turbo_file_persistence, turbo_file_failed_save, battle_box_protocol,
         battle_box_persistence, battle_box_failed_save, subor_keyboard_matrix,
-        subor_mouse_packets
+        subor_mouse_packets, hori_track_reports
     };
     NesConsoleModel saved_model = nes_console_model();
     NesRegion saved_region = nes_timing()->region;

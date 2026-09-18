@@ -63,7 +63,8 @@ typedef enum {
     NES_EXPANSION_FAMILY_BASIC,
     NES_EXPANSION_TURBO_FILE,
     NES_EXPANSION_BATTLE_BOX,
-    NES_EXPANSION_SUBOR_KEYBOARD
+    NES_EXPANSION_SUBOR_KEYBOARD,
+    NES_EXPANSION_HORI_TRACK
 } NesExpansionDevice;
 
 typedef enum {
@@ -127,6 +128,7 @@ bool    joypad_set_zapper_radius(unsigned radius);
 bool    joypad_set_subor_key(SuborKey key, bool pressed);
 bool    joypad_add_subor_mouse_motion(int dx, int dy);
 bool    joypad_set_subor_mouse_buttons(bool left, bool right);
+bool    joypad_add_hori_track_motion(int dx, int dy);
 bool    joypad_persistent_configure(const char *rom_path);
 bool    joypad_persistent_flush(void);
 bool    joypad_persistent_shutdown(void);

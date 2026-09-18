@@ -395,7 +395,7 @@ int main(int argc, char *argv[]) {
             }
         } else if (strcmp(argv[i], "--expansion") == 0) {
             if (++i == argc || !joypad_set_expansion_device_name(argv[i])) {
-                fprintf(stderr, "Expansion device must be none, arkanoid, family-trainer-a, family-trainer-b, zapper, family-basic, turbo-file, battle-box, or subor-keyboard\n");
+                fprintf(stderr, "Expansion device must be none, arkanoid, family-trainer-a, family-trainer-b, zapper, family-basic, turbo-file, battle-box, subor-keyboard, or hori-track\n");
                 return 1;
             }
         } else if (strcmp(argv[i], "--zapper-radius") == 0) {
@@ -699,6 +699,9 @@ int main(int argc, char *argv[]) {
                     joypad_set_subor_mouse_buttons((buttons & SDL_BUTTON_LMASK) != 0,
                                                    (buttons & SDL_BUTTON_RMASK) != 0);
                 }
+                if (e.type == SDL_MOUSEMOTION
+                    && joypad_expansion_device() == NES_EXPANSION_HORI_TRACK)
+                    joypad_add_hori_track_motion(e.motion.xrel, e.motion.yrel);
             }
             if (e.type == SDL_QUIT) {
                 if (rom_is_fds() && !fds_flush()) {

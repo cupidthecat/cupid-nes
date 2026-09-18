@@ -77,6 +77,15 @@ typedef struct {
 static SuborKeyboard subor_keyboard;
 static SuborMouse subor_mouse = {.packet_size = 1};
 
+typedef struct {
+    int dx;
+    int dy;
+    uint32_t state;
+    bool strobe;
+} HoriTrack;
+
+static HoriTrack hori_track;
+
 enum { SUBOR_NONE = 0xFF };
 static const uint8_t subor_matrix[104] = {
     SUBOR_KEY_4, SUBOR_KEY_G, SUBOR_KEY_F, SUBOR_KEY_C,
@@ -485,4 +494,52 @@ void subor_mouse_write(uint8_t value) {
     bool strobe = (value & 1u) != 0;
     if (subor_mouse.strobe && !strobe) subor_mouse_refresh();
     subor_mouse.strobe = strobe;
+}
+
+static uint8_t reverse_nibble(unsigned value) {
+    value &= 0x0Fu;
+    return (uint8_t)(((value & 1u) << 3) | ((value & 2u) << 1)
+                   | ((value & 4u) >> 1) | ((value & 8u) >> 3));
+}
+
+static void hori_track_refresh(uint8_t buttons) {
+    int dx = hori_track.dx;
+    int dy = hori_track.dy;
+    if (dx < -8) dx = -8;
+    if (dx > 7) dx = 7;
+    if (dy < -8) dy = -8;
+    if (dy > 7) dy = 7;
+    hori_track.dx = 0;
+    hori_track.dy = 0;
+    uint8_t movement = (uint8_t)((~reverse_nibble((unsigned)dy) & 0x0Fu)
+                      | ((~reverse_nibble((unsigned)dx) & 0x0Fu) << 4));
+    hori_track.state = (uint32_t)buttons | ((uint32_t)movement << 8) | (0x09u << 16);
+}
+
+void hori_track_reset(void) {
+    memset(&hori_track, 0, sizeof(hori_track));
+}
+
+void hori_track_add_motion(int dx, int dy) {
+    long long x = (long long)hori_track.dx + dx;
+    long long y = (long long)hori_track.dy + dy;
+    if (x > 32767) x = 32767;
+    if (x < -32768) x = -32768;
+    if (y > 32767) y = 32767;
+    if (y < -32768) y = -32768;
+    hori_track.dx = (int)x;
+    hori_track.dy = (int)y;
+}
+
+void hori_track_write(uint8_t value, uint8_t buttons) {
+    bool strobe = (value & 1u) != 0;
+    if (hori_track.strobe && !strobe) hori_track_refresh(buttons);
+    hori_track.strobe = strobe;
+}
+
+uint8_t hori_track_read(uint8_t buttons) {
+    if (hori_track.strobe) hori_track_refresh(buttons);
+    uint8_t output = (uint8_t)((hori_track.state & 1u) << 1);
+    hori_track.state >>= 1;
+    return output;
 }

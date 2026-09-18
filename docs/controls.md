@@ -114,6 +114,10 @@ With `--tape-play FILE`, F10 starts playback. With `--tape-record FILE`, F10 sta
 
 Mouse motion uses SDL relative movement. Left and right mouse buttons map to the two Subor mouse buttons. Small movement uses the one-byte report; larger movement is split across the three-byte report and each axis is bounded to 31 units per packet.
 
+## Hori Track
+
+`--console famicom --expansion hori-track` connects Hori Track. Player-one controller buttons supply its controller byte, while relative mouse movement supplies the trackball axes. Each axis is bounded to -8 through 7 when a report is latched.
+
 ## ASCII Turbo File
 
 `--console famicom --expansion turbo-file` connects the 8 KiB serial storage device. Games control its reset, clock, data, and read lines through the Famicom expansion connector. The contents are loaded and saved automatically next to the ROM; there is no host key for manually advancing the device.
