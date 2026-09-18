@@ -17,6 +17,7 @@
 #include "ffe.hpp"
 #include "farid.hpp"
 #include "mmc3_95.hpp"
+#include "mmc3_96.hpp"
 #include "ntdec.hpp"
 #include "racermate.hpp"
 #include "taito.hpp"
@@ -57,6 +58,18 @@ std::unique_ptr<Board> CreateBoard(unsigned mapper) {
         case 115: return std::make_unique<Mmc3_115>();
         case 121: return std::make_unique<Mmc3_121>();
         case 123: return std::make_unique<Mmc3_123>();
+        case 126: return std::make_unique<Mmc3_126>();
+        case 134: return std::make_unique<Mmc3_134>();
+        case 165: return std::make_unique<Mmc3_165>();
+        case 182: return std::make_unique<Mmc3_182>();
+        case 187: return std::make_unique<Mmc3_187>();
+        case 196: return std::make_unique<Mmc3_196>();
+        case 197: return std::make_unique<Mmc3_197>();
+        case 198: return std::make_unique<Mmc3_198>();
+        case 199: return std::make_unique<Mmc3_199>();
+        case 205: return std::make_unique<Mmc3_205>();
+        case 208: return std::make_unique<Mmc3_208>();
+        case 215: return std::make_unique<Mmc3_215>();
         case 152: return std::make_unique<Bandai74161>(true);
         case 188: return std::make_unique<BandaiKaraoke>();
         case 218: return std::make_unique<MagicFloor>();
@@ -111,6 +124,8 @@ bool board_handles_mapper(unsigned mapper) {
         case 31: case 70: case 86: case 104: case 152: case 188: case 218: return true;
         case 12: case 14: case 37: case 44: case 45: case 47: case 49: case 52:
         case 114: case 115: case 121: case 123: return true;
+        case 126: case 134: case 165: case 182: case 187: case 196:
+        case 197: case 198: case 199: case 205: case 208: case 215: return true;
         default: return false;
     }
 }
