@@ -1309,6 +1309,72 @@ static int read_test_mode_register(uint16_t addr, uint8_t expected) {
     return 0;
 }
 
+static int cpu_diagnostic_output_latches(void) {
+    reset_fixture();
+    cpu_set_test_mode(true);
+
+    apu.pulse1.enabled = true;
+    apu.pulse1.lc.length = 10;
+    apu.pulse1.env.constant_volume = true;
+    apu.pulse1.env.volume = 5;
+    apu.pulse1.timer_reload = 100;
+    apu.pulse1.timer = 0;
+    apu.pulse1.duty = 0;
+    apu.pulse1.duty_step = 0;
+    apu.noise.enabled = true;
+    apu.noise.lc.length = 10;
+    apu.noise.env.constant_volume = true;
+    apu.noise.env.volume = 6;
+    apu.noise.period = 1000;
+    apu.noise.timer = 0;
+    apu.noise.lfsr = 4;
+    apu.cpu_cycle_odd = false;
+
+    fixture_memory[0x8000] = 0xEA; // A CPU cycle clocks both channel DAC latches.
+    cpu.pc = 0x8000;
+    CHECK(cpu_step(&cpu) == 2);
+    CHECK(apu.pulse1.output_level == 5 && apu.noise.output_level == 6);
+
+    // Keep the next channel edge beyond the disable/read sequence. $4015 clears
+    // the length counters immediately, but the DACs retain their last outputs.
+    apu.pulse1.timer = 100;
+    apu.noise.timer = 100;
+    static const uint8_t disable_and_read[] = {
+        0xA9, 0x00,                   // LDA #$00
+        0x8D, 0x15, 0x40,             // STA $4015
+        0xAD, 0x18, 0x40, 0x85, 0x10, // LDA $4018 / STA $10
+        0xAD, 0x19, 0x40, 0x85, 0x11  // LDA $4019 / STA $11
+    };
+    memcpy(fixture_memory + 0x8000, disable_and_read, sizeof(disable_and_read));
+    cpu.pc = 0x8000;
+    CHECK(cpu_step(&cpu) == 2);
+    CHECK(cpu_step(&cpu) == 4);
+    CHECK(cpu_step(&cpu) == 4);
+    CHECK(cpu_step(&cpu) == 3);
+    CHECK(cpu_step(&cpu) == 4);
+    CHECK(cpu_step(&cpu) == 3);
+    CHECK(apu.pulse1.lc.length == 0 && apu.noise.lc.length == 0);
+    CHECK(ram[0x10] == 0x05 && ram[0x11] == 0x60);
+
+    // Once each timer reaches its next edge, the disabled channels drive zero.
+    apu.pulse1.timer = 0;
+    apu.noise.timer = 0;
+    apu.cpu_cycle_odd = false;
+    fixture_memory[0x8000] = 0xAD; fixture_memory[0x8001] = 0x18; fixture_memory[0x8002] = 0x40;
+    fixture_memory[0x8003] = 0x85; fixture_memory[0x8004] = 0x12;
+    fixture_memory[0x8005] = 0xAD; fixture_memory[0x8006] = 0x19; fixture_memory[0x8007] = 0x40;
+    fixture_memory[0x8008] = 0x85; fixture_memory[0x8009] = 0x13;
+    cpu.pc = 0x8000;
+    CHECK(cpu_step(&cpu) == 4);
+    CHECK(cpu_step(&cpu) == 3);
+    CHECK(cpu_step(&cpu) == 4);
+    CHECK(cpu_step(&cpu) == 3);
+    CHECK(ram[0x12] == 0 && ram[0x13] == 0);
+    CHECK(apu.pulse1.output_level == 0 && apu.noise.output_level == 0);
+    cpu_set_test_mode(false);
+    return 0;
+}
+
 static int cpu_diagnostic_output_reads(void) {
     reset_fixture();
     CHECK(!cpu_test_mode_enabled());
@@ -1325,6 +1391,8 @@ static int cpu_diagnostic_output_reads(void) {
     apu.pulse1.timer_reload = apu.pulse2.timer_reload = 100;
     apu.pulse1.timer = apu.pulse2.timer = 1000;
     apu.pulse1.duty_step = apu.pulse2.duty_step = 1;
+    apu.pulse1.output_level = 3;
+    apu.pulse2.output_level = 10;
     apu.tri.output_level = 11;
     apu.noise.enabled = true;
     apu.noise.lc.length = 10;
@@ -1332,6 +1400,7 @@ static int cpu_diagnostic_output_reads(void) {
     apu.noise.env.volume = 6;
     apu.noise.lfsr = 0x4000;
     apu.noise.timer = 1000;
+    apu.noise.output_level = 6;
     write_mem(0x4011, 0x65);
     raise_frame_irq();
     CHECK(read_test_mode_register(0x4018, 0xA3) == 0);
@@ -1399,7 +1468,7 @@ int test_cpu_accuracy(void) {
         reset_bus_sequence, halt_and_reset, regional_bus_timing_and_pal_dma,
         bus_cycle_interrupt_polling, dma_arbitration, dmc_revision_dma, dma_cycle_accounting,
         startup_phase_selection, seeded_startup_alignment, startup_phase_register_race,
-        cpu_diagnostic_output_reads,
+        cpu_diagnostic_output_latches, cpu_diagnostic_output_reads,
     };
     Mapper *saved_cart = cart;
     iNESHeader saved_header = ines_header;

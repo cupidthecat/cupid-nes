@@ -77,6 +77,7 @@ typedef struct {
     uint16_t timer_reload;
     uint8_t  duty;       // 0..3 (12.5/25/50/25% neg)
     uint8_t  duty_step;  // sequencer step 0..7
+    uint8_t  output_level; // Last value driven to the channel DAC.
     bool     enabled;    // $4015 bit
 } Pulse;
 
@@ -103,6 +104,7 @@ typedef struct {
     uint16_t period;     // current period from table
     uint8_t  period_idx; // 0..15
     uint16_t timer;
+    uint8_t  output_level; // Last value driven to the channel DAC.
     bool     enabled;
 } Noise;
 

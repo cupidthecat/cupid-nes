@@ -259,6 +259,21 @@ static inline uint16_t sweep_target(uint16_t t, const Sweep* s, bool ch2){
         return t + change;
     }
 }
+
+static inline uint8_t pulse_current_output(const Pulse* p) {
+    if (p->lc.length == 0) return 0;
+    if (p->timer_reload < 8 || p->timer_reload > 0x7FF) return 0;
+    if (!p->sweep.negate && sweep_target(p->timer_reload, &p->sweep, false) > 0x7FF)
+        return 0;
+    if (!DUTY_SEQ[p->duty][p->duty_step]) return 0;
+    return env_output(&p->env);
+}
+
+static inline uint8_t noise_current_output(const Noise* n) {
+    if (n->lc.length == 0 || (n->lfsr & 1)) return 0;
+    return env_output(&n->env);
+}
+
 static void sweep_clock(Pulse* p, bool is_ch2){
     p->sweep.divider--;
     if (p->sweep.divider == 0) {
@@ -511,6 +526,9 @@ static void pulse_write(Pulse* p, uint16_t reg, uint8_t v){
             p->env.start_flag = true;
             break;
     }
+    // Pulse register writes refresh the DAC immediately. $4015 disable only
+    // clears the length counter; the latched output changes on the next edge.
+    p->output_level = pulse_current_output(p);
 }
 static void triangle_write(Triangle* t, uint16_t reg, uint8_t v){
     switch (reg & 3) {
@@ -611,6 +629,7 @@ static inline void clock_pulse(Pulse* p){
     if (p->timer == 0) {
         p->timer = p->timer_reload;
         p->duty_step = (p->duty_step + 1) & 7;
+        p->output_level = pulse_current_output(p);
     } else {
         p->timer--;
     }
@@ -637,29 +656,20 @@ static inline void clock_noise(Noise* n){
         uint16_t bitX = (n->lfsr >> (n->mode ? 6 : 1)) & 1;
         uint16_t fb = bit0 ^ bitX;
         n->lfsr = (n->lfsr >> 1) | (fb << 14);
+        n->output_level = noise_current_output(n);
     } else {
         n->timer--;
     }
 }
 // DAC-ish sample (0..1 per channel)
 static inline float pulse_out(const Pulse* p){
-    if (p->lc.length == 0) return 0.0f;
-    if (p->timer_reload < 8 || p->timer_reload > 0x7FF) return 0.0f;
-    // The adder can mute the channel even when sweep updates are disabled.
-    if (!p->sweep.negate && sweep_target(p->timer_reload, &p->sweep, false) > 0x7FF)
-        return 0.0f;
-    uint8_t gate = DUTY_SEQ[p->duty][p->duty_step];
-    if (!gate) return 0.0f;
-    return (float)env_output(&p->env); // 0..15 raw DAC domain for nonlinear mixer
+    return (float)p->output_level;
 }
 static inline float triangle_out(const Triangle* t){
     return (float)t->output_level;
 }
 static inline float noise_out(const Noise* n){
-    if (n->lc.length == 0) return 0.0f;
-    // if lfsr bit0 is 1 -> output 0, else envelope
-    if (n->lfsr & 1) return 0.0f;
-    return (float)env_output(&n->env); // 0..15
+    return (float)n->output_level;
 }
 
 static inline float dmc_out(const DMC* d){
