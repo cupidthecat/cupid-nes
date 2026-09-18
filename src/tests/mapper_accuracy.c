@@ -7709,6 +7709,206 @@ static int test_irem77_97_loader_validation(void) {
     return 0;
 }
 
+static int test_jaleco72_92_latches_cpu_and_bus_conflicts(void) {
+    const unsigned mappers[] = {72, 92};
+    const size_t prg_sizes[] = {0x20000, 0x40000};
+
+    for (size_t board = 0; board < 2; ++board) {
+        unsigned mapper = mappers[board];
+        size_t prg_bytes = prg_sizes[board];
+        CHECK(fixture(mapper, prg_bytes, 0x20000, false) == (int)mapper);
+        CHECK(cart != NULL && cart->clock == NULL && cart->reset != NULL);
+        CHECK(cart_ppu_read(0) == 0);
+        CHECK(cart_cpu_read(mapper == 72 ? 0x8001 : 0xC001)
+              == (mapper == 72 ? 0 : 30));
+
+        nes_set_region(NES_REGION_NTSC);
+        ppu_power_on(&ppu);
+        apu_power_on(&apu);
+        cpu_power_on(&cpu);
+
+        fixture_prg[0] = 0x7F;
+        const uint8_t conflict_program[] = {
+            0xA9, 0x85,             // LDA #$85
+            0x8D, 0x00, 0x80        // STA $8000; ROM clears D7.
+        };
+        for (size_t i = 0; i < sizeof(conflict_program); ++i)
+            write_mem((uint16_t)(0x0200 + i), conflict_program[i]);
+        cpu.pc = 0x0200;
+        CHECK(cpu_step(&cpu) == 2);
+        CHECK(cpu_step(&cpu) == 4);
+        CHECK(cart_cpu_read(mapper == 72 ? 0x8001 : 0xC001)
+              == (mapper == 72 ? 0 : 30));
+
+        fixture_prg[0] = 0xFF;
+        fixture_prg[3 * 0x4000] = 0xFF;
+        fixture_prg[5 * 0x4000] = 0xFF;
+        const uint8_t latch_program[] = {
+            0xA9, 0x83, 0x8D, 0x00, 0x80,
+            0xA9, 0x87, 0x8D, 0x00, 0x80,
+            0xA9, 0x03, 0x8D, 0x00, 0x80,
+            0xA9, 0x85, 0x8D, 0x00, 0x80,
+            0xA9, 0x44, 0x8D, 0x00, 0x80,
+            0xA9, 0x47, 0x8D, 0x00, 0x80,
+            0xA9, 0x07, 0x8D, 0x00, 0x80,
+            0xA9, 0x42, 0x8D, 0x00, 0x80
+        };
+        for (size_t i = 0; i < sizeof(latch_program); ++i)
+            write_mem((uint16_t)(0x0300 + i), latch_program[i]);
+        cpu.pc = 0x0300;
+
+        CHECK(cpu_step(&cpu) == 2 && cpu_step(&cpu) == 4);
+        CHECK(cart_cpu_read(mapper == 72 ? 0x8001 : 0xC001) == 6);
+        CHECK(cart_cpu_read(mapper == 72 ? 0xC001 : 0x8001)
+              == (mapper == 72 ? 14 : 0));
+        CHECK(cpu_step(&cpu) == 2 && cpu_step(&cpu) == 4);
+        CHECK(cart_cpu_read(mapper == 72 ? 0x8001 : 0xC001) == 6);
+        CHECK(cpu_step(&cpu) == 2 && cpu_step(&cpu) == 4);
+        CHECK(cpu_step(&cpu) == 2 && cpu_step(&cpu) == 4);
+        CHECK(cart_cpu_read(mapper == 72 ? 0x8001 : 0xC001) == 10);
+
+        CHECK(cpu_step(&cpu) == 2 && cpu_step(&cpu) == 4);
+        CHECK(cart_ppu_read(0) == 32);
+        CHECK(cpu_step(&cpu) == 2 && cpu_step(&cpu) == 4);
+        CHECK(cart_ppu_read(0) == 32);
+        CHECK(cpu_step(&cpu) == 2 && cpu_step(&cpu) == 4);
+        CHECK(cpu_step(&cpu) == 2 && cpu_step(&cpu) == 4);
+        CHECK(cart_ppu_read(0) == 16);
+
+        cart->reset();
+        CHECK(cart_ppu_read(0) == 0);
+        CHECK(cart_cpu_read(mapper == 72 ? 0x8001 : 0xC001)
+              == (mapper == 72 ? 0 : 30));
+    }
+    return 0;
+}
+
+static int test_jaleco78_banking_and_submapper_mirroring(void) {
+    CHECK(fixture(78, 0x20000, 0x20000, false) == 78);
+    fixture_prg[0] = 0xFF;
+    cart_cpu_write(0x8000, 0x5B);
+    CHECK(cart_cpu_read(0x8001) == 6 && cart_ppu_read(0) == 40);
+    CHECK(cart_get_mirroring() == MIRROR_SINGLE1);
+    fixture_prg[3 * 0x4000] = 0xFF;
+    cart_cpu_write(0x8000, 0x23);
+    CHECK(cart_cpu_read(0x8001) == 6 && cart_ppu_read(0) == 16);
+    CHECK(cart_get_mirroring() == MIRROR_SINGLE0);
+    cart->reset();
+    CHECK(cart_cpu_read(0x8001) == 0 && cart_ppu_read(0) == 0);
+
+    iNESHeader h = header_for(78, 0x20000, false);
+    h.flags7 |= 8;
+    h.prg_ram_size = 0x10;
+    CHECK(fixture_with_header(&h, 0x20000, 0x20000) == 78);
+    fixture_prg[0] = 0xFF;
+    cart_cpu_write(0x8000, 0x5B);
+    CHECK(cart_get_mirroring() == MIRROR_SINGLE1);
+
+    h.prg_ram_size = 0x30;
+    CHECK(fixture_with_header(&h, 0x20000, 0x20000) == 78);
+    fixture_prg[0] = 0xFF;
+    cart_cpu_write(0x8000, 0x5B);
+    CHECK(cart_get_mirroring() == MIRROR_VERTICAL);
+    fixture_prg[3 * 0x4000] = 0xFF;
+    cart_cpu_write(0x8000, 0x53);
+    CHECK(cart_get_mirroring() == MIRROR_HORIZONTAL);
+    return 0;
+}
+
+static int test_jaleco87_101_140_banks_and_register_ranges(void) {
+    CHECK(fixture(87, 0x8000, 0x8000, false) == 87);
+    cart_cpu_write(0x5FFF, 3);
+    CHECK(cart_ppu_read(0) == 0);
+    cart_cpu_write(0x6000, 1);
+    CHECK(cart_ppu_read(0) == 16);
+    cart_cpu_write(0x7FFF, 2);
+    CHECK(cart_ppu_read(0) == 8);
+    cart_cpu_write(0x8000, 3);
+    CHECK(cart_ppu_read(0) == 8);
+    cart->reset();
+    CHECK(cart_ppu_read(0) == 0);
+
+    CHECK(fixture(101, 0x8000, 0x80000, false) == 101);
+    cart_cpu_write(0x5FFF, 5);
+    CHECK(cart_ppu_read(0) == 0);
+    cart_cpu_write(0x6000, 5);
+    CHECK(cart_ppu_read(0) == 40);
+    cart_cpu_write(0x7FFF, 0x3F);
+    CHECK(cart_ppu_read(0) == 0xF8);
+    cart_cpu_write(0x8000, 1);
+    CHECK(cart_ppu_read(0) == 0xF8);
+    cart->reset();
+    CHECK(cart_ppu_read(0) == 0);
+
+    CHECK(fixture(140, 0x20000, 0x20000, false) == 140);
+    cart_cpu_write(0x6000, 0x23);
+    CHECK(cart_cpu_read(0x8001) == 8 && cart_ppu_read(0) == 24);
+    cart_cpu_write(0x7FFF, 0x13);
+    CHECK(cart_cpu_read(0x8001) == 4 && cart_ppu_read(0) == 24);
+    cart_cpu_write(0x6000, 0x15);
+    CHECK(cart_cpu_read(0x8001) == 4 && cart_ppu_read(0) == 40);
+    cart_cpu_write(0x8000, 0x32);
+    CHECK(cart_cpu_read(0x8001) == 4 && cart_ppu_read(0) == 40);
+    cart->reset();
+    CHECK(cart_cpu_read(0x8001) == 0 && cart_ppu_read(0) == 0);
+    return 0;
+}
+
+static int test_jaleco_discrete_loader_validation(void) {
+    const unsigned mappers[] = {72, 78, 87, 92, 101, 140};
+    for (size_t i = 0; i < sizeof(mappers) / sizeof(mappers[0]); ++i) {
+        iNESHeader h = header_for(mappers[i], 0x8000, false);
+        size_t size;
+        uint8_t *image = image_for(&h, 0x8000, 0x2000, &size);
+        CHECK(image != NULL);
+        CHECK(load_rom_memory(image, size) == 0);
+        free(image);
+        CHECK(rom_mapper_number(&ines_header) == (int)mappers[i]);
+        CHECK(cart != NULL && cart->clock == NULL);
+        unload_rom();
+    }
+
+    const unsigned mirrored[] = {87, 101, 140};
+    for (size_t i = 0; i < sizeof(mirrored) / sizeof(mirrored[0]); ++i) {
+        iNESHeader h = header_for(mirrored[i], 0x4000, false);
+        size_t size;
+        uint8_t *image = image_for(&h, 0x4000, 0x2000, &size);
+        CHECK(image != NULL);
+        CHECK(load_rom_memory(image, size) == 0);
+        free(image);
+        CHECK(cart_cpu_read(0x8000) == 0x5C && cart_cpu_read(0xC000) == 0x5C);
+        cart_cpu_write(0x6000, mirrored[i] == 140 ? 0x31 : 3);
+        CHECK(cart_cpu_read(0x8000) == 0x5C && cart_cpu_read(0xC000) == 0x5C);
+        unload_rom();
+    }
+
+    CHECK(fixture(18, 0x20000, 0x20000, false) == 18);
+    cart_cpu_write(0x8000, 3);
+    CHECK(cart_cpu_read(0x8000) == 3);
+    Mapper *previous = cart;
+
+    iNESHeader invalid = header_for(78, 0x8000, false);
+    invalid.flags7 |= 8;
+    invalid.prg_ram_size = 0x20;
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x8000, fixture_chr, 0x2000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 3);
+
+    invalid = header_for(72, 0x8000, false);
+    invalid.flags7 |= 8;
+    invalid.prg_ram_size = 0x10;
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x8000, fixture_chr, 0x2000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 3);
+
+    invalid = header_for(87, 0xC000, false);
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0xC000, fixture_chr, 0x2000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 3);
+
+    invalid = header_for(140, 0x20000, false);
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x24000, fixture_chr, 0x2000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 3);
+    return 0;
+}
+
 static int test_cartridge_unload(void) {
     iNESHeader h = header_for(0, 0x4000, true);
     size_t image_size;
@@ -7814,6 +8014,10 @@ int test_mapper_accuracy(void) {
         test_taito_x1_persistence_and_loader,
         test_irem77_mixed_chr_and_bus_conflicts, test_irem97_prg_and_mirroring,
         test_irem77_97_loader_validation,
+        test_jaleco72_92_latches_cpu_and_bus_conflicts,
+        test_jaleco78_banking_and_submapper_mirroring,
+        test_jaleco87_101_140_banks_and_register_ranges,
+        test_jaleco_discrete_loader_validation,
         test_cartridge_bus_reads, test_mmc6_persistence, test_cartridge_unload
     };
     int failures = 0;

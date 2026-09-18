@@ -72,7 +72,7 @@ static Mapper mapper_nrom, mapper_mmc1, mapper_m105, mapper_m232, mapper_uxrom, 
 static Mapper mapper_mmc5, mapper_aorom, mapper_mmc2, mapper_mmc4, mapper_colordreams;
 static Mapper mapper_cprom, mapper_100in1, mapper_bandai, mapper_action53, mapper_unrom512, mapper_m111, mapper_fds;
 static Mapper mapper_taito33, mapper_taito48, mapper_taito_x1005, mapper_taito_x1017;
-static Mapper mapper_jaleco18, mapper_irem32, mapper_irem65, mapper_irem77, mapper_irem97;
+static Mapper mapper_jaleco18, mapper_jaleco_discrete, mapper_irem32, mapper_irem65, mapper_irem77, mapper_irem97;
 static Mapper mapper_rambo1, mapper_rambo158;
 static Mapper mapper_vrc1, mapper_vrc3, mapper_vrc6, mapper_vrc24, mapper_vrc7;
 static Mapper mapper_sunsoft3, mapper_sunsoft4, mapper_sunsoft89, mapper_sunsoft93, mapper_sunsoft184;
@@ -5660,6 +5660,98 @@ static void jaleco18_reset(void) {
     mapper_irq_line = false;
 }
 
+// Mappers 72, 78, 87, 92, 101, and 140: Jaleco discrete boards.
+static struct {
+    uint8_t prg_bank;
+    uint8_t chr_bank;
+    bool prg_flag;
+    bool chr_flag;
+    Mirroring mirr;
+} jaleco_discrete;
+
+static uint8_t jaleco_discrete_cpu_read(uint16_t a) {
+    if (a < 0x8000u) return cart_cpu_bus_input;
+
+    if (C.mapper_no == 87 || C.mapper_no == 101) {
+        return C.prg[(size_t)(a - 0x8000u) % C.prg_sz];
+    }
+    if (C.mapper_no == 140) {
+        if (C.prg_sz < PRG_BANK_32K)
+            return C.prg[(size_t)(a - 0x8000u) % C.prg_sz];
+        size_t banks = C.prg_sz / PRG_BANK_32K;
+        size_t bank = jaleco_discrete.prg_bank % banks;
+        return C.prg[bank * PRG_BANK_32K + (a & 0x7FFFu)];
+    }
+
+    size_t banks = C.prg_sz / PRG_BANK_16K;
+    size_t bank;
+    if (C.mapper_no == 92) {
+        bank = a < 0xC000u ? 0 : jaleco_discrete.prg_bank % banks;
+    } else {
+        bank = a < 0xC000u ? jaleco_discrete.prg_bank % banks : banks - 1;
+    }
+    return C.prg[bank * PRG_BANK_16K + (a & 0x3FFFu)];
+}
+
+static void jaleco_discrete_cpu_write(uint16_t a, uint8_t value) {
+    if (C.mapper_no == 87 || C.mapper_no == 101 || C.mapper_no == 140) {
+        if (a < 0x6000u || a > 0x7FFFu) return;
+        if (C.mapper_no == 87) {
+            jaleco_discrete.chr_bank = (uint8_t)(((value & 0x01u) << 1) | ((value & 0x02u) >> 1));
+        } else if (C.mapper_no == 101) {
+            jaleco_discrete.chr_bank = value;
+        } else {
+            jaleco_discrete.prg_bank = (value >> 4) & 0x03u;
+            jaleco_discrete.chr_bank = value & 0x0Fu;
+        }
+        return;
+    }
+
+    if (a < 0x8000u) return;
+    if (C.mapper_no == 72 || C.mapper_no == 92) {
+        bool prg_flag = (value & 0x80u) != 0;
+        bool chr_flag = (value & 0x40u) != 0;
+        if (!jaleco_discrete.prg_flag && prg_flag)
+            jaleco_discrete.prg_bank = C.mapper_no == 92 ? value & 0x0Fu : value & 0x07u;
+        if (!jaleco_discrete.chr_flag && chr_flag)
+            jaleco_discrete.chr_bank = value & 0x0Fu;
+        jaleco_discrete.prg_flag = prg_flag;
+        jaleco_discrete.chr_flag = chr_flag;
+        return;
+    }
+
+    jaleco_discrete.prg_bank = value & 0x07u;
+    jaleco_discrete.chr_bank = (value >> 4) & 0x0Fu;
+    if (C.submapper == 3)
+        jaleco_discrete.mirr = (value & 0x08u) ? MIRROR_VERTICAL : MIRROR_HORIZONTAL;
+    else
+        jaleco_discrete.mirr = (value & 0x08u) ? MIRROR_SINGLE1 : MIRROR_SINGLE0;
+}
+
+static uint8_t jaleco_discrete_ppu_read(uint16_t a) {
+    a &= 0x1FFFu;
+    size_t banks = C.chr_sz / CHR_BANK_8K;
+    size_t bank = jaleco_discrete.chr_bank % banks;
+    return C.chr[bank * CHR_BANK_8K + a];
+}
+
+static void jaleco_discrete_ppu_write(uint16_t a, uint8_t value) {
+    if (!C.chr_is_ram) return;
+    a &= 0x1FFFu;
+    size_t banks = C.chr_sz / CHR_BANK_8K;
+    size_t bank = jaleco_discrete.chr_bank % banks;
+    chr_ram_write(bank * CHR_BANK_8K + a, value);
+}
+
+static Mirroring jaleco_discrete_mirr(void) { return jaleco_discrete.mirr; }
+
+static void jaleco_discrete_reset(void) {
+    memset(&jaleco_discrete, 0, sizeof(jaleco_discrete));
+    jaleco_discrete.mirr = C.mirr_base;
+    if (C.mapper_no == 92)
+        jaleco_discrete.prg_bank = (uint8_t)(C.prg_sz / PRG_BANK_16K - 1u);
+}
+
 // Mapper 77: Irem LROG017.
 static struct {
     uint8_t prg_bank;
@@ -6401,6 +6493,9 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         case 4: case 24: case 26: case 118: chr_limit = 0x40000; break;
         case 33: case 48: case 67: case 68: chr_limit = 0x80000; break;
         case 80: case 82: case 207: chr_limit = 0x40000; break;
+        case 72: case 78: case 92: case 140: chr_limit = 0x20000; break;
+        case 87: chr_limit = 0x8000; break;
+        case 101: chr_limit = 0x200000; break;
         case 64: case 158: chr_limit = 0x40000; break;
         case 5: chr_limit = 0x100000; break;
         case 13: chr_limit = 0x4000; break;
@@ -6470,9 +6565,10 @@ int mapper_init_from_header(const iNESHeader *h,
         case 16: case 153: case 157: case 159:
         case 18: case 32: case 33: case 34: case 48: case 64: case 65: case 158:
         case 21: case 22: case 23: case 24: case 25: case 26: case 27: case 183:
-        case 19: case 66: case 67: case 68: case 69: case 71: case 73: case 75: case 76: case 77: case 80: case 82: case 85:
-        case 88: case 89: case 93: case 95: case 97: case 99: case 105: case 151: case 154: case 184: case 206: case 207: case 210:
-        case 90: case 191: case 192: case 194: case 195: case 209: case 211: case 232:
+        case 19: case 66: case 67: case 68: case 69: case 71: case 72: case 73: case 75: case 76: case 77: case 78:
+        case 80: case 82: case 85: case 87: case 88: case 89: case 92: case 93: case 95: case 97: case 99: case 101:
+        case 140: case 151: case 154: case 184: case 206: case 207: case 210:
+        case 90: case 105: case 191: case 192: case 194: case 195: case 209: case 211: case 232:
             break;
         default:
             fprintf(stderr, "Unsupported mapper: %d\n", mapper_no);
@@ -6488,6 +6584,7 @@ int mapper_init_from_header(const iNESHeader *h,
         || (mapper_no == 32 && submapper == 1)
         || (mapper_no == 71 && submapper == 1)
         || (mapper_no == 232 && submapper == 1)
+        || (mapper_no == 78 && (submapper == 1 || submapper == 3))
         || (mapper_no == 206 && submapper == 1)
         || (mapper_no == 210 && submapper <= 2)
         || ((mapper_no == 2 || mapper_no == 3 || mapper_no == 7) && submapper <= 2)
@@ -6560,6 +6657,27 @@ int mapper_init_from_header(const iNESHeader *h,
     if (mapper_no == 97
         && (prg_sz > 0x40000 || (prg_sz % PRG_BANK_16K) != 0 || chr_sz != CHR_BANK_8K)) {
         fprintf(stderr, "Unsupported ROM/RAM size for mapper 97\n");
+        return -1;
+    }
+    if ((mapper_no == 72 || mapper_no == 78 || mapper_no == 92)
+        && (prg_sz > (mapper_no == 92 ? 0x40000u : 0x20000u)
+            || (prg_sz % PRG_BANK_16K) != 0
+            || chr_sz > 0x20000 || (chr_sz % CHR_BANK_8K) != 0)) {
+        fprintf(stderr, "Unsupported ROM/RAM size for mapper %d\n", mapper_no);
+        return -1;
+    }
+    if ((mapper_no == 87 || mapper_no == 101)
+        && ((prg_sz != PRG_BANK_16K && prg_sz != PRG_BANK_32K)
+            || chr_sz > (mapper_no == 87 ? 0x8000u : 0x200000u)
+            || (chr_sz % CHR_BANK_8K) != 0)) {
+        fprintf(stderr, "Unsupported ROM/RAM size for mapper %d\n", mapper_no);
+        return -1;
+    }
+    if (mapper_no == 140
+        && (prg_sz > 0x20000
+            || (prg_sz != PRG_BANK_16K && (prg_sz % PRG_BANK_32K) != 0)
+            || chr_sz > 0x20000 || (chr_sz % CHR_BANK_8K) != 0)) {
+        fprintf(stderr, "Unsupported ROM/RAM size for mapper 140\n");
         return -1;
     }
     if ((mapper_no == 64 || mapper_no == 158)
@@ -6771,6 +6889,7 @@ int mapper_init_from_header(const iNESHeader *h,
     C.submapper = submapper;
     C.mmc1a = mapper_no == 155;
     C.bus_conflicts = mapper_no == 11
+        || mapper_no == 72 || mapper_no == 78 || mapper_no == 92
         || mapper_no == 77
         || (mapper_no == 34 && !mapper34_nina)
         || (submapper == 2 && (mapper_no == 2 || mapper_no == 3 || mapper_no == 7 || mapper_no == 30))
@@ -6892,6 +7011,12 @@ int mapper_init_from_header(const iNESHeader *h,
             build_mapper(&mapper_m71, m71_cpu_read, m71_cpu_write,
                          m71_ppu_read, m71_ppu_write, m71_reset, m71_mirr);
             cart = &mapper_m71;
+            break;
+        case 72: case 78: case 87: case 92: case 101: case 140:
+            build_mapper(&mapper_jaleco_discrete, jaleco_discrete_cpu_read, jaleco_discrete_cpu_write,
+                         jaleco_discrete_ppu_read, jaleco_discrete_ppu_write,
+                         jaleco_discrete_reset, jaleco_discrete_mirr);
+            cart = &mapper_jaleco_discrete;
             break;
         case 67:
             build_mapper(&mapper_sunsoft3, sunsoft3_cpu_read, sunsoft3_cpu_write,
