@@ -1,5 +1,7 @@
 # Accuracy implementation checkpoints
 
+[Documentation index](README.md)
+
 Each commit below passed the production hardware regressions and the full pinned AccuracyCoin cartridge: **144/144 passed, zero skipped, and zero unfinished**. These are the commits tested after integrating each issue. Later fixes require their own checks, and the final pull-request commit must pass the complete CI workflow.
 
 AccuracyCoin is pinned to revision `9bc42d1e3acbeeaea215b1011d58f4ce72a8a49e`. The ROM SHA-256 is `7e25ac08d2e7ed14c9b1f16bd853148fef09a824452164f8e0d69fd2bd96176c`. Each recorded run completed 4,182 frames and agreed with the cartridge's own 144/144 tally. The result checks and ROM pins were retained throughout the work.

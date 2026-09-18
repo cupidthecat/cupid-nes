@@ -1,5 +1,7 @@
 # NES accuracy checks
 
+[Documentation index](README.md)
+
 The hardware targets use NTSC, PAL, or Dendy timing with the cartridge and input devices listed in the README. Disk and VS systems use NTSC timing. The tests below exercise the production core. They do not establish compatibility with every cartridge or hardware revision.
 
 ## Timing model

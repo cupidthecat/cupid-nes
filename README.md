@@ -2,7 +2,9 @@
 
 Cupid is an NES emulator written in C, with NTSC, PAL, and Dendy timing and SDL2 for video, input, and audio.
 
-The current core passes **144/144 AccuracyCoin tests**, with zero skipped or unfinished results, plus the 91-ROM diagnostic collection and the 8,991-state canonical CPU trace. Reproduction commands and test limits are below.
+The emulator runs cartridge images, Famicom Disk System media with a supplied BIOS, and supported VS System arcade configurations. Its hardware tests use the same CPU, PPU, APU, and cartridge code as the application. Development focuses on NES emulation accuracy and reproducible bug fixes.
+
+The recorded accuracy baseline is **144/144 AccuracyCoin tests**, with zero skipped or unfinished results, plus the 91-ROM diagnostic collection and the 8,991-state canonical CPU trace. See the [tested commits](docs/accuracy-checkpoints.md) and the [accuracy workflow](.github/workflows/accuracy.yml) for the evidence and checks required on later changes.
 
 <p align="center">
   <img src="img/smb33.png" alt="Super Mario Bros. 3 gameplay">
@@ -10,6 +12,22 @@ The current core passes **144/144 AccuracyCoin tests**, with zero skipped or unf
 <p align="center">
   <img src="img/coin.png" alt="AccuracyCoin test results">
 </p>
+
+## Documentation
+
+| What you need | Guide |
+| --- | --- |
+| Build Cupid and open your first game | [Getting started](docs/getting-started.md) |
+| Find a command-line option or its default | [Configuration](docs/configuration.md) |
+| Set up controllers, paddles, light guns, or BASIC | [Controls and peripherals](docs/controls.md) |
+| Understand ROM headers and supported hardware | [Hardware and compatibility](docs/hardware.md) |
+| Locate saves, preserve disks, and record tapes | [Saves and media](docs/saves.md) |
+| Find the code behind a hardware behavior | [Architecture](docs/architecture.md) |
+| Build tests and investigate an accuracy failure | [Development and testing](docs/development.md) |
+| Diagnose loading, input, audio, or build problems | [Troubleshooting](docs/troubleshooting.md) |
+| Submit a fix or a useful bug report | [Contributing](CONTRIBUTING.md) |
+
+The [documentation index](docs/README.md) also links the detailed timing notes and implementation checkpoints.
 
 ## Build and run
 
@@ -23,7 +41,7 @@ make
 ./cupid-nes path/to/game.nes
 ```
 
-Clang is also supported: `make CC=clang`.
+Clang is also supported: `make CC=clang`. Run these commands from a checkout of this repository. The [setup guide](docs/getting-started.md) covers cloning, build outputs, and switching compilers.
 
 ### Windows
 
@@ -102,7 +120,7 @@ The disk loader accepts headered and raw disk images with an explicitly supplied
 
 The device provides 32 KiB work RAM, 8 KiB CHR RAM, BIOS mapping, timer and transfer interrupts, disk transport and block timing, CRC handling, and wavetable/modulation audio. `--fds-side N` selects a side starting at 1. `--fds-eject` starts without media inserted, and `--fds-write-protect` blocks disk writes. During execution, F8 inserts or ejects the selected side, F9 changes sides, and F10 changes write protection.
 
-Modified disk data is saved separately from the original image. A failed save keeps the modified media loaded and reports the error. Changing cartridges or closing the application must not discard those writes.
+Disk writes are saved back to the loaded image path through a temporary file and replacement. Keep a backup or run a working copy of writable media. `--fds-write-protect` starts with writes blocked. A failed disk save keeps the modified media loaded and reports the error when the application tries to close or the loader tries to replace it. See [saves and media](docs/saves.md) for file formats and failure handling.
 
 ### VS System
 
@@ -151,7 +169,7 @@ A battery-backed cartridge uses files beside its ROM:
 
 Only declared nonvolatile memory is persisted. Save sizes follow the supported cartridge layout; the previous 8 KiB PRG save format remains usable for 8 KiB cartridges. Saves load when a cartridge opens and flush when it is replaced or the emulator exits normally.
 
-Legacy iNES headers use the board's RAM defaults; byte 8 does not override them. Most boards default to 8 KiB, MMC5 to 64 KiB, FME-7 to 32 KiB, and a VS board's volatile work chip to 2 KiB. An MMC5 battery save appends the 1 KiB ExRAM contents after PRG NVRAM; a shorter existing save leaves the remaining memory zero-filled. NES 2.0 declares volatile and nonvolatile RAM separately. The memory-loading API used by diagnostic tests does not create save files unless the caller supplies a persistence path.
+Legacy iNES headers use the board's RAM defaults; byte 8 does not override them. Most boards default to 8 KiB, MMC5 to 64 KiB, FME-7 to 32 KiB, and mapper 99 to 2 KiB of volatile work RAM. An MMC5 battery save appends the 1 KiB ExRAM contents after PRG NVRAM; a shorter existing save leaves the remaining memory zero-filled. NES 2.0 declares volatile and nonvolatile RAM separately. The memory-loading API used by diagnostic tests does not create save files unless the caller supplies a persistence path.
 
 ## Controls
 
@@ -161,10 +179,13 @@ Legacy iNES headers use the board's RAM defaults; byte 8 does not override them.
 | Right Shift / Enter | Select / Start |
 | Arrow keys | D-pad |
 | R | Reset |
+| M | Famicom microphone input while held |
 | F7 / F6 | Show palette editor / restore default palette |
 | Ctrl+V | Paste palette text |
 
-The existing palette editor also accepts dropped `.pal` files containing 192 or 1536 bytes. Its implementation remains in `src/ui/palette_tool.c`.
+The keyboard drives player 1. Additional players use SDL game controllers and the selected adapter or VS configuration. The [controls guide](docs/controls.md) explains player assignment, peripheral keys, and keyboard shortcuts consumed by Family BASIC or a floor mat.
+
+The palette editor also accepts dropped `.pal` files containing 192 or 1536 bytes. Dropping a file invokes the palette loader; open game images from the command line.
 
 ## Tests
 
@@ -219,5 +240,7 @@ Passing the listed tests does not establish complete hardware equivalence. OAM c
 ## License and hardware documentation
 
 GPL-3.0-or-later; see [LICENSE](LICENSE).
+
+Component notices remain in their source files, including the emu2413 author and source credit in [the FM synthesis implementation](src/rom/emu2413.c). Preserve existing notices when changing these files.
 
 Hardware references: [NESdev](https://www.nesdev.org/wiki/Nintendo_Entertainment_System), [PPU](https://www.nesdev.org/wiki/PPU), [APU](https://www.nesdev.org/wiki/APU), and [mappers](https://www.nesdev.org/wiki/Mapper).
