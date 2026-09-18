@@ -126,6 +126,10 @@ Mouse motion uses SDL relative movement. Left and right mouse buttons map to the
 
 `--console famicom --expansion bandai-hyper-shot` connects the combined controller and light gun. Player-one buttons are serialized on expansion `$4016 D1`. Mouse aiming and trigger input use the same beam-aware light detection as the normal Zapper and appear on `$4017 D3-D4`.
 
+## Party Tap
+
+`--console famicom --expansion party-tap` connects the six-button Party Tap. Host keys 1 through 6 map to its six buttons. The first two reads return three buttons each on `$4017 D2-D4`; later reads return the device-detection value.
+
 ## ASCII Turbo File
 
 `--console famicom --expansion turbo-file` connects the 8 KiB serial storage device. Games control its reset, clock, data, and read lines through the Famicom expansion connector. The contents are loaded and saved automatically next to the ROM; there is no host key for manually advancing the device.

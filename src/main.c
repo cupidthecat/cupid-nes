@@ -269,6 +269,18 @@ static bool subor_key_event(const SDL_KeyboardEvent *event) {
     return false;
 }
 
+static bool party_tap_key_event(const SDL_KeyboardEvent *event) {
+    if (!event || joypad_expansion_device() != NES_EXPANSION_PARTY_TAP) return false;
+    static const SDL_Keycode keys[] = {SDLK_1, SDLK_2, SDLK_3, SDLK_4, SDLK_5, SDLK_6};
+    for (unsigned button = 0; button < 6; ++button) {
+        if (event->keysym.sym == keys[button]) {
+            joypad_set_party_tap_button(button, event->type == SDL_KEYDOWN);
+            return true;
+        }
+    }
+    return false;
+}
+
 int main(int argc, char *argv[]) {
     SDL_AudioSpec want;
     SDL_AudioSpec have;
@@ -395,7 +407,7 @@ int main(int argc, char *argv[]) {
             }
         } else if (strcmp(argv[i], "--expansion") == 0) {
             if (++i == argc || !joypad_set_expansion_device_name(argv[i])) {
-                fprintf(stderr, "Expansion device must be none, arkanoid, family-trainer-a, family-trainer-b, zapper, family-basic, turbo-file, battle-box, subor-keyboard, hori-track, konami-hyper-shot, or bandai-hyper-shot\n");
+                fprintf(stderr, "Expansion device must be none, arkanoid, family-trainer-a, family-trainer-b, zapper, family-basic, turbo-file, battle-box, subor-keyboard, hori-track, konami-hyper-shot, bandai-hyper-shot, or party-tap\n");
                 return 1;
             }
         } else if (strcmp(argv[i], "--zapper-radius") == 0) {
@@ -722,6 +734,9 @@ int main(int argc, char *argv[]) {
             if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
                 && e.key.windowID == SDL_GetWindowID(window)
                 && subor_key_event(&e.key)) continue;
+            if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
+                && e.key.windowID == SDL_GetWindowID(window)
+                && party_tap_key_event(&e.key)) continue;
             palette_tool_handle_event(&e, renderer);
             
             if (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP) {

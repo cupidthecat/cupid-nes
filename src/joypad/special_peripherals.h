@@ -55,4 +55,9 @@ void bandai_hyper_shot_reset(void);
 void bandai_hyper_shot_write(uint8_t value, uint8_t buttons);
 uint8_t bandai_hyper_shot_read(uint8_t buttons);
 
+void party_tap_reset(void);
+void party_tap_write(uint8_t value);
+uint8_t party_tap_read(unsigned port);
+bool party_tap_set_button(unsigned button, bool pressed);
+
 #endif

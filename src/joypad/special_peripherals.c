@@ -100,6 +100,15 @@ typedef struct {
 
 static BandaiHyperShot bandai_hyper_shot;
 
+typedef struct {
+    bool buttons[6];
+    uint8_t state;
+    uint8_t read_count;
+    bool strobe;
+} PartyTap;
+
+static PartyTap party_tap;
+
 enum { SUBOR_NONE = 0xFF };
 static const uint8_t subor_matrix[104] = {
     SUBOR_KEY_4, SUBOR_KEY_G, SUBOR_KEY_F, SUBOR_KEY_C,
@@ -597,4 +606,39 @@ uint8_t bandai_hyper_shot_read(uint8_t buttons) {
     uint8_t output = (uint8_t)((bandai_hyper_shot.state & 1u) << 1);
     bandai_hyper_shot.state >>= 1;
     return output;
+}
+
+static void party_tap_latch(void) {
+    party_tap.state = 0;
+    for (unsigned button = 0; button < 6; ++button)
+        if (party_tap.buttons[button]) party_tap.state |= (uint8_t)(1u << button);
+    party_tap.read_count = 0;
+}
+
+void party_tap_reset(void) {
+    party_tap.state = 0;
+    party_tap.read_count = 0;
+    party_tap.strobe = false;
+}
+
+bool party_tap_set_button(unsigned button, bool pressed) {
+    if (button >= 6) return false;
+    party_tap.buttons[button] = pressed;
+    return true;
+}
+
+void party_tap_write(uint8_t value) {
+    bool strobe = (value & 1u) != 0;
+    if (party_tap.strobe && !strobe) party_tap_latch();
+    party_tap.strobe = strobe;
+}
+
+uint8_t party_tap_read(unsigned port) {
+    if (port != 1) return 0;
+    if (party_tap.strobe) party_tap_latch();
+    if (party_tap.read_count >= 2) return 0x14;
+    uint8_t value = (uint8_t)((party_tap.state & 7u) << 2);
+    party_tap.state >>= 3;
+    party_tap.read_count++;
+    return value;
 }

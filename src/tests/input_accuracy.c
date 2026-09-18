@@ -1631,6 +1631,50 @@ static int bandai_hyper_shot_signals(void) {
     return 0;
 }
 
+static int party_tap_reports(void) {
+    input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+    CHECK(joypad_set_expansion_device_name("party-tap"));
+    CHECK(joypad_expansion_device() == NES_EXPANSION_PARTY_TAP);
+    pad2.buttons = 1;
+    CHECK(joypad_set_party_tap_button(0, true));
+    CHECK(joypad_set_party_tap_button(2, true));
+    CHECK(joypad_set_party_tap_button(4, true));
+    CHECK(!joypad_set_party_tap_button(6, true));
+    latch_controllers();
+    CHECK((read_mem(0x4017) & 0x1D) == 0x15);
+    CHECK((read_mem(0x4017) & 0x1C) == 0x08);
+    CHECK((read_mem(0x4017) & 0x1C) == 0x14);
+    CHECK((read_mem(0x4017) & 0x1C) == 0x14);
+
+    CHECK(joypad_set_party_tap_button(0, false));
+    CHECK(joypad_set_party_tap_button(2, false));
+    CHECK(joypad_set_party_tap_button(4, false));
+    CHECK(joypad_set_party_tap_button(1, true));
+    CHECK(joypad_set_party_tap_button(3, true));
+    CHECK(joypad_set_party_tap_button(5, true));
+    CHECK((read_mem(0x4017) & 0x1C) == 0x14);
+    latch_controllers();
+    CHECK((read_mem(0x4017) & 0x1C) == 0x08);
+    CHECK((read_mem(0x4017) & 0x1C) == 0x14);
+
+    write_mem(0x4016, 1);
+    CHECK((read_mem(0x4017) & 0x1C) == 0x08);
+    CHECK((read_mem(0x4017) & 0x1C) == 0x08);
+    CHECK(joypad_set_party_tap_button(1, false));
+    CHECK(joypad_set_party_tap_button(0, true));
+    CHECK((read_mem(0x4017) & 0x1C) == 0x04);
+    write_mem(0x4016, 0);
+    CHECK((read_mem(0x4017) & 0x1C) == 0x04);
+
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_NONE));
+    CHECK(!joypad_set_party_tap_button(0, true));
+    CHECK((read_mem(0x4017) & 0x1C) == 0);
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_PARTY_TAP));
+    latch_controllers();
+    CHECK((read_mem(0x4017) & 0x1C) == 0x04);
+    return 0;
+}
+
 int test_input_accuracy(void) {
     static int (*const tests[])(void) = {
         console_open_bus, console_read_clocks, console_strobe_timing,
@@ -1646,7 +1690,7 @@ int test_input_accuracy(void) {
         turbo_file_persistence, turbo_file_failed_save, battle_box_protocol,
         battle_box_persistence, battle_box_failed_save, subor_keyboard_matrix,
         subor_mouse_packets, hori_track_reports, konami_hyper_shot_signals,
-        bandai_hyper_shot_signals
+        bandai_hyper_shot_signals, party_tap_reports
     };
     NesConsoleModel saved_model = nes_console_model();
     NesRegion saved_region = nes_timing()->region;
