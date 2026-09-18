@@ -4760,7 +4760,6 @@ static int test_loader_ram_layouts(void) {
         {10, 7, 0, 0}, // More RAM than MMC1 can address.
         {0x99, 7, 0, 2}, // Separate large RAM chips lack board selection.
         {7, 0x77, 0, 2}, // Mixed volatile/nonvolatile CHR chips.
-        {7, 0x0C, 1, 0}, // Declared CHR-RAM exceeds this board's supported storage.
         {7, 0, 0, 0}, // NES 2.0 explicitly declares no CHR memory.
         {0x70, 7, 0, 0} // NVRAM requires the battery flag.
     };
@@ -4776,6 +4775,20 @@ static int test_loader_ram_layouts(void) {
         CHECK(loaded == -1 && prg_rom == previous_prg && chr_rom == previous_chr);
         CHECK(cart_cpu_read(0x6000) == 0xA7);
     }
+
+    // CHR RAM declared beside CHR ROM is separate storage. MMC1 has no
+    // selector for it in this layout, so the ROM remains mapped and read-only.
+    h.flags10 = 7;
+    h.zero[0] = 0x0C;
+    h.chr_rom_chunks = 1;
+    h.flags6 = 0x10;
+    image = image_for(&h, 0x4000, 0x2000, &size);
+    CHECK(image != NULL);
+    loaded = load_rom_memory(image, size);
+    free(image);
+    CHECK(loaded == 0 && cart_ppu_read(0x0123) == 0xA5);
+    cart_ppu_write(0x0123, 0x53);
+    CHECK(cart_ppu_read(0x0123) == 0xA5);
     return 0;
 }
 
@@ -4962,6 +4975,61 @@ static int test_extended_ram_layouts_and_ownership(void) {
     cart_cpu_write(0x6000, 0x2A);
     cart_cpu_write(0x5113, 0);
     CHECK(cart_cpu_read(0x6000) == 0x2A);
+
+    unload_rom();
+    return save_fixture_end(&paths);
+}
+
+static int test_unmapped_chr_storage_ownership(void) {
+    SaveFixture paths;
+    CHECK(save_fixture_begin(&paths) == 0);
+
+    uint8_t seeded[0x2000];
+    memset(seeded, 0x6B, sizeof(seeded));
+    FILE *fp = fopen(paths.chr_save, "wb");
+    CHECK(fp != NULL);
+    CHECK(fwrite(seeded, 1, sizeof(seeded), fp) == sizeof(seeded));
+    CHECK(fclose(fp) == 0);
+
+    iNESHeader h = header_for(69, 0x20000, false);
+    h.flags7 |= 0x08;
+    h.flags6 |= 0x02;
+    h.flags10 = 0;
+    h.zero[0] = 0x77; // Separate 8 KiB CHR work RAM and 8 KiB CHR NVRAM beside ROM.
+    size_t image_size;
+    uint8_t *image = image_for(&h, 0x20000, 0x2000, &image_size);
+    CHECK(image != NULL);
+    FILE *rom = fopen(paths.rom, "wb");
+    CHECK(rom != NULL);
+    CHECK(fwrite(image, 1, image_size, rom) == image_size);
+    CHECK(fclose(rom) == 0);
+    free(image);
+
+    CHECK(load_rom(paths.rom) == 0);
+    sunsoft69_command(0, 0);
+    CHECK(cart_ppu_read(0x0123) == 0xA5);
+    cart_ppu_write(0x0123, 0x53);
+    CHECK(cart_ppu_read(0x0123) == 0xA5);
+    cart_battery_flush();
+    CHECK(saved_file_size(paths.chr_save) == 0x2000);
+    CHECK(saved_byte(paths.chr_save, 0) == 0x6B);
+    CHECK(saved_file_size(paths.prg_save) == -1);
+
+    Mapper *previous = cart;
+    iNESHeader invalid = h;
+    invalid.flags6 &= (uint8_t)~0x02u;
+    image = image_for(&invalid, 0x20000, 0x2000, &image_size);
+    CHECK(image != NULL);
+    CHECK(load_rom_memory(image, image_size) == -1);
+    free(image);
+    CHECK(cart == previous && cart_ppu_read(0x0123) == 0xA5);
+
+    // Storage that exceeds the mapper's CHR-ROM selector range is still a
+    // valid independent device when no PPU register can select it.
+    h.zero[0] = 0xDD; // 512 KiB volatile plus 512 KiB nonvolatile CHR RAM.
+    CHECK(fixture_with_header(&h, 0x20000, 0x2000) == 69);
+    sunsoft69_command(0, 0);
+    CHECK(cart_ppu_read(0x0123) == 0);
 
     unload_rom();
     return save_fixture_end(&paths);
@@ -10920,6 +10988,7 @@ int test_mapper_accuracy(void) {
         test_loader_region_and_console_type,
         test_ram_header_sizes, test_prg_ram_capacity, test_mmc1_banked_ram,
         test_mmc5_banked_ram, test_loader_ram_layouts, test_extended_ram_layouts_and_ownership,
+        test_unmapped_chr_storage_ownership,
         test_prg_nvram_persistence,
         test_mapper96_legacy_nvram_persistence,
         test_vs_nvram_persistence,

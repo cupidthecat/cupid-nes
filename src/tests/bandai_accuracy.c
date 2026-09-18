@@ -508,25 +508,39 @@ static int test_bandai_rejected_loads(void) {
     cart->clock(1);
     CHECK(cart_irq_pending());
     uint8_t *previous_prg = prg_rom, *previous_chr = chr_rom;
-    iNESHeader rejected[] = {h, h, h, h, h};
+    iNESHeader rejected[] = {h, h, h, h};
     rejected[0].prg_ram_size = 0x20;
     rejected[1].flags10 = 0x30;
     rejected[2].flags10 = 0x27;
     rejected[3].flags6 &= (uint8_t)~2u;
-    rejected[4].zero[0] = 7;
     for (size_t i = 0; i < sizeof(rejected) / sizeof(rejected[0]); ++i) {
         CHECK(load_board(&rejected[i]) == -1);
         CHECK(prg_rom == previous_prg && chr_rom == previous_chr && cart_irq_pending());
         CHECK(cart_cpu_read(0x8000) == 3);
         CHECK(eeprom02_read(0x26, 0x96) == 0);
     }
+
+    // Explicit CHR RAM alongside CHR ROM is a valid device declaration.
+    // Bandai's CHR registers stop selecting ROM when CHR RAM exists, while
+    // the separate RAM chip has no default PPU mapping because ROM is present.
+    iNESHeader mixed = h;
+    mixed.zero[0] = 7;
+    CHECK(load_board(&mixed) == 0);
+    CHECK(cart_ppu_read(0x0123) == 0x23);
+    cart_cpu_write(0x8000, 5);
+    CHECK(cart_ppu_read(0x0123) == 0x23);
+    cart_ppu_write(0x0123, 0xA6);
+    CHECK(cart_ppu_read(0x0123) == 0x23);
+
+    previous_prg = prg_rom;
+    previous_chr = chr_rom;
     size_t bytes;
     uint8_t *image = board_image(&h, &bytes);
     CHECK(image != NULL);
     int loaded = load_rom_memory(image, bytes - 1);
     free(image);
-    CHECK(loaded == -1 && prg_rom == previous_prg && cart_irq_pending());
-    CHECK(eeprom02_read(0x26, 0x96) == 0);
+    CHECK(loaded == -1 && prg_rom == previous_prg && chr_rom == previous_chr);
+    CHECK(cart_ppu_read(0x0123) == 0x23);
     return 0;
 }
 

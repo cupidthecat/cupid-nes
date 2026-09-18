@@ -5552,6 +5552,10 @@ static uint8_t bandai_cpu_read(uint16_t address) {
     return output;
 }
 
+static bool bandai_has_chr_ram(void) {
+    return C.chr_is_ram || C.ram.chr_ram || C.ram.chr_nvram;
+}
+
 static void bandai_cpu_write(uint16_t address, uint8_t value) {
     if (address < 0x6000) return;
     if (address < 0x8000 && bandai.mapper != 16) {
@@ -5569,7 +5573,7 @@ static void bandai_cpu_write(uint16_t address, uint8_t value) {
             for (unsigned i = 0; i < 8; ++i)
                 bandai.outer_bank |= (bandai.chr_regs[i] & 1u) << 4;
             bandai.prg_selected = true;
-        } else if (!C.chr_is_ram && bandai.mapper != 157) {
+        } else if (!bandai_has_chr_ram() && bandai.mapper != 157) {
             bandai.chr_banks[reg] = value;
             bandai.chr_mapped |= (uint8_t)(1u << reg);
         }
@@ -5619,6 +5623,7 @@ static void bandai_cpu_write(uint16_t address, uint8_t value) {
 static uint8_t bandai_ppu_read(uint16_t address) {
     address &= 0x1FFFu;
     if (C.chr_is_ram) return C.chr[address % C.chr_sz];
+    if (C.ram.chr_ram || C.ram.chr_nvram) return (uint8_t)address;
     unsigned slot;
     size_t page_size, page_count;
     if (!shrunk_chr_slot_geometry(address, CHR_BANK_1K, 8, &slot, &page_size, &page_count))
@@ -7121,6 +7126,7 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
     }
 
     size_t mixed_chr_ram = mmc3_mixed_chr_expected_ram(mapper_no);
+    bool unmapped_chr_storage = false;
     if (mapper_no == 96) {
         if (!chr_is_ram || chr_sz != 0x8000) return false;
         if (nes2 && (ram->chr_ram != 0x8000 || ram->chr_nvram != 0)) return false;
@@ -7134,12 +7140,14 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         if (ram->chr_nvram) return false;
         if (nes2 && !chr_is_ram && ram->chr_ram != CHR_BANK_8K) return false;
     } else {
-        bool unmapped_chr_storage = !chr_is_ram && chr_total
-            && (mapper_no == 0 || mapper_no == 1 || mapper_no == 5 || mapper_no == 155);
-        if ((!chr_is_ram && chr_total && !unmapped_chr_storage)
-            || (chr_is_ram && ram->chr_ram && ram->chr_nvram)) return false;
+        // Explicit CHR storage may coexist with CHR ROM even when this board
+        // has no register path that selects it. Keep those chips independent
+        // for persistence without replacing the ROM-backed PPU mapping.
+        unmapped_chr_storage = !chr_is_ram && chr_total;
+        if (chr_is_ram && ram->chr_ram && ram->chr_nvram) return false;
     }
     if (nes2 && chr_is_ram && chr_total != chr_sz) return false;
+    if (unmapped_chr_storage) return true;
     size_t chr_limit;
     switch (mapper_no) {
         case 1: case 9: case 10: case 11: case 89: case 105: case 113: case 144: case 155:
