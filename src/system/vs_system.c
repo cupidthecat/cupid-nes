@@ -28,7 +28,9 @@ typedef struct {
     VsRomConfig config;
     unsigned active_side;
     uint16_t dips;
-    bool coins[4];
+    uint8_t coin_frames[4];
+    bool coin_pressed[4];
+    uint64_t coin_frame_mark[4];
     bool service[2];
     uint8_t shift[2][2];
     bool strobe[2];
@@ -44,6 +46,26 @@ typedef struct {
 } VsState;
 
 static VsState vs;
+
+static void advance_coin_pulse(unsigned slot) {
+    if (slot >= 4 || !vs.coin_frames[slot]) return;
+    unsigned side = slot / 2;
+    uint64_t frame = side == 0 ? ppu.frame_count : vs.sub_ppu.state.frame_count;
+    if (frame < vs.coin_frame_mark[slot]) {
+        vs.coin_frame_mark[slot] = frame;
+        return;
+    }
+    uint64_t elapsed = frame - vs.coin_frame_mark[slot];
+    if (!elapsed) return;
+    if (elapsed >= vs.coin_frames[slot]) vs.coin_frames[slot] = 0;
+    else vs.coin_frames[slot] = (uint8_t)(vs.coin_frames[slot] - elapsed);
+    vs.coin_frame_mark[slot] = frame;
+}
+
+static bool coin_pulse_active(unsigned slot) {
+    advance_coin_pulse(slot);
+    return slot < 4 && vs.coin_frames[slot] != 0;
+}
 
 static void reset_control_state(void) {
     memset(vs.protection_counter, 0, sizeof(vs.protection_counter));
@@ -251,6 +273,8 @@ int vs_cpu_step(void) {
 }
 
 void vs_start_frame(void) {
+    for (unsigned slot = 0; slot < (vs_dual_system() ? 4u : 2u); ++slot)
+        advance_coin_pulse(slot);
     start_frame();
     if (vs_dual_system()) vs.sub_ppu.state.frame_complete = false;
 }
@@ -394,8 +418,8 @@ uint8_t vs_read_controller_port(unsigned port) {
         if (vs.service[side]) value |= 0x04;
         uint8_t local_dips = (uint8_t)(vs.dips >> (side * 8));
         value |= (uint8_t)((local_dips & 0x03) << 3);
-        if (vs.coins[coin]) value |= 0x20;
-        if (vs.coins[coin + 1]) value |= 0x40;
+        if (coin_pulse_active(coin)) value |= 0x20;
+        if (coin_pulse_active(coin + 1)) value |= 0x40;
         if (side) value |= 0x80;
         return value;
     }
@@ -413,7 +437,12 @@ uint16_t vs_dip_switches(void) { return vs.dips; }
 
 bool vs_set_coin(unsigned slot, bool pressed) {
     if (!vs_enabled() || slot >= (vs_dual_system() ? 4u : 2u)) return false;
-    vs.coins[slot] = pressed;
+    if (pressed && !vs.coin_pressed[slot]) {
+        unsigned side = slot / 2;
+        vs.coin_frames[slot] = 4;
+        vs.coin_frame_mark[slot] = side == 0 ? ppu.frame_count : vs.sub_ppu.state.frame_count;
+    }
+    vs.coin_pressed[slot] = pressed;
     return true;
 }
 

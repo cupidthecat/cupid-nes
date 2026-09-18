@@ -706,6 +706,85 @@ static int test_vs_reset_and_declared_ram(void) {
     return 0;
 }
 
+static void run_vs_frame(void) {
+    vs_start_frame();
+    for (unsigned i = 0; i < 40000 && !ppu.frame_complete; ++i) vs_cpu_step();
+}
+
+static int test_vs_coin_pulses(void) {
+    static const uint8_t loop[] = {0x4C,0x00,0x80};
+    CHECK(load_vs_program(VS_TYPE_DEFAULT, 0, VS_INPUT_STANDARD, loop, sizeof(loop)) == 0);
+    power_main();
+
+    CHECK(vs_set_coin(0, true));
+    CHECK(vs_set_coin(0, false));
+    CHECK(vs_set_service(0, true));
+    CHECK((vs_read_controller_port(0) & 0x24) == 0x24);
+    for (unsigned frame = 0; frame < 4; ++frame) {
+        run_vs_frame();
+        uint8_t value = vs_read_controller_port(0);
+        CHECK((value & 0x04) != 0);
+        CHECK(((value & 0x20) != 0) == (frame < 3));
+    }
+    CHECK(vs_set_service(0, false));
+    CHECK((vs_read_controller_port(0) & 0x24) == 0);
+
+    CHECK(vs_set_coin(1, true));
+    CHECK((vs_read_controller_port(0) & 0x40) != 0);
+    for (unsigned frame = 0; frame < 4; ++frame) {
+        CHECK(vs_set_coin(1, true));
+        run_vs_frame();
+    }
+    CHECK((vs_read_controller_port(0) & 0x40) == 0);
+    CHECK(vs_set_coin(1, false));
+    CHECK(vs_set_coin(1, true));
+    CHECK((vs_read_controller_port(0) & 0x40) != 0);
+    CHECK(vs_set_coin(1, false));
+    CHECK(unload_rom());
+
+    iNESHeader h = nes20_vs_header(99, 4, 4, VS_TYPE_DUAL, 1, VS_INPUT_STANDARD);
+    h.flags10 = 7; // 8 KiB shared PRG RAM for the sub-CPU observation program.
+    size_t image_size;
+    uint8_t *image = build_image(&h, 0x10000, 0x8000, &image_size);
+    CHECK(image != NULL);
+    uint8_t *prg = image + sizeof(h);
+    memset(prg, 0xEA, 0x10000);
+    memcpy(prg, loop, sizeof(loop));
+    static const uint8_t sub_reader[] = {
+        0xAD,0x16,0x40,
+        0x8D,0x00,0x60,
+        0x4C,0x00,0x80
+    };
+    memcpy(prg + 0x8000, sub_reader, sizeof(sub_reader));
+    set_vector(prg, 0x7FFA, 0x8000);
+    set_vector(prg, 0x7FFC, 0x8000);
+    set_vector(prg, 0x7FFE, 0x8000);
+    set_vector(prg, 0xFFFA, 0x8000);
+    set_vector(prg, 0xFFFC, 0x8000);
+    set_vector(prg, 0xFFFE, 0x8000);
+    CHECK(load_rom_memory(image, image_size) == 0);
+    free(image);
+    power_main();
+    vs_power_on_secondary();
+    CHECK(vs_set_coin(2, true) && vs_set_coin(2, false));
+    CHECK(vs_set_coin(3, true));
+    for (unsigned i = 0; i < 40; ++i) vs_cpu_step();
+    write_mem(0x4016, 0x02);
+    CHECK((cart_cpu_read(0x6000) & 0x60) == 0x60);
+    write_mem(0x4016, 0x00);
+    for (unsigned frame = 0; frame < 4; ++frame) {
+        CHECK(vs_set_coin(3, true));
+        run_vs_frame();
+        for (unsigned i = 0; i < 40; ++i) vs_cpu_step();
+    }
+    write_mem(0x4016, 0x02);
+    CHECK((cart_cpu_read(0x6000) & 0x60) == 0);
+    write_mem(0x4016, 0x00);
+    CHECK(vs_set_coin(3, false));
+    CHECK(unload_rom());
+    return 0;
+}
+
 static int test_vs_dual_reset_suppression(void) {
     iNESHeader h = nes20_vs_header(99, 4, 4, VS_TYPE_DUAL, 1, VS_INPUT_STANDARD);
     size_t image_size;
@@ -839,6 +918,7 @@ int test_vs_accuracy(void) {
         test_vs_rgb_frame_timing,
         test_vs_dual_rendered_frame_timing,
         test_vs_inputs_and_protection,
+        test_vs_coin_pulses,
         test_vs_zapper_serial,
         test_vs_zapper_cpu_port,
         test_mapper99_banks,
