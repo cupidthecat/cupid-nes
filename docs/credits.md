@@ -25,6 +25,14 @@ history.
 The component's [MIT license](../src/rom/emu2413.LICENSE) is retained alongside
 the source. Its notice is separate from Cupid's project license.
 
+## Audio reconstruction
+
+The APU uses Shay Green's [blip_buf](../src/third_party/blip_buf.c) to reconstruct
+CPU-cycle output changes at the host sample rate. The source retains its
+copyright notice and [LGPL-2.1-or-later license](../src/third_party/blip_buf.LICENSE).
+The local adaptation supplies the C interface and avoids shifting negative
+signed samples when updating the reconstruction integrator.
+
 ## EPSM sound engine
 
 EPSM uses Aaron Giles's ymfm YMF288 implementation. The bundled OPN, SSG, and ADPCM sources retain their copyright notices and [BSD 3-Clause license](../src/third_party/ymfm/LICENSE). The [component notes](../src/third_party/ymfm/README.md) describe the local build edits. Cupid supplies the CPU-bus, timer, firmware, and stereo-output integration in [epsm.cpp](../src/apu/epsm.cpp).

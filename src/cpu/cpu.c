@@ -457,7 +457,10 @@ static void write_bus(uint16_t addr, uint8_t value) {
     }
 
     if (addr >= 0x401C && addr <= 0x401F) epsm_write_port(addr, value);
-    if (addr >= 0x4020) cart_cpu_write(addr, value);
+    if (addr >= 0x4020) {
+        cart_cpu_write(addr, value);
+        apu_audio_refresh(apu_active_state());
+    }
 }
 
 static uint8_t read_mem_cycle(uint16_t addr, bool opcode_fetch) {

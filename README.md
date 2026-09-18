@@ -26,7 +26,7 @@ does not exercise.
 | --- | --- |
 | CPU and PPU | Official and undocumented instructions, shared OAM/DMC DMA timing, register delays, sprite evaluation, regional frame timing, selectable startup alignment and RAM contents, and optional PPU reset suppression |
 | Cartridges | Board-specific PRG/CHR banking, nametable routing, bus conflicts, RAM permissions, IRQs, EEPROM, and flash; the [mapper table](docs/hardware.md#cartridge-mappers) lists supported families and variants |
-| Sound | Five base APU channels, cartridge and disk expansion audio, and EPSM stereo output with timer IRQs |
+| Sound | Five base APU channels, CPU-cycle band-limited reconstruction, cartridge and disk expansion audio, and EPSM stereo output with timer IRQs |
 | Controllers and storage | Gamepads, multiplayer adapters, light guns, paddles, mats, Family BASIC and Subor keyboards, mouse/trackball/tablet input, specialty expansion controllers, Turbo File, and BattleBox |
 | VS System | Header-selected RGB PPU and controller behavior, cabinet controls and protection, and dual machines with shared RAM, two screens, and mixed audio |
 

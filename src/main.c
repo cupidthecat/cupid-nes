@@ -975,6 +975,7 @@ int main(int argc, char *argv[]) {
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     if (audio_dev) SDL_CloseAudioDevice(audio_dev);
+    apu_audio_shutdown_state(&apu);
     for (unsigned player = 0; player < NES_INPUT_PLAYERS; ++player)
         if (controllers[player]) SDL_GameControllerClose(controllers[player]);
     bool tape_saved = finish_tape_capture(tape_record_path);

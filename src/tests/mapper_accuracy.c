@@ -45,6 +45,8 @@ extern uint64_t cpu_total_cycles;
 static uint8_t fixture_prg[0x200000];
 static uint8_t fixture_chr[0x80000];
 static uint8_t *image_for(const iNESHeader *h, size_t prg_bytes, size_t chr_bytes, size_t *size);
+static void prepare_mapper_cpu_nops(void);
+static void run_mapper_nops(unsigned count);
 
 #define CHECK(condition) do { \
     if (!(condition)) { \
@@ -1546,6 +1548,21 @@ static int test_vrc6_pulse_and_saw_audio(void) {
     vrc6_test_write(24, 0xB002, 0x80);
     cart->clock(2);
     CHECK(cart_expansion_audio() == saw);
+
+    CHECK(fixture(24, 0x40000, 0x40000, false) == 24);
+    vrc6_test_write(24, 0x9000, 0x1F);
+    vrc6_test_write(24, 0x9001, 15);
+    vrc6_test_write(24, 0x9002, 0x80);
+    prepare_mapper_cpu_nops();
+    apu_audio_init_state(&apu, 44100);
+    run_mapper_nops(128);
+    float reconstructed[4];
+    apu_audio_pull(&apu, reconstructed, 4);
+    float reconstructed_energy = 0.0f;
+    for (unsigned i = 0; i < 4; ++i)
+        reconstructed_energy += reconstructed[i] < 0.0f ? -reconstructed[i] : reconstructed[i];
+    CHECK(reconstructed_energy > 0.00001f);
+    CHECK(apu.audio_transition_count > 0);
     return 0;
 }
 

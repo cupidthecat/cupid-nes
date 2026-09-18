@@ -188,6 +188,7 @@ static void select_side(unsigned side) {
 
 void vs_commit_config(const VsRomConfig *config) {
     select_side(0);
+    apu_audio_shutdown_state(&vs.sub_apu);
     memset(&vs, 0, sizeof(vs));
     if (config) vs.config = *config;
     reset_control_state();
@@ -195,6 +196,7 @@ void vs_commit_config(const VsRomConfig *config) {
 
 void vs_clear_config(void) {
     select_side(0);
+    apu_audio_shutdown_state(&vs.sub_apu);
     memset(&vs, 0, sizeof(vs));
 }
 
@@ -206,6 +208,7 @@ unsigned vs_active_side(void) { return vs.active_side; }
 
 void vs_power_on_secondary(void) {
     if (!vs_dual_system()) return;
+    apu_audio_shutdown_state(&vs.sub_apu);
     memset(&vs.sub_cpu, 0, sizeof(vs.sub_cpu));
     memset(&vs.sub_ppu, 0, sizeof(vs.sub_ppu));
     memset(&vs.sub_apu, 0, sizeof(vs.sub_apu));

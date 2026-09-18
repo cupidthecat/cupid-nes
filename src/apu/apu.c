@@ -25,6 +25,7 @@
 
 #include "apu.h"
 #include "epsm.h"
+#include "../third_party/blip_buf.h"
 #include "../rom/mapper.h"
 #include "../cpu/cpu.h"
 #include "../system/timing.h"
@@ -37,6 +38,7 @@ static APU *const main_apu = &apu;
 static APU *active_apu = &apu;
 #define apu (*active_apu)
 static ApuCpuRevision cpu_revision = APU_CPU_REVISION_EARLY_2A03;
+enum { APU_RECONSTRUCTION_CAP = 64, APU_RECONSTRUCTION_SCALE = 16384 };
 
 void apu_select_machine(APU *state) {
     active_apu = state ? state : main_apu;
@@ -179,6 +181,24 @@ static inline float apu_post_filter(APU *a, float s) {
     return s;
 }
 
+static void apu_reconstruction_reset(APU *a) {
+    if (!a->reconstruction) a->reconstruction = blip_new(APU_RECONSTRUCTION_CAP);
+    if (!a->reconstruction) return;
+    blip_set_rates(a->reconstruction, nes_timing()->cpu_hz,
+                   a->sample_rate > 1.0 ? a->sample_rate : 44100.0);
+    blip_clear(a->reconstruction);
+    a->reconstructed_level = 0;
+    a->audio_transition_count = 0;
+}
+
+void apu_audio_shutdown_state(APU *a) {
+    if (!a) return;
+    blip_delete(a->reconstruction);
+    a->reconstruction = NULL;
+    a->reconstructed_level = 0;
+    a->audio_transition_count = 0;
+}
+
 // Envelope unit.
 static void env_clock(Envelope* e) {
     if (e->start_flag) {
@@ -302,6 +322,7 @@ static void tri_linear_clock(Triangle* t){
 // Power, reset, and audio initialization.
 static void apu_reset_state(APU *a, bool soft_reset) {
     double sample_rate = a->sample_rate > 1.0 ? a->sample_rate : 44100.0;
+    blip_t *reconstruction = a->reconstruction;
     bool five_step = soft_reset ? a->five_step : false;
     uint8_t dmc_addr_reg = soft_reset ? a->dmc.sample_addr_reg : 0;
     uint8_t dmc_len_reg = soft_reset ? a->dmc.sample_len_reg : 0;
@@ -310,6 +331,7 @@ static void apu_reset_state(APU *a, bool soft_reset) {
     LengthCounter triangle_length = a->tri.lc;
 
     memset(a, 0, sizeof(*a));
+    a->reconstruction = reconstruction;
     atomic_init(&a->ring_w, 0);
     atomic_init(&a->ring_r, 0);
     a->five_step = five_step;
@@ -342,6 +364,7 @@ static void apu_reset_state(APU *a, bool soft_reset) {
     a->regs[0x12] = dmc_addr_reg;
     a->regs[0x13] = dmc_len_reg;
     apu_init_filter_coeffs(a);
+    apu_reconstruction_reset(a);
 }
 
 void apu_power_on(APU *a) {
@@ -370,6 +393,7 @@ void apu_audio_init_state(APU *state, int sample_rate) {
     atomic_store_explicit(&state->ring_w, 0, memory_order_relaxed);
     atomic_store_explicit(&state->ring_r, 0, memory_order_relaxed);
     apu_init_filter_coeffs(state);
+    apu_reconstruction_reset(state);
 }
 
 bool apu_set_cpu_revision(ApuCpuRevision revision) {
@@ -617,6 +641,7 @@ void apu_write(uint16_t addr, uint8_t v){
     } else if (addr == 0x4017) {
         apu_write_4017(&apu, v);
     }
+    apu_audio_refresh(&apu);
 }
 uint8_t apu_read(uint16_t addr){
     if (addr == 0x4015) return apu_read_4015(&apu);
@@ -704,6 +729,52 @@ static inline float mix_sample(float p1, float p2, float tri, float noi, float d
     return s;
 }
 
+static int apu_quantize_mix(float sample) {
+    double scaled = (double)sample * APU_RECONSTRUCTION_SCALE;
+    if (scaled > 32767.0) scaled = 32767.0;
+    if (scaled < -32768.0) scaled = -32768.0;
+    return (int)lrint(scaled);
+}
+
+void apu_audio_refresh(APU *a) {
+    if (!a) return;
+    float sample = mix_sample(pulse_out(&a->pulse1), pulse_out(&a->pulse2),
+                              triangle_out(&a->tri), noise_out(&a->noise),
+                              dmc_out(&a->dmc));
+    sample += cart_expansion_audio();
+    int level = apu_quantize_mix(sample);
+    int delta = level - a->reconstructed_level;
+    if (delta && a->reconstruction) {
+        blip_add_delta(a->reconstruction, 0, delta);
+        a->audio_transition_count++;
+    }
+    a->reconstructed_level = level;
+}
+
+static void apu_output_reconstructed_samples(APU *a) {
+    if (!a->reconstruction) return;
+    blip_end_frame(a->reconstruction, 1);
+    while (blip_samples_avail(a->reconstruction) > 0) {
+        short reconstructed = 0;
+        if (blip_read_samples(a->reconstruction, &reconstructed, 1, 0) != 1) break;
+        float s = (float)reconstructed / (float)APU_RECONSTRUCTION_SCALE;
+        s = apu_post_filter(a, s);
+
+        float epsm_left = 0.0f, epsm_right = 0.0f;
+        if (a == main_apu) epsm_sample_stereo(&epsm_left, &epsm_right);
+        float left = s + epsm_left;
+        float right = s + epsm_right;
+        if (left > 1.0f) left = 1.0f;
+        if (left < -1.0f) left = -1.0f;
+        if (right > 1.0f) right = 1.0f;
+        if (right < -1.0f) right = -1.0f;
+        float middle = (left + right) * 0.5f;
+        float side = (left - right) * 0.5f;
+        a->last_output_sample = middle;
+        rb_push(a, middle, side);
+    }
+}
+
 void apu_step(APU *a, int cpu_cycles){
     const uint32_t (*frame_steps)[6] = frame_step_table();
     for (int i=0; i<cpu_cycles; ++i) {
@@ -780,34 +851,11 @@ void apu_step(APU *a, int cpu_cycles){
             a->dmc.timer--;
         }
 
-        // resample
+        // Record cycle-timed output changes, then advance the reconstruction by one CPU clock.
         a->sample_accum += 1.0;
-        if (a->sample_accum >= a->cycles_per_sample) {
-            a->sample_accum -= a->cycles_per_sample;
-
-            float p1 = pulse_out(&a->pulse1);
-            float p2 = pulse_out(&a->pulse2);
-            float tr = triangle_out(&a->tri);
-            float nz = noise_out(&a->noise);
-            float dm = dmc_out(&a->dmc);
-            float s  = mix_sample(p1, p2, tr, nz, dm);
-            s += cart_expansion_audio();
-            s = apu_post_filter(a, s);
-
-            float epsm_left = 0, epsm_right = 0;
-            if (a == main_apu) epsm_sample_stereo(&epsm_left, &epsm_right);
-            float left = s + epsm_left;
-            float right = s + epsm_right;
-            if (left > 1.0f) left = 1.0f;
-            if (left < -1.0f) left = -1.0f;
-            if (right > 1.0f) right = 1.0f;
-            if (right < -1.0f) right = -1.0f;
-            float middle = (left + right) * 0.5f;
-            float side = (left - right) * 0.5f;
-            a->last_output_sample = middle;
-
-            rb_push(a, middle, side);
-        }
+        while (a->sample_accum >= a->cycles_per_sample) a->sample_accum -= a->cycles_per_sample;
+        apu_audio_refresh(a);
+        apu_output_reconstructed_samples(a);
 
         a->cpu_cycle_odd = !a->cpu_cycle_odd;
     }

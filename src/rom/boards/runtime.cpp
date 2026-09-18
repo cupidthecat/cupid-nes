@@ -36,7 +36,7 @@ void Board::MapCpuBytes(uint16_t first, uint16_t last, uint8_t *bytes,
     if (!AlignedRange(first, last)) return;
     for (unsigned slot = first >> 8; slot <= (last >> 8); ++slot) {
         bool valid = access != 0 && bytes && offset <= size && size - offset >= 0x100;
-        _cpuPages[slot] = valid ? Page{bytes + offset, static_cast<uint8_t>(access < 0 ? ReadWrite : access)}
+        _cpuPages[slot] = valid ? Page{bytes + offset, static_cast<uint8_t>(access < 0 ? static_cast<int>(ReadWrite) : access)}
                                 : Page{};
         if (offset <= UINT32_MAX - 0x100) offset += 0x100;
         else bytes = nullptr;
@@ -48,7 +48,7 @@ void Board::MapPpuBytes(uint16_t first, uint16_t last, uint8_t *bytes,
     if (!AlignedRange(first, last) || last > 0x3FFF) return;
     for (unsigned slot = first >> 8; slot <= (last >> 8); ++slot) {
         bool valid = access != 0 && bytes && offset <= size && size - offset >= 0x100;
-        _ppuPages[slot] = valid ? Page{bytes + offset, static_cast<uint8_t>(access < 0 ? ReadWrite : access)}
+        _ppuPages[slot] = valid ? Page{bytes + offset, static_cast<uint8_t>(access < 0 ? static_cast<int>(ReadWrite) : access)}
                                 : Page{};
         if (offset <= UINT32_MAX - 0x100) offset += 0x100;
         else bytes = nullptr;
