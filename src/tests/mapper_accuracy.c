@@ -6517,7 +6517,7 @@ static int test_irregular_native_page_safety(void) {
     // count, and keep the active cartridge transactional.
     Mapper *previous = cart;
     uint8_t *previous_prg = prg_rom;
-    const unsigned fixed_chr_boards[] = {10, 184};
+    const unsigned fixed_chr_boards[] = {10};
     for (size_t i = 0; i < sizeof(fixed_chr_boards) / sizeof(fixed_chr_boards[0]); ++i) {
         h = header_for(fixed_chr_boards[i], 0x8000, false);
         h.flags7 |= 0x08;
@@ -8057,6 +8057,148 @@ static int test_sunsoft_discrete_boards(void) {
     CHECK(cart_ppu_read(0) == 4 && cart_cpu_read(0x8000) == 0);
     cart->reset();
     CHECK(cart_ppu_read(0x0123) == 0x23);
+    return 0;
+}
+
+static int test_sunsoft_shrunk_chr_pages(void) {
+    size_t size;
+    iNESHeader h;
+    uint8_t *image;
+    uint8_t *prg;
+    uint8_t *chr;
+
+    // Sunsoft 3 normally uses four 2 KiB CHR slots. With a 1 KiB ROM the
+    // mapper page size shrinks to 1 KiB, so the four written slots occupy only
+    // $0000-$0FFF and the upper pattern table remains open bus.
+    h = header_for(67, 0x8000, false);
+    h.flags7 |= 0x08;
+    h.chr_rom_chunks = 0x28; // 1 * 2^10 = 1 KiB.
+    h.flags9 = 0xF0;
+    image = image_for(&h, 0x8000, 0x0400, &size);
+    CHECK(image != NULL);
+    prg = image + sizeof(h);
+    chr = prg + 0x8000;
+    memset(prg, 0x11, 0x4000);
+    memset(prg + 0x4000, 0x22, 0x4000);
+    memset(chr, 0x71, 0x0400);
+    CHECK(load_rom_memory(image, size) == 0);
+    free(image);
+    CHECK(cart_ppu_read(0x0123) == 0x23);
+    cart_cpu_write(0x8800, 7);
+    cart_cpu_write(0x9800, 6);
+    cart_cpu_write(0xA800, 5);
+    cart_cpu_write(0xB800, 4);
+    CHECK(cart_ppu_read(0x0123) == 0x71 && cart_ppu_read(0x0523) == 0x71);
+    CHECK(cart_ppu_read(0x0923) == 0x71 && cart_ppu_read(0x0D23) == 0x71);
+    CHECK(cart_ppu_read(0x1123) == 0x23);
+    cart_cpu_write(0xE800, 3);
+    CHECK(cart_get_mirroring() == MIRROR_SINGLE1);
+    cart_cpu_write(0xF800, 1);
+    CHECK(cart_cpu_read(0x8000) == 0x22 && cart_cpu_read(0xC000) == 0x22);
+
+    // Sunsoft 4 has the same four pattern slots. A 512-byte image shrinks each
+    // slot to 512 bytes; CHR-backed nametables also expose only bytes that
+    // exist in the selected physical image.
+    h = header_for(68, 0x8000, false);
+    h.flags7 |= 0x08;
+    h.chr_rom_chunks = 0x24; // 512 bytes.
+    h.flags9 = 0xF0;
+    image = image_for(&h, 0x8000, 0x0200, &size);
+    CHECK(image != NULL);
+    prg = image + sizeof(h);
+    chr = prg + 0x8000;
+    memset(prg, 0x31, 0x4000);
+    memset(prg + 0x4000, 0x42, 0x4000);
+    memset(chr, 0x82, 0x0200);
+    CHECK(load_rom_memory(image, size) == 0);
+    free(image);
+    cart_cpu_write(0x8000, 1);
+    cart_cpu_write(0x9000, 2);
+    cart_cpu_write(0xA000, 3);
+    cart_cpu_write(0xB000, 4);
+    CHECK(cart_ppu_read(0x0100) == 0x82 && cart_ppu_read(0x0300) == 0x82);
+    CHECK(cart_ppu_read(0x0500) == 0x82 && cart_ppu_read(0x0700) == 0x82);
+    CHECK(cart_ppu_read(0x0900) == 0x00);
+    cart_cpu_write(0xC000, 0);
+    cart_cpu_write(0xD000, 0);
+    cart_cpu_write(0xE000, 0x10);
+    uint8_t nt[0x1000] = {0};
+    CHECK(cart_nt_read(0x2001, nt) == 0x82);
+    CHECK(cart_nt_read(0x2223, nt) == 0x23);
+    cart_cpu_write(0xE000, 0x13);
+    CHECK(cart_get_mirroring() == MIRROR_SINGLE1);
+
+    // Mapper 89 has one 8 KiB CHR slot. With 2 KiB of CHR, the selected slot
+    // occupies only $0000-$07FF; bank and mirroring writes leave the rest open.
+    h = header_for(89, 0x8000, false);
+    h.flags7 |= 0x08;
+    h.chr_rom_chunks = 0x2C; // 2 KiB.
+    h.flags9 = 0xF0;
+    image = image_for(&h, 0x8000, 0x0800, &size);
+    CHECK(image != NULL);
+    memset(image + sizeof(h) + 0x8000, 0x93, 0x0800);
+    CHECK(load_rom_memory(image, size) == 0);
+    free(image);
+    cart_cpu_write(0x8000, 0x5D);
+    CHECK(cart_ppu_read(0x0123) == 0x93 && cart_ppu_read(0x0923) == 0x23);
+    CHECK(cart_get_mirroring() == MIRROR_SINGLE1);
+
+    // Mapper 93 gates its single CHR slot. The slot shrinks with the image and
+    // disabling it removes the entire pattern-table mapping.
+    h = header_for(93, 0x8000, false);
+    h.flags7 |= 0x08;
+    h.chr_rom_chunks = 0x2C;
+    h.flags9 = 0xF0;
+    image = image_for(&h, 0x8000, 0x0800, &size);
+    CHECK(image != NULL);
+    memset(image + sizeof(h) + 0x8000, 0xA4, 0x0800);
+    CHECK(load_rom_memory(image, size) == 0);
+    free(image);
+    cart_cpu_write(0x8000, 0x11);
+    CHECK(cart_ppu_read(0x0123) == 0xA4 && cart_ppu_read(0x0923) == 0x23);
+    cart_cpu_write(0x8000, 0x10);
+    CHECK(cart_ppu_read(0x0123) == 0x23);
+
+    // A small RAM chip initially aliases throughout both pattern tables. An
+    // enable write retains that mapping; disabling it removes every alias.
+    h = header_for(93, 0x8000, true);
+    h.flags7 |= 8;
+    h.zero[0] = 3;
+    image = image_for(&h, 0x8000, 0, &size);
+    CHECK(image != NULL && load_rom_memory(image, size) == 0);
+    free(image);
+    cart_ppu_write(0x1F23, 0x5A);
+    CHECK(cart_ppu_read(0x0123) == 0x5A && cart_ppu_read(0x1F23) == 0x5A);
+    cart_cpu_write(0x8000, 1);
+    cart_ppu_write(0x1F23, 0xA5);
+    CHECK(cart_ppu_read(0x0123) == 0xA5 && cart_ppu_read(0x1F23) == 0xA5);
+    cart_cpu_write(0x8000, 0);
+    cart_ppu_write(0x1F23, 0xEE);
+    CHECK(cart_ppu_read(0x0123) == 0x23 && cart_ppu_read(0x1F23) == 0x23);
+    cart_cpu_write(0x8000, 1);
+    CHECK(cart_ppu_read(0x0123) == 0xA5 && cart_ppu_read(0x1F23) == 0x23);
+    cart_ppu_write(0x1F23, 0xEE);
+    CHECK(cart_ppu_read(0x0123) == 0xA5);
+    ppu_power_on(&ppu);
+    CHECK(cpu_power_on(&cpu));
+    cpu_soft_reset(&cpu);
+    CHECK(cart_ppu_read(0x0123) == 0xA5 && cart_ppu_read(0x1F23) == 0x23);
+
+    // Mapper 184 exposes two 4 KiB slots. A 2 KiB image shrinks both to 2 KiB,
+    // so a register write maps $0000-$0FFF and leaves $1000-$1FFF open.
+    h = header_for(184, 0x8000, false);
+    h.flags7 |= 0x08;
+    h.chr_rom_chunks = 0x2C;
+    h.flags9 = 0xF0;
+    image = image_for(&h, 0x8000, 0x0800, &size);
+    CHECK(image != NULL);
+    memset(image + sizeof(h) + 0x8000, 0xB5, 0x0800);
+    CHECK(load_rom_memory(image, size) == 0);
+    free(image);
+    CHECK(cart_ppu_read(0x0123) == 0x23);
+    cart_cpu_write(0x6000, 0x31);
+    CHECK(cart_ppu_read(0x0123) == 0xB5 && cart_ppu_read(0x0923) == 0xB5);
+    CHECK(cart_ppu_read(0x1123) == 0x23);
     return 0;
 }
 
@@ -9771,7 +9913,8 @@ int test_mapper_accuracy(void) {
         test_sunsoft3_banks_mirroring_and_irq, test_sunsoft3_cpu_irq_and_loader,
         test_sunsoft4_banks_nametables_and_timer, test_sunsoft4_chr_ram_persistence_and_loader,
         test_sunsoft4_cpu_licensed_reads,
-        test_sunsoft_discrete_boards, test_sunsoft_discrete_loader_rejection,
+        test_sunsoft_discrete_boards, test_sunsoft_shrunk_chr_pages,
+        test_sunsoft_discrete_loader_rejection,
         test_sunsoft_discrete_image_loading, test_sunsoft184_inherited_ram_reads,
         test_taito_x1005_and_207, test_taito_x1017_banks_chr_and_ram,
         test_taito_x1_persistence_and_loader,

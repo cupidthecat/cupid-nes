@@ -676,12 +676,36 @@ static size_t mapper_chr_page_size(uint16_t mapper_no) {
 
 static bool mapper_has_shrinking_chr_window(uint16_t mapper_no) {
     switch (mapper_no) {
-        case 0: case 2: case 11: case 69: case 79: case 94: case 113:
-        case 144: case 146: case 180:
+        case 0: case 2: case 11: case 67: case 68: case 69: case 79: case 89:
+        case 93: case 94: case 113: case 144: case 146: case 180: case 184:
             return true;
         default:
             return false;
     }
+}
+
+static size_t shrunk_chr_page_size(size_t native_page_size) {
+    if (!C.chr_sz) return 0;
+    return C.chr_sz < native_page_size ? C.chr_sz : native_page_size;
+}
+
+static bool chr_bank_slot_offset(uint16_t address, size_t native_page_size,
+                                 unsigned slot_count, const uint8_t *banks,
+                                 size_t *offset) {
+    size_t page_size = shrunk_chr_page_size(native_page_size);
+    if (!page_size || !banks || !offset) return false;
+    size_t slot = (address & 0x1FFFu) / page_size;
+    if (slot >= slot_count) return false;
+    size_t page_count = C.chr_sz / page_size;
+    if (!page_count) return false;
+    *offset = ((size_t)banks[slot] % page_count) * page_size
+            + ((address & 0x1FFFu) % page_size);
+    return true;
+}
+
+static uint8_t chr_unmapped_read(uint16_t address) {
+    address &= 0x1FFFu;
+    return C.chr_is_ram ? C.chr[address % C.chr_sz] : (uint8_t)address;
 }
 
 static bool small_prg_window_read(uint16_t address, uint8_t *value) {
@@ -1534,28 +1558,28 @@ static void sunsoft3_cpu_write(uint16_t a, uint8_t value) {
     }
 }
 
-static size_t sunsoft3_chr_offset(uint16_t a) {
-    unsigned slot = (a >> 11) & 3u;
-    size_t banks = C.chr_sz / 0x0800u;
-    size_t bank = sunsoft3.chr[slot] % banks;
-    return bank * 0x0800u + (a & 0x07FFu);
-}
-
 static uint8_t sunsoft3_ppu_read(uint16_t a) {
     a &= 0x1FFFu;
-    unsigned slot = a >> 11;
-    if (!sunsoft3.chr_mapped[slot]) {
-        if (!C.chr_is_ram) return (uint8_t)a;
-        return C.chr[a % C.chr_sz];
+    size_t page_size = shrunk_chr_page_size(CHR_BANK_2K);
+    unsigned slot = page_size ? (unsigned)(a / page_size) : 4u;
+    if (slot >= 4 || !sunsoft3.chr_mapped[slot]) return chr_unmapped_read(a);
+    size_t offset;
+    if (!chr_bank_slot_offset(a, CHR_BANK_2K, 4, sunsoft3.chr, &offset)) {
+        return chr_unmapped_read(a);
     }
-    return C.chr[sunsoft3_chr_offset(a)];
+    return C.chr[offset];
 }
 
 static void sunsoft3_ppu_write(uint16_t a, uint8_t value) {
     if (!C.chr_is_ram) return;
     a &= 0x1FFFu;
-    unsigned slot = a >> 11;
-    size_t offset = sunsoft3.chr_mapped[slot] ? sunsoft3_chr_offset(a) : (a % C.chr_sz);
+    size_t page_size = shrunk_chr_page_size(CHR_BANK_2K);
+    unsigned slot = page_size ? (unsigned)(a / page_size) : 4u;
+    size_t offset;
+    if (slot >= 4 || !sunsoft3.chr_mapped[slot]
+        || !chr_bank_slot_offset(a, CHR_BANK_2K, 4, sunsoft3.chr, &offset)) {
+        offset = a % C.chr_sz;
+    }
     chr_ram_write(offset, value);
 }
 
@@ -1653,28 +1677,28 @@ static void sunsoft4_cpu_write(uint16_t a, uint8_t value) {
     }
 }
 
-static size_t sunsoft4_chr_offset(uint16_t a) {
-    unsigned slot = (a >> 11) & 3u;
-    size_t banks = C.chr_sz / 0x0800u;
-    size_t bank = sunsoft4.chr[slot] % banks;
-    return bank * 0x0800u + (a & 0x07FFu);
-}
-
 static uint8_t sunsoft4_ppu_read(uint16_t a) {
     a &= 0x1FFFu;
-    unsigned slot = a >> 11;
-    if (!sunsoft4.chr_mapped[slot]) {
-        if (!C.chr_is_ram) return (uint8_t)a;
-        return C.chr[a % C.chr_sz];
+    size_t page_size = shrunk_chr_page_size(CHR_BANK_2K);
+    unsigned slot = page_size ? (unsigned)(a / page_size) : 4u;
+    if (slot >= 4 || !sunsoft4.chr_mapped[slot]) return chr_unmapped_read(a);
+    size_t offset;
+    if (!chr_bank_slot_offset(a, CHR_BANK_2K, 4, sunsoft4.chr, &offset)) {
+        return chr_unmapped_read(a);
     }
-    return C.chr[sunsoft4_chr_offset(a)];
+    return C.chr[offset];
 }
 
 static void sunsoft4_ppu_write(uint16_t a, uint8_t value) {
     if (!C.chr_is_ram) return;
     a &= 0x1FFFu;
-    unsigned slot = a >> 11;
-    size_t offset = sunsoft4.chr_mapped[slot] ? sunsoft4_chr_offset(a) : (a % C.chr_sz);
+    size_t page_size = shrunk_chr_page_size(CHR_BANK_2K);
+    unsigned slot = page_size ? (unsigned)(a / page_size) : 4u;
+    size_t offset;
+    if (slot >= 4 || !sunsoft4.chr_mapped[slot]
+        || !chr_bank_slot_offset(a, CHR_BANK_2K, 4, sunsoft4.chr, &offset)) {
+        offset = a % C.chr_sz;
+    }
     chr_ram_write(offset, value);
 }
 
@@ -1733,10 +1757,12 @@ static void sunsoft89_cpu_write(uint16_t a, uint8_t value) {
 
 static uint8_t sunsoft89_ppu_read(uint16_t a) {
     a &= 0x1FFFu;
-    if (!sunsoft89.mapped) return C.chr_is_ram ? C.chr[a % C.chr_sz] : (uint8_t)a;
-    size_t banks = C.chr_sz / CHR_BANK_8K;
+    if (!sunsoft89.mapped) return chr_unmapped_read(a);
+    size_t page_size = shrunk_chr_page_size(CHR_BANK_8K);
+    if (!page_size || a >= page_size) return chr_unmapped_read(a);
+    size_t banks = C.chr_sz / page_size;
     size_t bank = sunsoft89.chr_bank % banks;
-    return C.chr[bank * CHR_BANK_8K + a];
+    return C.chr[bank * page_size + a];
 }
 
 static void sunsoft89_ppu_write(uint16_t a, uint8_t value) {
@@ -1744,8 +1770,11 @@ static void sunsoft89_ppu_write(uint16_t a, uint8_t value) {
     a &= 0x1FFFu;
     size_t offset = a % C.chr_sz;
     if (sunsoft89.mapped) {
-        size_t bank = sunsoft89.chr_bank % (C.chr_sz / CHR_BANK_8K);
-        offset = bank * CHR_BANK_8K + a;
+        size_t page_size = shrunk_chr_page_size(CHR_BANK_8K);
+        if (page_size && a < page_size) {
+            size_t bank = sunsoft89.chr_bank % (C.chr_sz / page_size);
+            offset = bank * page_size + a;
+        }
     }
     chr_ram_write(offset, value);
 }
@@ -1757,6 +1786,7 @@ static struct {
     uint8_t prg_bank;
     bool prg_mapped;
     bool chr_enabled;
+    bool chr_startup_aliases;
 } sunsoft93;
 
 static uint8_t sunsoft93_cpu_read(uint16_t a) {
@@ -1776,22 +1806,33 @@ static void sunsoft93_cpu_write(uint16_t a, uint8_t value) {
     sunsoft93.prg_bank = (value >> 4) & 7u;
     sunsoft93.prg_mapped = true;
     sunsoft93.chr_enabled = (value & 1u) != 0;
+    if (!sunsoft93.chr_enabled) sunsoft93.chr_startup_aliases = false;
 }
 
 static uint8_t sunsoft93_ppu_read(uint16_t a) {
     a &= 0x1FFFu;
     if (!sunsoft93.chr_enabled) return (uint8_t)a;
-    return C.chr[a % C.chr_sz];
+    if (sunsoft93.chr_startup_aliases) return C.chr[a % C.chr_sz];
+    size_t page_size = shrunk_chr_page_size(CHR_BANK_8K);
+    return page_size && a < page_size ? C.chr[a] : (uint8_t)a;
 }
 
 static void sunsoft93_ppu_write(uint16_t a, uint8_t value) {
-    if (sunsoft93.chr_enabled) chr_ram_write((a & 0x1FFFu) % C.chr_sz, value);
+    a &= 0x1FFFu;
+    size_t page_size = shrunk_chr_page_size(CHR_BANK_8K);
+    if (sunsoft93.chr_startup_aliases) {
+        chr_ram_write(a % C.chr_sz, value);
+        return;
+    }
+    if (sunsoft93.chr_enabled && C.chr_is_ram && page_size && a < page_size)
+        chr_ram_write(a, value);
 }
 
 static Mirroring sunsoft93_mirr(void) { return C.mirr_base; }
 static void sunsoft93_reset(void) {
     memset(&sunsoft93, 0, sizeof(sunsoft93));
     sunsoft93.chr_enabled = C.chr_is_ram;
+    sunsoft93.chr_startup_aliases = C.chr_is_ram;
 }
 
 static struct { uint8_t chr[2]; bool mapped; } sunsoft184;
@@ -1809,22 +1850,24 @@ static void sunsoft184_cpu_write(uint16_t a, uint8_t value) {
     sunsoft184.mapped = true;
 }
 
-static size_t sunsoft184_chr_offset(uint16_t a) {
-    unsigned slot = (a >> 12) & 1u;
-    size_t bank = sunsoft184.chr[slot] % (C.chr_sz / CHR_BANK_4K);
-    return bank * CHR_BANK_4K + (a & 0x0FFFu);
-}
-
 static uint8_t sunsoft184_ppu_read(uint16_t a) {
     a &= 0x1FFFu;
-    if (!sunsoft184.mapped) return C.chr_is_ram ? C.chr[a % C.chr_sz] : (uint8_t)a;
-    return C.chr[sunsoft184_chr_offset(a)];
+    if (!sunsoft184.mapped) return chr_unmapped_read(a);
+    size_t offset;
+    if (!chr_bank_slot_offset(a, CHR_BANK_4K, 2, sunsoft184.chr, &offset))
+        return chr_unmapped_read(a);
+    return C.chr[offset];
 }
 
 static void sunsoft184_ppu_write(uint16_t a, uint8_t value) {
     if (!C.chr_is_ram) return;
     a &= 0x1FFFu;
-    chr_ram_write(sunsoft184.mapped ? sunsoft184_chr_offset(a) : a % C.chr_sz, value);
+    size_t offset;
+    if (!sunsoft184.mapped
+        || !chr_bank_slot_offset(a, CHR_BANK_4K, 2, sunsoft184.chr, &offset)) {
+        offset = a % C.chr_sz;
+    }
+    chr_ram_write(offset, value);
 }
 
 static Mirroring sunsoft184_mirr(void) { return C.mirr_base; }
@@ -4120,8 +4163,9 @@ uint8_t cart_nt_read(uint16_t addr, uint8_t *nt_ram) {
     if (cart == &mapper_sunsoft4 && sunsoft4.use_chr_nt) {
         uint16_t off = (uint16_t)((addr - 0x2000u) & 0x0FFFu);
         unsigned nt = (off >> 10) & 3u;
-        size_t bank = sunsoft4.nt[sunsoft4_nt_reg(nt)] % (C.chr_sz / CHR_BANK_1K);
-        return C.chr[bank * CHR_BANK_1K + (off & 0x03FFu)];
+        size_t base = ((size_t)sunsoft4.nt[sunsoft4_nt_reg(nt)] * CHR_BANK_1K) % C.chr_sz;
+        size_t in = off & 0x03FFu;
+        return base + in < C.chr_sz ? C.chr[base + in] : (uint8_t)addr;
     }
     if (cart == &mapper_taito_x1005 && C.mapper_no == 207) {
         uint16_t off = (uint16_t)((addr - 0x2000u) & 0x0FFFu);
@@ -4225,8 +4269,9 @@ void cart_nt_write(uint16_t addr, uint8_t v, uint8_t *nt_ram) {
         if (!C.chr_is_ram) return;
         uint16_t off = (uint16_t)((addr - 0x2000u) & 0x0FFFu);
         unsigned nt = (off >> 10) & 3u;
-        size_t bank = sunsoft4.nt[sunsoft4_nt_reg(nt)] % (C.chr_sz / CHR_BANK_1K);
-        chr_ram_write(bank * CHR_BANK_1K + (off & 0x03FFu), v);
+        size_t base = ((size_t)sunsoft4.nt[sunsoft4_nt_reg(nt)] * CHR_BANK_1K) % C.chr_sz;
+        size_t in = off & 0x03FFu;
+        if (base + in < C.chr_sz) chr_ram_write(base + in, v);
         return;
     }
     if (cart == &mapper_taito_x1005 && C.mapper_no == 207) {
@@ -7165,24 +7210,8 @@ int mapper_init_from_header(const iNESHeader *h,
         fprintf(stderr, "Unsupported ROM size for mapper %d\n", mapper_no);
         return -1;
     }
-    if (mapper_no == 67
-        && chr_sz < CHR_BANK_2K) {
-        fprintf(stderr, "Unsupported ROM/RAM size for mapper 67\n");
-        return -1;
-    }
-    if (mapper_no == 68
-        && (chr_sz < CHR_BANK_2K || (h->flags6 & 0x08))) {
+    if (mapper_no == 68 && (h->flags6 & 0x08)) {
         fprintf(stderr, "Unsupported ROM/RAM size for mapper 68\n");
-        return -1;
-    }
-    if ((mapper_no == 89 || mapper_no == 93)
-        && chr_sz < CHR_BANK_8K) {
-        fprintf(stderr, "Unsupported ROM/RAM size for mapper %d\n", mapper_no);
-        return -1;
-    }
-    if (mapper_no == 184
-        && chr_sz < CHR_BANK_4K) {
-        fprintf(stderr, "Unsupported ROM/RAM size for mapper 184\n");
         return -1;
     }
     if (mapper_no == 85 && chr_sz < CHR_BANK_1K) {
