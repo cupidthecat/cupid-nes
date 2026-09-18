@@ -994,6 +994,47 @@ static void m96_ppu_write(uint16_t a, uint8_t v) {
 static Mirroring m96_mirr(void) { return C.mirr_base; }
 static void m96_reset(void) { memset(&m96, 0, sizeof(m96)); }
 
+// Discrete boards select complete PRG/CHR pages. Trailing partial pages are not
+// folded into a selected bank. A PRG image smaller than a 32 KiB window is
+// repeated only as many whole copies as fit in that window.
+static uint8_t discrete_prg32_read(uint16_t a, uint8_t bank) {
+    if (a < 0x8000) return cart_cpu_bus_input;
+    size_t offset = a - 0x8000u;
+    if (C.prg_sz < PRG_BANK_32K) {
+        size_t mapped = (PRG_BANK_32K / C.prg_sz) * C.prg_sz;
+        if (offset >= mapped) return cart_cpu_bus_input;
+        return C.prg[offset % C.prg_sz];
+    }
+    size_t banks = C.prg_sz / PRG_BANK_32K;
+    if (!banks) return cart_cpu_bus_input;
+    return C.prg[(bank % banks) * PRG_BANK_32K + offset];
+}
+
+static uint8_t discrete_chr8_read(uint16_t a, uint8_t bank) {
+    a &= 0x1FFFu;
+    if (C.chr_sz < CHR_BANK_8K) {
+        // CHR RAM is mapped across the full pattern-table window before mapper
+        // initialization. A smaller CHR ROM leaves the upper addresses open.
+        if (C.chr_is_ram) return C.chr[a % C.chr_sz];
+        return a < C.chr_sz ? C.chr[a] : (uint8_t)a;
+    }
+    size_t banks = C.chr_sz / CHR_BANK_8K;
+    if (!banks) return (uint8_t)a;
+    return C.chr[(bank % banks) * CHR_BANK_8K + a];
+}
+
+static void discrete_chr8_write(uint16_t a, uint8_t bank, uint8_t value) {
+    if (!C.chr_is_ram) return;
+    a &= 0x1FFFu;
+    if (C.chr_sz < CHR_BANK_8K) {
+        chr_ram_write(a % C.chr_sz, value);
+        return;
+    }
+    size_t banks = C.chr_sz / CHR_BANK_8K;
+    if (!banks) return;
+    chr_ram_write((bank % banks) * CHR_BANK_8K + a, value);
+}
+
 // UxROM and the mapper 94/180 register-wiring variants.
 static struct { uint8_t bank; } ux;
 static uint8_t uxrom_cpu_read(uint16_t a) {
@@ -1014,8 +1055,8 @@ static void uxrom_cpu_write(uint16_t a, uint8_t v) {
     if (a >= 0x6000 && a <= 0x7FFF) { prg_ram_write(a, v); return; }
     if (a >= 0x8000) ux.bank = C.mapper_no == 94 ? (v >> 2) & 7 : v;
 }
-static uint8_t uxrom_ppu_read(uint16_t a) { return nrom_ppu_read(a); }
-static void uxrom_ppu_write(uint16_t a, uint8_t v) { nrom_ppu_write(a, v); }
+static uint8_t uxrom_ppu_read(uint16_t a) { return discrete_chr8_read(a, 0); }
+static void uxrom_ppu_write(uint16_t a, uint8_t v) { discrete_chr8_write(a, 0, v); }
 static Mirroring uxrom_mirr(void) { return C.mirr_base; }
 static void uxrom_reset(void) { ux.bank = 0; }
 
@@ -4886,11 +4927,7 @@ static struct {
 
 static uint8_t colordreams_cpu_read(uint16_t a) {
     if (a >= 0x6000 && a <= 0x7FFF) return prg_ram_read(a);
-    if (a >= 0x8000) {
-        size_t banks = C.prg_sz / PRG_BANK_32K;
-        size_t bank = (banks > 0) ? (colordreams.prg_bank % banks) : 0;
-        return C.prg[(bank * PRG_BANK_32K + (a - 0x8000)) % C.prg_sz];
-    }
+    if (a >= 0x8000) return discrete_prg32_read(a, colordreams.prg_bank);
     return cart_cpu_bus_input;
 }
 
@@ -4904,20 +4941,11 @@ static void colordreams_cpu_write(uint16_t a, uint8_t v) {
 }
 
 static uint8_t colordreams_ppu_read(uint16_t a) {
-    a &= 0x1FFF;
-    size_t banks = C.chr_sz / CHR_BANK_8K;
-    if (banks == 0) return nrom_ppu_read(a);
-    size_t bank = colordreams.chr_bank % banks;
-    return C.chr[bank * CHR_BANK_8K + a];
+    return discrete_chr8_read(a, colordreams.chr_bank);
 }
 
 static void colordreams_ppu_write(uint16_t a, uint8_t v) {
-    if (!C.chr_is_ram) return;
-    a &= 0x1FFF;
-    size_t banks = C.chr_sz / CHR_BANK_8K;
-    if (banks == 0) { nrom_ppu_write(a, v); return; }
-    size_t bank = colordreams.chr_bank % banks;
-    chr_ram_write(bank * CHR_BANK_8K + a, v);
+    discrete_chr8_write(a, colordreams.chr_bank, v);
 }
 
 static Mirroring colordreams_mirr(void) { return C.mirr_base; }
@@ -4934,10 +4962,7 @@ static struct {
 
 static uint8_t nina_cpu_read(uint16_t a) {
     if (a >= 0x6000 && a <= 0x7FFF) return prg_ram_read(a);
-    if (a >= 0x8000) {
-        size_t offset = (size_t)nina.prg_bank * PRG_BANK_32K + (a & 0x7FFFu);
-        return C.prg[offset % C.prg_sz];
-    }
+    if (a >= 0x8000) return discrete_prg32_read(a, nina.prg_bank);
     return cart_cpu_bus_input;
 }
 
@@ -4957,13 +4982,11 @@ static void nina_cpu_write(uint16_t a, uint8_t v) {
 }
 
 static uint8_t nina_ppu_read(uint16_t a) {
-    size_t offset = (size_t)nina.chr_bank * CHR_BANK_8K + (a & 0x1FFFu);
-    return C.chr[offset % C.chr_sz];
+    return discrete_chr8_read(a, nina.chr_bank);
 }
 
 static void nina_ppu_write(uint16_t a, uint8_t v) {
-    size_t offset = (size_t)nina.chr_bank * CHR_BANK_8K + (a & 0x1FFFu);
-    chr_ram_write(offset % C.chr_sz, v);
+    discrete_chr8_write(a, nina.chr_bank, v);
 }
 
 static Mirroring nina_mirr(void) { return nina.mirr; }
@@ -6748,7 +6771,10 @@ int mapper_init_from_header(const iNESHeader *h,
             fprintf(stderr, "Unsupported mapper: %d\n", mapper_no);
             return -1;
     }
-    if (submapper && !((mapper_no == 1 && submapper == 5)
+    bool ignores_submapper = mapper_no == 79 || mapper_no == 94 || mapper_no == 113
+        || mapper_no == 144 || mapper_no == 146 || mapper_no == 180;
+    if (submapper && !(ignores_submapper
+        || (mapper_no == 1 && submapper == 5)
         || vrc24_submapper_supported(mapper_no, submapper)
         || (mapper_no == 85 && submapper <= 2)
         || (mapper_no == 4 && (submapper == 1 || submapper == 3))
@@ -6852,21 +6878,6 @@ int mapper_init_from_header(const iNESHeader *h,
             || chr_is_ram || chr_sz != CHR_BANK_8K)) {
         fprintf(stderr, "Unsupported ROM/RAM size for mapper 185\n");
         return -1;
-    }
-    if ((mapper_no == 94 || mapper_no == 180)
-        && (prg_sz > (mapper_no == 94 ? 0x20000u : 0x400000u)
-            || prg_sz % PRG_BANK_16K != 0 || chr_sz != CHR_BANK_8K)) {
-        fprintf(stderr, "Unsupported ROM/RAM size for mapper %d\n", mapper_no);
-        return -1;
-    }
-    if (mapper_no == 79 || mapper_no == 113 || mapper_no == 144 || mapper_no == 146) {
-        size_t prg_limit = mapper_no == 113 ? 0x40000u : mapper_no == 144 ? 0x80000u : 0x10000u;
-        size_t chr_limit = mapper_no == 113 || mapper_no == 144 ? 0x20000u : 0x10000u;
-        if (prg_sz > prg_limit || (prg_sz != PRG_BANK_16K && prg_sz % PRG_BANK_32K != 0)
-            || chr_sz > chr_limit || chr_sz % CHR_BANK_8K != 0) {
-            fprintf(stderr, "Unsupported ROM/RAM size for mapper %d\n", mapper_no);
-            return -1;
-        }
     }
     if ((mapper_no == 64 || mapper_no == 158)
         && (prg_sz > 0x200000 || prg_sz % PRG_BANK_8K != 0

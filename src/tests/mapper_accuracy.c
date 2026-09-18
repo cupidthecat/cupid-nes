@@ -8874,8 +8874,18 @@ static int test_discrete_followup_loader_and_ram(void) {
             Mapper *previous = cart;
             iNESHeader active = ines_header;
             CHECK(load_rom_memory(image, size - 1) == -1);
-            image[7] |= 8;
-            image[8] = 0x10;
+            uint8_t signature = image[0];
+            image[0] = 0;
+            CHECK(load_rom_memory(image, size) == -1);
+            image[0] = signature;
+            iNESHeader unsupported_ram = h;
+            unsupported_ram.flags7 |= 8;
+            unsupported_ram.flags6 |= 2;
+            unsupported_ram.flags10 = 0x77;
+            memcpy(image, &unsupported_ram, sizeof(unsupported_ram));
+            // Separate work/save RAM chips remain an implementation limit for
+            // these boards; keep that rejection transactional until RAM
+            // representation and persistence ordering are handled together.
             CHECK(load_rom_memory(image, size) == -1);
             free(image);
             CHECK(cart == previous && memcmp(&active, &ines_header, sizeof(active)) == 0);
@@ -8918,24 +8928,183 @@ static int test_mapper180_full_prg_range(void) {
     return 0;
 }
 
-static int test_discrete_followup_loader_limits(void) {
-    static const struct { unsigned mapper; size_t prg_max, chr_max; } boards[] = {
-        {79, 0x10000, 0x10000}, {94, 0x20000, 0x2000}, {113, 0x40000, 0x20000},
-        {144, 0x80000, 0x20000}, {146, 0x10000, 0x10000}, {180, 0x400000, 0x2000}
+static int test_discrete_followup_page_geometry(void) {
+    // NES 2.0 exponent sizes: 48 KiB PRG and 12 KiB CHR. Both contain one
+    // complete mapper page plus a trailing partial page, which is not selected.
+    const unsigned paged_boards[] = {79, 11, 144};
+    for (size_t board = 0; board < sizeof(paged_boards) / sizeof(paged_boards[0]); ++board) {
+        unsigned mapper = paged_boards[board];
+        iNESHeader h = header_for(mapper, 0x8000, false);
+        h.flags7 |= 8;
+        h.prg_rom_chunks = 0x39; // 3 * 2^14 = 48 KiB.
+        h.chr_rom_chunks = 0x31; // 3 * 2^12 = 12 KiB.
+        h.flags9 = 0xFF;
+        size_t size;
+        uint8_t *image = image_for(&h, 0xC000, 0x3000, &size);
+        CHECK(image != NULL);
+        uint8_t *prg = image + sizeof(h);
+        uint8_t *chr = prg + 0xC000;
+        memset(prg, 0x21, 0x8000);
+        memset(prg + 0x8000, 0x42, 0x4000);
+        memset(chr, 0x31, 0x2000);
+        memset(chr + 0x2000, 0x62, 0x1000);
+        if (mapper == 11 || mapper == 144) prg[0x123] = 0xFF;
+        CHECK(load_rom_memory(image, size) == 0);
+        free(image);
+        ppu_power_on(&ppu);
+        apu_power_on(&apu);
+        CHECK(cpu_power_on(&cpu));
+        if (mapper == 79) {
+            CHECK(discrete_cpu_store(0x4100, 0x09) == 0);
+        } else {
+            CHECK(discrete_cpu_store(0x8123, 0x11) == 0);
+        }
+        CHECK(discrete_cpu_load(0x8100, 0x21) == 0);
+        CHECK(discrete_cpu_load(0xC100, 0x21) == 0);
+        CHECK(ppu_read(0x0123) == 0x31 && ppu_read(0x1123) == 0x31);
+        CHECK(unload_rom());
+    }
+
+    // A 24 KiB PRG image is smaller than NINA's 32 KiB window. One whole
+    // copy maps at $8000-$DFFF and the remaining $E000-$FFFF stays open bus.
+    // A smaller CHR ROM maps its physical bytes and leaves the upper range open.
+    iNESHeader h = header_for(79, 0x8000, false);
+    h.flags7 |= 8;
+    h.prg_rom_chunks = 0x35; // 3 * 2^13 = 24 KiB.
+    h.chr_rom_chunks = 0x30; // 1 * 2^12 = 4 KiB.
+    h.flags9 = 0xFF;
+    size_t size;
+    uint8_t *image = image_for(&h, 0x6000, 0x1000, &size);
+    CHECK(image != NULL);
+    memset(image + sizeof(h), 0x52, 0x6000);
+    memset(image + sizeof(h) + 0x6000, 0x64, 0x1000);
+    CHECK(load_rom_memory(image, size) == 0);
+    free(image);
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    CHECK(cpu_power_on(&cpu));
+    CHECK(discrete_cpu_load(0x8100, 0x52) == 0);
+    CHECK(discrete_cpu_load(0xC100, 0x52) == 0);
+    CHECK(discrete_cpu_load(0xE100, 0xE1) == 0);
+    CHECK(ppu_read(0x0123) == 0x64 && ppu_read(0x1123) == 0x23);
+    CHECK(unload_rom());
+
+    // Exactly 16 KiB is mirrored twice across a 32 KiB NINA PRG window.
+    h = header_for(79, 0x8000, false);
+    h.flags7 |= 8;
+    h.prg_rom_chunks = 0x38; // 1 * 2^14 = 16 KiB.
+    h.chr_rom_chunks = 0x30;
+    h.flags9 = 0xFF;
+    image = image_for(&h, 0x4000, 0x1000, &size);
+    CHECK(image != NULL);
+    memset(image + sizeof(h), 0x71, 0x4000);
+    memset(image + sizeof(h) + 0x4000, 0x83, 0x1000);
+    CHECK(load_rom_memory(image, size) == 0);
+    free(image);
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    CHECK(cpu_power_on(&cpu));
+    CHECK(discrete_cpu_load(0x8100, 0x71) == 0);
+    CHECK(discrete_cpu_load(0xC100, 0x71) == 0);
+    CHECK(ppu_read(0x0123) == 0x83 && ppu_read(0x1123) == 0x23);
+    CHECK(unload_rom());
+
+    // UxROM variants use the same smaller-CHR-ROM mapping rule.
+    h = header_for(94, 0x8000, false);
+    h.flags7 |= 8;
+    h.prg_rom_chunks = 0x38;
+    h.chr_rom_chunks = 0x30;
+    h.flags9 = 0xFF;
+    image = image_for(&h, 0x4000, 0x1000, &size);
+    CHECK(image != NULL);
+    memset(image + sizeof(h), 0x91, 0x4000);
+    memset(image + sizeof(h) + 0x4000, 0xA3, 0x1000);
+    CHECK(load_rom_memory(image, size) == 0);
+    free(image);
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    CHECK(cpu_power_on(&cpu));
+    CHECK(discrete_cpu_load(0x8100, 0x91) == 0);
+    CHECK(discrete_cpu_load(0xC100, 0x91) == 0);
+    CHECK(ppu_read(0x0123) == 0xA3 && ppu_read(0x1123) == 0x23);
+    CHECK(unload_rom());
+
+    // Oversized images are accepted; address lines simply cannot select every
+    // complete page. Mapper 113 reaches its normal bank range within the image.
+    h = header_for(113, 0x80000, false);
+    h.flags7 |= 8;
+    h.chr_rom_chunks = 32;
+    image = image_for(&h, 0x80000, 0x40000, &size);
+    CHECK(image != NULL);
+    uint8_t *oversized_prg = image + sizeof(h);
+    uint8_t *oversized_chr = oversized_prg + 0x80000;
+    for (unsigned bank = 0; bank < 16; ++bank)
+        memset(oversized_prg + bank * 0x8000, 0x40 + bank, 0x8000);
+    for (unsigned bank = 0; bank < 32; ++bank)
+        memset(oversized_chr + bank * 0x2000, 0x80 + bank, 0x2000);
+    CHECK(load_rom_memory(image, size) == 0);
+    free(image);
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    CHECK(cpu_power_on(&cpu));
+    CHECK(discrete_cpu_store(0x4100, 0x7F) == 0);
+    CHECK(discrete_cpu_load(0x8100, 0x47) == 0);
+    CHECK(ppu_read(0x0123) == 0x8F);
+    CHECK(unload_rom());
+
+    // Each newly added board accepts ROMs beyond the former artificial cap.
+    // Banking still exposes only the pages its address lines can select.
+    static const struct {
+        unsigned mapper;
+        size_t prg_bytes;
+        size_t chr_bytes;
+    } oversized[] = {
+        {79,  0x18000,  0x12000},
+        {94,  0x28000,  0x04000},
+        {113, 0x80000,  0x40000},
+        {144, 0x100000, 0x40000},
+        {146, 0x18000,  0x12000},
+        {180, 0x440000, 0x04000}
     };
-    CHECK(fixture(0, 0x8000, 0x2000, false) == 0);
-    cart_cpu_write(0x6000, 0xA6);
-    Mapper *previous = cart;
+    for (size_t i = 0; i < sizeof(oversized) / sizeof(oversized[0]); ++i) {
+        h = header_for(oversized[i].mapper, 0x8000, false);
+        h.flags7 |= 8;
+        size_t prg_units = oversized[i].prg_bytes / 0x4000;
+        h.prg_rom_chunks = (uint8_t)prg_units;
+        h.chr_rom_chunks = (uint8_t)(oversized[i].chr_bytes / 0x2000);
+        h.flags9 = (uint8_t)((prg_units >> 8) & 0x0F);
+        image = image_for(&h, oversized[i].prg_bytes, oversized[i].chr_bytes, &size);
+        CHECK(image != NULL);
+        CHECK(load_rom_memory(image, size) == 0);
+        free(image);
+        ppu_power_on(&ppu);
+        apu_power_on(&apu);
+        CHECK(cpu_power_on(&cpu));
+        CHECK(discrete_cpu_load(0x8100, 0x5C) == 0);
+        CHECK(ppu_read(0x0123) == 0xA5);
+        CHECK(unload_rom());
+    }
+    return 0;
+}
+
+static int test_discrete_followup_ignored_submappers(void) {
+    const unsigned boards[] = {79, 94, 113, 144, 146, 180};
     for (size_t i = 0; i < sizeof(boards) / sizeof(boards[0]); ++i) {
-        iNESHeader h = header_for(boards[i].mapper, 0x8000, false);
-        // Invalid dimensions must be rejected before accessing these borrowed buffers.
-        CHECK(mapper_init_from_header(&h, fixture_prg, boards[i].prg_max + 0x4000,
-                                      fixture_chr, 0x2000) == -1);
-        CHECK(mapper_init_from_header(&h, fixture_prg, 0x6000, fixture_chr, 0x2000) == -1);
-        CHECK(mapper_init_from_header(&h, fixture_prg, 0x8000,
-                                      fixture_chr, boards[i].chr_max + 0x2000) == -1);
-        CHECK(mapper_init_from_header(&h, fixture_prg, 0x8000, fixture_chr, 0x2800) == -1);
-        CHECK(cart == previous && cart_cpu_read(0x6000) == 0xA6);
+        iNESHeader h = header_for(boards[i], 0x8000, false);
+        h.flags7 |= 8;
+        h.prg_ram_size = 0xF0;
+        size_t size;
+        uint8_t *image = image_for(&h, 0x8000, 0x2000, &size);
+        CHECK(image != NULL);
+        CHECK(load_rom_memory(image, size) == 0);
+        free(image);
+        CHECK(rom_mapper_number(&ines_header) == (int)boards[i]);
+        ppu_power_on(&ppu);
+        apu_power_on(&apu);
+        CHECK(cpu_power_on(&cpu));
+        CHECK(discrete_cpu_load(0x8100, 0x5C) == 0);
+        CHECK(ppu_read(0x0123) == 0xA5);
+        CHECK(unload_rom());
     }
     return 0;
 }
@@ -9049,7 +9218,7 @@ int test_mapper_accuracy(void) {
         test_colordreams_high_banks_and_mapper144, test_unrom94_180_cpu_banks,
         test_nina_cpu_decode_and_mirroring, test_nina_chr_ram_banks,
         test_discrete_followup_loader_and_ram, test_mapper180_full_prg_range,
-        test_discrete_followup_loader_limits,
+        test_discrete_followup_page_geometry, test_discrete_followup_ignored_submappers,
         test_discrete_followup_saves,
         test_mapper15_modes, test_action53_banks_and_mirroring,
         test_action53_game_sizes, test_action53_largest_image,
