@@ -6269,6 +6269,116 @@ static int test_sunsoft4_cpu_licensed_reads(void) {
     return 0;
 }
 
+static int test_sunsoft_discrete_boards(void) {
+    CHECK(fixture(89, 0x20000, 0x20000, false) == 89);
+    CHECK(cart_cpu_read_bus(0x8000, 0x56) == 0x56 && cart_cpu_read(0xC000) == 14);
+    cart_cpu_write(0x8ABC, 0xD5);
+    CHECK(cart_cpu_read(0x8000) == 10 && cart_cpu_read(0xC000) == 14);
+    CHECK(cart_ppu_read(0) == 13 * 8 && cart_get_mirroring() == MIRROR_SINGLE0);
+    cart_cpu_write(0x8000, 0x55);
+    CHECK(cart_cpu_read(0x8000) == 10 && cart_ppu_read(0) == 5 * 8);
+    CHECK(cart_get_mirroring() == MIRROR_SINGLE0);
+    cart_cpu_write(0x8000, 0x5D);
+    CHECK(cart_cpu_read(0x8000) == 10 && cart_ppu_read(0) == 5 * 8);
+    CHECK(cart_get_mirroring() == MIRROR_SINGLE1);
+    cart_cpu_write(0x8000, 0x6D);
+    CHECK(cart_cpu_read(0x8000) == 12 && cart_ppu_read(0) == 5 * 8);
+    CHECK(cart_get_mirroring() == MIRROR_SINGLE1);
+    cart_cpu_write(0xFFFF, 0x7A);
+    CHECK(cart_cpu_read(0x8000) == 14 && cart_ppu_read(0) == 2 * 8);
+    CHECK(cart_get_mirroring() == MIRROR_SINGLE1);
+    uint8_t prg_before = cart_cpu_read(0x8000);
+    cart_cpu_write(0x6000, 0xA6);
+    CHECK(cart_cpu_read(0x6000) == 0xA6 && cart_cpu_read(0x8000) == prg_before);
+    cart->reset();
+    CHECK(cart_cpu_read_bus(0x8000, 0x69) == 0x69);
+
+    CHECK(fixture(93, 0x20000, 0x2000, false) == 93);
+    CHECK(cart_ppu_read(0x0123) == 0x23);
+    cart_cpu_write(0x8000, 0x51);
+    CHECK(cart_cpu_read(0x8000) == 10 && cart_cpu_read(0xC000) == 14);
+    CHECK(cart_ppu_read(0x0123) == 0);
+    cart_cpu_write(0xFFFF, 0x70);
+    CHECK(cart_cpu_read(0x8000) == 14 && cart_ppu_read(0x0123) == 0x23);
+    cart_cpu_write(0x9000, 0x31);
+    CHECK(cart_cpu_read(0x8000) == 6 && cart_ppu_read(0x1FFF) == 7);
+    cart->reset();
+    CHECK(cart_ppu_read(0x0123) == 0x23 && cart_cpu_read_bus(0x8000, 0x35) == 0x35);
+
+    CHECK(fixture(93, 0x20000, 0x2000, true) == 93);
+    cart_ppu_write(0x0123, 0xA6);
+    CHECK(cart_ppu_read(0x0123) == 0xA6);
+    cart_cpu_write(0x8000, 0);
+    cart_ppu_write(0x0123, 0x53);
+    CHECK(cart_ppu_read(0x0123) == 0x23);
+    cart_cpu_write(0x8000, 1);
+    CHECK(cart_ppu_read(0x0123) == 0xA6);
+    cart->reset();
+    CHECK(cart_ppu_read(0x0123) == 0xA6);
+
+    CHECK(fixture(184, 0x8000, 0x8000, false) == 184);
+    CHECK(cart_cpu_read(0x8000) == 0 && cart_cpu_read(0xFFFF) == 3);
+    CHECK(cart_ppu_read(0x0123) == 0x23);
+    cart_cpu_write(0x5FFF, 0x76);
+    CHECK(cart_ppu_read(0x0123) == 0x23);
+    cart_cpu_write(0x6000, 0x26);
+    CHECK(cart_ppu_read(0) == 24 && cart_ppu_read(0x1000) == 24);
+    cart_cpu_write(0x7FFF, 0x31);
+    CHECK(cart_ppu_read(0) == 4 && cart_ppu_read(0x1000) == 28);
+    cart_cpu_write(0x8000, 0x77);
+    CHECK(cart_ppu_read(0) == 4 && cart_cpu_read(0x8000) == 0);
+    cart->reset();
+    CHECK(cart_ppu_read(0x0123) == 0x23);
+    return 0;
+}
+
+static int test_sunsoft_discrete_loader_rejection(void) {
+    CHECK(fixture(89, 0x20000, 0x20000, false) == 89);
+    cart_cpu_write(0x8000, 0x31);
+    Mapper *previous = cart;
+    iNESHeader h = header_for(89, 0x20000, false);
+    CHECK(mapper_init_from_header(&h, fixture_prg, 0x22000, fixture_chr, 0x20000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 6);
+    CHECK(mapper_init_from_header(&h, fixture_prg, 0x20000, fixture_chr, 0x22000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 6);
+    h = header_for(93, 0x20000, false);
+    CHECK(mapper_init_from_header(&h, fixture_prg, 0x20000, fixture_chr, 0x4000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 6);
+    h = header_for(184, 0x8000, false);
+    CHECK(mapper_init_from_header(&h, fixture_prg, 0x10000, fixture_chr, 0x8000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 6);
+    return 0;
+}
+
+static int test_sunsoft_discrete_image_loading(void) {
+    const unsigned boards[] = {89, 93, 184};
+    for (unsigned i = 0; i < sizeof(boards) / sizeof(boards[0]); ++i) {
+        bool ram = boards[i] == 93;
+        iNESHeader h = header_for(boards[i], 0x8000, ram);
+        h.flags7 |= 8;
+        if (ram) h.zero[0] = 7;
+        size_t image_size;
+        uint8_t *image = image_for(&h, 0x8000, ram ? 0 : 0x2000, &image_size);
+        CHECK(image != NULL);
+        CHECK(load_rom_memory(image, image_size) == 0);
+        CHECK(rom_mapper_number(&ines_header) == (int)boards[i]);
+        write_mem(boards[i] == 184 ? 0x6000 : 0x8000, 1);
+        CHECK(read_mem(0xC000) == 0x5C);
+        if (ram) {
+            cart_ppu_write(0x123, 0x69);
+            CHECK(cart_ppu_read(0x123) == 0x69);
+        } else {
+            CHECK(cart_ppu_read(0x123) == 0xA5);
+        }
+        Mapper *previous = cart;
+        CHECK(load_rom_memory(image, image_size - 1) == -1);
+        CHECK(cart == previous && read_mem(0xC000) == 0x5C);
+        free(image);
+        CHECK(unload_rom());
+    }
+    return 0;
+}
+
 static int test_cartridge_unload(void) {
     iNESHeader h = header_for(0, 0x4000, true);
     size_t image_size;
@@ -6357,6 +6467,8 @@ int test_mapper_accuracy(void) {
         test_sunsoft3_banks_mirroring_and_irq, test_sunsoft3_cpu_irq_and_loader,
         test_sunsoft4_banks_nametables_and_timer, test_sunsoft4_chr_ram_persistence_and_loader,
         test_sunsoft4_cpu_licensed_reads,
+        test_sunsoft_discrete_boards, test_sunsoft_discrete_loader_rejection,
+        test_sunsoft_discrete_image_loading,
         test_cartridge_bus_reads, test_mmc6_persistence, test_cartridge_unload
     };
     int failures = 0;
