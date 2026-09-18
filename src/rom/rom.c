@@ -162,11 +162,11 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
         return -1;
     }
 
-    size_t new_prg_size, rom_chr_size;
+    size_t prg_payload_size, rom_chr_size;
     int nes2 = is_nes20(&header);
     if (nes2) {
         if (nes20_rom_size(header.prg_rom_chunks, header.flags9 & 0x0F,
-                           PRG_ROM_BANK_SIZE, &new_prg_size) < 0
+                           PRG_ROM_BANK_SIZE, &prg_payload_size) < 0
             || nes20_rom_size(header.chr_rom_chunks, header.flags9 >> 4,
                               CHR_ROM_BANK_SIZE, &rom_chr_size) < 0) {
             fprintf(stderr, "NES 2.0 ROM size overflows the address space\n");
@@ -174,12 +174,11 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
         }
     } else {
         size_t prg_units = header.prg_rom_chunks ? header.prg_rom_chunks : 256u;
-        new_prg_size = prg_units * PRG_ROM_BANK_SIZE;
+        prg_payload_size = prg_units * PRG_ROM_BANK_SIZE;
         rom_chr_size = (size_t)header.chr_rom_chunks * CHR_ROM_BANK_SIZE;
     }
-    if (!new_prg_size || (new_prg_size < PRG_ROM_BANK_SIZE
-        && !board_handles_mapper((unsigned)rom_mapper_number(&header)))) {
-        fprintf(stderr, "Unsupported PRG size: %zu\n", new_prg_size);
+    if (!prg_payload_size) {
+        fprintf(stderr, "Invalid PRG size: 0\n");
         return -1;
     }
 
@@ -193,7 +192,7 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
         trainer = data + offset;
         offset += 512;
     }
-    if (new_prg_size > size - offset || rom_chr_size > size - offset - new_prg_size) {
+    if (prg_payload_size > size - offset || rom_chr_size > size - offset - prg_payload_size) {
         fprintf(stderr, "Truncated PRG-ROM or CHR-ROM payload\n");
         return -1;
     }
@@ -212,7 +211,7 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
     VsRomConfig vs_config;
     char vs_reason[96];
     int mapper_number = rom_mapper_number(&header);
-    if (!vs_decode_header(&header, mapper_number, new_prg_size, rom_chr_size,
+    if (!vs_decode_header(&header, mapper_number, prg_payload_size, rom_chr_size,
                           &vs_config, vs_reason, sizeof(vs_reason))) {
         fprintf(stderr, "Unsupported VS System configuration: %s\n", vs_reason);
         return -1;
@@ -233,6 +232,7 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
         }
     }
 
+    size_t new_prg_size = prg_payload_size < 256u ? 256u : prg_payload_size;
     uint8_t *new_prg = (uint8_t *)malloc(new_prg_size);
     uint8_t *new_chr = (uint8_t *)calloc(1, new_chr_size ? new_chr_size : 1);
     if (!new_prg || !new_chr) {
@@ -241,8 +241,14 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
         free(new_chr);
         return -1;
     }
-    memcpy(new_prg, data + offset, new_prg_size);
-    if (rom_chr_size) memcpy(new_chr, data + offset + new_prg_size, rom_chr_size);
+    memcpy(new_prg, data + offset, prg_payload_size);
+    for (size_t filled = prg_payload_size; filled < new_prg_size;) {
+        size_t chunk = prg_payload_size;
+        if (chunk > new_prg_size - filled) chunk = new_prg_size - filled;
+        memcpy(new_prg + filled, data + offset, chunk);
+        filled += chunk;
+    }
+    if (rom_chr_size) memcpy(new_chr, data + offset + prg_payload_size, rom_chr_size);
     else if (!board_handles_mapper((unsigned)mapper_number))
         nes_initialize_power_on_ram(new_chr, new_chr_size, 0);
 

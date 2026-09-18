@@ -508,15 +508,12 @@ static int test_bandai_rejected_loads(void) {
     cart->clock(1);
     CHECK(cart_irq_pending());
     uint8_t *previous_prg = prg_rom, *previous_chr = chr_rom;
-    iNESHeader rejected[] = {h, h, h, h, h, h, h};
+    iNESHeader rejected[] = {h, h, h, h, h};
     rejected[0].prg_ram_size = 0x20;
     rejected[1].flags10 = 0x30;
     rejected[2].flags10 = 0x27;
     rejected[3].flags6 &= (uint8_t)~2u;
-    rejected[4].flags6 = 0xD2; rejected[4].flags7 = 0x98; rejected[4].prg_ram_size = 0;
-    rejected[4].flags10 = 0x10; // Datach cannot bank a CHR-ROM payload.
-    rejected[5].prg_rom_chunks = 48;
-    rejected[6].zero[0] = 7;
+    rejected[4].zero[0] = 7;
     for (size_t i = 0; i < sizeof(rejected) / sizeof(rejected[0]); ++i) {
         CHECK(load_board(&rejected[i]) == -1);
         CHECK(prg_rom == previous_prg && chr_rom == previous_chr && cart_irq_pending());
