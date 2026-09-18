@@ -39,6 +39,7 @@
 #include "unlicensed_115.hpp"
 #include "unif.hpp"
 #include "../unif.h"
+#include "waixing_116.hpp"
 
 namespace cupid::boards {
 
@@ -62,14 +63,22 @@ std::unique_ptr<Board> CreateBoard(unsigned mapper) {
         case 120: return std::make_unique<Unl120>();
         case 132: return std::make_unique<Txc22211A>();
         case 156: return std::make_unique<Unl156>();
+        case 162: return std::make_unique<Waixing162>();
         case 163: return std::make_unique<Unl163>();
+        case 164: return std::make_unique<Waixing164>();
         case 174: return std::make_unique<Ntdec174>();
+        case 176: return std::make_unique<Fk23C>();
+        case 178: return std::make_unique<Waixing178>();
         case 168: return std::make_unique<Racermate>();
         case 172: return std::make_unique<Txc22211B>();
         case 173: return std::make_unique<Txc22211C>();
         case 189: return std::make_unique<Mmc3_189>();
         case 193: return std::make_unique<NtdecTc112>();
         case 221: return std::make_unique<Ntdec221>();
+        case 242: return std::make_unique<Waixing242>();
+        case 252: return std::make_unique<Waixing252>();
+        case 253: return std::make_unique<Waixing253>();
+        case 286: return std::make_unique<WaixingBs5>();
         case 290: return std::make_unique<NtdecNtd03>();
         case 298: return std::make_unique<Tf1201>();
         case 299: return std::make_unique<Bmc11160>();
@@ -244,6 +253,7 @@ bool board_handles_mapper(unsigned mapper) {
         case 36: case 61: case 132: case 172: case 173: case 189: case 299: return true;
         case 60: case 62: case 83: case 103: case 106: case 107: case 108:
         case 116: case 117: case 120: case 156: case 163: return true;
+        case 162: case 164: case 176: case 178: case 242: case 252: case 253: case 286: return true;
         case 168: return true;
         case 552: return true;
         case 133: case 136: case 137: case 138: case 139: case 141:
