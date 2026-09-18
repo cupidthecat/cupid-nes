@@ -204,6 +204,8 @@ void ppu_set_startup_write_restriction(bool enabled);
 bool ppu_startup_writes_restricted(void);
 bool ppu_oam_decay_enabled(void);
 void ppu_set_oam_decay(bool enabled);
+bool ppu_reset_suppression_enabled(void);
+void ppu_set_reset_suppression(bool enabled);
 void ppu_oam_dma(uint8_t page);
 void ppu_begin_vblank(void);
 void ppu_end_vblank(void);

@@ -21,6 +21,8 @@ Select emulated input hardware with the options in [configuration](configuration
 
 Close the window for normal shutdown. The M key supplies the emulated microphone line only; Cupid does not capture a host microphone. Soft reset keeps the selected console, CPU/APU and PPU profiles, current CPU/PPU clock alignment, controller configuration, and persistent peripheral contents. It does not rerun command-line setup or reconnect host controllers.
 
+With `--ppu-reset-suppression`, R preserves PPU registers, scroll latches, raster position, and rendering state while the other reset paths still run. The setting also applies to the second PPU in a dual VS system. It does not change hard power-on behavior.
+
 Keyboard peripherals are handled before the normal application shortcuts. Family BASIC consumes every keyboard event while selected. Subor, Party Tap, Exciting Boxing, Jissen Mahjong, and mat handlers consume the keys they map, so an overlapping key acts on the selected peripheral instead of the later shortcut. For example, R is a mat key and a Subor letter key, and the number keys used by Party Tap or Boxing take priority over VS coin shortcuts.
 
 ## Game controllers and player slots

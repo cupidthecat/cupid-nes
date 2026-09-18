@@ -78,6 +78,7 @@ static PpuRevision active_ppu_revision = PPU_REVISION_2C02_E_PLUS;
 static bool oam_row_corruption_worst_case = false;
 static bool startup_write_restriction = false;
 static bool oam_decay = false;
+static bool reset_suppression = false;
 static const char *const ppu_revision_names[] = {"2c02-pre-e", "2c02e-plus"};
 
 PpuRevision ppu_revision(void) {
@@ -130,6 +131,14 @@ bool ppu_oam_decay_enabled(void) {
 
 void ppu_set_oam_decay(bool enabled) {
     oam_decay = enabled;
+}
+
+bool ppu_reset_suppression_enabled(void) {
+    return reset_suppression;
+}
+
+void ppu_set_reset_suppression(bool enabled) {
+    reset_suppression = enabled;
 }
 
 static bool rendering_line(void) {
@@ -625,6 +634,10 @@ void ppu_reset(PPU *state) {
 }
 
 void ppu_soft_reset(PPU *state) {
+    state->cpu_clock_phase = 0;
+    memset(state->oam_decay_cycles, 0, sizeof(state->oam_decay_cycles));
+    if (reset_suppression) return;
+
     uint8_t oam[PPU_OAM_SIZE];
     uint8_t secondary_oam[32];
     memcpy(oam, state->oam, sizeof(oam));
@@ -643,7 +656,6 @@ void ppu_soft_reset(PPU *state) {
     state->oam_bus = 0xFF;
     state->oam_read_latch = 0xFF;
     state->startup_writes_restricted = startup_write_restriction;
-    memset(state->oam_decay_cycles, 0, sizeof(state->oam_decay_cycles));
     memset(active_ppu_ob_expire, 0, sizeof(main_ppu_ob_expire));
     cpu_set_nmi_line(false);
 }

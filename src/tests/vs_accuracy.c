@@ -706,6 +706,62 @@ static int test_vs_reset_and_declared_ram(void) {
     return 0;
 }
 
+static int test_vs_dual_reset_suppression(void) {
+    iNESHeader h = nes20_vs_header(99, 4, 4, VS_TYPE_DUAL, 1, VS_INPUT_STANDARD);
+    size_t image_size;
+    uint8_t *image = build_image(&h, 0x10000, 0x8000, &image_size);
+    CHECK(image != NULL);
+    uint8_t *prg = image + sizeof(h);
+    static const uint8_t loop[] = {0x4C, 0x00, 0x80};
+    for (size_t side = 0; side < 2; ++side) {
+        size_t base = side * 0x8000;
+        memcpy(prg + base, loop, sizeof(loop));
+        set_vector(prg, base + 0x7FFA, 0x8000);
+        set_vector(prg, base + 0x7FFC, 0x8000);
+        set_vector(prg, base + 0x7FFE, 0x8000);
+    }
+    CHECK(load_rom_memory(image, image_size) == 0);
+    free(image);
+    CHECK(vs_dual_system());
+    power_main();
+    vs_power_on_secondary();
+
+    PPU *sub = vs_side_ppu(1);
+    CHECK(sub != NULL && vs_side_ppu(0) == &ppu);
+    ppu.ctrl = 0x84;
+    ppu.mask = 0x18;
+    ppu.scanline = 101;
+    ppu.dot = 202;
+    ppu.cpu_clock_phase = 2;
+    ppu.oam_decay_cycles[3] = 99;
+    sub->ctrl = 0x88;
+    sub->mask = 0x1A;
+    sub->scanline = 77;
+    sub->dot = 166;
+    sub->cpu_clock_phase = 1;
+    sub->oam_decay_cycles[4] = 88;
+    apu.pulse1.lc.length = 19;
+    vs_side_apu(1)->pulse1.lc.length = 17;
+    uint8_t main_sp = cpu.sp;
+
+    ppu_set_reset_suppression(true);
+    ppu_soft_reset(&ppu);
+    apu_soft_reset(&apu);
+    cpu_soft_reset(&cpu);
+    vs_soft_reset();
+    CHECK(ppu.ctrl == 0x84 && ppu.mask == 0x18);
+    CHECK(sub->ctrl == 0x88 && sub->mask == 0x1A);
+    CHECK(ppu.scanline == 101 && sub->scanline == 77);
+    CHECK(ppu.cpu_clock_phase == 0 && sub->cpu_clock_phase == 0);
+    CHECK(ppu.oam_decay_cycles[3] == 0 && sub->oam_decay_cycles[4] == 0);
+    CHECK(cpu.sp == (uint8_t)(main_sp - 3));
+    CHECK(apu.pulse1.lc.length == 0 && vs_side_apu(1)->pulse1.lc.length == 0);
+
+    ppu_set_reset_suppression(false);
+    CHECK(unload_rom());
+    return 0;
+}
+
 static int test_vs_dual_video_and_audio(void) {
     iNESHeader h = legacy_vs99_header();
     size_t image_size;
@@ -788,6 +844,7 @@ int test_vs_accuracy(void) {
         test_mapper99_banks,
         test_vs_dual_execution,
         test_vs_reset_and_declared_ram,
+        test_vs_dual_reset_suppression,
         test_vs_dual_video_and_audio
     };
     int failures = 0;

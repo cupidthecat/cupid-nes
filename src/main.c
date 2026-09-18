@@ -450,6 +450,8 @@ int main(int argc, char *argv[]) {
             ppu_set_startup_write_restriction(true);
         } else if (strcmp(argv[i], "--ppu-oam-decay") == 0) {
             ppu_set_oam_decay(true);
+        } else if (strcmp(argv[i], "--ppu-reset-suppression") == 0) {
+            ppu_set_reset_suppression(true);
         } else if (strcmp(argv[i], "--mmc3-revision") == 0) {
             if (++i == argc || !cart_set_mmc3_revision_name(argv[i])) {
                 fprintf(stderr, "MMC3 revision must be standard or a\n");
@@ -566,7 +568,7 @@ int main(int argc, char *argv[]) {
                "[--startup-phase CPU:PPU | --startup-seed SEED] "
                "[--ram-power-on STATE] [--power-on-seed SEED] [--random-vblank] "
                "[--ppu-revision REVISION] [--ppu-oam-row-corruption] "
-               "[--ppu-startup-restriction] [--ppu-oam-decay] "
+               "[--ppu-startup-restriction] [--ppu-oam-decay] [--ppu-reset-suppression] "
                "[--mmc3-revision REVISION] [--cart-dip VALUE] "
                "[--adapter TYPE] [--port1 DEVICE] [--port2 DEVICE] "
                "[--expansion DEVICE] [--barcode DIGITS] [--barcode-battler DIGITS] "
@@ -601,6 +603,8 @@ int main(int argc, char *argv[]) {
     printf("PPU startup write restriction: %s\n",
            ppu_startup_write_restriction_enabled() ? "enabled" : "compatibility");
     printf("PPU OAM decay: %s\n", ppu_oam_decay_enabled() ? "enabled" : "compatibility");
+    printf("PPU soft-reset suppression: %s\n",
+           ppu_reset_suppression_enabled() ? "enabled" : "disabled");
     printf("MMC3 revision: %s\n", cart_mmc3_revision_name());
     printf("Input adapter: %s\n", joypad_adapter_name());
     printf("Loading ROM: %s\n", rom_path);

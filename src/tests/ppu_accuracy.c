@@ -944,6 +944,50 @@ static void test_video_reset(void) {
     CHECK("power on initializes nametable RAM separately from soft reset", ppu_read(0x2000) == 0);
 }
 
+static void test_reset_suppression(void) {
+    reset_video(0);
+    CHECK("PPU reset suppression defaults off", !ppu_reset_suppression_enabled());
+
+    ppu.ctrl = 0xA4;
+    ppu.mask = 0x1E;
+    ppu.status = 0xE0;
+    ppu.v = 0x27A5;
+    ppu.t = 0x1357;
+    ppu.x = 5;
+    ppu.w = 1;
+    ppu.scanline = 123;
+    ppu.dot = 211;
+    ppu.odd_frame = true;
+    ppu.rendering_enabled = true;
+    ppu.fetches_enabled = true;
+    ppu.total_cycles = 654321;
+    ppu.cpu_clock_phase = 2;
+    ppu.oam_decay_cycles[0] = 111;
+    ppu.oam_decay_cycles[31] = 222;
+    ppu.oam[7] = 0x6D;
+
+    ppu_set_reset_suppression(true);
+    CHECK("PPU reset suppression can be enabled", ppu_reset_suppression_enabled());
+    ppu_soft_reset(&ppu);
+    CHECK("suppressed soft reset preserves PPU registers and scroll latches",
+          ppu.ctrl == 0xA4 && ppu.mask == 0x1E && ppu.status == 0xE0
+          && ppu.v == 0x27A5 && ppu.t == 0x1357 && ppu.x == 5 && ppu.w == 1);
+    CHECK("suppressed soft reset preserves raster and rendering state",
+          ppu.scanline == 123 && ppu.dot == 211 && ppu.odd_frame
+          && ppu.rendering_enabled && ppu.fetches_enabled && ppu.total_cycles == 654321);
+    CHECK("suppressed soft reset still resets PPU clock and OAM-decay bookkeeping",
+          ppu.cpu_clock_phase == 0 && ppu.oam_decay_cycles[0] == 0
+          && ppu.oam_decay_cycles[31] == 0 && ppu.oam[7] == 0x6D);
+
+    ppu_set_reset_suppression(false);
+    ppu.ctrl = 0x80;
+    ppu.mask = 0x18;
+    ppu.w = 1;
+    ppu_soft_reset(&ppu);
+    CHECK("ordinary soft reset still clears control and render state when suppression is disabled",
+          !ppu.ctrl && !ppu.mask && !ppu.w && !ppu.rendering_enabled && !ppu.fetches_enabled);
+}
+
 static bool all_bytes_equal(const uint8_t *bytes, size_t size, uint8_t value) {
     for (size_t i = 0; i < size; ++i) {
         if (bytes[i] != value) return false;
@@ -1488,6 +1532,7 @@ int test_ppu_accuracy(void) {
     test_oam_decay_refresh();
     test_regional_video();
     test_video_reset();
+    test_reset_suppression();
     test_power_on_ram_profiles();
     test_sprite_shifters();
     test_late_register_reads();

@@ -272,6 +272,11 @@ APU *vs_side_apu(unsigned side) {
     return side == 1 && vs_dual_system() ? &vs.sub_apu : NULL;
 }
 
+PPU *vs_side_ppu(unsigned side) {
+    if (side == 0) return &ppu;
+    return side == 1 && vs_dual_system() ? &vs.sub_ppu.state : NULL;
+}
+
 void vs_audio_init(int sample_rate) {
     apu_audio_init_state(vs_side_apu(0), sample_rate);
     apu_audio_init_state(vs_side_apu(1), sample_rate);

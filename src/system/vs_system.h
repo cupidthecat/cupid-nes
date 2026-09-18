@@ -17,6 +17,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "../apu/apu.h"
+#include "../ppu/ppu.h"
 #include "../rom/rom.h"
 
 typedef enum {
@@ -78,6 +79,7 @@ uint64_t vs_side_frame_count(unsigned side);
 unsigned vs_video_width(void);
 const uint32_t *vs_video_framebuffer(void);
 APU *vs_side_apu(unsigned side);
+PPU *vs_side_ppu(unsigned side);
 void vs_audio_init(int sample_rate);
 void vs_audio_callback(void *userdata, uint8_t *stream, int len);
 
