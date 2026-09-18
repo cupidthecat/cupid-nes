@@ -7968,6 +7968,62 @@ static int test_native_small_chr_1k_families(void) {
     return 0;
 }
 
+static int test_remaining_small_chr_single_source(void) {
+    const unsigned vrc6_mappers[] = {24, 26};
+    for (size_t i = 0; i < sizeof(vrc6_mappers) / sizeof(vrc6_mappers[0]); ++i) {
+        unsigned mapper = vrc6_mappers[i];
+        CHECK(fixture(mapper, 0x40000, 0x0200, false) == (int)mapper);
+        fixture_chr[0x12] = 0xA6;
+        CHECK(cart_ppu_read(0x0812) == 0x12);
+        vrc6_test_write(mapper, 0xD000, 5);
+        CHECK(cart_ppu_read(0x0012) == 0xA6);
+        CHECK(cart_ppu_read(0x1012) == 0x12);
+        vrc6_test_write(mapper, 0xB003, 0x10);
+        uint8_t nt[0x1000] = {0};
+        CHECK(cart_nt_read(0x2012, nt) == 0xA6);
+
+        CHECK(fixture(mapper, 0x40000, 0x0200, true) == (int)mapper);
+        cart_ppu_write(0x1012, 0x53);
+        CHECK(cart_ppu_read(0x0012) == 0x53 && cart_ppu_read(0x1012) == 0x53);
+        vrc6_test_write(mapper, 0xD000, 3);
+        cart_ppu_write(0x0012, 0x69);
+        CHECK(cart_ppu_read(0x0012) == 0x69 && cart_ppu_read(0x1012) == 0x69);
+    }
+
+    const unsigned jy_mappers[] = {90, 209, 211};
+    for (size_t i = 0; i < sizeof(jy_mappers) / sizeof(jy_mappers[0]); ++i) {
+        unsigned mapper = jy_mappers[i];
+        CHECK(fixture(mapper, 0x8000, 0x0200, false) == (int)mapper);
+        fixture_chr[0x12] = 0x96;
+        CHECK(cart_ppu_read(0x0812) == 0x96);
+        CHECK(cart_ppu_read(0x1012) == 0x12);
+        cart_cpu_write(0xD000, 0x18);
+        jy_write_chr(4, 0x123);
+        CHECK(cart_ppu_read(0x0812) == 0x96);
+
+        CHECK(fixture(mapper, 0x8000, 0x0200, true) == (int)mapper);
+        cart_ppu_write(0x1012, 0x3C);
+        CHECK(cart_ppu_read(0x0012) == 0x3C && cart_ppu_read(0x1012) == 0x3C);
+        cart_cpu_write(0xD000, 0x18);
+        jy_write_chr(0, 7);
+        cart_ppu_write(0x0012, 0xC3);
+        CHECK(cart_ppu_read(0x0012) == 0xC3 && cart_ppu_read(0x1012) == 0xC3);
+    }
+
+    CHECK(fixture(16, 0x20000, 0x0200, false) == 16);
+    fixture_chr[0x12] = 0x5A;
+    CHECK(cart_ppu_read(0x0812) == 0x12);
+    cart_cpu_write(0x8004, 9);
+    CHECK(cart_ppu_read(0x0812) == 0x5A && cart_ppu_read(0x1012) == 0x12);
+
+    CHECK(fixture(16, 0x20000, 0x0200, true) == 16);
+    cart_ppu_write(0x1012, 0xD2);
+    CHECK(cart_ppu_read(0x0012) == 0xD2 && cart_ppu_read(0x1012) == 0xD2);
+    cart_cpu_write(0x8004, 7);
+    CHECK(cart_ppu_read(0x0812) == 0xD2);
+    return 0;
+}
+
 static int test_vrc1_banks_mirroring_and_reset(void) {
     const unsigned mappers[] = {75, 151};
     for (size_t i = 0; i < sizeof(mappers) / sizeof(mappers[0]); ++i) {
@@ -10427,7 +10483,7 @@ int test_mapper_accuracy(void) {
         test_namco108_banks_aliases_and_irq_absence, test_namco108_submapper_loader_and_chr_ram,
         test_namco108_variants, test_namco108_variant_loader_rejection,
         test_namco108_variant_image_loading, test_native_small_chr_bank_windows,
-        test_native_small_chr_1k_families,
+        test_native_small_chr_1k_families, test_remaining_small_chr_single_source,
         test_sunsoft69_banks_ram_and_startup, test_sunsoft69_legacy_ram_defaults,
         test_sunsoft69_irq_cpu_clock,
         test_sunsoft5b_tone_noise_envelope, test_sunsoft69_persistence_and_loader,

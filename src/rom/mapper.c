@@ -681,13 +681,16 @@ static size_t mapper_chr_page_size(uint16_t mapper_no) {
 static bool mapper_has_shrinking_chr_window(uint16_t mapper_no) {
     switch (mapper_no) {
         case 0: case 1: case 2: case 3: case 7: case 9: case 10: case 11:
-        case 13: case 15: case 18: case 21: case 22: case 23: case 25: case 27:
+        case 13: case 15: case 16: case 18: case 21: case 22: case 23: case 24:
+        case 25: case 26: case 27:
         case 32: case 33: case 34: case 48: case 64: case 65: case 66: case 67:
         case 68: case 69: case 71: case 72: case 73: case 75: case 76: case 78:
-        case 79: case 80: case 82: case 85: case 87: case 88: case 89: case 92:
+        case 79: case 80: case 82: case 85: case 87: case 88: case 89: case 90:
+        case 92:
         case 93: case 94: case 95: case 97: case 101: case 105: case 113: case 140:
         case 144: case 146: case 151: case 154: case 155: case 158: case 180:
-        case 183: case 184: case 185: case 206: case 207: case 232:
+        case 153: case 157: case 159: case 183: case 184: case 185: case 206:
+        case 207: case 209: case 211: case 232:
             return true;
         default:
             return false;
@@ -1129,6 +1132,16 @@ static bool shrunk_chr_slot_geometry(uint16_t address, size_t native_page_size,
 static size_t shrunk_chr_bank_offset(uint16_t address, size_t page_size,
                                      size_t page_count, size_t bank) {
     return (bank % page_count) * page_size + ((address & 0x1FFFu) % page_size);
+}
+
+static size_t shrunk_chr_window_offset(size_t in_window, size_t native_page_size,
+                                       size_t first_bank) {
+    size_t page_size = shrunk_chr_page_size(native_page_size);
+    if (!page_size) return 0;
+    size_t page_count = C.chr_sz / page_size;
+    if (!page_count) return 0;
+    size_t page = first_bank + in_window / page_size;
+    return (page % page_count) * page_size + (in_window % page_size);
 }
 static Mirroring m232_mirr(void) { return C.mirr_base; }
 static void m232_reset(void) { memset(&m232, 0, sizeof(m232)); }
@@ -2050,8 +2063,7 @@ static uint16_t jy_chr_reg(unsigned index) {
     return (uint16_t)((jy.chr_low[index] & mask) | ((uint16_t)jy.chr_block << shift));
 }
 
-static size_t jy_chr_bank(uint16_t addr) {
-    unsigned slot = (unsigned)((addr & 0x1FFFu) >> 10);
+static size_t jy_chr_bank(unsigned slot) {
     switch (jy.chr_mode) {
         case 0:
             return (size_t)jy_chr_reg(0) * 8u + slot;
@@ -2213,19 +2225,23 @@ static uint8_t jy_ppu_read(uint16_t addr) {
     if (jy.irq_source == JY_IRQ_PPU_READ && cart_ppu_fetch_source != CART_PPU_FETCH_CPU)
         jy_irq_tick();
     addr &= 0x1FFFu;
-    size_t banks = C.chr_sz / CHR_BANK_1K;
-    if (!banks) return 0;
-    size_t bank = jy_chr_bank(addr) % banks;
-    return C.chr[bank * CHR_BANK_1K + (addr & 0x03FFu)];
+    unsigned slot;
+    size_t page_size, page_count;
+    if (!shrunk_chr_slot_geometry(addr, CHR_BANK_1K, 8, &slot, &page_size, &page_count))
+        return chr_unmapped_read(addr);
+    return C.chr[shrunk_chr_bank_offset(addr, page_size, page_count, jy_chr_bank(slot))];
 }
 
 static void jy_ppu_write(uint16_t addr, uint8_t value) {
     if (!C.chr_is_ram) return;
     addr &= 0x1FFFu;
-    size_t banks = C.chr_sz / CHR_BANK_1K;
-    if (!banks) return;
-    size_t bank = jy_chr_bank(addr) % banks;
-    chr_ram_write(bank * CHR_BANK_1K + (addr & 0x03FFu), value);
+    unsigned slot;
+    size_t page_size, page_count;
+    if (!shrunk_chr_slot_geometry(addr, CHR_BANK_1K, 8, &slot, &page_size, &page_count)) {
+        chr_ram_write(addr % C.chr_sz, value);
+        return;
+    }
+    chr_ram_write(shrunk_chr_bank_offset(addr, page_size, page_count, jy_chr_bank(slot)), value);
 }
 
 static void jy_clock(int cycles) {
@@ -4023,9 +4039,7 @@ static void vrc6_clock(int cpu_cycles) {
     }
 }
 
-static size_t vrc6_chr_bank(uint16_t addr) {
-    unsigned slot = (addr >> 10) & 7u;
-    if (!vrc6.ppu_initialized) return C.chr_is_ram ? slot : SIZE_MAX;
+static size_t vrc6_chr_bank(unsigned slot) {
     unsigned mode = vrc6.banking_mode & 3u;
     uint8_t mask = (vrc6.banking_mode & 0x20u) ? 0xFEu : 0xFFu;
     uint8_t or_mask = (vrc6.banking_mode & 0x20u) ? 1u : 0u;
@@ -4149,19 +4163,25 @@ static void vrc6_cpu_write(uint16_t addr, uint8_t value) {
 
 static uint8_t vrc6_ppu_read(uint16_t addr) {
     addr &= 0x1FFFu;
-    size_t bank = vrc6_chr_bank(addr);
-    if (bank == SIZE_MAX) return (uint8_t)addr;
-    bank %= C.chr_sz / CHR_BANK_1K;
-    return C.chr[bank * CHR_BANK_1K + (addr & 0x03FFu)];
+    unsigned slot;
+    size_t page_size, page_count;
+    if (!vrc6.ppu_initialized
+        || !shrunk_chr_slot_geometry(addr, CHR_BANK_1K, 8, &slot, &page_size, &page_count))
+        return chr_unmapped_read(addr);
+    return C.chr[shrunk_chr_bank_offset(addr, page_size, page_count, vrc6_chr_bank(slot))];
 }
 
 static void vrc6_ppu_write(uint16_t addr, uint8_t value) {
     if (!C.chr_is_ram) return;
     addr &= 0x1FFFu;
-    size_t bank = vrc6_chr_bank(addr);
-    if (bank == SIZE_MAX) return;
-    bank %= C.chr_sz / CHR_BANK_1K;
-    chr_ram_write(bank * CHR_BANK_1K + (addr & 0x03FFu), value);
+    unsigned slot;
+    size_t page_size, page_count;
+    if (!vrc6.ppu_initialized
+        || !shrunk_chr_slot_geometry(addr, CHR_BANK_1K, 8, &slot, &page_size, &page_count)) {
+        chr_ram_write(addr % C.chr_sz, value);
+        return;
+    }
+    chr_ram_write(shrunk_chr_bank_offset(addr, page_size, page_count, vrc6_chr_bank(slot)), value);
 }
 
 static Mirroring vrc6_mirr(void) {
@@ -4224,8 +4244,8 @@ uint8_t cart_nt_read(uint16_t addr, uint8_t *nt_ram) {
         unsigned nt = (off >> 10) & 3u;
         size_t in = off & 0x03FFu;
         if (vrc6.banking_mode & 0x10u) {
-            size_t bank = vrc6_nt_chr_bank(nt) % (C.chr_sz / CHR_BANK_1K);
-            return C.chr[bank * CHR_BANK_1K + in];
+            size_t offset = shrunk_chr_window_offset(in, CHR_BANK_1K, vrc6_nt_chr_bank(nt));
+            return C.chr[offset];
         }
         return nt_ram[(size_t)vrc6_ciram_page(nt) * 0x400u + in];
     }
@@ -4327,8 +4347,8 @@ void cart_nt_write(uint16_t addr, uint8_t v, uint8_t *nt_ram) {
         size_t in = off & 0x03FFu;
         if (vrc6.banking_mode & 0x10u) {
             if (!C.chr_is_ram) return;
-            size_t bank = vrc6_nt_chr_bank(nt) % (C.chr_sz / CHR_BANK_1K);
-            chr_ram_write(bank * CHR_BANK_1K + in, v);
+            size_t offset = shrunk_chr_window_offset(in, CHR_BANK_1K, vrc6_nt_chr_bank(nt));
+            chr_ram_write(offset, v);
             return;
         }
         nt_ram[(size_t)vrc6_ciram_page(nt) * 0x400u + in] = v;
@@ -5538,14 +5558,18 @@ static void bandai_cpu_write(uint16_t address, uint8_t value) {
 }
 
 static uint8_t bandai_ppu_read(uint16_t address) {
-    unsigned slot = (address >> 10) & 7;
+    address &= 0x1FFFu;
+    if (C.chr_is_ram) return C.chr[address % C.chr_sz];
+    unsigned slot;
+    size_t page_size, page_count;
+    if (!shrunk_chr_slot_geometry(address, CHR_BANK_1K, 8, &slot, &page_size, &page_count))
+        return chr_unmapped_read(address);
     if (!(bandai.chr_mapped & (1u << slot))) return (uint8_t)address;
-    size_t offset = (size_t)bandai.chr_banks[slot] * CHR_BANK_1K + (address & 0x03FF);
-    return C.chr[offset % C.chr_sz];
+    return C.chr[shrunk_chr_bank_offset(address, page_size, page_count, bandai.chr_banks[slot])];
 }
 
 static void bandai_ppu_write(uint16_t address, uint8_t value) {
-    if (C.chr_is_ram) chr_ram_write(address & 0x1FFF, value);
+    if (C.chr_is_ram) chr_ram_write((address & 0x1FFFu) % C.chr_sz, value);
 }
 
 static void bandai_clock(int cycles) {
@@ -5569,7 +5593,7 @@ static void bandai_init(int mapper, unsigned standard_eeprom, unsigned extra_eep
     bandai.mapper = mapper;
     bandai.mirroring = C.mirr_base;
     bandai.ram_enabled = true;
-    bandai.chr_mapped = C.chr_is_ram ? 0xFF : 0;
+    bandai.chr_mapped = 0;
     for (unsigned i = 0; i < 8; ++i) bandai.chr_banks[i] = (uint8_t)i;
     eeprom24_init(&bandai_eeprom[0], standard_eeprom);
     eeprom24_init(&bandai_eeprom[1], extra_eeprom);
@@ -6966,10 +6990,9 @@ static bool vrc24_submapper_supported(int mapper_no, uint8_t submapper) {
 }
 
 static bool bandai_layout(int mapper, uint8_t submapper, bool nes2,
-                          size_t chr_bytes, bool chr_is_ram,
+                          size_t chr_bytes,
                           RomRamSizes *ram, unsigned eeprom_sizes[2]) {
-    if ((chr_is_ram && chr_bytes != CHR_BANK_8K)
-        || (!chr_is_ram && chr_bytes < CHR_BANK_1K)) return false;
+    if (!chr_bytes) return false;
     if (mapper == 153)
         return (!ram->prg_ram || ram->prg_ram == PRG_BANK_8K)
             && (!ram->prg_nvram || ram->prg_nvram == PRG_BANK_8K);
@@ -7254,7 +7277,7 @@ int mapper_init_from_header(const iNESHeader *h,
     unsigned eeprom_sizes[2] = {0, 0};
     bool is_bandai = mapper_no == 16 || mapper_no == 153 || mapper_no == 157 || mapper_no == 159;
     if (is_bandai && !bandai_layout(mapper_no, submapper, nes2, chr_sz,
-                                    chr_is_ram, &ram, eeprom_sizes)) {
+                                    &ram, eeprom_sizes)) {
         fprintf(stderr, "Unsupported cartridge layout for mapper %d\n", mapper_no);
         return -1;
     }
@@ -7293,11 +7316,6 @@ int mapper_init_from_header(const iNESHeader *h,
         fprintf(stderr, "Unsupported ROM size for mapper %d\n", mapper_no);
         return -1;
     }
-    if ((mapper_no == 24 || mapper_no == 26)
-        && chr_sz < CHR_BANK_1K) {
-        fprintf(stderr, "Unsupported ROM size for mapper %d\n", mapper_no);
-        return -1;
-    }
     if (mapper_no == 68 && (h->flags6 & 0x08)) {
         fprintf(stderr, "Unsupported ROM/RAM size for mapper 68\n");
         return -1;
@@ -7314,10 +7332,6 @@ int mapper_init_from_header(const iNESHeader *h,
         || (prg_sz != 0x8000 && prg_sz != 0xA000 && prg_sz != 0xC000 && prg_sz != 0x10000)
         || (chr_sz != 0x2000 && chr_sz != 0x4000 && chr_sz != 0x8000))) {
         fprintf(stderr, "Unsupported ROM size for mapper 99\n");
-        return -1;
-    }
-    if (is_jy && chr_sz < CHR_BANK_1K) {
-        fprintf(stderr, "Unsupported ROM/RAM size for mapper %d\n", mapper_no);
         return -1;
     }
     if (mapper_no == 105
