@@ -188,7 +188,100 @@ static void latch_banks(void) {
     cart_cpu_write(0xE000, 4);
 }
 
+static uint8_t mmc_latch_bus_read(uint16_t address, uint64_t *cycle) {
+    cart_notify_ppu_address(address, (*cycle)++);
+    return cart_ppu_read(address);
+}
+
+static void mmc_latch_bus_write(uint16_t address, uint8_t value, uint64_t *cycle) {
+    cart_notify_ppu_address(address, (*cycle)++);
+    cart_ppu_write(address, value);
+}
+
+static int test_mmc_latch_address_notifications(void) {
+    for (unsigned mapper = 9; mapper <= 10; ++mapper) {
+        uint64_t cycle = 1;
+        CHECK(fixture(mapper, 0x20000, 0x8000, false) == (int)mapper);
+
+        // Power-on CHR registers are not mapped until a latch transition is
+        // followed by another VRAM address. The transition itself is delayed
+        // even when it came from the address bus without a pattern-table read.
+        CHECK(cart_ppu_read(0x1400) == 0);
+        cart_notify_ppu_address(0x0FD8, cycle++);
+        CHECK(cart_ppu_read(0x1400) == 0);
+        cart_notify_ppu_address(0x1400, cycle++);
+        CHECK(cart_ppu_read(0x1400) == 1);
+
+        CHECK(fixture(mapper, 0x20000, 0x8000, false) == (int)mapper);
+        latch_banks();
+        CHECK(cart_ppu_read(0) == 8);
+
+        // Nametable addresses never select a latch, even when their lower
+        // thirteen bits match a pattern-table trigger. They can still apply
+        // an update that was pending from an earlier pattern-table address.
+        const uint16_t nametable_aliases[] = {0x2FD8, 0x2FDF, 0x2FE8, 0x2FEF,
+                                              0x3FD8, 0x3FDF, 0x3FE8, 0x3FEF};
+        for (unsigned index = 0; index < sizeof(nametable_aliases) / sizeof(nametable_aliases[0]); ++index) {
+            cart_notify_ppu_address(nametable_aliases[index], cycle++);
+            cart_notify_ppu_address(0, cycle++);
+            CHECK(cart_ppu_read(0) == 8 && cart_ppu_read(0x1000) == 16);
+        }
+        cart_notify_ppu_address(0x0FD8, cycle++);
+        cart_notify_ppu_address(0x2FE8, cycle++);
+        CHECK(cart_ppu_read(0) == 4);
+        cart_notify_ppu_address(0, cycle++);
+        CHECK(cart_ppu_read(0) == 4);
+        cart_notify_ppu_address(0x0FE8, cycle++);
+        cart_notify_ppu_address(0x2000, cycle++);
+        CHECK(cart_ppu_read(0) == 8);
+
+        // A CPU PPUADDR write changes the cartridge address pins after the
+        // PPU's normal three-clock delay. It can trigger the latch without a
+        // CHR read, and the following bus address performs the bank update.
+        ppu_power_on(&ppu);
+        ppu_reg_write(PPUADDR, 0x0F);
+        ppu_reg_write(PPUADDR, 0xD8);
+        ppu_step_dots(2);
+        CHECK(cart_ppu_read(0) == 8);
+        ppu_step_dots(1);
+        CHECK(cart_ppu_read(0) == 8);
+        ppu_reg_write(PPUADDR, 0x00);
+        ppu_reg_write(PPUADDR, 0x00);
+        ppu_step_dots(3);
+        CHECK(cart_ppu_read(0) == 4);
+
+        // Writes use the same address hook. The triggering write still uses
+        // the selected page; the next address commits the new latch state.
+        CHECK(fixture(mapper, 0x20000, 0x8000, true) == (int)mapper);
+        latch_banks();
+        cycle = 1;
+        cart_ppu_write(0, 0x53);
+        mmc_latch_bus_write(0x0FD8, 0xA6, &cycle);
+        CHECK(cart_ppu_read(0) == 0x53);
+        cart_notify_ppu_address(0, cycle++);
+        CHECK(cart_ppu_read(0) == 4);
+        cart_notify_ppu_address(0x0FE8, cycle++);
+        CHECK(cart_ppu_read(0) == 4);
+        cart_notify_ppu_address(0, cycle++);
+        CHECK(cart_ppu_read(0) == 0x53);
+
+        // A console CPU soft reset does not reset MMC2/MMC4 state. A pending
+        // latch update therefore remains pending until the next VRAM address.
+        CHECK(fixture(mapper, 0x20000, 0x8000, false) == (int)mapper);
+        latch_banks();
+        cycle = 1;
+        CHECK(cart_ppu_read(0) == 8);
+        cart_notify_ppu_address(0x0FD8, cycle++);
+        cpu_soft_reset(&cpu);
+        CHECK(cart_ppu_read(0) == 8);
+        cart_notify_ppu_address(0, cycle++);
+        CHECK(cart_ppu_read(0) == 4);
+    }
+    return 0;
+}
+
 static int test_mmc2_banks_and_latches(void) {
+    uint64_t cycle = 1;
     CHECK(fixture(9, 0x20000, 0x8000, false) == 9);
     cart_cpu_write(0xA000, 2);
     CHECK(cart_cpu_read(0x8000) == 2);
@@ -197,16 +290,16 @@ static int test_mmc2_banks_and_latches(void) {
     CHECK(cart_cpu_read(0xFFFF) == 15);
     latch_banks();
     CHECK(cart_ppu_read(0) == 8 && cart_ppu_read(0x1000) == 16);
-    CHECK(cart_ppu_read(0x0FD9) == 11); // Only $0FD8 is decoded in the left table.
+    CHECK(mmc_latch_bus_read(0x0FD9, &cycle) == 11); // Only $0FD8 is decoded in the left table.
     CHECK(cart_ppu_read(0) == 8);
-    CHECK(cart_ppu_read(0x0FD8) == 11); // Triggering read still uses the old bank.
-    CHECK(cart_ppu_read(0) == 4);
-    CHECK(cart_ppu_read(0x0FE8) == 7);
-    CHECK(cart_ppu_read(0) == 8);
-    CHECK(cart_ppu_read(0x1FDF) == 19);
-    CHECK(cart_ppu_read(0x1000) == 12);
-    CHECK(cart_ppu_read(0x1FEF) == 15);
-    CHECK(cart_ppu_read(0x1000) == 16);
+    CHECK(mmc_latch_bus_read(0x0FD8, &cycle) == 11); // Triggering read still uses the old bank.
+    CHECK(mmc_latch_bus_read(0, &cycle) == 4);
+    CHECK(mmc_latch_bus_read(0x0FE8, &cycle) == 7);
+    CHECK(mmc_latch_bus_read(0, &cycle) == 8);
+    CHECK(mmc_latch_bus_read(0x1FDF, &cycle) == 19);
+    CHECK(mmc_latch_bus_read(0x1000, &cycle) == 12);
+    CHECK(mmc_latch_bus_read(0x1FEF, &cycle) == 15);
+    CHECK(mmc_latch_bus_read(0x1000, &cycle) == 16);
     cart_ppu_write(0x1000, 0x55);
     CHECK(cart_ppu_read(0x1000) == 16);
     cart_cpu_write(0xF000, 1);
@@ -215,26 +308,28 @@ static int test_mmc2_banks_and_latches(void) {
 }
 
 static int test_mmc4_latches_and_chr_ram(void) {
+    uint64_t cycle = 1;
     CHECK(fixture(10, 0x20000, 0x8000, false) == 10);
     cart_cpu_write(0xA000, 2);
     CHECK(cart_cpu_read(0x8000) == 4 && cart_cpu_read(0xFFFF) == 15);
     latch_banks();
     CHECK(cart_ppu_read(0) == 8 && cart_ppu_read(0x1000) == 16);
-    CHECK(cart_ppu_read(0x0FDF) == 11);
-    CHECK(cart_ppu_read(0) == 4 && cart_ppu_read(0x1000) == 16);
-    CHECK(cart_ppu_read(0x0FEF) == 7);
-    CHECK(cart_ppu_read(0) == 8);
+    CHECK(mmc_latch_bus_read(0x0FDF, &cycle) == 11);
+    CHECK(mmc_latch_bus_read(0, &cycle) == 4 && cart_ppu_read(0x1000) == 16);
+    CHECK(mmc_latch_bus_read(0x0FEF, &cycle) == 7);
+    CHECK(mmc_latch_bus_read(0, &cycle) == 8);
     for (unsigned mapper = 9; mapper <= 10; ++mapper) {
         CHECK(fixture(mapper, 0x20000, 0x8000, true) == (int)mapper);
         latch_banks();
+        cycle = 1;
         cart_ppu_write(0x1000, 0xA5);
-        (void)cart_ppu_read(0x1FD8);
-        CHECK(cart_ppu_read(0x1000) == 12);
+        (void)mmc_latch_bus_read(0x1FD8, &cycle);
+        CHECK(mmc_latch_bus_read(0x1000, &cycle) == 12);
         cart_ppu_write(0x1000, 0x5A);
-        (void)cart_ppu_read(0x1FE8);
-        CHECK(cart_ppu_read(0x1000) == 0xA5);
-        (void)cart_ppu_read(0x1FD8);
-        CHECK(cart_ppu_read(0x1000) == 0x5A);
+        (void)mmc_latch_bus_read(0x1FE8, &cycle);
+        CHECK(mmc_latch_bus_read(0x1000, &cycle) == 0xA5);
+        (void)mmc_latch_bus_read(0x1FD8, &cycle);
+        CHECK(mmc_latch_bus_read(0x1000, &cycle) == 0x5A);
     }
     return 0;
 }
@@ -9939,7 +10034,7 @@ int test_mapper_accuracy(void) {
         test_mapper232_multicart_banks,
         test_mapper232_loader_and_cpu_bus,
         test_mmc1a_ram_revision, test_mmc1a_cpu_serial_writes, test_mmc1a_ram_layouts_and_loader,
-        test_mmc1_outer_and_fixed_banks, test_mmc2_banks_and_latches,
+        test_mmc1_outer_and_fixed_banks, test_mmc_latch_address_notifications, test_mmc2_banks_and_latches,
         test_mmc4_latches_and_chr_ram, test_mmc3_banks_and_protection,
         test_mmc3_irq_edges, test_mmc3_revision_a_irq, test_mmc3_revision_a_cpu_irq,
         test_mmc3_render_trace, test_tqrom_mixed_chr_memory,

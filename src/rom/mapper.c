@@ -172,6 +172,8 @@ static struct {
 static RamBlock prg_work_ram, prg_save_ram;
 static RamBlock chr_work_ram, chr_save_ram;
 static uint8_t *chr_nvram_data(void);
+static void mmc2_notify_ppu_address(uint16_t address);
+static void mmc4_notify_ppu_address(uint16_t address);
 static bool prg_ram_dirty = false;
 static bool chr_ram_dirty = false;
 static uint8_t mmc5_exram[0x400];
@@ -2234,6 +2236,14 @@ static void jy_reset(void) {
 void cart_notify_ppu_address(uint16_t addr, uint64_t ppu_cycle) {
     if (active_board) {
         board_notify_ppu_address(active_board, addr, ppu_cycle);
+        return;
+    }
+    if (cart == &mapper_mmc2) {
+        mmc2_notify_ppu_address(addr);
+        return;
+    }
+    if (cart == &mapper_mmc4) {
+        mmc4_notify_ppu_address(addr);
         return;
     }
     if (cart == &mapper_m96) {
@@ -4388,9 +4398,38 @@ static struct {
     uint8_t prg_bank;
     uint8_t chr_banks[4];
     uint8_t latch[2];
+    uint8_t selected_chr_bank[2];
     bool chr_mapped[2];
+    bool need_chr_update;
     Mirroring mirr;
 } mmc2;
+
+static void mmc2_select_chr_slot(unsigned slot) {
+    uint8_t bank_idx = slot ? (uint8_t)(2 + mmc2.latch[1]) : mmc2.latch[0];
+    mmc2.selected_chr_bank[slot] = mmc2.chr_banks[bank_idx];
+    mmc2.chr_mapped[slot] = true;
+}
+
+static void mmc2_notify_ppu_address(uint16_t a) {
+    if (mmc2.need_chr_update) {
+        mmc2_select_chr_slot(0);
+        mmc2_select_chr_slot(1);
+        mmc2.need_chr_update = false;
+    }
+    if (a == 0x0FD8) {
+        mmc2.latch[0] = 0;
+        mmc2.need_chr_update = true;
+    } else if (a == 0x0FE8) {
+        mmc2.latch[0] = 1;
+        mmc2.need_chr_update = true;
+    } else if (a >= 0x1FD8 && a <= 0x1FDF) {
+        mmc2.latch[1] = 0;
+        mmc2.need_chr_update = true;
+    } else if (a >= 0x1FE8 && a <= 0x1FEF) {
+        mmc2.latch[1] = 1;
+        mmc2.need_chr_update = true;
+    }
+}
 
 static uint8_t mmc2_cpu_read(uint16_t a) {
     if (a >= 0x6000 && a <= 0x7FFF) return prg_ram_read(a);
@@ -4411,10 +4450,10 @@ static uint8_t mmc2_cpu_read(uint16_t a) {
 static void mmc2_cpu_write(uint16_t a, uint8_t v) {
     if (a >= 0x6000 && a <= 0x7FFF) { prg_ram_write(a, v); return; }
     if (a >= 0xA000 && a <= 0xAFFF) mmc2.prg_bank = v & 0x0F;
-    else if (a >= 0xB000 && a <= 0xBFFF) { mmc2.chr_banks[0] = v & 0x1F; mmc2.chr_mapped[0] = true; }
-    else if (a >= 0xC000 && a <= 0xCFFF) { mmc2.chr_banks[1] = v & 0x1F; mmc2.chr_mapped[0] = true; }
-    else if (a >= 0xD000 && a <= 0xDFFF) { mmc2.chr_banks[2] = v & 0x1F; mmc2.chr_mapped[1] = true; }
-    else if (a >= 0xE000 && a <= 0xEFFF) { mmc2.chr_banks[3] = v & 0x1F; mmc2.chr_mapped[1] = true; }
+    else if (a >= 0xB000 && a <= 0xBFFF) { mmc2.chr_banks[0] = v & 0x1F; mmc2_select_chr_slot(0); }
+    else if (a >= 0xC000 && a <= 0xCFFF) { mmc2.chr_banks[1] = v & 0x1F; mmc2_select_chr_slot(0); }
+    else if (a >= 0xD000 && a <= 0xDFFF) { mmc2.chr_banks[2] = v & 0x1F; mmc2_select_chr_slot(1); }
+    else if (a >= 0xE000 && a <= 0xEFFF) { mmc2.chr_banks[3] = v & 0x1F; mmc2_select_chr_slot(1); }
     else if (a >= 0xF000) mmc2.mirr = (v & 1) ? MIRROR_HORIZONTAL : MIRROR_VERTICAL;
 }
 
@@ -4424,17 +4463,9 @@ static uint8_t mmc2_ppu_read(uint16_t a) {
     size_t slot = page_size ? a / page_size : 2;
     uint8_t val = chr_unmapped_read(a);
     if (slot < 2 && mmc2.chr_mapped[slot]) {
-        uint8_t bank_idx = slot ? (uint8_t)(2 + mmc2.latch[1]) : mmc2.latch[0];
-        size_t bank = mmc2.chr_banks[bank_idx] % (C.chr_sz / page_size);
+        size_t bank = mmc2.selected_chr_bank[slot] % (C.chr_sz / page_size);
         val = C.chr[bank * page_size + (a % page_size)];
     }
-    
-    // Latch update
-    if (a == 0x0FD8) mmc2.latch[0] = 0;
-    else if (a == 0x0FE8) mmc2.latch[0] = 1;
-    else if (a >= 0x1FD8 && a <= 0x1FDF) mmc2.latch[1] = 0;
-    else if (a >= 0x1FE8 && a <= 0x1FEF) mmc2.latch[1] = 1;
-    
     return val;
 }
 
@@ -4444,8 +4475,7 @@ static void mmc2_ppu_write(uint16_t a, uint8_t v) {
     size_t page_size = shrunk_chr_page_size(CHR_BANK_4K);
     size_t slot = page_size ? a / page_size : 2;
     if (slot >= 2 || !mmc2.chr_mapped[slot]) { chr_ram_write(a % C.chr_sz, v); return; }
-    uint8_t bank_idx = slot ? (uint8_t)(2 + mmc2.latch[1]) : mmc2.latch[0];
-    size_t bank = mmc2.chr_banks[bank_idx] % (C.chr_sz / page_size);
+    size_t bank = mmc2.selected_chr_bank[slot] % (C.chr_sz / page_size);
     chr_ram_write(bank * page_size + (a % page_size), v);
 }
 
@@ -4461,9 +4491,38 @@ static struct {
     uint8_t prg_bank;
     uint8_t chr_banks[4];
     uint8_t latch[2];
+    uint8_t selected_chr_bank[2];
     bool chr_mapped[2];
+    bool need_chr_update;
     Mirroring mirr;
 } mmc4;
+
+static void mmc4_select_chr_slot(unsigned slot) {
+    uint8_t bank_idx = slot ? (uint8_t)(2 + mmc4.latch[1]) : mmc4.latch[0];
+    mmc4.selected_chr_bank[slot] = mmc4.chr_banks[bank_idx];
+    mmc4.chr_mapped[slot] = true;
+}
+
+static void mmc4_notify_ppu_address(uint16_t a) {
+    if (mmc4.need_chr_update) {
+        mmc4_select_chr_slot(0);
+        mmc4_select_chr_slot(1);
+        mmc4.need_chr_update = false;
+    }
+    if (a >= 0x0FD8 && a <= 0x0FDF) {
+        mmc4.latch[0] = 0;
+        mmc4.need_chr_update = true;
+    } else if (a >= 0x0FE8 && a <= 0x0FEF) {
+        mmc4.latch[0] = 1;
+        mmc4.need_chr_update = true;
+    } else if (a >= 0x1FD8 && a <= 0x1FDF) {
+        mmc4.latch[1] = 0;
+        mmc4.need_chr_update = true;
+    } else if (a >= 0x1FE8 && a <= 0x1FEF) {
+        mmc4.latch[1] = 1;
+        mmc4.need_chr_update = true;
+    }
+}
 
 static uint8_t mmc4_cpu_read(uint16_t a) {
     if (a >= 0x6000 && a <= 0x7FFF) return prg_ram_read(a);
@@ -4483,10 +4542,10 @@ static uint8_t mmc4_cpu_read(uint16_t a) {
 static void mmc4_cpu_write(uint16_t a, uint8_t v) {
     if (a >= 0x6000 && a <= 0x7FFF) { prg_ram_write(a, v); return; }
     if (a >= 0xA000 && a <= 0xAFFF) mmc4.prg_bank = v & 0x0F;
-    else if (a >= 0xB000 && a <= 0xBFFF) { mmc4.chr_banks[0] = v & 0x1F; mmc4.chr_mapped[0] = true; }
-    else if (a >= 0xC000 && a <= 0xCFFF) { mmc4.chr_banks[1] = v & 0x1F; mmc4.chr_mapped[0] = true; }
-    else if (a >= 0xD000 && a <= 0xDFFF) { mmc4.chr_banks[2] = v & 0x1F; mmc4.chr_mapped[1] = true; }
-    else if (a >= 0xE000 && a <= 0xEFFF) { mmc4.chr_banks[3] = v & 0x1F; mmc4.chr_mapped[1] = true; }
+    else if (a >= 0xB000 && a <= 0xBFFF) { mmc4.chr_banks[0] = v & 0x1F; mmc4_select_chr_slot(0); }
+    else if (a >= 0xC000 && a <= 0xCFFF) { mmc4.chr_banks[1] = v & 0x1F; mmc4_select_chr_slot(0); }
+    else if (a >= 0xD000 && a <= 0xDFFF) { mmc4.chr_banks[2] = v & 0x1F; mmc4_select_chr_slot(1); }
+    else if (a >= 0xE000 && a <= 0xEFFF) { mmc4.chr_banks[3] = v & 0x1F; mmc4_select_chr_slot(1); }
     else if (a >= 0xF000) mmc4.mirr = (v & 1) ? MIRROR_HORIZONTAL : MIRROR_VERTICAL;
 }
 
@@ -4496,17 +4555,9 @@ static uint8_t mmc4_ppu_read(uint16_t a) {
     size_t slot = page_size ? a / page_size : 2;
     uint8_t val = chr_unmapped_read(a);
     if (slot < 2 && mmc4.chr_mapped[slot]) {
-        uint8_t bank_idx = slot ? (uint8_t)(2 + mmc4.latch[1]) : mmc4.latch[0];
-        size_t bank = mmc4.chr_banks[bank_idx] % (C.chr_sz / page_size);
+        size_t bank = mmc4.selected_chr_bank[slot] % (C.chr_sz / page_size);
         val = C.chr[bank * page_size + (a % page_size)];
     }
-    
-    // MMC4 decodes all eight addresses in both pattern-table latch ranges.
-    if (a >= 0x0FD8 && a <= 0x0FDF) mmc4.latch[0] = 0;
-    else if (a >= 0x0FE8 && a <= 0x0FEF) mmc4.latch[0] = 1;
-    else if (a >= 0x1FD8 && a <= 0x1FDF) mmc4.latch[1] = 0;
-    else if (a >= 0x1FE8 && a <= 0x1FEF) mmc4.latch[1] = 1;
-    
     return val;
 }
 
@@ -4516,8 +4567,7 @@ static void mmc4_ppu_write(uint16_t a, uint8_t v) {
     size_t page_size = shrunk_chr_page_size(CHR_BANK_4K);
     size_t slot = page_size ? a / page_size : 2;
     if (slot >= 2 || !mmc4.chr_mapped[slot]) { chr_ram_write(a % C.chr_sz, v); return; }
-    uint8_t bank_idx = slot ? (uint8_t)(2 + mmc4.latch[1]) : mmc4.latch[0];
-    size_t bank = mmc4.chr_banks[bank_idx] % (C.chr_sz / page_size);
+    size_t bank = mmc4.selected_chr_bank[slot] % (C.chr_sz / page_size);
     chr_ram_write(bank * page_size + (a % page_size), v);
 }
 
