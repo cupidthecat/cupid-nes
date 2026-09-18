@@ -323,6 +323,14 @@ static bool jissen_key_event(const SDL_KeyboardEvent *event) {
     return true;
 }
 
+static void oeka_kids_pointer_event(int pointer_x, int pointer_y, bool pointer_on_screen,
+                                    uint32_t buttons) {
+    if (joypad_expansion_device() != NES_EXPANSION_OEKA_KIDS_TABLET) return;
+    bool click = (buttons & SDL_BUTTON_LMASK) != 0;
+    bool touch = click || (pointer_on_screen && pointer_y >= 48);
+    joypad_set_oeka_kids_tablet(pointer_x, pointer_y, touch, click);
+}
+
 int main(int argc, char *argv[]) {
     SDL_AudioSpec want;
     SDL_AudioSpec have;
@@ -775,10 +783,7 @@ int main(int argc, char *argv[]) {
                 if (joypad_expansion_device() == NES_EXPANSION_PACHINKO)
                     joypad_set_pachinko_controls((buttons & SDL_BUTTON_LMASK) != 0,
                                                  (buttons & SDL_BUTTON_RMASK) != 0);
-                if (joypad_expansion_device() == NES_EXPANSION_OEKA_KIDS_TABLET)
-                    joypad_set_oeka_kids_tablet(pointer_x, pointer_y,
-                                                pointer_on_screen && pointer_y >= 48,
-                                                (buttons & SDL_BUTTON_LMASK) != 0);
+                oeka_kids_pointer_event(pointer_x, pointer_y, pointer_on_screen, buttons);
             }
             if (e.type == SDL_QUIT) {
                 if (rom_is_fds() && !fds_flush()) {
