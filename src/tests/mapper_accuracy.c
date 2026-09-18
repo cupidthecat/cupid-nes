@@ -34,10 +34,13 @@
 #include <unistd.h>
 #endif
 #include "../rom/mapper.h"
+#include "../rom/game_db.h"
 #include "../cpu/cpu.h"
 #include "../ppu/ppu.h"
 #include "../apu/apu.h"
+#include "../joypad/joypad.h"
 #include "../system/timing.h"
+#include "../system/vs_system.h"
 #include "../../include/globals.h"
 
 extern uint64_t cpu_total_cycles;
@@ -10566,6 +10569,135 @@ static int test_trainer_volatile_ram_ignores_save(void) {
     return result | save_fixture_end(&paths);
 }
 
+static int test_game_database_and_headerless_loading(void) {
+    CHECK(unload_rom());
+    rom_database_clear();
+    rom_database_set_overrides(true);
+    joypad_set_configuration_overrides(0);
+    CHECK(joypad_set_adapter(NES_ADAPTER_NONE));
+    CHECK(joypad_set_port_device(0, NES_PORT_GAMEPAD));
+    CHECK(joypad_set_port_device(1, NES_PORT_GAMEPAD));
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_NONE));
+
+    iNESHeader legacy = header_for(0, 0x4000, false);
+    size_t corrected_size = 0;
+    uint8_t *corrected = image_for(&legacy, 0x8000, 0x2000, &corrected_size);
+    CHECK(corrected != NULL);
+    for (size_t i = 0; i < 0x8000; ++i)
+        corrected[sizeof(legacy) + i] = (uint8_t)(i / 0x4000);
+    uint32_t corrected_payload_crc = game_db_crc32(corrected + sizeof(legacy),
+                                                   corrected_size - sizeof(legacy));
+    uint32_t corrected_file_crc = game_db_crc32(corrected, corrected_size);
+    uint32_t corrected_prg_crc = game_db_crc32(corrected + sizeof(legacy), 0x8000);
+    char database[512];
+    int length = snprintf(database, sizeof(database),
+        "%08X,Famicom,UOROM,TEST,MMC1B,2,32,8,0,8,0,0,v,59,N,2,0,0\n",
+        (unsigned)corrected_payload_crc);
+    CHECK(length > 0 && (size_t)length < sizeof(database));
+    CHECK(rom_database_load_memory(database, (size_t)length));
+    CHECK(load_rom_memory(corrected, corrected_size) == 0);
+    CHECK(rom_metadata_source() == ROM_METADATA_DATABASE);
+    CHECK(rom_mapper_number(&ines_header) == 2 && (ines_header.prg_ram_size >> 4) == 2);
+    CHECK(prg_size == 0x8000 && chr_size == 0x2000);
+    CHECK(cart_get_mirroring() == MIRROR_VERTICAL && nes_timing()->region == NES_REGION_NTSC);
+    CHECK(rom_file_crc32() == corrected_file_crc);
+    CHECK(rom_prg_crc32() == corrected_prg_crc && rom_prg_chr_crc32() == corrected_payload_crc);
+    CHECK(joypad_expansion_device() == NES_EXPANSION_FCNS_CONTROLLER);
+    cart_cpu_write(0x6123, 0xA7);
+    CHECK(cart_cpu_read(0x6123) == 0xA7);
+    cart_cpu_write(0x8000, 1);
+    CHECK(cart_cpu_read(0x8000) == 1); // Database disabled the board's bus conflict.
+
+    GameDbEntry looked_up = {0};
+    CHECK(game_db_lookup(corrected_payload_crc, &looked_up));
+    CHECK(looked_up.mapper == 2 && looked_up.submapper_present && looked_up.submapper == 2);
+    CHECK(strcmp(looked_up.board, "UOROM") == 0 && looked_up.bus_conflicts == 0);
+
+    iNESHeader nes2 = header_for(0, 0x8000, false);
+    nes2.flags7 |= 0x08;
+    size_t nes2_size = 0;
+    uint8_t *nes2_image = image_for(&nes2, 0x8000, 0x2000, &nes2_size);
+    CHECK(nes2_image != NULL);
+    memcpy(nes2_image + sizeof(nes2), corrected + sizeof(legacy), 0xA000);
+    CHECK(load_rom_memory(nes2_image, nes2_size) == 0);
+    CHECK(rom_metadata_source() == ROM_METADATA_NES20 && rom_mapper_number(&ines_header) == 0);
+    free(nes2_image);
+
+    rom_database_set_overrides(false);
+    iNESHeader plain = header_for(0, 0x8000, false);
+    size_t plain_size = 0;
+    uint8_t *plain_image = image_for(&plain, 0x8000, 0x2000, &plain_size);
+    CHECK(plain_image != NULL);
+    memcpy(plain_image + sizeof(plain), corrected + sizeof(legacy), 0xA000);
+    CHECK(load_rom_memory(plain_image, plain_size) == 0);
+    CHECK(rom_metadata_source() == ROM_METADATA_INES && rom_mapper_number(&ines_header) == 0);
+    free(plain_image);
+    rom_database_set_overrides(true);
+
+    iNESHeader vs_header = header_for(0, 0x4000, false);
+    size_t vs_size = 0;
+    uint8_t *vs_image = image_for(&vs_header, 0x4000, 0x2000, &vs_size);
+    CHECK(vs_image != NULL);
+    uint32_t vs_crc = game_db_crc32(vs_image + sizeof(vs_header), vs_size - sizeof(vs_header));
+    length = snprintf(database, sizeof(database),
+        "%08X,VsSystem,NROM,,,0,16,8,0,0,0,0,h,1,N,0,0,2\n", (unsigned)vs_crc);
+    CHECK(length > 0 && (size_t)length < sizeof(database));
+    CHECK(rom_database_load_memory(database, (size_t)length));
+    CHECK(load_rom_memory(vs_image, vs_size) == 0);
+    CHECK(rom_metadata_source() == ROM_METADATA_DATABASE && vs_enabled());
+    CHECK(vs_ppu_model() == VS_PPU_2C04_0001);
+    free(vs_image);
+
+    uint8_t *headerless = (uint8_t *)malloc(0x6000);
+    CHECK(headerless != NULL);
+    memset(headerless, 0x35, 0x4000);
+    memset(headerless + 0x4000, 0xC7, 0x2000);
+    uint32_t headerless_crc = game_db_crc32(headerless, 0x6000);
+    length = snprintf(database, sizeof(database),
+        "%08X,NesPal,NROM,,,0,16,8,0,8,0,0,h,1,N,,0,0\n", (unsigned)headerless_crc);
+    CHECK(length > 0 && (size_t)length < sizeof(database));
+
+    SaveFixture paths;
+    CHECK(save_fixture_begin(&paths) == 0);
+    char database_path[128];
+    snprintf(database_path, sizeof(database_path), "%s/games.txt", paths.directory);
+    FILE *database_file = fopen(database_path, "wb");
+    CHECK(database_file != NULL);
+    size_t database_written = fwrite(database, 1, (size_t)length, database_file);
+    int database_closed = fclose(database_file);
+    CHECK(database_written == (size_t)length && database_closed == 0);
+    CHECK(rom_database_load_file(database_path));
+
+    rom_database_set_overrides(false); // Headerless lookup remains available.
+    CHECK(load_rom_memory(headerless, 0x6000) == 0);
+    CHECK(rom_metadata_source() == ROM_METADATA_DATABASE_HEADERLESS);
+    CHECK(rom_file_crc32() == headerless_crc && rom_prg_chr_crc32() == headerless_crc);
+    CHECK(nes_timing()->region == NES_REGION_PAL && rom_mapper_number(&ines_header) == 0);
+    cart_cpu_write(0x6123, 0x6D);
+    CHECK(cart_cpu_read(0x6123) == 0x6D);
+
+    uint8_t unknown[0x6000];
+    memcpy(unknown, headerless, sizeof(unknown));
+    unknown[0] ^= 0xFF;
+    uint8_t *active_prg = prg_rom;
+    Mapper *active_cart = cart;
+    CHECK(load_rom_memory(unknown, sizeof(unknown)) == -1);
+    CHECK(prg_rom == active_prg && cart == active_cart && cart_cpu_read(0x6123) == 0x6D);
+
+    CHECK(!rom_database_load_memory("bad", 3));
+    CHECK(load_rom_memory(headerless, 0x6000) == 0);
+    CHECK(rom_metadata_source() == ROM_METADATA_DATABASE_HEADERLESS);
+
+    rom_database_set_overrides(true);
+    rom_database_clear();
+    CHECK(remove(database_path) == 0);
+    CHECK(unload_rom());
+    free(headerless);
+    free(corrected);
+    CHECK(save_fixture_end(&paths) == 0);
+    return 0;
+}
+
 static int test_cartridge_unload(void) {
     iNESHeader h = header_for(0, 0x4000, true);
     size_t image_size;
@@ -10696,7 +10828,8 @@ int test_mapper_accuracy(void) {
         test_cnrom185_submapper_latches_and_ppu_bus,
         test_cnrom185_cpu_bus_conflict_control,
         test_cnrom185_loader_and_cnrom_regression,
-        test_cartridge_bus_reads, test_mmc6_persistence, test_cartridge_unload
+        test_cartridge_bus_reads, test_mmc6_persistence,
+        test_game_database_and_headerless_loading, test_cartridge_unload
     };
     int failures = 0;
     for (size_t i = 0; i < sizeof(tests) / sizeof(tests[0]); ++i) failures += tests[i]();

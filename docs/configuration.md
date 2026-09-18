@@ -71,6 +71,19 @@ NES 2.0 extended console subtype `0x0C` selects the Famicom Network System cartr
 
 The emulator models the local cartridge, character-ROM interface, RAM banking, and controller. It does not connect to or reproduce the original network service.
 
+## Game database and headerless cartridges
+
+`--game-db FILE` loads an optional cartridge metadata database before the positional image. The file uses the 18-field CSV layout for CRC, system, board, PCB, chip, mapper, PRG ROM, CHR ROM, CHR RAM, work RAM, save RAM, battery, mirroring, input, bus conflicts, submapper, VS hardware type, and VS PPU model. Blank optional fields retain the loader or board default where the database format defines one.
+
+For legacy iNES images, Cupid hashes the PRG+CHR payload after the header and optional trainer. A matching entry can correct the mapper, submapper, ROM sizes, supported RAM sizes, battery state, mirroring, regional or VS metadata, input type, board/chip information, and bus-conflict setting. NES 2.0 metadata keeps precedence over ordinary database corrections. `--no-game-db-overrides` disables corrections for headered legacy images.
+
+Headerless images use a separate whole-file CRC lookup. A matching database entry supplies the complete cartridge description needed to validate and load the payload. Headerless lookup remains available with `--no-game-db-overrides` because there is no image header to fall back to. Unknown headerless payloads and invalid database records are rejected without replacing an active cartridge. Startup output reports the selected metadata source together with whole-file, PRG, and PRG+CHR CRCs for cartridge images.
+
+```sh
+./cupid-nes --game-db "NesDB.txt" "game.nes"
+./cupid-nes --game-db "NesDB.txt" --no-game-db-overrides "headerless.bin"
+```
+
 ## Controllers and expansion devices
 
 | Option | Accepted value | Default |

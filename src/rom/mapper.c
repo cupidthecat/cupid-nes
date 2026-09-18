@@ -7245,8 +7245,16 @@ int mapper_init_from_header(const iNESHeader *h,
                             uint8_t *prg, size_t prg_sz,
                             uint8_t *chr, size_t chr_sz)
 {
+    return mapper_init_from_header_metadata(h, prg, prg_sz, chr, chr_sz, NULL);
+}
+
+int mapper_init_from_header_metadata(const iNESHeader *h,
+                                     uint8_t *prg, size_t prg_sz,
+                                     uint8_t *chr, size_t chr_sz,
+                                     const RomDatabaseInfo *database)
+{
     if (h && board_handles_header(h)) {
-        CartridgeBoard *prepared = board_create(h, prg, prg_sz, chr, chr_sz);
+        CartridgeBoard *prepared = board_create_with_metadata(h, prg, prg_sz, chr, chr_sz, database);
         if (!prepared) return -1;
         uint16_t mapper_no = board_is_fcns_header(h) ? BOARD_FCNS_MAPPER_ID
                                                      : (uint16_t)rom_mapper_number(h);
@@ -7305,6 +7313,11 @@ int mapper_init_from_header(const iNESHeader *h,
     }
     RomRamSizes ram;
     rom_ram_sizes(h, &ram);
+    if (database && database->present) {
+        if (database->work_ram_override) ram.prg_ram = database->work_ram;
+        if (database->save_ram_override) ram.prg_nvram = database->save_ram;
+        if (database->chr_ram_override) ram.chr_ram = database->chr_ram;
+    }
     bool is_jy = mapper_no == 90 || mapper_no == 209 || mapper_no == 211;
     if (is_jy && !nes2) ram.prg_ram = ram.prg_nvram = 0;
     if (mapper_no == 99 && !nes2 && !(h->flags6 & 2)) {
@@ -7458,6 +7471,8 @@ int mapper_init_from_header(const iNESHeader *h,
         || (mapper_no == 34 && !mapper34_nina)
         || (submapper == 2 && (mapper_no == 2 || mapper_no == 3 || mapper_no == 7 || mapper_no == 30))
         || (mapper_no == 30 && submapper == 0 && !(h->flags6 & 2));
+    if (database && database->present && database->bus_conflicts >= 0)
+        C.bus_conflicts = database->bus_conflicts != 0;
     
     // iNES flags6:
     // bit 0 = 1 -> VERTICAL mirroring, 0 -> HORIZONTAL mirroring
@@ -7468,6 +7483,8 @@ int mapper_init_from_header(const iNESHeader *h,
     } else {
         mir = (h->flags6 & 0x01) ? MIRROR_VERTICAL : MIRROR_HORIZONTAL;
     }
+    if (database && database->present && database->mirroring_override)
+        mir = database->mirroring;
     cart_set_mirroring(mir);
 
     switch(mapper_no) {

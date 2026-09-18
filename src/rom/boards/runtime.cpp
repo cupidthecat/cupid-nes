@@ -374,7 +374,8 @@ void Board::UpdatePageSizes() {
 }
 
 void Board::Initialize(const iNESHeader &header, uint8_t *prg, size_t prgBytes,
-                        uint8_t *chr, size_t chrBytes) {
+                        uint8_t *chr, size_t chrBytes,
+                        const RomDatabaseInfo *database) {
     if (!prg || !prgBytes || prgBytes > UINT32_MAX || chrBytes > UINT32_MAX)
         throw std::invalid_argument("unsupported cartridge buffer size");
     _romInfo.MapperID = static_cast<unsigned>(rom_mapper_number(&header));
@@ -382,6 +383,11 @@ void Board::Initialize(const iNESHeader &header, uint8_t *prg, size_t prgBytes,
     _romInfo.SubMapperID = IsNes20() ? header.prg_ram_size >> 4 : 0;
     _romInfo.HasBattery = (header.flags6 & 2) != 0;
     _romInfo.Header.Byte6 = header.flags6;
+    if (database && database->present) {
+        _romInfo.DatabaseInfo.Board = database->board;
+        _romInfo.DatabaseInfo.Chip = database->chip;
+        _romInfo.DatabaseInfo.BusConflicts = database->bus_conflicts;
+    }
     _prgRom = prg;
     _prgSize = static_cast<uint32_t>(prgBytes);
     bool chrRom = header.chr_rom_chunks || (IsNes20() && (header.flags9 & 0xF0));
@@ -390,6 +396,11 @@ void Board::Initialize(const iNESHeader &header, uint8_t *prg, size_t prgBytes,
     _chrRomSize = chrRom ? static_cast<uint32_t>(chrBytes) : 0;
     RomRamSizes ram{};
     rom_ram_sizes(&header, &ram);
+    if (database && database->present) {
+        if (database->work_ram_override) ram.prg_ram = database->work_ram;
+        if (database->save_ram_override) ram.prg_nvram = database->save_ram;
+        if (database->chr_ram_override) ram.chr_ram = database->chr_ram;
+    }
     _saveRamSize = !IsNes20() || ForceSaveRamSize()
                  ? (HasBattery() || ForceSaveRamSize() ? GetSaveRamSize() : 0)
                  : static_cast<uint32_t>(ram.prg_nvram);
@@ -420,7 +431,8 @@ void Board::Initialize(const iNESHeader &header, uint8_t *prg, size_t prgBytes,
     nes_initialize_power_on_ram(_chrRam, _chrRamSize, 0);
     _romInfo.HasChrRam = HasChrRam();
     _registerReads = AllowRegisterRead();
-    _busConflicts = HasBusConflicts();
+    _busConflicts = database && database->present && database->bus_conflicts >= 0
+                  ? database->bus_conflicts != 0 : HasBusConflicts();
     _clockHook = EnableCpuClockHook();
     _addressHook = EnableVramAddressHook();
     _customRead = EnableCustomVramRead();
@@ -432,6 +444,8 @@ void Board::Initialize(const iNESHeader &header, uint8_t *prg, size_t prgBytes,
     SetMirroringType(header.flags6 & 8 ? MirroringType::FourScreens
                      : header.flags6 & 1 ? MirroringType::Vertical : MirroringType::Horizontal);
     InitMapper();
+    if (database && database->present && database->mirroring_override)
+        SetMirroringType(static_cast<MirroringType>(database->mirroring));
 }
 
 void Board::ApplyTrainer(const uint8_t trainer[512]) {
@@ -518,6 +532,13 @@ struct CartridgeBoard {
 
 CartridgeBoard *board_create(const iNESHeader *header, uint8_t *prg, size_t prgBytes,
                              uint8_t *chr, size_t chrBytes) {
+    return board_create_with_metadata(header, prg, prgBytes, chr, chrBytes, nullptr);
+}
+
+CartridgeBoard *board_create_with_metadata(const iNESHeader *header,
+                                           uint8_t *prg, size_t prgBytes,
+                                           uint8_t *chr, size_t chrBytes,
+                                           const RomDatabaseInfo *database) {
     if (!header) return nullptr;
     if (!prg || !prgBytes || prgBytes > UINT32_MAX || chrBytes > UINT32_MAX) {
         std::fprintf(stderr, "Unsupported cartridge buffer size\n");
@@ -535,7 +556,7 @@ CartridgeBoard *board_create(const iNESHeader *header, uint8_t *prg, size_t prgB
             ? cupid::boards::CreateFcnsBoard()
             : cupid::boards::CreateBoard(static_cast<unsigned>(rom_mapper_number(header)));
         if (!board->instance) return nullptr;
-        board->instance->Initialize(*header, prg, prgBytes, chr, chrBytes);
+        board->instance->Initialize(*header, prg, prgBytes, chr, chrBytes, database);
         return board.release();
     } catch (const std::exception &error) {
         std::fprintf(stderr, "Cartridge initialization failed: %s\n", error.what());

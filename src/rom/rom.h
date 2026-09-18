@@ -48,6 +48,32 @@ typedef enum {
     MIRROR_FOUR       = 4
 } Mirroring;
 
+typedef struct {
+    bool present;
+    bool headerless;
+    char board[64];
+    char chip[64];
+    int8_t bus_conflicts; /* -1 = board default, 0 = disabled, 1 = enabled */
+    bool work_ram_override;
+    bool save_ram_override;
+    bool chr_ram_override;
+    size_t work_ram;
+    size_t save_ram;
+    size_t chr_ram;
+    bool mirroring_override;
+    Mirroring mirroring;
+} RomDatabaseInfo;
+
+typedef enum {
+    ROM_METADATA_NONE,
+    ROM_METADATA_INES,
+    ROM_METADATA_NES20,
+    ROM_METADATA_DATABASE,
+    ROM_METADATA_DATABASE_HEADERLESS,
+    ROM_METADATA_FDS,
+    ROM_METADATA_STUDYBOX
+} RomMetadataSource;
+
 // expose sizes so CPU/PPU can reason about mirroring
 extern iNESHeader ines_header;
 extern size_t     prg_size;
@@ -74,6 +100,16 @@ int load_studybox_memory(const uint8_t *media, size_t media_size,
 bool rom_is_fds(void);
 bool rom_is_studybox(void);
 int rom_mapper_number(const iNESHeader *header);
+bool rom_database_load_file(const char *path);
+bool rom_database_load_memory(const char *text, size_t size);
+void rom_database_clear(void);
+void rom_database_set_overrides(bool enabled);
+bool rom_database_overrides_enabled(void);
+RomMetadataSource rom_metadata_source(void);
+const char *rom_metadata_source_name(void);
+uint32_t rom_file_crc32(void);
+uint32_t rom_prg_crc32(void);
+uint32_t rom_prg_chr_crc32(void);
 
 typedef struct {
     size_t prg_ram, prg_nvram;

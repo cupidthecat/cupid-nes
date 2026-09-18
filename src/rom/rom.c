@@ -32,6 +32,7 @@
 #include "mapper.h"
 #include "board.h"
 #include "fds.h"
+#include "game_db.h"
 #include "../system/timing.h"
 #include "../system/hardware.h"
 #include "../system/vs_system.h"
@@ -52,8 +53,40 @@ size_t chr_size = 0;
 int mirroring_mode = 0;
 static int fds_loaded = 0;
 static int studybox_loaded = 0;
+static bool database_overrides = true;
+static RomMetadataSource metadata_source = ROM_METADATA_NONE;
+static uint32_t loaded_file_crc32 = 0;
+static uint32_t loaded_prg_crc32 = 0;
+static uint32_t loaded_prg_chr_crc32 = 0;
 
 static int read_file(const char *path, uint8_t **data, size_t *size);
+static bool database_header(const iNESHeader *original, const GameDbEntry *entry,
+                            bool headerless, iNESHeader *header);
+static void database_metadata(const GameDbEntry *entry, bool headerless,
+                              RomDatabaseInfo *metadata);
+
+bool rom_database_load_file(const char *path) { return game_db_load_file(path); }
+bool rom_database_load_memory(const char *text, size_t size) { return game_db_load_memory(text, size); }
+void rom_database_clear(void) { game_db_clear(); }
+void rom_database_set_overrides(bool enabled) { database_overrides = enabled; }
+bool rom_database_overrides_enabled(void) { return database_overrides; }
+RomMetadataSource rom_metadata_source(void) { return metadata_source; }
+uint32_t rom_file_crc32(void) { return loaded_file_crc32; }
+uint32_t rom_prg_crc32(void) { return loaded_prg_crc32; }
+uint32_t rom_prg_chr_crc32(void) { return loaded_prg_chr_crc32; }
+
+const char *rom_metadata_source_name(void) {
+    switch (metadata_source) {
+        case ROM_METADATA_INES: return "iNES";
+        case ROM_METADATA_NES20: return "NES 2.0";
+        case ROM_METADATA_DATABASE: return "game database";
+        case ROM_METADATA_DATABASE_HEADERLESS: return "game database (headerless)";
+        case ROM_METADATA_FDS: return "FDS";
+        case ROM_METADATA_STUDYBOX: return "StudyBox";
+        case ROM_METADATA_NONE:
+        default: return "none";
+    }
+}
 
 static int is_nes20(const iNESHeader *h) {
     // NES 2.0 if (flags7 & 0x0C) == 0x08
@@ -146,16 +179,69 @@ int rom_ram_sizes(const iNESHeader *header, RomRamSizes *sizes) {
 }
 
 static int load_rom_data(const uint8_t *data, size_t size, const char *filename) {
-    iNESHeader header;
-    if (!data || size < sizeof(header)) {
-        fprintf(stderr, "Truncated iNES header\n");
+    if (!data || !size) {
+        fprintf(stderr, "Empty cartridge image\n");
         return -1;
     }
-    memcpy(&header, data, sizeof(header));
-    if (memcmp(header.signature, "NES\x1A", 4) != 0) {
-        fprintf(stderr, "Invalid iNES signature\n");
-        return -1;
+
+    uint32_t file_crc = game_db_crc32(data, size);
+    iNESHeader original_header = {0};
+    iNESHeader header = {0};
+    GameDbEntry database_entry = {0};
+    RomDatabaseInfo database_info = {0};
+    const RomDatabaseInfo *database = NULL;
+    const uint8_t *trainer = NULL;
+    size_t offset = 0;
+    bool headerless = false;
+    bool database_applied = false;
+    RomMetadataSource source = ROM_METADATA_NONE;
+
+    bool has_ines_header = size >= sizeof(header) && memcmp(data, "NES\x1A", 4) == 0;
+    if (has_ines_header) {
+        memcpy(&original_header, data, sizeof(original_header));
+        header = original_header;
+        offset = sizeof(header);
+        if (header.flags6 & 0x04) {
+            if (size - offset < 512) {
+                fprintf(stderr, "Truncated iNES trainer\n");
+                return -1;
+            }
+            trainer = data + offset;
+            offset += 512;
+        }
+
+        uint32_t payload_crc = game_db_crc32(data + offset, size - offset);
+        bool nes2_header = is_nes20(&header);
+        if (!nes2_header && database_overrides
+            && game_db_lookup(payload_crc, &database_entry)) {
+            if (!database_header(&original_header, &database_entry, false, &header)) {
+                fprintf(stderr, "Game database entry cannot describe this cartridge\n");
+                return -1;
+            }
+            database_metadata(&database_entry, false, &database_info);
+            database = &database_info;
+            database_applied = true;
+            source = ROM_METADATA_DATABASE;
+        } else {
+            source = nes2_header ? ROM_METADATA_NES20 : ROM_METADATA_INES;
+        }
+    } else {
+        if (!game_db_lookup(file_crc, &database_entry)) {
+            fprintf(stderr, size < sizeof(header) ? "Unrecognized cartridge image\n"
+                                                   : "Invalid iNES signature\n");
+            return -1;
+        }
+        if (!database_header(NULL, &database_entry, true, &header)) {
+            fprintf(stderr, "Game database entry cannot describe this headerless cartridge\n");
+            return -1;
+        }
+        database_metadata(&database_entry, true, &database_info);
+        database = &database_info;
+        database_applied = true;
+        headerless = true;
+        source = ROM_METADATA_DATABASE_HEADERLESS;
     }
+
     if (!rom_console_supported(&header)) {
         fprintf(stderr, "Unsupported NES console type\n");
         return -1;
@@ -165,9 +251,11 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
         return -1;
     }
 
-    size_t prg_payload_size, rom_chr_size;
-    int nes2 = is_nes20(&header);
-    if (nes2) {
+    size_t prg_payload_size = 0, rom_chr_size = 0;
+    if (database_applied) {
+        prg_payload_size = database_entry.prg_rom_size;
+        rom_chr_size = database_entry.chr_rom_size;
+    } else if (is_nes20(&header)) {
         if (nes20_rom_size(header.prg_rom_chunks, header.flags9 & 0x0F,
                            PRG_ROM_BANK_SIZE, &prg_payload_size) < 0
             || nes20_rom_size(header.chr_rom_chunks, header.flags9 >> 4,
@@ -184,26 +272,20 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
         fprintf(stderr, "Invalid PRG size: 0\n");
         return -1;
     }
-
-    size_t offset = sizeof(header);
-    const uint8_t *trainer = NULL;
-    if (header.flags6 & 0x04) {
-        if (size - offset < 512) {
-            fprintf(stderr, "Truncated iNES trainer\n");
-            return -1;
-        }
-        trainer = data + offset;
-        offset += 512;
-    }
-    if (prg_payload_size > size - offset || rom_chr_size > size - offset - prg_payload_size) {
+    if (offset > size || prg_payload_size > size - offset
+        || rom_chr_size > size - offset - prg_payload_size) {
         fprintf(stderr, "Truncated PRG-ROM or CHR-ROM payload\n");
         return -1;
     }
+
+    uint32_t prg_chr_crc = game_db_crc32(data + offset, size - offset);
+    uint32_t prg_crc = game_db_crc32(data + offset, prg_payload_size);
 
     size_t new_chr_size = rom_chr_size;
     if (!new_chr_size) {
         RomRamSizes ram;
         rom_ram_sizes(&header, &ram);
+        if (database && database->chr_ram_override) ram.chr_ram = database->chr_ram;
         new_chr_size = ram.chr_ram + ram.chr_nvram;
         if (!new_chr_size && !board_handles_header(&header)) {
             fprintf(stderr, "Cartridge declares no CHR-ROM or CHR-RAM\n");
@@ -222,14 +304,14 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
 
     NesInputConfiguration input_config;
     bool input_supported = false;
-    bool apply_input_config = nes2 && !vs_config.enabled && header.zero[4] != 0;
+    bool apply_input_config = is_nes20(&header) && !vs_config.enabled && header.zero[4] != 0;
     if (apply_input_config) {
         if (!joypad_resolve_default_input(header.zero[4], &input_config, &input_supported)) {
-            fprintf(stderr, "NES 2.0 default input conflicts with explicit input configuration\n");
+            fprintf(stderr, "Default input conflicts with explicit input configuration\n");
             return -1;
         }
         if (!input_supported) {
-            fprintf(stderr, "Unsupported NES 2.0 default input type: %u; keeping current input configuration\n",
+            fprintf(stderr, "Unsupported default input type: %u; keeping current input configuration\n",
                     (unsigned)header.zero[4]);
             apply_input_config = false;
         }
@@ -277,8 +359,8 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
         free(new_chr);
         return -1;
     }
-    int mapper_no = mapper_init_from_header(&header, new_prg, new_prg_size,
-                                            new_chr, new_chr_size);
+    int mapper_no = mapper_init_from_header_metadata(&header, new_prg, new_prg_size,
+                                                     new_chr, new_chr_size, database);
     if (mapper_no < 0) {
         epsm_destroy(new_epsm);
         free(new_prg);
@@ -302,9 +384,14 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
     nes_set_region(rom_region(&header));
     fds_loaded = 0;
     studybox_loaded = 0;
+    metadata_source = source;
+    loaded_file_crc32 = file_crc;
+    loaded_prg_crc32 = prg_crc;
+    loaded_prg_chr_crc32 = prg_chr_crc;
     if (apply_input_config) (void)joypad_apply_configuration(&input_config);
 
-    printf("Mapper: %d  (CHR %s)\n", mapper_no, rom_chr_size ? "ROM" : "RAM");
+    printf("Mapper: %d  (CHR %s%s)\n", mapper_no, rom_chr_size ? "ROM" : "RAM",
+           headerless ? ", headerless" : "");
     return 0;
 }
 
@@ -352,8 +439,161 @@ int load_fds_memory(const uint8_t *disk, size_t disk_size,
     nes_set_region(NES_REGION_NTSC);
     fds_loaded = 1;
     studybox_loaded = 0;
+    metadata_source = ROM_METADATA_FDS;
+    loaded_file_crc32 = game_db_crc32(disk, disk_size);
+    loaded_prg_crc32 = 0;
+    loaded_prg_chr_crc32 = 0;
     printf("Famicom Disk System: %zu side%s\n", fds_side_count(), fds_side_count() == 1 ? "" : "s");
     return 0;
+}
+
+static bool encode_nes20_rom_size(size_t bytes, size_t unit,
+                                  uint8_t *low, uint8_t *high_nibble) {
+    if (!low || !high_nibble || bytes % unit != 0) return false;
+    size_t units = bytes / unit;
+    if (units > 0x0FFFu) return false;
+    *low = (uint8_t)(units & 0xFFu);
+    *high_nibble = (uint8_t)((units >> 8) & 0x0Fu);
+    return true;
+}
+
+static bool database_mirroring(const GameDbEntry *entry, Mirroring *mirroring) {
+    if (!entry || !mirroring || !entry->mirroring) return false;
+    switch (entry->mirroring) {
+        case 'h': *mirroring = MIRROR_HORIZONTAL; return true;
+        case 'v': *mirroring = MIRROR_VERTICAL; return true;
+        case '0': *mirroring = MIRROR_SINGLE0; return true;
+        case '1': *mirroring = MIRROR_SINGLE1; return true;
+        case '4': *mirroring = MIRROR_FOUR; return true;
+        default: return false;
+    }
+}
+
+static bool database_vs_input(uint8_t input_type, uint8_t *header_input) {
+    if (!header_input) return false;
+    switch (input_type) {
+        case 0: /* Unspecified uses the VS standard wiring. */
+        case 1: /* StandardControllers */
+        case 4: /* VsSystem */
+            *header_input = VS_INPUT_STANDARD;
+            return true;
+        case 5: /* VsSystemSwapped */
+            *header_input = VS_INPUT_SWAPPED;
+            return true;
+        case 6: /* VsSystemSwapAB */
+            *header_input = VS_INPUT_SWAP_AB;
+            return true;
+        case 7: /* VsZapper */
+            *header_input = VS_INPUT_ZAPPER;
+            return true;
+        default:
+            return false;
+    }
+}
+
+static bool database_vs_ppu_code(uint8_t ppu_model, uint8_t *header_code) {
+    if (!header_code) return false;
+    switch (ppu_model) {
+        case 0: /* Ppu2C02: closest supported VS behavior is 2C03. */
+        case 1: /* Ppu2C03 */
+            *header_code = 0;
+            return true;
+        case 2: case 3: case 4: case 5: /* 2C04 A-D */
+            *header_code = ppu_model;
+            return true;
+        case 6: case 7: case 8: case 9: case 10: /* 2C05 A-E */
+            *header_code = (uint8_t)(ppu_model + 2);
+            return true;
+        default:
+            return false;
+    }
+}
+
+static void database_metadata(const GameDbEntry *entry, bool headerless,
+                              RomDatabaseInfo *metadata) {
+    memset(metadata, 0, sizeof(*metadata));
+    metadata->present = true;
+    metadata->headerless = headerless;
+    snprintf(metadata->board, sizeof(metadata->board), "%s", entry->board);
+    snprintf(metadata->chip, sizeof(metadata->chip), "%s", entry->chip);
+    metadata->bus_conflicts = entry->bus_conflicts;
+    bool validated = entry->submapper_present;
+    metadata->work_ram_override = validated || entry->work_ram_size != 0;
+    metadata->save_ram_override = validated || entry->save_ram_size != 0;
+    metadata->chr_ram_override = validated || entry->chr_ram_size != 0;
+    metadata->work_ram = entry->work_ram_size;
+    metadata->save_ram = entry->save_ram_size;
+    metadata->chr_ram = entry->chr_ram_size;
+    metadata->mirroring_override = database_mirroring(entry, &metadata->mirroring);
+}
+
+static bool database_header(const iNESHeader *original, const GameDbEntry *entry,
+                            bool headerless, iNESHeader *header) {
+    if (!entry || !header || entry->mapper > 0x0FFFu || !entry->prg_rom_size) return false;
+
+    iNESHeader source = {0};
+    if (original) source = *original;
+    memset(header, 0, sizeof(*header));
+    memcpy(header->signature, "NES\x1A", 4);
+
+    uint8_t prg_high = 0, chr_high = 0;
+    if (!encode_nes20_rom_size(entry->prg_rom_size, PRG_ROM_BANK_SIZE,
+                               &header->prg_rom_chunks, &prg_high)
+        || !encode_nes20_rom_size(entry->chr_rom_size, CHR_ROM_BANK_SIZE,
+                                  &header->chr_rom_chunks, &chr_high))
+        return false;
+
+    header->flags6 = (uint8_t)((entry->mapper & 0x0Fu) << 4);
+    if (!headerless && (source.flags6 & 0x04u)) header->flags6 |= 0x04u;
+
+    bool battery = entry->submapper_present ? entry->battery
+                 : entry->battery || (!headerless && (source.flags6 & 0x02u));
+    if (battery) header->flags6 |= 0x02u;
+
+    Mirroring mirroring;
+    if (database_mirroring(entry, &mirroring)) {
+        if (mirroring == MIRROR_VERTICAL) header->flags6 |= 0x01u;
+        else if (mirroring == MIRROR_FOUR) header->flags6 |= 0x08u;
+    } else if (!headerless) {
+        header->flags6 |= source.flags6 & 0x09u;
+    }
+
+    unsigned console = headerless ? 0u : source.flags7 & 0x03u;
+    NesRegion region = headerless ? NES_REGION_NTSC : rom_region(&source);
+    uint8_t vs_descriptor = 0;
+    uint8_t header_input = entry->input_type;
+    if (entry->system[0]) {
+        if (strcmp(entry->system, "NesNtsc") == 0 || strcmp(entry->system, "Famicom") == 0) {
+            console = 0;
+            region = NES_REGION_NTSC;
+        } else if (strcmp(entry->system, "NesPal") == 0) {
+            console = 0;
+            region = NES_REGION_PAL;
+        } else if (strcmp(entry->system, "Dendy") == 0) {
+            console = 0;
+            region = NES_REGION_DENDY;
+        } else if (strcmp(entry->system, "VsSystem") == 0) {
+            uint8_t ppu_code = 0;
+            if (entry->vs_type > VS_TYPE_RAID_ON_BUNGELING_BAY
+                || !database_vs_input(entry->input_type, &header_input)
+                || !database_vs_ppu_code(entry->ppu_model, &ppu_code))
+                return false;
+            console = 1;
+            region = NES_REGION_NTSC;
+            vs_descriptor = (uint8_t)((entry->vs_type << 4) | ppu_code);
+        } else {
+            return false;
+        }
+    }
+
+    header->flags7 = (uint8_t)((entry->mapper & 0xF0u) | 0x08u | console);
+    header->prg_ram_size = (uint8_t)(((entry->submapper_present ? entry->submapper : 0u) << 4)
+                           | ((entry->mapper >> 8) & 0x0Fu));
+    header->flags9 = (uint8_t)(prg_high | (chr_high << 4));
+    header->zero[1] = region == NES_REGION_PAL ? 1u : region == NES_REGION_DENDY ? 3u : 0u;
+    header->zero[2] = vs_descriptor;
+    header->zero[4] = header_input;
+    return true;
 }
 
 bool rom_is_fds(void) { return fds_loaded != 0; }
@@ -391,6 +631,10 @@ int load_studybox_memory(const uint8_t *media, size_t media_size,
     nes_set_region(NES_REGION_NTSC);
     fds_loaded = 0;
     studybox_loaded = 1;
+    metadata_source = ROM_METADATA_STUDYBOX;
+    loaded_file_crc32 = game_db_crc32(media, media_size);
+    loaded_prg_crc32 = 0;
+    loaded_prg_chr_crc32 = 0;
     printf("StudyBox: STBX tape loaded\n");
     return 0;
 }
@@ -409,6 +653,10 @@ bool unload_rom(void) {
     mirroring_mode = 0;
     fds_loaded = 0;
     studybox_loaded = 0;
+    metadata_source = ROM_METADATA_NONE;
+    loaded_file_crc32 = 0;
+    loaded_prg_crc32 = 0;
+    loaded_prg_chr_crc32 = 0;
     vs_clear_config();
     epsm_activate(NULL);
     nes_set_region(NES_REGION_NTSC);

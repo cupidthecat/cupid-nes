@@ -23,6 +23,7 @@ class FnsMmc1 final : public Board {
     bool _chrMode = false;
     bool _prgMode = true;
     bool _slotSelect = true;
+    bool _forceWramOn = false;
     uint8_t _chrReg0 = 0;
     uint8_t _chrReg1 = 0;
     uint8_t _prgReg = 0;
@@ -76,7 +77,7 @@ class FnsMmc1 final : public Board {
     void UpdateState() {
         uint8_t extra = ExtraRegister();
         PrgMemoryType ramType = HasBattery() ? PrgMemoryType::SaveRam : PrgMemoryType::WorkRam;
-        int8_t access = _wramDisable ? NoAccess : ReadWrite;
+        int8_t access = _wramDisable && !_forceWramOn ? NoAccess : ReadWrite;
         uint32_t totalRam = _saveRamSize + _workRamSize;
         if (totalRam > 0x4000) {
             SetCpuMemoryMapping(0x6000, 0x7FFF, (extra >> 2) & 3, ramType, access);
@@ -127,7 +128,9 @@ class FnsMmc1 final : public Board {
         ProcessRegisterWrite(0x8000, 0x0C);
         ProcessRegisterWrite(0xA000, 0);
         ProcessRegisterWrite(0xC000, 0);
-        ProcessRegisterWrite(0xE000, 0);
+        ProcessRegisterWrite(0xE000,
+            _romInfo.DatabaseInfo.Board.find("MMC1B") != std::string::npos ? 0x10 : 0);
+        _forceWramOn = _romInfo.DatabaseInfo.Board == "MMC1A";
         AddRegisterRange(0x40AD, 0x40C0, MemoryOperation::Any);
         AddRegisterRange(0x5000, 0x5FFF, MemoryOperation::Read);
         RemoveRegisterRange(0x8000, 0xFFFF, MemoryOperation::Read);

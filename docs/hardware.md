@@ -264,9 +264,9 @@ The Famicom Network System uses its NES 2.0 extended-console subtype instead of 
 
 StudyBox uses a dedicated STBX media path and a 256 KiB BIOS instead of an iNES mapper number. The board provides 64 KiB of banked work RAM, four-screen nametable RAM, a switchable 16 KiB BIOS window at `$8000-$BFFF`, and the fixed first BIOS page at `$C000-$FFFF`. Tape control registers at `$4200-$4203` select RAM and BIOS banks, shift drive commands, report decoder/seek state, deliver page bytes, and assert the CPU IRQ at the lead-in/data boundary and for subsequent bytes when enabled. PAGE lead-in offsets, byte delays, and seek steps advance on the CPU clock. A supported embedded mono 16-bit PCM WAV follows the same tape position and enters the normal cartridge-audio mix. Unknown drive commands have no modeled effect; command meanings and timing that remain uncertain on the original hardware retain the documented timing model rather than inventing additional behavior.
 
-## What the cartridge header controls
+## Cartridge metadata
 
-An image begins with an iNES or NES 2.0 header that describes the board and its memory. A mapper number identifies a hardware family. A submapper narrows that choice to a wiring or chip variant, such as an IRQ-counter revision or a different register address layout.
+An iNES or NES 2.0 header describes the board and its memory. A mapper number identifies a hardware family. A submapper narrows that choice to a wiring or chip variant, such as an IRQ-counter revision or a different register address layout. The optional game database can correct legacy iNES metadata or describe a known headerless payload. NES 2.0 headers retain their explicit metadata instead of receiving ordinary database corrections.
 
 | Metadata | How Cupid uses it |
 | --- | --- |
@@ -278,7 +278,9 @@ An image begins with an iNES or NES 2.0 header that describes the board and its 
 | Timing and console type | Regional timing, supported arcade configuration, EPSM expansion sound, or Famicom Network System hardware |
 | Trainer flag | A 512-byte initialization window applied through cartridge handling |
 
-The loader checks payload sizes and size overflows before activating a cartridge. A truncated or unsupported image returns an error and preserves an already loaded cartridge. The application exits when its initial load fails; preservation also matters to callers of the loader API.
+The loader records separate whole-file, PRG-only, and PRG+CHR CRC32 values. Legacy database lookup uses the PRG+CHR payload after any trainer, while headerless recognition uses the whole file. A database correction can supply mapper and submapper selection, ROM and supported RAM geometry, battery state, mirroring, regional and VS metadata, input type, board/chip hints, and bus-conflict behavior. VS database input values are translated to the cabinet's standard, swapped-controller, swapped-A/B, or Zapper wiring, and database PPU identifiers are translated separately to the VS PPU header codes.
+
+The loader checks payload sizes and size overflows before activating a cartridge. A truncated or unsupported image, malformed database record, or invalid correction returns an error and preserves an already loaded cartridge. The application exits when its initial load fails; preservation also matters to callers of the loader API.
 
 Legacy iNES RAM fields are unreliable. Cupid uses board defaults and ignores byte 8 as a RAM-size override. Most boards default to 8 KiB, MMC5 to 64 KiB, and FME-7 to 32 KiB. Legacy mapper 99 without a battery flag uses 2 KiB of volatile RAM. UNROM 512 has its own CHR RAM and flash layout. A legacy PRG count of zero represents 256 banks of 16 KiB, or 4 MiB. The image must still contain the complete payload, and its mapper must support that size.
 

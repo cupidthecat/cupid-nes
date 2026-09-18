@@ -127,6 +127,10 @@ void cart_apply_trainer(const uint8_t trainer[512]);
 int mapper_init_from_header(const iNESHeader *h,
                             uint8_t *prg, size_t prg_sz,
                             uint8_t *chr, size_t chr_sz);
+int mapper_init_from_header_metadata(const iNESHeader *h,
+                                     uint8_t *prg, size_t prg_sz,
+                                     uint8_t *chr, size_t chr_sz,
+                                     const RomDatabaseInfo *database);
 // Activate a fully validated disk-system image. Takes ownership on success.
 int mapper_init_fds(FdsImage *image);
 // Activate a prepared StudyBox board. Takes ownership on success.

@@ -39,7 +39,7 @@ struct BoardInfo {
     bool HasBattery = false;
     bool HasChrRam = false;
     struct { uint8_t Byte6 = 0; } Header;
-    struct { std::string Chip, Board; } DatabaseInfo;
+    struct { std::string Chip, Board; int8_t BusConflicts = -1; } DatabaseInfo;
 };
 
 class Board {
@@ -178,7 +178,8 @@ protected:
 public:
     virtual ~Board() = default;
     void Initialize(const iNESHeader &header, uint8_t *prg, size_t prgBytes,
-                     uint8_t *chr, size_t chrBytes);
+                     uint8_t *chr, size_t chrBytes,
+                     const RomDatabaseInfo *database = nullptr);
     virtual void Reset(bool) {}
     virtual void OnAfterResetPowerOn() {}
     virtual void ProcessCpuClock() {}

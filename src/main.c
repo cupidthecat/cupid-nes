@@ -477,6 +477,8 @@ int main(int argc, char *argv[]) {
     uint32_t power_on_seed = 0;
     const char *epsm_adpcm_path = NULL;
     const char *fcns_kanji_path = NULL;
+    const char *game_db_path = NULL;
+    bool disable_game_db_overrides = false;
     bool ntsc_composite_requested = false;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--console") == 0) {
@@ -511,6 +513,14 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             fcns_kanji_path = argv[i];
+        } else if (strcmp(argv[i], "--game-db") == 0) {
+            if (++i == argc) {
+                fprintf(stderr, "--game-db requires a database file\n");
+                return 1;
+            }
+            game_db_path = argv[i];
+        } else if (strcmp(argv[i], "--no-game-db-overrides") == 0) {
+            disable_game_db_overrides = true;
         } else if (strcmp(argv[i], "--startup-phase") == 0) {
             if (++i == argc || startup_phase_set || startup_seed_set) {
                 fprintf(stderr, "Choose one startup phase CPU:PPU or startup seed\n");
@@ -717,6 +727,7 @@ int main(int argc, char *argv[]) {
                "[--cpu-test-mode] "
                "[--epsm-adpcm FILE] "
                "[--fcns-kanji FILE] "
+               "[--game-db FILE] [--no-game-db-overrides] "
                "[--startup-phase CPU:PPU | --startup-seed SEED] "
                "[--ram-power-on STATE] [--power-on-seed SEED] [--random-vblank] "
                "[--ppu-revision REVISION] [--ppu-oam-row-corruption] "
@@ -774,6 +785,11 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Could not load the 256 KiB FCNS Kanji ROM: %s\n", fcns_kanji_path);
         return 1;
     }
+    rom_database_set_overrides(!disable_game_db_overrides);
+    if (game_db_path && !rom_database_load_file(game_db_path)) {
+        fprintf(stderr, "Could not load the game database: %s\n", game_db_path);
+        return 1;
+    }
     if (power_on_seed_set) nes_seed_power_on_random(power_on_seed);
     int load_result = fds_bios_path
         ? load_fds(rom_path, fds_bios_path, fds_start_write_protected)
@@ -782,6 +798,12 @@ int main(int argc, char *argv[]) {
     if(load_result != 0) {
         fprintf(stderr, "Failed to load ROM\n");
         return 1;
+    }
+    printf("Metadata source: %s\n", rom_metadata_source_name());
+    if (!rom_is_fds() && !rom_is_studybox()) {
+        printf("File CRC32: %08X\n", (unsigned)rom_file_crc32());
+        printf("PRG CRC32: %08X\n", (unsigned)rom_prg_crc32());
+        printf("PRG+CHR CRC32: %08X\n", (unsigned)rom_prg_chr_crc32());
     }
     if (epsm_enabled()) {
         printf("EPSM: 8 MHz YMF288, stereo output\n");
