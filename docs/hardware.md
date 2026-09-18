@@ -114,6 +114,8 @@ The supported VS configurations use mappers 0, 1, 2, or 99 with NTSC timing. Dua
 
 The PPU choices include the 2C03 RGB palette, four 2C04 palettes, and the implemented 2C05 register/status variants. Cabinet handling includes DIP switches, coin and service inputs, controller routing, and the implemented protection-read sequences.
 
+NES 2.0 console selector 3 with extended subtype 1 also selects VS hardware. That encoding uses the existing 2C03 profile as a compatibility fallback because its subtype occupies the direct descriptor's PPU field. It retains the cabinet type and input metadata. This fallback does not add RP2C03G emulation; direct VS descriptors keep their existing PPU selection and validation.
+
 Dual mode maintains independent CPU, PPU, APU, internal RAM, input, and DMA state. The boards share cartridge RAM with ownership controlled by the hardware signal. Cross-CPU interrupts and synchronized stepping support communication between the two sides. Both screens are presented and both APUs feed mono output.
 
 RP2C03G, VS Zapper input wiring, and unimplemented combinations of console, mapper, memory, or PPU metadata are rejected. The [VS tests](../src/tests/vs_accuracy.c) cover supported paths, including real CPU programs that communicate through shared RAM and produce separate video and audio.

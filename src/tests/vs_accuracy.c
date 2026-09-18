@@ -146,6 +146,59 @@ static int test_vs_metadata_transaction(void) {
     return 0;
 }
 
+static int test_vs_extended_console_header(void) {
+    iNESHeader h = nes20_vs_header(0, 2, 1, VS_TYPE_DEFAULT, 1, VS_INPUT_SWAPPED);
+    h.flags7 = 0x0B;
+    size_t image_size;
+    uint8_t *image = build_image(&h, 0x8000, 0x2000, &image_size);
+    CHECK(image != NULL);
+    image[sizeof(h)] = 0x5A;
+    CHECK(load_rom_memory(image, image_size) == 0);
+    CHECK(vs_enabled() && !vs_dual_system() && vs_ppu_model() == VS_PPU_2C03);
+    CHECK(vs_system_type() == VS_TYPE_DEFAULT && cart_cpu_read(0x8000) == 0x5A);
+
+    h.zero[2] = (VS_TYPE_TKO_BOXING << 4) | 1;
+    memcpy(image, &h, sizeof(h));
+    CHECK(load_rom_memory(image, image_size) == 0);
+    CHECK(vs_system_type() == VS_TYPE_TKO_BOXING && vs_ppu_model() == VS_PPU_2C03);
+    (void)read_mem(0x5E00);
+    CHECK(read_mem(0x5E01) == 0xFF && read_mem(0x5E01) == 0xBF);
+    Mapper *previous = cart;
+    uint8_t *previous_prg = prg_rom;
+    static const uint8_t unsupported[] = {2, 3, 5, 15};
+    for (size_t i = 0; i < sizeof(unsupported); ++i) {
+        h.zero[2] = unsupported[i];
+        memcpy(image, &h, sizeof(h));
+        CHECK(load_rom_memory(image, image_size) == -1);
+        CHECK(cart == previous && prg_rom == previous_prg);
+        CHECK(vs_system_type() == VS_TYPE_TKO_BOXING && cart_cpu_read(0x8000) == 0x5A);
+    }
+    h.zero[2] = 1;
+    for (unsigned region = 1; region <= 3; region += 2) {
+        h.zero[1] = (uint8_t)region;
+        memcpy(image, &h, sizeof(h));
+        CHECK(load_rom_memory(image, image_size) == -1);
+        CHECK(cart == previous && prg_rom == previous_prg);
+    }
+    h.zero[1] = 0;
+    h.flags6 = 0x30;
+    memcpy(image, &h, sizeof(h));
+    CHECK(load_rom_memory(image, image_size) == -1);
+    CHECK(cart == previous && prg_rom == previous_prg);
+    h.flags6 = 0;
+    h.flags7 = 0x09; // A direct VS descriptor still treats one as the unsupported PPU.
+    memcpy(image, &h, sizeof(h));
+    CHECK(load_rom_memory(image, image_size) == -1);
+    CHECK(cart == previous && prg_rom == previous_prg);
+    h.zero[2] = (VS_TYPE_RBI_BASEBALL << 4) | 3;
+    memcpy(image, &h, sizeof(h));
+    CHECK(load_rom_memory(image, image_size) == 0);
+    CHECK(vs_system_type() == VS_TYPE_RBI_BASEBALL && vs_ppu_model() == VS_PPU_2C04_0002);
+    free(image);
+    CHECK(unload_rom());
+    return 0;
+}
+
 static int test_vs_ppu_models(void) {
     static const uint8_t program[] = {
         0xA9,0x18, 0x8D,0x00,0x20,
@@ -570,6 +623,7 @@ static int test_vs_dual_video_and_audio(void) {
 int test_vs_accuracy(void) {
     static int (*const tests[])(void) = {
         test_vs_metadata_transaction,
+        test_vs_extended_console_header,
         test_vs_ppu_models,
         test_vs_rgb_frame_timing,
         test_vs_dual_rendered_frame_timing,

@@ -65,8 +65,8 @@ static int rom_console_supported(const iNESHeader *h) {
     if (is_nes20(h)) {
         unsigned console = h->flags7 & 0x03u;
         if (console == 0 || console == 1) return 1;
-        // Extended console type 0 still identifies a regular NES/Famicom-family machine.
-        return console == 3 && (h->zero[2] & 0x0Fu) == 0;
+        // Extended subtypes 0 and 1 identify NES/Famicom and VS hardware.
+        return console == 3 && (h->zero[2] & 0x0Fu) <= 1;
     }
     // Archaic headers have unreliable byte 7 contents.  Only clean iNES headers
     // use its low bits as the VS/PlayChoice console selector.

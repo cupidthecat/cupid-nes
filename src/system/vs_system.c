@@ -91,14 +91,16 @@ bool vs_decode_header(const iNESHeader *header, int mapper, size_t prg_bytes,
     unsigned console = header->flags7 & 3u;
     if (nes2) {
         if (console == 0 || (console == 3 && (header->zero[2] & 0x0Fu) == 0)) return true;
-        if (console != 1) {
+        bool extended_vs = console == 3 && (header->zero[2] & 0x0Fu) == 1;
+        if (console != 1 && !extended_vs) {
             set_reason(reason, reason_size, "unsupported NES 2.0 console type");
             return false;
         }
         config->enabled = true;
         uint8_t descriptor = header->zero[2];
         uint8_t type = descriptor >> 4;
-        uint8_t ppu = descriptor & 0x0F;
+        // The extended subtype occupies the PPU field. Use the 2C03 fallback.
+        uint8_t ppu = extended_vs ? 0 : descriptor & 0x0F;
         if (type > VS_TYPE_RAID_ON_BUNGELING_BAY) {
             set_reason(reason, reason_size, "unsupported VS hardware type");
             return false;
