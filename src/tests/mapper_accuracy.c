@@ -6091,13 +6091,22 @@ static int test_mapper34_loader_preserves_cart(void) {
     CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x40000, fixture_chr, 0x2000) == -1);
     CHECK(cart == previous && cart_cpu_read(0x8000) == 12 && cart_cpu_read(0x6123) == 0xA6);
 
-    invalid = mapper34_header(2, false, true); // Explicit BNROM cannot use CHR ROM.
-    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x40000, fixture_chr, 0x2000) == -1);
-    CHECK(cart == previous && cart_cpu_read(0x8000) == 12);
+    iNESHeader compatible = mapper34_header(2, false, true);
+    fixture_chr[0x0123] = 0x35;
+    CHECK(mapper_init_from_header(&compatible, fixture_prg, 0x40000, fixture_chr, 0x2000) == 34);
+    CHECK(cart_ppu_read(0x0123) == 0x35);
+    cart_cpu_write(0xE000, 3);
+    CHECK(cart_cpu_read(0x8000) == 12 && cart_ppu_read(0x0123) == 0x35);
 
-    invalid = mapper34_header(1, true, true); // Explicit NINA-001 requires CHR ROM.
-    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x40000, fixture_chr, 0x2000) == -1);
-    CHECK(cart == previous && cart_cpu_read(0x8000) == 12);
+    compatible = mapper34_header(1, true, true);
+    CHECK(mapper_init_from_header(&compatible, fixture_prg, 0x40000, fixture_chr, 0x2000) == 34);
+    cart_ppu_write(0x0123, 0x53);
+    CHECK(cart_ppu_read(0x0123) == 0x53);
+    cart_cpu_write(0x7FFE, 1);
+    cart_ppu_write(0x0123, 0xA6);
+    CHECK(cart_ppu_read(0x0123) == 0xA6);
+    cart_cpu_write(0x7FFE, 0);
+    CHECK(cart_ppu_read(0x0123) == 0x53);
 
     return 0;
 }
@@ -7787,6 +7796,71 @@ static int test_namco108_variant_loader_rejection(void) {
     h.prg_ram_size = 0x10;
     CHECK(mapper_init_from_header(&h, fixture_prg, 0x200000, fixture_chr, 0x20000) == -1);
     CHECK(cart == previous && cart_cpu_read(0x8000) == 3);
+    return 0;
+}
+
+static int test_native_small_chr_bank_windows(void) {
+    const unsigned vrc1_mappers[] = {75, 151};
+    for (size_t i = 0; i < sizeof(vrc1_mappers) / sizeof(vrc1_mappers[0]); ++i) {
+        CHECK(fixture(vrc1_mappers[i], 0x20000, 0x0800, false) == (int)vrc1_mappers[i]);
+        fixture_chr[0x0123] = 0xA6;
+        CHECK(cart_ppu_read(0x0123) == 0x23);
+        cart_cpu_write(0xE000, 7);
+        CHECK(cart_ppu_read(0x0123) == 0xA6);
+        CHECK(cart_ppu_read(0x0923) == 0xA6);
+        CHECK(cart_ppu_read(0x1123) == 0x23);
+    }
+
+    CHECK(fixture(73, 0x20000, 0x0800, false) == 73);
+    fixture_chr[0x0123] = 0x53;
+    CHECK(cart_ppu_read(0x0123) == 0x53);
+    CHECK(cart_ppu_read(0x0923) == 0x23);
+
+    CHECK(fixture(73, 0x20000, 0x0800, true) == 73);
+    cart_ppu_write(0x1123, 0x69);
+    CHECK(cart_ppu_read(0x0123) == 0x69);
+    CHECK(cart_ppu_read(0x1123) == 0x69);
+
+    iNESHeader bnrom = mapper34_header(2, false, true);
+    CHECK(fixture_with_header(&bnrom, 0x40000, 0x0800) == 34);
+    fixture_chr[0x0123] = 0x35;
+    CHECK(cart_ppu_read(0x0123) == 0x35);
+    CHECK(cart_ppu_read(0x0923) == 0x23);
+
+    iNESHeader nina = mapper34_header(1, false, true);
+    CHECK(fixture_with_header(&nina, 0x40000, 0x0800) == 34);
+    fixture_chr[0x0123] = 0x96;
+    CHECK(cart_ppu_read(0x0123) == 0x23);
+    cart_cpu_write(0x7FFE, 0x35);
+    CHECK(cart_ppu_read(0x0123) == 0x96);
+    CHECK(cart_ppu_read(0x0923) == 0x23);
+    cart_cpu_write(0x7FFF, 0x53);
+    CHECK(cart_ppu_read(0x0923) == 0x96);
+    CHECK(cart_ppu_read(0x1123) == 0x23);
+
+    const unsigned namco_mappers[] = {76, 88, 95, 154, 206};
+    for (size_t i = 0; i < sizeof(namco_mappers) / sizeof(namco_mappers[0]); ++i) {
+        unsigned mapper = namco_mappers[i];
+        size_t chr_bytes = 0x0200;
+        unsigned slots = mapper == 76 ? 4u : 8u;
+        uint16_t uncovered = (uint16_t)(chr_bytes * slots + 0x0123u);
+        uint16_t register2_slot = mapper == 76 ? 0x0123u
+            : (uint16_t)(chr_bytes * 4u + 0x0123u);
+        CHECK(fixture(mapper, 0x20000, chr_bytes, false) == (int)mapper);
+        fixture_chr[0x0123] = 0xC3;
+        CHECK(cart_ppu_read(0x0123) == 0xC3);
+        CHECK(cart_ppu_read((uint16_t)(chr_bytes + 0x0123u)) == 0xC3);
+        namco108_write_bank(2, 0x85);
+        CHECK(cart_ppu_read(register2_slot) == 0xC3);
+        CHECK(cart_ppu_read(uncovered) == (uint8_t)uncovered);
+    }
+
+    CHECK(fixture(206, 0x20000, 0x0200, true) == 206);
+    cart_ppu_write(0x1123, 0x5A);
+    CHECK(cart_ppu_read(0x0123) == 0x5A);
+    CHECK(cart_ppu_read(0x1123) == 0x5A);
+    namco108_write_bank(2, 0x85);
+    CHECK(cart_ppu_read(0x0123) == 0x5A);
     return 0;
 }
 
@@ -10231,7 +10305,7 @@ int test_mapper_accuracy(void) {
         test_mapper71_image_loading, test_legacy_loader_ram_and_large_prg_metadata,
         test_namco108_banks_aliases_and_irq_absence, test_namco108_submapper_loader_and_chr_ram,
         test_namco108_variants, test_namco108_variant_loader_rejection,
-        test_namco108_variant_image_loading,
+        test_namco108_variant_image_loading, test_native_small_chr_bank_windows,
         test_sunsoft69_banks_ram_and_startup, test_sunsoft69_legacy_ram_defaults,
         test_sunsoft69_irq_cpu_clock,
         test_sunsoft5b_tone_noise_envelope, test_sunsoft69_persistence_and_loader,

@@ -681,10 +681,11 @@ static size_t mapper_chr_page_size(uint16_t mapper_no) {
 static bool mapper_has_shrinking_chr_window(uint16_t mapper_no) {
     switch (mapper_no) {
         case 0: case 1: case 2: case 3: case 7: case 9: case 10: case 11:
-        case 13: case 66: case 67: case 68: case 69: case 71: case 72: case 78:
-        case 79: case 87: case 89: case 92: case 93: case 94: case 97: case 101:
-        case 105: case 113: case 140: case 144: case 146: case 155: case 180:
-        case 184: case 185: case 232:
+        case 13: case 15: case 34: case 66: case 67: case 68: case 69: case 71:
+        case 72: case 73: case 75: case 76: case 78: case 79: case 87: case 88:
+        case 89: case 92: case 93: case 94: case 95: case 97: case 101: case 105:
+        case 113: case 140: case 144: case 146: case 151: case 154: case 155:
+        case 180: case 184: case 185: case 206: case 232:
             return true;
         default:
             return false;
@@ -1380,28 +1381,27 @@ static void vrc1_cpu_write(uint16_t a, uint8_t value) {
     }
 }
 
-static size_t vrc1_chr_offset(uint16_t a) {
-    unsigned slot = (a >> 12) & 1u;
-    size_t banks = C.chr_sz / CHR_BANK_4K;
-    size_t bank = vrc1.chr[slot] % banks;
-    return bank * CHR_BANK_4K + (a & 0x0FFFu);
-}
-
 static uint8_t vrc1_ppu_read(uint16_t a) {
     a &= 0x1FFFu;
-    unsigned slot = a >> 12;
-    if (!vrc1.chr_mapped[slot]) {
-        if (!C.chr_is_ram) return (uint8_t)a;
-        return C.chr[a % C.chr_sz];
-    }
-    return C.chr[vrc1_chr_offset(a)];
+    size_t page_size = shrunk_chr_page_size(CHR_BANK_4K);
+    unsigned slot = page_size ? (unsigned)(a / page_size) : 2u;
+    if (slot >= 2 || !vrc1.chr_mapped[slot]) return chr_unmapped_read(a);
+    size_t banks = C.chr_sz / page_size;
+    size_t bank = vrc1.chr[slot] % banks;
+    return C.chr[bank * page_size + (a % page_size)];
 }
 
 static void vrc1_ppu_write(uint16_t a, uint8_t value) {
     if (!C.chr_is_ram) return;
     a &= 0x1FFFu;
-    unsigned slot = a >> 12;
-    size_t offset = vrc1.chr_mapped[slot] ? vrc1_chr_offset(a) : (a % C.chr_sz);
+    size_t page_size = shrunk_chr_page_size(CHR_BANK_4K);
+    unsigned slot = page_size ? (unsigned)(a / page_size) : 2u;
+    size_t offset = a % C.chr_sz;
+    if (slot < 2 && vrc1.chr_mapped[slot]) {
+        size_t banks = C.chr_sz / page_size;
+        size_t bank = vrc1.chr[slot] % banks;
+        offset = bank * page_size + (a % page_size);
+    }
     chr_ram_write(offset, value);
 }
 
@@ -1479,11 +1479,11 @@ static void vrc3_cpu_write(uint16_t a, uint8_t value) {
 }
 
 static uint8_t vrc3_ppu_read(uint16_t a) {
-    return C.chr[(a & 0x1FFFu) % C.chr_sz];
+    return discrete_chr8_read(a, 0);
 }
 
 static void vrc3_ppu_write(uint16_t a, uint8_t value) {
-    chr_ram_write((a & 0x1FFFu) % C.chr_sz, value);
+    discrete_chr8_write(a, 0, value);
 }
 
 static void vrc3_clock(int cpu_cycles) {
@@ -4833,17 +4833,31 @@ static void m34_cpu_write(uint16_t address, uint8_t value) {
 
 static uint8_t m34_ppu_read(uint16_t address) {
     address &= 0x1FFFu;
-    if (!m34.nina) return C.chr[address % C.chr_sz];
-    unsigned slot = address >> 12;
-    if (!m34.chr_mapped[slot]) return (uint8_t)address;
-    size_t banks = C.chr_sz / CHR_BANK_4K;
-    size_t bank = banks ? (size_t)m34.chr_bank[slot] % banks : 0;
-    return C.chr[bank * CHR_BANK_4K + (address & 0x0FFFu)];
+    if (!m34.nina) return discrete_chr8_read(address, 0);
+    size_t page_size = shrunk_chr_page_size(CHR_BANK_4K);
+    unsigned slot = page_size ? (unsigned)(address / page_size) : 2u;
+    if (slot >= 2 || !m34.chr_mapped[slot]) return chr_unmapped_read(address);
+    size_t banks = C.chr_sz / page_size;
+    size_t bank = m34.chr_bank[slot] % banks;
+    return C.chr[bank * page_size + (address % page_size)];
 }
 
 static void m34_ppu_write(uint16_t address, uint8_t value) {
-    if (m34.nina || !C.chr_is_ram) return;
-    chr_ram_write(address & 0x1FFFu, value);
+    if (!C.chr_is_ram) return;
+    address &= 0x1FFFu;
+    if (!m34.nina) {
+        discrete_chr8_write(address, 0, value);
+        return;
+    }
+    size_t page_size = shrunk_chr_page_size(CHR_BANK_4K);
+    unsigned slot = page_size ? (unsigned)(address / page_size) : 2u;
+    size_t offset = address % C.chr_sz;
+    if (slot < 2 && m34.chr_mapped[slot]) {
+        size_t banks = C.chr_sz / page_size;
+        size_t bank = m34.chr_bank[slot] % banks;
+        offset = bank * page_size + (address % page_size);
+    }
+    chr_ram_write(offset, value);
 }
 
 static Mirroring m34_mirr(void) { return C.mirr_base; }
@@ -4976,12 +4990,10 @@ static void namco108_cpu_write(uint16_t address, uint8_t value) {
     namco108.banks[reg] = value;
 }
 
-static size_t namco108_chr_bank(uint16_t address) {
+static size_t namco108_chr_bank_slot(unsigned slot) {
     if (C.mapper_no == 76) {
-        unsigned slot = (unsigned)((address & 0x1FFFu) >> 11);
         return namco108.banks[2u + slot];
     }
-    unsigned slot = (unsigned)((address & 0x1FFFu) >> 10);
     if (slot < 4) {
         unsigned reg = slot >> 1;
         return (size_t)(namco108.banks[reg] + (slot & 1u));
@@ -4991,28 +5003,30 @@ static size_t namco108_chr_bank(uint16_t address) {
 
 static uint8_t namco108_ppu_read(uint16_t address) {
     address &= 0x1FFFu;
-    if (C.mapper_no == 76) {
-        size_t banks = C.chr_sz / CHR_BANK_2K;
-        size_t bank = banks ? namco108_chr_bank(address) % banks : 0;
-        return C.chr[bank * CHR_BANK_2K + (address & 0x07FFu)];
-    }
-    size_t banks = C.chr_sz / CHR_BANK_1K;
-    size_t bank = banks ? namco108_chr_bank(address) % banks : 0;
-    return C.chr[bank * CHR_BANK_1K + (address & 0x03FFu)];
+    size_t native_page = C.mapper_no == 76 ? CHR_BANK_2K : CHR_BANK_1K;
+    unsigned slot_count = C.mapper_no == 76 ? 4u : 8u;
+    size_t page_size = shrunk_chr_page_size(native_page);
+    unsigned slot = page_size ? (unsigned)(address / page_size) : slot_count;
+    if (slot >= slot_count) return chr_unmapped_read(address);
+    size_t banks = C.chr_sz / page_size;
+    size_t bank = namco108_chr_bank_slot(slot) % banks;
+    return C.chr[bank * page_size + (address % page_size)];
 }
 
 static void namco108_ppu_write(uint16_t address, uint8_t value) {
     if (!C.chr_is_ram) return;
     address &= 0x1FFFu;
-    if (C.mapper_no == 76) {
-        size_t banks = C.chr_sz / CHR_BANK_2K;
-        size_t bank = banks ? namco108_chr_bank(address) % banks : 0;
-        chr_ram_write(bank * CHR_BANK_2K + (address & 0x07FFu), value);
-        return;
+    size_t native_page = C.mapper_no == 76 ? CHR_BANK_2K : CHR_BANK_1K;
+    unsigned slot_count = C.mapper_no == 76 ? 4u : 8u;
+    size_t page_size = shrunk_chr_page_size(native_page);
+    unsigned slot = page_size ? (unsigned)(address / page_size) : slot_count;
+    size_t offset = address % C.chr_sz;
+    if (slot < slot_count) {
+        size_t banks = C.chr_sz / page_size;
+        size_t bank = namco108_chr_bank_slot(slot) % banks;
+        offset = bank * page_size + (address % page_size);
     }
-    size_t banks = C.chr_sz / CHR_BANK_1K;
-    size_t bank = banks ? namco108_chr_bank(address) % banks : 0;
-    chr_ram_write(bank * CHR_BANK_1K + (address & 0x03FFu), value);
+    chr_ram_write(offset, value);
 }
 
 static Mirroring namco108_mirr(void) {
@@ -7258,11 +7272,6 @@ int mapper_init_from_header(const iNESHeader *h,
         fprintf(stderr, "Unsupported ROM size for mapper %d\n", mapper_no);
         return -1;
     }
-    if ((mapper_no == 75 || mapper_no == 151)
-        && chr_sz < CHR_BANK_4K) {
-        fprintf(stderr, "Unsupported ROM size for mapper %d\n", mapper_no);
-        return -1;
-    }
     if (mapper_no == 68 && (h->flags6 & 0x08)) {
         fprintf(stderr, "Unsupported ROM/RAM size for mapper 68\n");
         return -1;
@@ -7275,22 +7284,8 @@ int mapper_init_from_header(const iNESHeader *h,
         fprintf(stderr, "Unsupported ROM/RAM size for mapper 96\n");
         return -1;
     }
-    if (mapper_no == 34) {
-        bool bnrom = !mapper34_nina;
-        if ((bnrom && (!chr_is_ram || chr_sz != CHR_BANK_8K))
-            || (mapper34_nina && (chr_is_ram || chr_sz < CHR_BANK_4K))) {
-            fprintf(stderr, "Unsupported ROM/RAM size for mapper 34\n");
-            return -1;
-        }
-    }
-    if (mapper_no == 206
-        && ((submapper == 1 && prg_sz != PRG_BANK_32K) || chr_sz < CHR_BANK_1K)) {
+    if (mapper_no == 206 && submapper == 1 && prg_sz != PRG_BANK_32K) {
         fprintf(stderr, "Unsupported ROM/RAM size for mapper 206\n");
-        return -1;
-    }
-    if ((mapper_no == 76 || mapper_no == 88 || mapper_no == 95 || mapper_no == 154)
-        && chr_sz < (mapper_no == 76 ? CHR_BANK_2K : CHR_BANK_1K)) {
-        fprintf(stderr, "Unsupported ROM/RAM size for mapper %d\n", mapper_no);
         return -1;
     }
     if (mapper_no == 99 && (chr_is_ram
