@@ -1773,6 +1773,72 @@ static int exciting_boxing_signals(void) {
     return 0;
 }
 
+static uint8_t jissen_read_row(unsigned row) {
+    write_mem(0x4016, (uint8_t)((row << 1) | 1u));
+    write_mem(0x4016, (uint8_t)(row << 1));
+    uint8_t value = 0;
+    for (unsigned bit = 0; bit < 8; ++bit) {
+        write_mem(0x4018, 0);
+        value |= (uint8_t)(((read_mem(0x4017) >> 1) & 1u) << bit);
+    }
+    return value;
+}
+
+static int jissen_mahjong_rows(void) {
+    input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+    CHECK(joypad_set_expansion_device_name("jissen-mahjong"));
+    CHECK(joypad_expansion_device() == NES_EXPANSION_JISSEN_MAHJONG);
+    pad2.buttons = 1;
+    CHECK(jissen_read_row(0) == 0);
+
+    CHECK(joypad_set_jissen_key(JISSEN_KEY_N, true));
+    CHECK(joypad_set_jissen_key(JISSEN_KEY_L, true));
+    CHECK(joypad_set_jissen_key(JISSEN_KEY_J, true));
+    CHECK(jissen_read_row(1) == 0x54);
+
+    CHECK(joypad_set_jissen_key(JISSEN_KEY_H, true));
+    CHECK(joypad_set_jissen_key(JISSEN_KEY_F, true));
+    CHECK(joypad_set_jissen_key(JISSEN_KEY_D, true));
+    CHECK(joypad_set_jissen_key(JISSEN_KEY_B, true));
+    CHECK(jissen_read_row(2) == 0x55);
+
+    CHECK(joypad_set_jissen_key(JISSEN_KEY_RON, true));
+    CHECK(joypad_set_jissen_key(JISSEN_KEY_CHII, true));
+    CHECK(joypad_set_jissen_key(JISSEN_KEY_KAN, true));
+    CHECK(joypad_set_jissen_key(JISSEN_KEY_SELECT, true));
+    CHECK(jissen_read_row(3) == 0xAA);
+
+    write_mem(0x4016, 5);
+    write_mem(0x4016, 4);
+    uint8_t partial = 0;
+    for (unsigned bit = 0; bit < 4; ++bit) {
+        write_mem(0x4018, 0);
+        partial |= (uint8_t)(((read_mem(0x4017) >> 1) & 1u) << bit);
+    }
+    CHECK(partial == 0x05);
+    write_mem(0x4016, 6);
+    uint8_t upper = 0;
+    for (unsigned bit = 4; bit < 8; ++bit) {
+        write_mem(0x4018, 0);
+        upper |= (uint8_t)(((read_mem(0x4017) >> 1) & 1u) << bit);
+    }
+    CHECK(upper == 0x50);
+    CHECK(jissen_read_row(3) == 0xAA);
+
+    write_mem(0x4016, 7);
+    CHECK((read_mem(0x4017) & 2u) == 0);
+    CHECK((read_mem(0x4017) & 2u) == 0);
+    write_mem(0x4016, 6);
+
+    CHECK(!joypad_set_jissen_key(JISSEN_KEY_COUNT, true));
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_NONE));
+    CHECK(!joypad_set_jissen_key(JISSEN_KEY_A, true));
+    CHECK((read_mem(0x4017) & 2u) == 0);
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_JISSEN_MAHJONG));
+    CHECK(jissen_read_row(0) == 0);
+    return 0;
+}
+
 int test_input_accuracy(void) {
     static int (*const tests[])(void) = {
         console_open_bus, console_read_clocks, console_strobe_timing,
@@ -1789,7 +1855,7 @@ int test_input_accuracy(void) {
         battle_box_persistence, battle_box_failed_save, subor_keyboard_matrix,
         subor_mouse_packets, hori_track_reports, konami_hyper_shot_signals,
         bandai_hyper_shot_signals, party_tap_reports, pachinko_reports,
-        exciting_boxing_signals
+        exciting_boxing_signals, jissen_mahjong_rows
     };
     NesConsoleModel saved_model = nes_console_model();
     NesRegion saved_region = nes_timing()->region;

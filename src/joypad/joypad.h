@@ -69,8 +69,17 @@ typedef enum {
     NES_EXPANSION_BANDAI_HYPER_SHOT,
     NES_EXPANSION_PARTY_TAP,
     NES_EXPANSION_PACHINKO,
-    NES_EXPANSION_EXCITING_BOXING
+    NES_EXPANSION_EXCITING_BOXING,
+    NES_EXPANSION_JISSEN_MAHJONG
 } NesExpansionDevice;
+
+typedef enum {
+    JISSEN_KEY_A, JISSEN_KEY_B, JISSEN_KEY_C, JISSEN_KEY_D, JISSEN_KEY_E,
+    JISSEN_KEY_F, JISSEN_KEY_G, JISSEN_KEY_H, JISSEN_KEY_I, JISSEN_KEY_J,
+    JISSEN_KEY_K, JISSEN_KEY_L, JISSEN_KEY_M, JISSEN_KEY_N,
+    JISSEN_KEY_SELECT, JISSEN_KEY_START, JISSEN_KEY_KAN, JISSEN_KEY_PON,
+    JISSEN_KEY_CHII, JISSEN_KEY_RIICHI, JISSEN_KEY_RON, JISSEN_KEY_COUNT
+} JissenKey;
 
 typedef enum {
     SUBOR_KEY_A, SUBOR_KEY_B, SUBOR_KEY_C, SUBOR_KEY_D, SUBOR_KEY_E, SUBOR_KEY_F,
@@ -137,6 +146,7 @@ bool    joypad_add_hori_track_motion(int dx, int dy);
 bool    joypad_set_party_tap_button(unsigned button, bool pressed);
 bool    joypad_set_pachinko_controls(bool press, bool release);
 bool    joypad_set_boxing_sensor(unsigned sensor, bool pressed);
+bool    joypad_set_jissen_key(JissenKey key, bool pressed);
 bool    joypad_persistent_configure(const char *rom_path);
 bool    joypad_persistent_flush(void);
 bool    joypad_persistent_shutdown(void);

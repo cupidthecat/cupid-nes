@@ -138,6 +138,10 @@ Mouse motion uses SDL relative movement. Left and right mouse buttons map to the
 
 `--console famicom --expansion exciting-boxing` connects the punching-bag sensors. Host keys 1 through 4 map to the first sensor bank and 5 through 8 map to the second. The game selects a bank with `$4016 D1`; inactive sensors read high on `$4017 D1-D4`.
 
+## Jissen Mahjong
+
+`--console famicom --expansion jissen-mahjong` connects the mahjong panel. Letter keys A through N map to the tile keys, Right Shift is Select, Enter is Start, and number keys 1 through 5 map to Kan, Pon, Chii, Riichi, and Ron. The game selects one of four rows through `$4016 D1-D2` and reads the latched row serially on `$4017 D1`.
+
 ## ASCII Turbo File
 
 `--console famicom --expansion turbo-file` connects the 8 KiB serial storage device. Games control its reset, clock, data, and read lines through the Famicom expansion connector. The contents are loaded and saved automatically next to the ROM; there is no host key for manually advancing the device.

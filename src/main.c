@@ -295,6 +295,27 @@ static bool boxing_key_event(const SDL_KeyboardEvent *event) {
     return false;
 }
 
+static bool jissen_key_event(const SDL_KeyboardEvent *event) {
+    if (!event || joypad_expansion_device() != NES_EXPANSION_JISSEN_MAHJONG) return false;
+    JissenKey key;
+    if (event->keysym.sym >= SDLK_a && event->keysym.sym <= SDLK_n) {
+        key = (JissenKey)(JISSEN_KEY_A + (event->keysym.sym - SDLK_a));
+    } else {
+        switch (event->keysym.sym) {
+            case SDLK_RSHIFT: key = JISSEN_KEY_SELECT; break;
+            case SDLK_RETURN: key = JISSEN_KEY_START; break;
+            case SDLK_1: key = JISSEN_KEY_KAN; break;
+            case SDLK_2: key = JISSEN_KEY_PON; break;
+            case SDLK_3: key = JISSEN_KEY_CHII; break;
+            case SDLK_4: key = JISSEN_KEY_RIICHI; break;
+            case SDLK_5: key = JISSEN_KEY_RON; break;
+            default: return false;
+        }
+    }
+    joypad_set_jissen_key(key, event->type == SDL_KEYDOWN);
+    return true;
+}
+
 int main(int argc, char *argv[]) {
     SDL_AudioSpec want;
     SDL_AudioSpec have;
@@ -421,7 +442,7 @@ int main(int argc, char *argv[]) {
             }
         } else if (strcmp(argv[i], "--expansion") == 0) {
             if (++i == argc || !joypad_set_expansion_device_name(argv[i])) {
-                fprintf(stderr, "Expansion device must be none, arkanoid, family-trainer-a, family-trainer-b, zapper, family-basic, turbo-file, battle-box, subor-keyboard, hori-track, konami-hyper-shot, bandai-hyper-shot, party-tap, pachinko, or exciting-boxing\n");
+                fprintf(stderr, "Expansion device must be none, arkanoid, family-trainer-a, family-trainer-b, zapper, family-basic, turbo-file, battle-box, subor-keyboard, hori-track, konami-hyper-shot, bandai-hyper-shot, party-tap, pachinko, exciting-boxing, or jissen-mahjong\n");
                 return 1;
             }
         } else if (strcmp(argv[i], "--zapper-radius") == 0) {
@@ -757,6 +778,9 @@ int main(int argc, char *argv[]) {
             if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
                 && e.key.windowID == SDL_GetWindowID(window)
                 && boxing_key_event(&e.key)) continue;
+            if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
+                && e.key.windowID == SDL_GetWindowID(window)
+                && jissen_key_event(&e.key)) continue;
             palette_tool_handle_event(&e, renderer);
             
             if (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP) {

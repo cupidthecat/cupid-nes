@@ -70,4 +70,9 @@ void exciting_boxing_write(uint8_t value);
 uint8_t exciting_boxing_read(unsigned port);
 bool exciting_boxing_set_sensor(unsigned sensor, bool pressed);
 
+void jissen_mahjong_reset(void);
+void jissen_mahjong_write(uint8_t value);
+uint8_t jissen_mahjong_read(unsigned port);
+bool jissen_mahjong_set_key(unsigned key, bool pressed);
+
 #endif

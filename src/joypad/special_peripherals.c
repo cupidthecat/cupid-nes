@@ -126,6 +126,15 @@ typedef struct {
 
 static ExcitingBoxing exciting_boxing;
 
+typedef struct {
+    bool keys[21];
+    uint8_t row;
+    uint8_t state;
+    bool strobe;
+} JissenMahjong;
+
+static JissenMahjong jissen_mahjong;
+
 enum { SUBOR_NONE = 0xFF };
 static const uint8_t subor_matrix[104] = {
     SUBOR_KEY_4, SUBOR_KEY_G, SUBOR_KEY_F, SUBOR_KEY_C,
@@ -718,4 +727,67 @@ uint8_t exciting_boxing_read(unsigned port) {
     for (unsigned bit = 0; bit < 4; ++bit)
         if (!exciting_boxing.sensors[base + bit]) value |= (uint8_t)(1u << (bit + 1u));
     return value;
+}
+
+static void jissen_mahjong_latch(void) {
+    uint8_t state = 0;
+    switch (jissen_mahjong.row) {
+        case 1:
+            if (jissen_mahjong.keys[JISSEN_KEY_N]) state |= 0x04;
+            if (jissen_mahjong.keys[JISSEN_KEY_M]) state |= 0x08;
+            if (jissen_mahjong.keys[JISSEN_KEY_L]) state |= 0x10;
+            if (jissen_mahjong.keys[JISSEN_KEY_K]) state |= 0x20;
+            if (jissen_mahjong.keys[JISSEN_KEY_J]) state |= 0x40;
+            if (jissen_mahjong.keys[JISSEN_KEY_I]) state |= 0x80;
+            break;
+        case 2:
+            if (jissen_mahjong.keys[JISSEN_KEY_H]) state |= 0x01;
+            if (jissen_mahjong.keys[JISSEN_KEY_G]) state |= 0x02;
+            if (jissen_mahjong.keys[JISSEN_KEY_F]) state |= 0x04;
+            if (jissen_mahjong.keys[JISSEN_KEY_E]) state |= 0x08;
+            if (jissen_mahjong.keys[JISSEN_KEY_D]) state |= 0x10;
+            if (jissen_mahjong.keys[JISSEN_KEY_C]) state |= 0x20;
+            if (jissen_mahjong.keys[JISSEN_KEY_B]) state |= 0x40;
+            if (jissen_mahjong.keys[JISSEN_KEY_A]) state |= 0x80;
+            break;
+        case 3:
+            if (jissen_mahjong.keys[JISSEN_KEY_RON]) state |= 0x02;
+            if (jissen_mahjong.keys[JISSEN_KEY_RIICHI]) state |= 0x04;
+            if (jissen_mahjong.keys[JISSEN_KEY_CHII]) state |= 0x08;
+            if (jissen_mahjong.keys[JISSEN_KEY_PON]) state |= 0x10;
+            if (jissen_mahjong.keys[JISSEN_KEY_KAN]) state |= 0x20;
+            if (jissen_mahjong.keys[JISSEN_KEY_START]) state |= 0x40;
+            if (jissen_mahjong.keys[JISSEN_KEY_SELECT]) state |= 0x80;
+            break;
+        default:
+            break;
+    }
+    jissen_mahjong.state = state;
+}
+
+void jissen_mahjong_reset(void) {
+    jissen_mahjong.row = 0;
+    jissen_mahjong.state = 0;
+    jissen_mahjong.strobe = false;
+}
+
+bool jissen_mahjong_set_key(unsigned key, bool pressed) {
+    if (key >= 21) return false;
+    jissen_mahjong.keys[key] = pressed;
+    return true;
+}
+
+void jissen_mahjong_write(uint8_t value) {
+    jissen_mahjong.row = (uint8_t)((value >> 1) & 3u);
+    bool strobe = (value & 1u) != 0;
+    if (jissen_mahjong.strobe && !strobe) jissen_mahjong_latch();
+    jissen_mahjong.strobe = strobe;
+}
+
+uint8_t jissen_mahjong_read(unsigned port) {
+    if (port != 1) return 0;
+    if (jissen_mahjong.strobe) jissen_mahjong_latch();
+    uint8_t output = (uint8_t)((jissen_mahjong.state & 1u) << 1);
+    jissen_mahjong.state >>= 1;
+    return output;
 }
