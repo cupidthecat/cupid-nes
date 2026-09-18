@@ -17,6 +17,7 @@
 #include "ffe.hpp"
 #include "farid.hpp"
 #include "ntdec.hpp"
+#include "racermate.hpp"
 
 namespace cupid::boards {
 
@@ -27,6 +28,7 @@ std::unique_ptr<Board> CreateBoard(unsigned mapper) {
         case 63: return std::make_unique<Ntdec63>();
         case 112: return std::make_unique<Ntdec112>();
         case 174: return std::make_unique<Ntdec174>();
+        case 168: return std::make_unique<Racermate>();
         case 193: return std::make_unique<NtdecTc112>();
         case 221: return std::make_unique<Ntdec221>();
         case 290: return std::make_unique<NtdecNtd03>();
@@ -49,6 +51,7 @@ std::unique_ptr<Board> CreateBoard(unsigned mapper) {
 bool board_handles_mapper(unsigned mapper) {
     switch (mapper) {
         case 29: return true;
+        case 168: return true;
         case 41: case 63: case 112: case 174: case 193: case 221: case 290: case 298: return true;
         case 6: case 8: case 17: return true;
         case 323: case 324: return true;
