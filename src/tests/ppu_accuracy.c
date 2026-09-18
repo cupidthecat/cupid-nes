@@ -25,6 +25,7 @@
 #include "../cpu/cpu.h"
 #include "../apu/apu.h"
 #include "../rom/mapper.h"
+#include "../system/hardware.h"
 #include "../system/timing.h"
 #include "../../include/globals.h"
 #include <stdio.h>
@@ -32,6 +33,7 @@
 
 static int checks;
 static int failures;
+extern uint8_t ram[0x0800];
 static uint8_t test_prg[0x8000];
 static uint8_t test_chr[0x2000];
 static uint16_t pattern_addresses[128];
@@ -942,6 +944,131 @@ static void test_video_reset(void) {
     CHECK("power on initializes nametable RAM separately from soft reset", ppu_read(0x2000) == 0);
 }
 
+static bool all_bytes_equal(const uint8_t *bytes, size_t size, uint8_t value) {
+    for (size_t i = 0; i < size; ++i) {
+        if (bytes[i] != value) return false;
+    }
+    return true;
+}
+
+static void test_power_on_ram_profiles(void) {
+    static const uint8_t boot_palette[PPU_PALETTE_SIZE] = {
+        0x09,0x01,0x00,0x01,0x00,0x02,0x02,0x0D,
+        0x08,0x10,0x08,0x24,0x00,0x00,0x04,0x2C,
+        0x09,0x01,0x34,0x03,0x00,0x04,0x00,0x14,
+        0x08,0x3A,0x00,0x02,0x00,0x20,0x2C,0x08
+    };
+    uint8_t first_ram[sizeof(ram)];
+    uint8_t first_vram[sizeof(ppu_vram)];
+    uint8_t first_oam[sizeof(ppu.oam)];
+    uint8_t first_secondary[sizeof(ppu.secondary_oam)];
+    uint8_t first_palette[sizeof(ppu_palette)];
+
+    CHECK("power-on RAM state names reject unknown profiles",
+          !nes_set_ram_power_on_state_name("unknown"));
+
+    CHECK("default power-on RAM profile selects compatibility state",
+          nes_set_ram_power_on_state(NES_RAM_POWER_DEFAULT));
+    nes_set_randomize_vblank(false);
+    memset(ram, 0xA5, sizeof(ram));
+    memset(ppu_vram, 0xA5, sizeof(ppu_vram));
+    memset(ppu.oam, 0xA5, sizeof(ppu.oam));
+    ppu_power_on(&ppu);
+    CHECK("default power-on profile keeps zeroed CPU and nametable RAM",
+          cpu_power_on(&cpu) && all_bytes_equal(ram, sizeof(ram), 0)
+          && all_bytes_equal(ppu_vram, sizeof(ppu_vram), 0));
+    CHECK("default power-on profile keeps all-ones primary and secondary OAM",
+          all_bytes_equal(ppu.oam, sizeof(ppu.oam), 0xFF)
+          && all_bytes_equal(ppu.secondary_oam, sizeof(ppu.secondary_oam), 0xFF));
+    CHECK("nonrandom power-on profiles keep the fixed boot palette",
+          memcmp(ppu_palette, boot_palette, sizeof(boot_palette)) == 0);
+    CHECK("power-on VBL randomization stays disabled independently", !(ppu.status & 0x80));
+
+    CHECK("zero power-on RAM profile is selectable",
+          nes_set_ram_power_on_state_name("zero"));
+    ppu_power_on(&ppu);
+    CHECK("zero profile clears CPU internal RAM on hard power-on",
+          cpu_power_on(&cpu) && all_bytes_equal(ram, sizeof(ram), 0));
+    CHECK("zero profile clears PPU nametable and OAM storage",
+          all_bytes_equal(ppu_vram, sizeof(ppu_vram), 0)
+          && all_bytes_equal(ppu.oam, sizeof(ppu.oam), 0)
+          && all_bytes_equal(ppu.secondary_oam, sizeof(ppu.secondary_oam), 0));
+    CHECK("zero profile still uses the fixed nonrandom palette",
+          memcmp(ppu_palette, boot_palette, sizeof(boot_palette)) == 0);
+
+    CHECK("ones power-on RAM profile is selectable",
+          nes_set_ram_power_on_state_name("ones"));
+    ppu_power_on(&ppu);
+    CHECK("ones profile fills CPU internal RAM on hard power-on",
+          cpu_power_on(&cpu) && all_bytes_equal(ram, sizeof(ram), 0xFF));
+    CHECK("ones profile fills PPU nametable and OAM storage",
+          all_bytes_equal(ppu_vram, sizeof(ppu_vram), 0xFF)
+          && all_bytes_equal(ppu.oam, sizeof(ppu.oam), 0xFF)
+          && all_bytes_equal(ppu.secondary_oam, sizeof(ppu.secondary_oam), 0xFF));
+    CHECK("ones profile still uses the fixed nonrandom palette",
+          memcmp(ppu_palette, boot_palette, sizeof(boot_palette)) == 0);
+
+    CHECK("random power-on RAM profile is selectable",
+          nes_set_ram_power_on_state_name("random"));
+    nes_seed_power_on_random(0x12345678u);
+    ppu_power_on(&ppu);
+    CHECK("random profile initializes CPU internal RAM", cpu_power_on(&cpu));
+    memcpy(first_ram, ram, sizeof(first_ram));
+    memcpy(first_vram, ppu_vram, sizeof(first_vram));
+    memcpy(first_oam, ppu.oam, sizeof(first_oam));
+    memcpy(first_secondary, ppu.secondary_oam, sizeof(first_secondary));
+    memcpy(first_palette, ppu_palette, sizeof(first_palette));
+    CHECK("random profile does not collapse CPU or PPU RAM to a constant fill",
+          !all_bytes_equal(ram, sizeof(ram), ram[0])
+          && !all_bytes_equal(ppu_vram, sizeof(ppu_vram), ppu_vram[0])
+          && !all_bytes_equal(ppu.oam, sizeof(ppu.oam), ppu.oam[0]));
+    bool palette_range = true;
+    for (unsigned i = 0; i < PPU_PALETTE_SIZE; ++i) {
+        if (ppu_palette[i] > 0x3F) palette_range = false;
+    }
+    CHECK("random palette RAM is limited to six-bit PPU values", palette_range);
+
+    nes_seed_power_on_random(0x12345678u);
+    ppu_power_on(&ppu);
+    CHECK("reseeded random profile initializes CPU internal RAM", cpu_power_on(&cpu));
+    CHECK("same power-on seed reproduces CPU internal RAM",
+          memcmp(ram, first_ram, sizeof(first_ram)) == 0);
+    CHECK("same power-on seed reproduces PPU RAM areas",
+          memcmp(ppu_vram, first_vram, sizeof(first_vram)) == 0
+          && memcmp(ppu.oam, first_oam, sizeof(first_oam)) == 0
+          && memcmp(ppu.secondary_oam, first_secondary, sizeof(first_secondary)) == 0
+          && memcmp(ppu_palette, first_palette, sizeof(first_palette)) == 0);
+
+    ram[0x21] = 0x6A;
+    ppu_vram[0x123] = 0x5C;
+    ppu_palette[7] = 0x2D;
+    ppu.oam[9] = 0xA6;
+    ppu_soft_reset(&ppu);
+    cpu_soft_reset(&cpu);
+    CHECK("soft reset does not rerun CPU or PPU power-on RAM initialization",
+          ram[0x21] == 0x6A && ppu_vram[0x123] == 0x5C
+          && ppu_palette[7] == 0x2D && ppu.oam[9] == 0xA6);
+
+    CHECK("default RAM profile can randomize only the power-on VBL flag",
+          nes_set_ram_power_on_state(NES_RAM_POWER_DEFAULT));
+    nes_set_randomize_vblank(true);
+    nes_seed_power_on_random(0xCAFEBABEu);
+    bool expected_vblank = nes_power_on_random_bool();
+    nes_seed_power_on_random(0xCAFEBABEu);
+    ppu_power_on(&ppu);
+    CHECK("power-on VBL uses the controlled random source independently of RAM",
+          ((ppu.status & 0x80) != 0) == expected_vblank
+          && all_bytes_equal(ppu_vram, sizeof(ppu_vram), 0));
+    nes_set_randomize_vblank(false);
+    nes_seed_power_on_random(0xCAFEBABEu);
+    ppu_power_on(&ppu);
+    CHECK("disabled power-on VBL randomization always clears the startup flag",
+          !(ppu.status & 0x80));
+
+    nes_set_ram_power_on_state(NES_RAM_POWER_DEFAULT);
+    nes_set_randomize_vblank(false);
+}
+
 static void test_sprite_shifters(void) {
     reset_video(0);
     ppu.scanline = 0;
@@ -1361,6 +1488,7 @@ int test_ppu_accuracy(void) {
     test_oam_decay_refresh();
     test_regional_video();
     test_video_reset();
+    test_power_on_ram_profiles();
     test_sprite_shifters();
     test_late_register_reads();
     printf("PPU: %d checks, %d failures\n", checks, failures);

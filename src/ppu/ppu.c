@@ -28,6 +28,7 @@
 #include "../../include/globals.h"
 #include "../rom/mapper.h"
 #include "../cpu/cpu.h"
+#include "../system/hardware.h"
 #include "../system/timing.h"
 #include "../system/vs_system.h"
 #include "../ui/palette_tool.h"
@@ -594,14 +595,14 @@ void ppu_power_on(PPU *state) {
     memset(state, 0, sizeof(*state));
     memset(state->pixel_indices, 0x0F, sizeof(state->pixel_indices));
     memset(active_ppu_ob_expire, 0, sizeof(main_ppu_ob_expire));
-    memset(state->oam, 0xFF, sizeof(state->oam));
-    memset(state->secondary_oam, 0xFF, sizeof(state->secondary_oam));
+    nes_initialize_power_on_ram(state->oam, sizeof(state->oam), 0xFF);
+    nes_initialize_power_on_ram(state->secondary_oam, sizeof(state->secondary_oam), 0xFF);
     memset(state->oam_decay_cycles, 0, sizeof(state->oam_decay_cycles));
     state->oam_bus = 0xFF;
     state->oam_read_latch = 0xFF;
     state->scanline = (int)nes_timing()->scanlines - 1;
     state->startup_writes_restricted = startup_write_restriction;
-    memset(active_ppu_vram, 0, NT_RAM_SIZE);
+    nes_initialize_power_on_ram(active_ppu_vram, NT_RAM_SIZE, 0x00);
     cpu_set_nmi_line(false);
     static const uint8_t power_up_palette[PPU_PALETTE_SIZE] = {
         0x09,0x01,0x00,0x01,0x00,0x02,0x02,0x0D,
@@ -609,7 +610,13 @@ void ppu_power_on(PPU *state) {
         0x09,0x01,0x34,0x03,0x00,0x04,0x00,0x14,
         0x08,0x3A,0x00,0x02,0x00,0x20,0x2C,0x08
     };
-    memcpy(active_ppu_palette, power_up_palette, PPU_PALETTE_SIZE);
+    if (nes_ram_power_on_state() == NES_RAM_POWER_RANDOM) {
+        nes_initialize_power_on_ram(active_ppu_palette, PPU_PALETTE_SIZE, 0x00);
+        for (unsigned i = 0; i < PPU_PALETTE_SIZE; ++i) active_ppu_palette[i] &= 0x3F;
+    } else {
+        memcpy(active_ppu_palette, power_up_palette, PPU_PALETTE_SIZE);
+    }
+    if (nes_randomize_vblank_enabled() && nes_power_on_random_bool()) state->status |= 0x80;
     ppu_palette_reset_default();
 }
 

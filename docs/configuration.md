@@ -19,6 +19,9 @@ On Windows, replace `./cupid-nes` with `.\build\windows\cupid-nes.exe`. Supply o
 | `--cpu-test-mode` | No value | Off | Enables the 2A03 channel-output diagnostic reads at `$4018-$401A` |
 | `--startup-phase CPU:PPU` | Decimal master-clock offsets within the regional dividers | CPU `0`, PPU divider minus one | Selects a reproducible power-on alignment |
 | `--startup-seed SEED` | Decimal integer from `0` through `4294967295` | No randomization | Generates a reproducible sequence of legal power-on alignments |
+| `--ram-power-on STATE` | `default`, `zero`, `ones`, `random` | `default` | Selects the initial CPU RAM, PPU RAM, and cartridge board RAM contents |
+| `--power-on-seed SEED` | Decimal integer from `0` through `4294967295` | Fixed initial seed | Makes random RAM contents and the optional startup VBL flag reproducible |
+| `--random-vblank` | No value | Off | Randomizes the PPU VBL flag at power-on independently of the RAM profile |
 | `--ppu-revision REVISION` | `2c02-pre-e`, `2c02e-plus` | `2c02e-plus` | PPU silicon revision used by optional OAM behavior |
 | `--ppu-oam-row-corruption` | No value | Off | Enables the deterministic worst-case OAM row-corruption profile |
 | `--ppu-startup-restriction` | No value | Off | Enables the protected PPU register-write interval after power-on and soft reset |
@@ -29,6 +32,10 @@ On Windows, replace `./cupid-nes` with `.\build\windows\cupid-nes.exe`. Supply o
 The ROM header selects the timing region. `--console famicom` changes console wiring and does not force NTSC, PAL, or Dendy timing. There is no application `--region` option.
 
 The three optional PPU profiles are compatibility models with documented assumptions. Their timing and limits are in [accuracy](accuracy.md).
+
+The `default` RAM profile clears CPU and nametable RAM and fills primary and secondary OAM with `$FF`. `zero` fills those areas with `$00`; `ones` fills them with `$FF`. All three retain the fixed boot palette. `random` fills RAM from the controlled random source and limits palette entries to six bits. The C++ cartridge board modules apply the same profile to their work, save, CHR, and nametable RAM before trainer and save data are loaded. Existing C cartridge implementations keep their board-specific initialization.
+
+`--power-on-seed` sets a separate random source from `--startup-seed`; it may be supplied once. Repeating the same seed, image, and options reproduces the startup state. RAM initialization occurs on hard power-on or cartridge insertion, depending on the memory's owner. Soft reset preserves RAM. `--random-vblank` can be used with any RAM profile and remains off unless supplied.
 
 `--cpu-test-mode` enables the read-only channel-output diagnostics at `$4018-$401A`. It does not add writable CPU test registers. The selection, CPU revision, PPU revision, and optional PPU profiles stay selected across the R-key soft reset.
 

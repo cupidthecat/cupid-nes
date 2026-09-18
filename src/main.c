@@ -352,6 +352,8 @@ int main(int argc, char *argv[]) {
     bool startup_seed_set = false;
     unsigned startup_cpu_offset = 0, startup_ppu_phase = 0;
     uint32_t startup_seed = 0;
+    bool power_on_seed_set = false;
+    uint32_t power_on_seed = 0;
     const char *epsm_adpcm_path = NULL;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--console") == 0) {
@@ -416,6 +418,27 @@ int main(int argc, char *argv[]) {
             }
             startup_seed = (uint32_t)seed;
             startup_seed_set = true;
+        } else if (strcmp(argv[i], "--ram-power-on") == 0) {
+            if (++i == argc || !nes_set_ram_power_on_state_name(argv[i])) {
+                fprintf(stderr, "RAM power-on state must be default, zero, ones, or random\n");
+                return 1;
+            }
+        } else if (strcmp(argv[i], "--power-on-seed") == 0) {
+            if (++i == argc || power_on_seed_set) {
+                fprintf(stderr, "Power-on seed must be an integer from 0 to 4294967295\n");
+                return 1;
+            }
+            char *end;
+            errno = 0;
+            unsigned long long seed = strtoull(argv[i], &end, 10);
+            if (errno || argv[i][0] < '0' || argv[i][0] > '9' || *end || seed > UINT32_MAX) {
+                fprintf(stderr, "Power-on seed must be an integer from 0 to 4294967295\n");
+                return 1;
+            }
+            power_on_seed = (uint32_t)seed;
+            power_on_seed_set = true;
+        } else if (strcmp(argv[i], "--random-vblank") == 0) {
+            nes_set_randomize_vblank(true);
         } else if (strcmp(argv[i], "--ppu-revision") == 0) {
             if (++i == argc || !ppu_set_revision_name(argv[i])) {
                 fprintf(stderr, "PPU revision must be 2c02-pre-e or 2c02e-plus\n");
@@ -541,6 +564,7 @@ int main(int argc, char *argv[]) {
                "[--cpu-test-mode] "
                "[--epsm-adpcm FILE] "
                "[--startup-phase CPU:PPU | --startup-seed SEED] "
+               "[--ram-power-on STATE] [--power-on-seed SEED] [--random-vblank] "
                "[--ppu-revision REVISION] [--ppu-oam-row-corruption] "
                "[--ppu-startup-restriction] [--ppu-oam-decay] "
                "[--mmc3-revision REVISION] [--cart-dip VALUE] "
@@ -567,6 +591,9 @@ int main(int argc, char *argv[]) {
     printf("Console: %s\n", nes_console_model_name());
     printf("CPU revision: %s\n", apu_get_cpu_revision() == APU_CPU_REVISION_EARLY_2A03
            ? "early-2a03" : "late-2a03");
+    printf("RAM power-on state: %s\n", nes_ram_power_on_state_name());
+    printf("Random power-on VBL flag: %s\n", nes_randomize_vblank_enabled() ? "enabled" : "disabled");
+    if (power_on_seed_set) printf("Power-on seed: %llu\n", (unsigned long long)power_on_seed);
     printf("PPU revision: %s\n", ppu_revision_name());
     printf("CPU test-register reads: %s\n", cpu_test_mode_enabled() ? "enabled" : "disabled");
     printf("PPU OAM row corruption: %s\n",
@@ -581,6 +608,7 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Could not load the 8 KiB YMF288 ADPCM ROM: %s\n", epsm_adpcm_path);
         return 1;
     }
+    if (power_on_seed_set) nes_seed_power_on_random(power_on_seed);
     int load_result = fds_bios_path
         ? load_fds(rom_path, fds_bios_path, fds_start_write_protected)
         : load_rom(rom_path);

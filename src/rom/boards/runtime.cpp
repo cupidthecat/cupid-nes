@@ -22,6 +22,7 @@
 extern "C" {
 #include "../mapper.h"
 #include "../../cpu/cpu.h"
+#include "../../system/hardware.h"
 }
 
 namespace cupid::boards {
@@ -373,6 +374,11 @@ void Board::Initialize(const iNESHeader &header, uint8_t *prg, size_t prgBytes,
     _saveRam = _saveStorage.data();
     _chrRam = _chrStorage.data();
     _mapperRam = _mapperStorage.data();
+    nes_initialize_power_on_ram(_saveRam, _saveRamSize, 0);
+    nes_initialize_power_on_ram(_workRam, _workRamSize, 0);
+    nes_initialize_power_on_ram(_mapperRam, _mapperRamSize, 0);
+    nes_initialize_power_on_ram(_nametableStorage.data(), _nametableStorage.size(), 0);
+    nes_initialize_power_on_ram(_chrRam, _chrRamSize, 0);
     _romInfo.HasChrRam = HasChrRam();
     _registerReads = AllowRegisterRead();
     _busConflicts = HasBusConflicts();

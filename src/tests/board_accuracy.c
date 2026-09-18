@@ -13,6 +13,7 @@
  * Public License for details. See <https://www.gnu.org/licenses/>.
  */
 #include "board_tests.h"
+#include "../system/hardware.h"
 #include <time.h>
 
 static bool image_rom_size(size_t bytes, size_t unit, uint8_t *low, uint8_t *high) {
@@ -218,13 +219,55 @@ static int test_bandai_discrete_saves(void) {
     return 0;
 }
 
+static int test_board_power_on_ram(void) {
+    BoardImage image;
+    BOARD_CHECK(board_image_create(&image, 70, 0x8000, 0, false));
+    BOARD_CHECK(board_image_add_trainer(&image, 0x9A));
+    BOARD_CHECK(nes_set_ram_power_on_state(NES_RAM_POWER_ONES));
+    BOARD_CHECK(board_image_load(&image) == 0);
+    BOARD_CHECK(read_mem(0x6123) == 0xFF && ppu_read(0x1234) == 0xFF);
+    BOARD_CHECK(ppu_read(0x2222) == 0xFF && read_mem(0x7000) == 0x9A);
+    write_mem(0x6123, 0x34);
+    ppu_write(0x1234, 0x56);
+    ppu_write(0x2222, 0x78);
+    cpu_soft_reset(&cpu);
+    BOARD_CHECK(read_mem(0x6123) == 0x34 && ppu_read(0x1234) == 0x56 && ppu_read(0x2222) == 0x78);
+    BOARD_CHECK(nes_set_ram_power_on_state(NES_RAM_POWER_ZERO));
+    BOARD_CHECK(board_image_load(&image) == 0);
+    BOARD_CHECK(read_mem(0x6123) == 0 && ppu_read(0x1234) == 0);
+    BOARD_CHECK(ppu_read(0x2222) == 0 && read_mem(0x7000) == 0x9A);
+    BOARD_CHECK(nes_set_ram_power_on_state(NES_RAM_POWER_RANDOM));
+    nes_seed_power_on_random(0x12345678);
+    BOARD_CHECK(board_image_load(&image) == 0);
+    uint8_t expected[768];
+    for (unsigned i = 0; i < 256; ++i) {
+        expected[i] = read_mem((uint16_t)(0x6000 + i));
+        expected[i + 256] = ppu_read((uint16_t)i);
+        expected[i + 512] = ppu_read((uint16_t)(0x2000 + i));
+    }
+    nes_seed_power_on_random(0x12345678);
+    BOARD_CHECK(board_image_load(&image) == 0);
+    bool varied = false;
+    for (unsigned i = 0; i < 256; ++i) {
+        BOARD_CHECK(read_mem((uint16_t)(0x6000 + i)) == expected[i]);
+        BOARD_CHECK(ppu_read((uint16_t)i) == expected[i + 256]);
+        BOARD_CHECK(ppu_read((uint16_t)(0x2000 + i)) == expected[i + 512]);
+        varied |= expected[i] != expected[0];
+    }
+    BOARD_CHECK(varied && read_mem(0x7000) == 0x9A);
+    BOARD_CHECK(nes_set_ram_power_on_state(NES_RAM_POWER_DEFAULT));
+    board_image_free(&image);
+    return 0;
+}
+
 int test_board_accuracy(void) {
     int failures = 0;
     failures += test_bandai_discrete_banks();
     failures += test_bandai_discrete_page_sizes();
     failures += test_bandai_discrete_failed_replacement();
     failures += test_bandai_discrete_saves();
+    failures += test_board_power_on_ram();
     unload_rom();
-    printf("Board accuracy: 4 groups, %d failures\n", failures);
+    printf("Board accuracy: 5 groups, %d failures\n", failures);
     return failures;
 }

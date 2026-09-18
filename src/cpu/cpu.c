@@ -32,6 +32,7 @@
 #include "../apu/epsm.h"
 #include "../rom/mapper.h"
 #include "../joypad/joypad.h"
+#include "../system/hardware.h"
 #include "../system/timing.h"
 #include "../system/vs_system.h"
 
@@ -282,6 +283,7 @@ static void cpu_reset_sequence(CPU* cpu) {
 bool cpu_power_on(CPU* cpu) {
     if (!cpu || !cpu_startup_alignment_valid(nes_timing()->region)) return false;
     cart_console_reset(false);
+    nes_initialize_power_on_ram(cpu_ram, 0x0800, 0x00);
     CpuStartupAlignment alignment = {0, (uint8_t)(nes_timing()->ppu_divider - 1)};
     if (alignment_mode == ALIGNMENT_EXPLICIT) {
         alignment = configured_alignment;
