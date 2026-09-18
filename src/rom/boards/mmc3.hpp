@@ -41,15 +41,17 @@ private:
     uint8_t _currentRegister = 0;
     bool _wramEnabled = false;
     bool _wramWriteProtected = false;
-    bool _a12Low = false;
-    uint64_t _a12LowCpuClock = 0;
+    uint64_t _a12LowClock = 0;
+    bool _forceMmc3RevAIrqs = false;
 
 protected:
     uint16_t GetPrgPageSize() override { return 0x2000; }
     uint16_t GetChrPageSize() override { return 0x0400; }
+    uint32_t GetSaveRamPageSize() override { return _romInfo.SubMapperID == 1 ? 0x200 : 0x2000; }
+    uint32_t GetSaveRamSize() override { return _romInfo.SubMapperID == 1 ? 0x400 : 0x2000; }
     bool EnableVramAddressHook() override { return true; }
 
-    virtual bool ForceMmc3RevAIrqs() { return false; }
+    virtual bool ForceMmc3RevAIrqs() { return _forceMmc3RevAIrqs; }
 
     State GetState() const { return _state; }
     uint8_t GetCurrentRegister() const { return _currentRegister; }
@@ -64,8 +66,6 @@ protected:
         _currentRegister = 0;
         _wramEnabled = false;
         _wramWriteProtected = false;
-        _a12Low = false;
-        _a12LowCpuClock = 0;
         _irqReloadValue = 0;
         _irqCounter = 0;
         _irqReload = false;
@@ -74,7 +74,6 @@ protected:
         _chrMode = 0;
         const uint8_t initial[8] = {0, 2, 4, 5, 6, 7, 0, 1};
         std::memcpy(_registers, initial, sizeof(initial));
-        SetIrq(false);
     }
 
     virtual void UpdateMirroring() {
@@ -126,24 +125,43 @@ protected:
         _wramEnabled = (_state.regA001 & 0x80) != 0;
         _wramWriteProtected = (_state.regA001 & 0x40) != 0;
 
-        int8_t access = NoAccess;
-        if (_wramEnabled) access = _wramWriteProtected ? Read : ReadWrite;
-        if ((HasBattery() && _saveRamSize) || (!HasBattery() && _workRamSize))
-            SetCpuMemoryMapping(0x6000, 0x7FFF, 0,
-                                HasBattery() ? PrgMemoryType::SaveRam : PrgMemoryType::WorkRam,
-                                access);
-        else
-            RemoveCpuMemoryMapping(0x6000, 0x7FFF);
+        if (_romInfo.SubMapperID == 0) {
+            int8_t access = NoAccess;
+            if (_wramEnabled) access = _wramWriteProtected ? Read : ReadWrite;
+            if ((HasBattery() && _saveRamSize) || (!HasBattery() && _workRamSize))
+                SetCpuMemoryMapping(0x6000, 0x7FFF, 0,
+                                    HasBattery() ? PrgMemoryType::SaveRam : PrgMemoryType::WorkRam,
+                                    access);
+            else
+                RemoveCpuMemoryMapping(0x6000, 0x7FFF);
+        }
 
         UpdatePrgMapping();
         UpdateChrMapping();
     }
 
     void InitMapper() override {
+        _forceMmc3RevAIrqs = _romInfo.DatabaseInfo.Chip.rfind("MMC3A", 0) == 0;
         ResetMmc3();
+        SetCpuMemoryMapping(0x6000, 0x7FFF, 0,
+                            HasBattery() ? PrgMemoryType::SaveRam : PrgMemoryType::WorkRam);
         UpdateState();
         UpdateMirroring();
     }
+
+    bool IsA12RisingEdge(uint16_t address) {
+        uint64_t clock = CpuClock();
+        if (address & 0x1000) {
+            bool rising = _a12LowClock > 0 && clock >= _a12LowClock
+                       && clock - _a12LowClock >= 3;
+            _a12LowClock = 0;
+            return rising;
+        }
+        if (_a12LowClock == 0) _a12LowClock = clock;
+        return false;
+    }
+
+    virtual void TriggerIrq() { SetIrq(true); }
 
     void WriteRegister(uint16_t address, uint8_t value) override {
         switch (address & 0xE001) {
@@ -183,18 +201,7 @@ protected:
 
 public:
     void NotifyVramAddressChange(uint16_t address) override {
-        uint64_t cpuClock = PpuClock() / 3;
-        if (!(address & 0x1000)) {
-            if (!_a12Low) {
-                _a12Low = true;
-                _a12LowCpuClock = cpuClock;
-            }
-            return;
-        }
-        bool qualified = _a12Low && cpuClock >= _a12LowCpuClock
-                      && cpuClock - _a12LowCpuClock >= 3;
-        _a12Low = false;
-        if (!qualified) return;
+        if (!IsA12RisingEdge(address)) return;
 
         uint8_t previous = _irqCounter;
         bool explicitReload = _irqReload;
@@ -205,7 +212,7 @@ public:
                       || std::strcmp(cart_mmc3_revision_name(), "a") == 0;
         bool trigger = _irqCounter == 0 && _irqEnabled;
         if (revisionA) trigger = trigger && (previous != 0 || explicitReload);
-        if (trigger) SetIrq(true);
+        if (trigger) TriggerIrq();
         _irqReload = false;
     }
 };

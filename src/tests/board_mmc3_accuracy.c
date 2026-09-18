@@ -21,15 +21,40 @@ static bool chr1_is(uint16_t address, unsigned bank) {
         && ppu_read((uint16_t)(address + 1)) == (uint8_t)(bank >> 8);
 }
 
-static void mmc3_a12_pulse(uint64_t ppu_cycle) {
-    cart_notify_ppu_address(0x0000, ppu_cycle);
-    cart_notify_ppu_address(0x1000, ppu_cycle + 9);
+static bool advance_cpu_cycles(unsigned cycles) {
+    if (cycles == 2) {
+        write_mem(0x0200, 0xEA);
+    } else if (cycles == 3) {
+        write_mem(0x0200, 0x4C);
+        write_mem(0x0201, 0x00);
+        write_mem(0x0202, 0x02);
+    } else {
+        return false;
+    }
+    cpu.pc = 0x0200;
+    return cpu_step(&cpu) == (int)cycles;
 }
 
-static uint64_t mmc3_sync_a12(void) {
-    uint64_t cycle = ppu.total_cycles + 9;
-    cart_notify_ppu_address(0x1000, cycle);
-    return cycle + 9;
+static void mmc3_sync_a12(uint64_t tag) {
+    cart_notify_ppu_address(0x1000, tag);
+}
+
+static int check_mmc3_a12_clock(NesRegion region, uint64_t phase_tag) {
+    nes_set_region(region);
+    mmc3_sync_a12(phase_tag);
+    cart_cpu_write(0xC000, 0);
+    cart_cpu_write(0xC001, 0);
+    cart_cpu_write(0xE001, 0);
+    cart_notify_ppu_address(0x0000, phase_tag + 1);
+    BOARD_CHECK(advance_cpu_cycles(2));
+    cart_notify_ppu_address(0x1000, phase_tag + 1000);
+    BOARD_CHECK(!cart_irq_pending());
+    cart_notify_ppu_address(0x0000, phase_tag + 2);
+    BOARD_CHECK(advance_cpu_cycles(3));
+    cart_notify_ppu_address(0x1000, phase_tag + 2000);
+    BOARD_CHECK(cart_irq_pending());
+    cart_cpu_write(0xE000, 0);
+    return 0;
 }
 
 static int test_mmc3_12_and_14(void) {
@@ -42,20 +67,10 @@ static int test_mmc3_12_and_14(void) {
     BOARD_CHECK(chr1_is(0x0000, 0x100) && chr1_is(0x1000, 0x104));
 
     BOARD_CHECK(cart_set_mmc3_revision_name("standard"));
-    uint64_t edge = mmc3_sync_a12();
-    cart_cpu_write(0xC000, 0);
-    cart_cpu_write(0xC001, 0);
-    cart_cpu_write(0xE001, 0);
-    cart_notify_ppu_address(0x0000, edge);
-    cart_notify_ppu_address(0x1000, edge + 6);
-    cart_notify_ppu_address(0x1000, edge + 15);
-    BOARD_CHECK(!cart_irq_pending());
-    mmc3_a12_pulse(edge + 18);
-    BOARD_CHECK(cart_irq_pending());
-    cart_cpu_write(0xE000, 0);
-    cart_cpu_write(0xE001, 0);
-    mmc3_a12_pulse(edge + 36);
-    BOARD_CHECK(!cart_irq_pending());
+    BOARD_CHECK(check_mmc3_a12_clock(NES_REGION_NTSC, 1) == 0);
+    BOARD_CHECK(check_mmc3_a12_clock(NES_REGION_PAL, 2) == 0);
+    BOARD_CHECK(check_mmc3_a12_clock(NES_REGION_DENDY, 7) == 0);
+    nes_set_region(NES_REGION_NTSC);
     board_image_free(&image);
 
     BOARD_CHECK(board_image_create(&image, 14, 0x40000, 0x80000, true));
@@ -80,10 +95,16 @@ static int test_mmc3_37_44_47(void) {
     BoardImage image;
     BOARD_CHECK(board_image_create(&image, 37, 0x80000, 0x40000, true));
     image.data[8] |= 0xB0;
+    image.data[10] = 7;
+    BOARD_CHECK(board_image_add_trainer(&image, 0x5A));
     BOARD_CHECK(board_image_load(&image) == 0);
+    BOARD_CHECK(read_mem(0x7000) == 0x5A);
+    write_mem(0x6000, 7);
+    BOARD_CHECK(prg8_is(0x8000, 0) && chr1_is(0x0000, 0));
     write_mem(0xA001, 0x80);
     write_mem(0x6000, 7);
-    BOARD_CHECK(prg8_is(0x8000, 0x20) && chr1_is(0x0000, 0x80));
+    BOARD_CHECK(prg8_is(0x8000, 0x20) && chr1_is(0x0000, 0x80)
+                && read_mem(0x7000) == 0x5A);
     cpu_soft_reset(&cpu);
     BOARD_CHECK(prg8_is(0x8000, 0) && chr1_is(0x0000, 0));
     board_image_free(&image);
@@ -164,15 +185,19 @@ static int test_mmc3_114_115(void) {
     write_mem(0xC000, 9);
     BOARD_CHECK(chr1_is(0x1000, 9));
 
-    uint64_t edge = mmc3_sync_a12();
+    mmc3_sync_a12(11);
     cart_cpu_write(0xA001, 0);
     cart_cpu_write(0xC001, 0);
     cart_cpu_write(0xE001, 0);
-    mmc3_a12_pulse(edge);
+    cart_notify_ppu_address(0x0000, 12);
+    BOARD_CHECK(advance_cpu_cycles(3));
+    cart_notify_ppu_address(0x1000, 1111);
     BOARD_CHECK(cart_irq_pending());
     cart_cpu_write(0xE000, 0);
     cart_cpu_write(0xE001, 0);
-    mmc3_a12_pulse(edge + 18);
+    cart_notify_ppu_address(0x0000, 13);
+    BOARD_CHECK(advance_cpu_cycles(3));
+    cart_notify_ppu_address(0x1000, 2222);
     BOARD_CHECK(!cart_irq_pending());
     board_image_free(&image);
 
