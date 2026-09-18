@@ -10,6 +10,7 @@
  * Public License for details. See <https://www.gnu.org/licenses/>.
  */
 #include "board_tests.h"
+#include <time.h>
 
 static bool prg8_is(uint16_t address, unsigned bank) {
     return read_mem(address) == (uint8_t)(bank * 2)
@@ -267,6 +268,180 @@ static int test_mmc3_121_123_and_replacement(void) {
     return 0;
 }
 
+static int test_mmc3_95_geometry_and_replacement(void) {
+    static const unsigned ids[] = {12, 14, 37, 44, 45, 47, 49, 52, 114, 115, 121, 123};
+    for (unsigned i = 0; i < sizeof(ids) / sizeof(ids[0]); ++i) {
+        BoardImage image;
+        BOARD_CHECK(board_image_create(&image, ids[i], 0x6000, 0x2800, true));
+        BOARD_CHECK(board_image_load(&image) == 0);
+        uint8_t before_prg = read_mem(0x8000);
+        uint8_t before_chr = ppu_read(0x0000);
+        BOARD_CHECK(before_prg == 0 && before_chr == 0);
+        BOARD_CHECK(load_rom_memory(image.data, image.size - 1) < 0);
+        BOARD_CHECK(read_mem(0x8000) == before_prg && ppu_read(0x0000) == before_chr);
+        board_image_free(&image);
+
+        BOARD_CHECK(board_image_create(&image, ids[i], 0x2000, 0x0400, true));
+        BOARD_CHECK(board_image_load(&image) == 0);
+        BOARD_CHECK(read_mem(0x8000) == 0 && ppu_read(0x0000) == 0);
+        BOARD_CHECK(load_rom_memory(image.data, image.size - 1) < 0);
+        BOARD_CHECK(read_mem(0x8000) == 0 && ppu_read(0x0000) == 0);
+        board_image_free(&image);
+    }
+    return 0;
+}
+
+static bool write_board_image_file(const char *path, const BoardImage *image) {
+    FILE *file = fopen(path, "wb");
+    if (!file) return false;
+    size_t count = fwrite(image->data, 1, image->size, file);
+    return fclose(file) == 0 && count == image->size;
+}
+
+static void mmc3_enable_ram(unsigned mapper) {
+    if (mapper == 14) write_mem(0xA131, 2);
+    write_mem(0xA001, 0x80);
+}
+
+static int test_mmc3_95_persistence(void) {
+    static const unsigned ordinary_ids[] = {12, 14, 44, 121, 123};
+    for (unsigned i = 0; i < sizeof(ordinary_ids) / sizeof(ordinary_ids[0]); ++i) {
+        unsigned mapper = ordinary_ids[i];
+        BoardImage image;
+        BOARD_CHECK(board_image_create(&image, mapper, 0x40000, 0x40000, true));
+        image.data[6] |= 2;
+        image.data[10] = 0x70;
+        char path[160], save[160];
+        snprintf(path, sizeof(path), "build/board-mmc3-%u-%lu-%lu.nes", mapper,
+                 (unsigned long)time(NULL), (unsigned long)clock());
+        memcpy(save, path, strlen(path) + 1);
+        strcpy(strrchr(save, '.'), ".sav");
+        BOARD_CHECK(write_board_image_file(path, &image));
+        BOARD_CHECK(load_rom(path) == 0);
+        mmc3_enable_ram(mapper);
+        write_mem(0x6123, (uint8_t)(0x80 + i));
+        BOARD_CHECK(read_mem(0x6123) == (uint8_t)(0x80 + i));
+        BOARD_CHECK(unload_rom());
+        BOARD_CHECK(load_rom(path) == 0);
+        mmc3_enable_ram(mapper);
+        BOARD_CHECK(read_mem(0x6123) == (uint8_t)(0x80 + i));
+        BOARD_CHECK(unload_rom());
+        BOARD_CHECK(remove(save) == 0 && remove(path) == 0);
+        board_image_free(&image);
+    }
+
+    static const unsigned intercepted_ids[] = {37, 47, 49, 115};
+    for (unsigned i = 0; i < sizeof(intercepted_ids) / sizeof(intercepted_ids[0]); ++i) {
+        unsigned mapper = intercepted_ids[i];
+        BoardImage image;
+        BOARD_CHECK(board_image_create(&image, mapper, 0x80000, 0x40000, true));
+        image.data[6] |= 2;
+        image.data[10] = 0x70;
+        char path[160], save[160];
+        snprintf(path, sizeof(path), "build/board-mmc3-intercept-%u-%lu-%lu.nes", mapper,
+                 (unsigned long)time(NULL), (unsigned long)clock());
+        memcpy(save, path, strlen(path) + 1);
+        strcpy(strrchr(save, '.'), ".sav");
+        BOARD_CHECK(write_board_image_file(path, &image));
+        uint8_t seed[0x2000] = {0};
+        seed[0] = (uint8_t)(0x30 + i);
+        FILE *file = fopen(save, "wb");
+        BOARD_CHECK(file != NULL);
+        size_t count = fwrite(seed, 1, sizeof(seed), file);
+        int closed = fclose(file);
+        BOARD_CHECK(count == sizeof(seed) && closed == 0);
+
+        BOARD_CHECK(load_rom(path) == 0);
+        mmc3_enable_ram(mapper);
+        BOARD_CHECK(read_mem(0x6000) == seed[0]);
+        write_mem(0x6000, mapper == 37 ? 7 : mapper == 47 ? 1 : 0x83);
+        BOARD_CHECK(read_mem(0x6000) == seed[0]);
+        if (mapper == 37) BOARD_CHECK(prg8_is(0x8000, 0x20));
+        if (mapper == 47) BOARD_CHECK(prg8_is(0x8000, 0x10));
+        BOARD_CHECK(unload_rom());
+        BOARD_CHECK(load_rom(path) == 0);
+        mmc3_enable_ram(mapper);
+        BOARD_CHECK(read_mem(0x6000) == seed[0]);
+        BOARD_CHECK(unload_rom());
+        BOARD_CHECK(remove(save) == 0 && remove(path) == 0);
+        board_image_free(&image);
+    }
+
+    {
+        BoardImage image;
+        BOARD_CHECK(board_image_create(&image, 114, 0x80000, 0x40000, true));
+        image.data[6] |= 2;
+        image.data[10] = 0x70;
+        char path[160], save[160];
+        snprintf(path, sizeof(path), "build/board-mmc3-intercept-114-%lu-%lu.nes",
+                 (unsigned long)time(NULL), (unsigned long)clock());
+        memcpy(save, path, strlen(path) + 1);
+        strcpy(strrchr(save, '.'), ".sav");
+        BOARD_CHECK(write_board_image_file(path, &image));
+        uint8_t seed[0x2000] = {0};
+        seed[0] = 0x5A;
+        FILE *file = fopen(save, "wb");
+        BOARD_CHECK(file != NULL);
+        size_t count = fwrite(seed, 1, sizeof(seed), file);
+        int closed = fclose(file);
+        BOARD_CHECK(count == sizeof(seed) && closed == 0);
+        BOARD_CHECK(load_rom(path) == 0);
+        write_mem(0x6000, 0x83);
+        BOARD_CHECK(prg8_is(0x8000, 6) && prg8_is(0xC000, 6));
+        BOARD_CHECK(unload_rom());
+        file = fopen(save, "rb");
+        BOARD_CHECK(file != NULL);
+        BOARD_CHECK(fgetc(file) == 0x5A);
+        closed = fclose(file);
+        BOARD_CHECK(closed == 0);
+        BOARD_CHECK(remove(save) == 0 && remove(path) == 0);
+        board_image_free(&image);
+    }
+
+    static const unsigned lock_ids[] = {45, 52};
+    for (unsigned i = 0; i < sizeof(lock_ids) / sizeof(lock_ids[0]); ++i) {
+        unsigned mapper = lock_ids[i];
+        BoardImage image;
+        BOARD_CHECK(board_image_create(&image, mapper, 0x80000, 0x40000, true));
+        image.data[6] |= 2;
+        image.data[10] = 0x70;
+        char path[160], save[160];
+        snprintf(path, sizeof(path), "build/board-mmc3-lock-%u-%lu-%lu.nes", mapper,
+                 (unsigned long)time(NULL), (unsigned long)clock());
+        memcpy(save, path, strlen(path) + 1);
+        strcpy(strrchr(save, '.'), ".sav");
+        BOARD_CHECK(write_board_image_file(path, &image));
+        BOARD_CHECK(load_rom(path) == 0);
+        mmc3_enable_ram(mapper);
+        if (mapper == 45) {
+            write_mem(0x6000, 0);
+            write_mem(0x6000, 0);
+            write_mem(0x6000, 0x0F);
+            write_mem(0x6000, 0x40);
+        } else {
+            write_mem(0x6000, 0x80);
+        }
+        write_mem(0x6123, (uint8_t)(0xA0 + i));
+        BOARD_CHECK(read_mem(0x6123) == (uint8_t)(0xA0 + i));
+        BOARD_CHECK(unload_rom());
+        BOARD_CHECK(load_rom(path) == 0);
+        mmc3_enable_ram(mapper);
+        if (mapper == 45) {
+            write_mem(0x6000, 0);
+            write_mem(0x6000, 0);
+            write_mem(0x6000, 0x0F);
+            write_mem(0x6000, 0x40);
+        } else {
+            write_mem(0x6000, 0x80);
+        }
+        BOARD_CHECK(read_mem(0x6123) == (uint8_t)(0xA0 + i));
+        BOARD_CHECK(unload_rom());
+        BOARD_CHECK(remove(save) == 0 && remove(path) == 0);
+        board_image_free(&image);
+    }
+    return 0;
+}
+
 int test_board_mmc3_accuracy(void) {
     int failures = 0;
     failures += test_mmc3_12_and_14();
@@ -274,8 +449,10 @@ int test_board_mmc3_accuracy(void) {
     failures += test_mmc3_45_49_52();
     failures += test_mmc3_114_115();
     failures += test_mmc3_121_123_and_replacement();
+    failures += test_mmc3_95_geometry_and_replacement();
+    failures += test_mmc3_95_persistence();
     unload_rom();
     cart_set_mmc3_revision_name("standard");
-    printf("MMC3 board accuracy: 5 groups, %d failures\n", failures);
+    printf("MMC3 board accuracy: 7 groups, %d failures\n", failures);
     return failures;
 }
