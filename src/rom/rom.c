@@ -51,6 +51,9 @@ size_t chr_size = 0;
 
 int mirroring_mode = 0;
 static int fds_loaded = 0;
+static int studybox_loaded = 0;
+
+static int read_file(const char *path, uint8_t **data, size_t *size);
 
 static int is_nes20(const iNESHeader *h) {
     // NES 2.0 if (flags7 & 0x0C) == 0x08
@@ -298,6 +301,7 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
     mirroring_mode = (int)cart_get_mirroring();
     nes_set_region(rom_region(&header));
     fds_loaded = 0;
+    studybox_loaded = 0;
     if (apply_input_config) (void)joypad_apply_configuration(&input_config);
 
     printf("Mapper: %d  (CHR %s)\n", mapper_no, rom_chr_size ? "ROM" : "RAM");
@@ -347,11 +351,49 @@ int load_fds_memory(const uint8_t *disk, size_t disk_size,
     mirroring_mode = (int)cart_get_mirroring();
     nes_set_region(NES_REGION_NTSC);
     fds_loaded = 1;
+    studybox_loaded = 0;
     printf("Famicom Disk System: %zu side%s\n", fds_side_count(), fds_side_count() == 1 ? "" : "s");
     return 0;
 }
 
 bool rom_is_fds(void) { return fds_loaded != 0; }
+bool rom_is_studybox(void) { return studybox_loaded != 0; }
+
+int load_studybox_memory(const uint8_t *media, size_t media_size,
+                         const uint8_t *bios, size_t bios_size) {
+    if (!cpu_startup_alignment_valid(NES_REGION_NTSC)) {
+        fprintf(stderr, "StudyBox startup alignment must fit the NTSC dividers\n");
+        return -1;
+    }
+    CartridgeBoard *prepared = board_create_studybox(bios, bios_size, media, media_size);
+    if (!prepared) return -1;
+
+    if (fds_active() && fds_disk_dirty() && !fds_flush()) {
+        fprintf(stderr, "Cannot replace the active FDS disk while modified media is unsaved\n");
+        board_destroy(prepared);
+        return -1;
+    }
+    if (mapper_init_studybox(prepared) != 0) {
+        board_destroy(prepared);
+        return -1;
+    }
+
+    free(prg_rom);
+    free(chr_rom);
+    prg_rom = NULL;
+    chr_rom = NULL;
+    prg_size = 0;
+    chr_size = 0;
+    memset(&ines_header, 0, sizeof(ines_header));
+    vs_clear_config();
+    epsm_activate(NULL);
+    mirroring_mode = (int)cart_get_mirroring();
+    nes_set_region(NES_REGION_NTSC);
+    fds_loaded = 0;
+    studybox_loaded = 1;
+    printf("StudyBox: STBX tape loaded\n");
+    return 0;
+}
 
 bool unload_rom(void) {
     if (fds_active() && fds_disk_dirty() && !fds_flush()) {
@@ -366,6 +408,7 @@ bool unload_rom(void) {
     memset(&ines_header, 0, sizeof(ines_header));
     mirroring_mode = 0;
     fds_loaded = 0;
+    studybox_loaded = 0;
     vs_clear_config();
     epsm_activate(NULL);
     nes_set_region(NES_REGION_NTSC);
@@ -426,6 +469,23 @@ int load_fds(const char *disk_path, const char *bios_path, bool write_protected)
     return result;
 }
 
+int load_studybox(const char *media_path, const char *bios_path) {
+    if (!media_path || !bios_path) return -1;
+    uint8_t *media = NULL, *bios = NULL;
+    size_t media_size = 0, bios_size = 0;
+    if (read_file(media_path, &media, &media_size) != 0
+        || read_file(bios_path, &bios, &bios_size) != 0) {
+        fprintf(stderr, "Failed to read StudyBox media or BIOS file\n");
+        free(media);
+        free(bios);
+        return -1;
+    }
+    int result = load_studybox_memory(media, media_size, bios, bios_size);
+    free(media);
+    free(bios);
+    return result;
+}
+
 int load_rom(const char *filename) {
     if (!filename) return -1;
     FILE *fp = fopen(filename, "rb");
@@ -449,7 +509,13 @@ int load_rom(const char *filename) {
         free(data);
         return -1;
     }
-    int result = load_rom_data(data, size, filename);
+    int result;
+    if (size >= 4 && memcmp(data, "STBX", 4) == 0) {
+        fprintf(stderr, "StudyBox media requires a 256 KiB BIOS\n");
+        result = -1;
+    } else {
+        result = load_rom_data(data, size, filename);
+    }
     free(data);
     return result;
 }

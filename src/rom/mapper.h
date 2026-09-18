@@ -30,6 +30,8 @@
 #include <stdbool.h>
 #include "rom.h"
 
+typedef struct CartridgeBoard CartridgeBoard;
+
 typedef struct Mapper {
     // CPU-visible cartridge space, usually $6000-$FFFF.
     uint8_t (*cpu_read)(uint16_t addr);
@@ -127,6 +129,8 @@ int mapper_init_from_header(const iNESHeader *h,
                             uint8_t *chr, size_t chr_sz);
 // Activate a fully validated disk-system image. Takes ownership on success.
 int mapper_init_fds(FdsImage *image);
+// Activate a prepared StudyBox board. Takes ownership on success.
+int mapper_init_studybox(CartridgeBoard *board);
 // Flush saves, eject the mapper, and release mapper-owned RAM.
 // The caller retains ownership of the PRG/CHR buffers passed to initialization.
 void mapper_shutdown(void);

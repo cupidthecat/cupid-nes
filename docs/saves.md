@@ -89,6 +89,12 @@ Recording saves use a sibling `.cupid-tape.tmp` file and then replace the reques
 
 If the recording buffer cannot grow, recording stops and shutdown reports `Tape recording stopped because the capture buffer could not grow`.
 
+## StudyBox tape images
+
+StudyBox STBX media is read-only in the current implementation. PAGE chunks contain the decoded tape bytes and tape-position offsets; a supported type-0 AUDI chunk contains the optional WAV stream that follows the emulated motor position. The user-supplied 256 KiB StudyBox BIOS is separate from the tape image. Work RAM is volatile and no sidecar save file is created for StudyBox media.
+
+Malformed chunks, an unsupported audio type, an out-of-order page, or a BIOS with the wrong size is rejected before the running machine is replaced. `load_studybox_memory()` follows the same transactional rule for in-memory fixtures.
+
 ## Backups and compatibility
 
 Copy persistent files after Cupid has closed successfully. Keep important saves with the cartridge or disk image and hardware configuration that produced them. Use separate filenames or directories when testing multiple copies of a game.

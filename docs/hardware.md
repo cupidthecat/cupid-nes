@@ -13,6 +13,7 @@ Cupid models the CPU, picture processing unit (PPU), audio processing unit (APU)
 | VS System | NTSC | Requires supported console, PPU, input, and cartridge metadata |
 | NES with EPSM | NES 2.0 header | Extended subtype 4 adds an 8 MHz YMF288 with stereo output |
 | Famicom Network System | NES 2.0 header | Extended subtype `0x0C`; optional 256 KiB character ROM supplied by the user |
+| StudyBox | STBX media | NTSC hardware with a user-supplied 256 KiB BIOS and tape PAGE/AUDI data |
 
 NTSC uses 262 scanlines with vblank beginning at line 241. PAL uses 312 scanlines with vblank beginning at line 241, and Dendy uses 312 with vblank beginning at line 291. PAL advances the PPU at 3.2 clocks per CPU clock; NTSC and Dendy use 3. The NTSC 2C02 skips one clock on rendered odd frames. VS RGB PPUs retain all 89,342 clocks on both frame parities, including both sides of a dual cabinet.
 
@@ -199,6 +200,8 @@ Larger ROM images retain the board's implemented bank-selection bits. Bank numbe
 Color Dreams writes resolve ROM bus conflicts before selecting banks. Both mapper 11 and mapper 144 retain all four PRG selection bits. Mapper 144 then takes D0 from the byte in the previously mapped ROM bank, so a CPU write of zero can still select an odd PRG bank.
 
 The Famicom Network System uses its NES 2.0 extended-console subtype instead of the numeric mapper to select its dedicated board. Its cartridge path builds on MMC1 serial PRG banking and adds the system's mirroring register, two 8 KiB work/save RAM socket controls, two 8 KiB CHR-RAM banks, and a 256 KiB character-ROM interface. Reads from `$5000-$5FFF` step through 32-byte character records; `$40B0` selects the character-ROM half and resets the record position when read, while `$40C0` also controls the second work-RAM enable and CHR-RAM bank. The FCNS controller serializes the ordinary eight controller buttons followed by its keypad state on `$4016 D1`. The implementation covers the local hardware and supplied character ROM; it does not emulate the original online service.
+
+StudyBox uses a dedicated STBX media path and a 256 KiB BIOS instead of an iNES mapper number. The board provides 64 KiB of banked work RAM, four-screen nametable RAM, a switchable 16 KiB BIOS window at `$8000-$BFFF`, and the fixed first BIOS page at `$C000-$FFFF`. Tape control registers at `$4200-$4203` select RAM and BIOS banks, shift drive commands, report decoder/seek state, deliver page bytes, and assert the CPU IRQ at the lead-in/data boundary and for subsequent bytes when enabled. PAGE lead-in offsets, byte delays, and seek steps advance on the CPU clock. A supported embedded mono 16-bit PCM WAV follows the same tape position and enters the normal cartridge-audio mix. Unknown drive commands have no modeled effect; command meanings and timing that remain uncertain on the original hardware retain the documented timing model rather than inventing additional behavior.
 
 ## What the cartridge header controls
 

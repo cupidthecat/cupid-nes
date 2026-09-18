@@ -157,6 +157,16 @@ Start the matching load or save operation in BASIC before pressing F10. The tape
 
 Runtime disk keys and disk replacement behavior are documented in [controls](controls.md) and [saves and media](saves.md).
 
+## StudyBox media
+
+Use `--studybox-bios BIOS` to load an STBX tape image with the StudyBox hardware. The BIOS must be exactly 256 KiB. The positional image must begin with the `STBX` signature and contain supported version-`0x100` PAGE chunks; an optional type-0 AUDI chunk carries mono 16-bit PCM WAV data used by the tape audio path.
+
+```sh
+./cupid-nes --studybox-bios "StudyBox.bin" "lesson.stbx"
+```
+
+StudyBox media and FDS firmware selections are mutually exclusive. Supplying an STBX file through the ordinary cartridge loader reports that the StudyBox BIOS is required rather than treating the tape image as an iNES cartridge.
+
 ## VS DIP switches
 
 | Option | Accepted value | Default |

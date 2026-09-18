@@ -11,6 +11,7 @@
  * Public License for details. See <https://www.gnu.org/licenses/>.
  */
 #include "runtime.hpp"
+#include "studybox.hpp"
 #include <cstdio>
 #include <limits>
 #include <stdexcept>
@@ -508,7 +509,10 @@ void Board::FlushBattery() {
 
 } // namespace cupid::boards
 
-struct CartridgeBoard { std::unique_ptr<cupid::boards::Board> instance; };
+struct CartridgeBoard {
+    std::vector<uint8_t> ownedPrg;
+    std::unique_ptr<cupid::boards::Board> instance;
+};
 
 CartridgeBoard *board_create(const iNESHeader *header, uint8_t *prg, size_t prgBytes,
                              uint8_t *chr, size_t chrBytes) {
@@ -557,6 +561,34 @@ void board_irq_ack(CartridgeBoard *board) { if (board) board->instance->Acknowle
 float board_audio(const CartridgeBoard *board) { return board ? board->instance->AudioOutput() : 0.0f; }
 bool board_set_mapper_input(CartridgeBoard *board, unsigned input, bool pressed) {
     return board && board->instance->SetMapperInput(input, pressed);
+}
+
+CartridgeBoard *board_create_studybox(const uint8_t *bios, size_t biosSize,
+                                      const uint8_t *media, size_t mediaSize) {
+    if (!bios || biosSize != 0x40000 || !media) {
+        std::fprintf(stderr, "StudyBox BIOS must be exactly 256 KiB\n");
+        return nullptr;
+    }
+    try {
+        cupid::boards::StudyBoxTape tape;
+        std::string error;
+        if (!cupid::boards::ParseStudyBoxTape(media, mediaSize, tape, error)) {
+            std::fprintf(stderr, "Invalid StudyBox media: %s\n", error.c_str());
+            return nullptr;
+        }
+
+        auto board = std::make_unique<CartridgeBoard>();
+        board->ownedPrg.assign(bios, bios + biosSize);
+        board->instance = std::make_unique<cupid::boards::StudyBox>(std::move(tape));
+        iNESHeader header{};
+        std::memcpy(header.signature, "NES\x1A", 4);
+        header.prg_rom_chunks = 16;
+        board->instance->Initialize(header, board->ownedPrg.data(), board->ownedPrg.size(), nullptr, 0);
+        return board.release();
+    } catch (const std::exception &error) {
+        std::fprintf(stderr, "StudyBox initialization failed: %s\n", error.what());
+        return nullptr;
+    }
 }
 bool board_set_fcns_kanji_firmware(const uint8_t *data, size_t size) {
     return cupid::boards::SetFcnsKanjiFirmware(data, size);

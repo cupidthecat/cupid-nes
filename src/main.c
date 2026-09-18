@@ -461,6 +461,7 @@ int main(int argc, char *argv[]) {
     const char *tape_play_path = NULL;
     const char *tape_record_path = NULL;
     const char *fds_bios_path = NULL;
+    const char *studybox_bios_path = NULL;
     size_t fds_frontend_side = 0;
     bool fds_side_set = false;
     bool fds_start_ejected = false;
@@ -681,6 +682,12 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             fds_bios_path = argv[i];
+        } else if (strcmp(argv[i], "--studybox-bios") == 0) {
+            if (++i == argc) {
+                fprintf(stderr, "--studybox-bios requires a 256 KiB BIOS file\n");
+                return 1;
+            }
+            studybox_bios_path = argv[i];
         } else if (strcmp(argv[i], "--fds-side") == 0) {
             if (++i == argc) {
                 fprintf(stderr, "--fds-side requires a side number starting at 1\n");
@@ -719,12 +726,16 @@ int main(int argc, char *argv[]) {
                "[--adapter TYPE] [--port1 DEVICE] [--port2 DEVICE] "
                "[--expansion DEVICE] [--barcode DIGITS] [--barcode-battler DIGITS] "
                "[--zapper-radius PIXELS] [--vs-dip VALUE] [--tape-play FILE | --tape-record FILE] "
-               "[--fds-bios BIOS] [--fds-side N] "
+               "[--fds-bios BIOS] [--studybox-bios BIOS] [--fds-side N] "
                "[--fds-eject] [--fds-write-protect] <rom-file>\n", argv[0]);
         return 1;
     }
     if (!fds_bios_path && (fds_side_set || fds_start_ejected || fds_start_write_protected)) {
         fprintf(stderr, "FDS media options require --fds-bios\n");
+        return 1;
+    }
+    if (fds_bios_path && studybox_bios_path) {
+        fprintf(stderr, "Choose either FDS or StudyBox firmware for the image\n");
         return 1;
     }
     if (!joypad_configuration_valid()) {
@@ -766,6 +777,7 @@ int main(int argc, char *argv[]) {
     if (power_on_seed_set) nes_seed_power_on_random(power_on_seed);
     int load_result = fds_bios_path
         ? load_fds(rom_path, fds_bios_path, fds_start_write_protected)
+        : studybox_bios_path ? load_studybox(rom_path, studybox_bios_path)
         : load_rom(rom_path);
     if(load_result != 0) {
         fprintf(stderr, "Failed to load ROM\n");
@@ -823,7 +835,7 @@ int main(int argc, char *argv[]) {
     ppu_power_on(&ppu);
     apu_power_on(&apu);
     // Print ROM metadata at startup so mapper selection can be checked from the log.
-    if (!rom_is_fds()) {
+    if (!rom_is_fds() && !rom_is_studybox()) {
         printf("=== ROM Header Info ===\n");
         printf("Signature: %c%c%c 0x%02X\n",
                ines_header.signature[0],
@@ -838,12 +850,13 @@ int main(int argc, char *argv[]) {
         printf("=======================\n");
     }
     
-    if (!rom_is_fds() && (ines_header.prg_rom_chunks > 1 || (ines_header.flags6 & 0xF0))) {
+    if (!rom_is_fds() && !rom_is_studybox()
+        && (ines_header.prg_rom_chunks > 1 || (ines_header.flags6 & 0xF0))) {
         printf("WARNING: This ROM likely uses a mapper (mapper number: %d).\n",
             (ines_header.flags7 & 0xF0) | ((ines_header.flags6 & 0xF0) >> 4));
     }
     
-    if (!rom_is_fds())
+    if (!rom_is_fds() && !rom_is_studybox())
         printf("Mapper detected: %d\n", ((ines_header.flags7 & 0xF0) | ((ines_header.flags6 & 0xF0) >> 4)));
 
 

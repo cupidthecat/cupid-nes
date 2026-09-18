@@ -58,6 +58,7 @@ extern uint8_t   *chr_rom;
 int load_rom(const char *filename);
 bool rom_set_fcns_kanji_firmware(const char *path);
 int load_fds(const char *disk_path, const char *bios_path, bool write_protected);
+int load_studybox(const char *media_path, const char *bios_path);
 // Eject the cartridge and release loader-owned buffers; false preserves dirty FDS media
 // when its pending disk image cannot be flushed.
 bool unload_rom(void);
@@ -68,7 +69,10 @@ int load_rom_memory(const uint8_t *data, size_t size);
 int load_fds_memory(const uint8_t *disk, size_t disk_size,
                     const uint8_t *bios, size_t bios_size,
                     const char *disk_path, bool write_protected);
+int load_studybox_memory(const uint8_t *media, size_t media_size,
+                         const uint8_t *bios, size_t bios_size);
 bool rom_is_fds(void);
+bool rom_is_studybox(void);
 int rom_mapper_number(const iNESHeader *header);
 
 typedef struct {
