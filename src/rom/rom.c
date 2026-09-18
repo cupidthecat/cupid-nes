@@ -126,7 +126,7 @@ int rom_ram_sizes(const iNESHeader *header, RomRamSizes *sizes) {
         // Legacy MMC5 and FME-7 boards default to eight and four 8KB RAM banks.
         // Other iNES boards use the conventional 8KB default. Legacy byte 8 is
         // not reliable enough to override the board default.
-        if (mapper != 30 && mapper != 96 && mapper != 111) {
+        if (mapper != 30 && mapper != 111) {
             size_t default_units = mapper == 5 ? 8u : mapper == 69 ? 4u : 1u;
             size_t prg_ram_bytes = default_units * 0x2000;
             if (header->flags6 & 2) sizes->prg_nvram = prg_ram_bytes;

@@ -2279,8 +2279,12 @@ static int test_mapper96_banks_latch_and_loader(void) {
     iNESHeader legacy = header_for(96, 0x20000, true);
     RomRamSizes ram;
     CHECK(rom_ram_sizes(&legacy, &ram) == 0);
-    CHECK(ram.prg_ram == 0 && ram.prg_nvram == 0 && ram.chr_ram == 0x8000 && ram.chr_nvram == 0);
+    CHECK(ram.prg_ram == 0x2000 && ram.prg_nvram == 0 && ram.chr_ram == 0x8000 && ram.chr_nvram == 0);
     CHECK(fixture_with_header(&legacy, 0x20000, 0x8000) == 96);
+
+    cart_cpu_write(0x6000, 0x35);
+    cart_cpu_write(0x7FFF, 0x53);
+    CHECK(cart_cpu_read(0x6000) == 0x35 && cart_cpu_read(0x7FFF) == 0x53);
 
     nes_set_region(NES_REGION_NTSC);
     ppu_power_on(&ppu);
@@ -2334,17 +2338,56 @@ static int test_mapper96_banks_latch_and_loader(void) {
     cpu_soft_reset(&cpu);
     CHECK(cart_cpu_read(0x8000) == 8 && cart_ppu_read(0x0000) == 28);
 
-    // Both legacy iNES and NES 2.0 normal loading allocate the board's 32 KiB CHR RAM.
+    // Legacy loading supplies the board's default 8 KiB work RAM and 32 KiB CHR RAM.
     size_t image_size;
     uint8_t *image = image_for(&legacy, 0x20000, 0, &image_size);
-    CHECK(image != NULL && load_rom_memory(image, image_size) == 0);
+    CHECK(image != NULL);
+    const uint8_t legacy_ram_program[] = {
+        0xA9, 0x35,             // LDA #$35
+        0x8D, 0x00, 0x60,       // STA $6000
+        0xAD, 0x00, 0x60,       // LDA $6000
+        0xA9, 0x53,             // LDA #$53
+        0x8D, 0xFF, 0x7F,       // STA $7FFF
+        0xAD, 0xFF, 0x7F        // LDA $7FFF
+    };
+    memcpy(image + sizeof(legacy) + 0x0100, legacy_ram_program, sizeof(legacy_ram_program));
+    image[sizeof(legacy) + 0x7FFC] = 0x00;
+    image[sizeof(legacy) + 0x7FFD] = 0x81;
+    CHECK(load_rom_memory(image, image_size) == 0);
     free(image);
     CHECK(rom_mapper_number(&ines_header) == 96 && chr_size == 0x8000);
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    CHECK(cpu_power_on(&cpu) && cpu.pc == 0x8100);
+    CHECK(cpu_step(&cpu) == 2);
+    CHECK(cpu_step(&cpu) == 4);
+    CHECK(cpu_step(&cpu) == 4 && cpu.a == 0x35);
+    CHECK(cpu_step(&cpu) == 2);
+    CHECK(cpu_step(&cpu) == 4);
+    CHECK(cpu_step(&cpu) == 4 && cpu.a == 0x53);
 
     iNESHeader h = m96_header();
     image = image_for(&h, 0x20000, 0, &image_size);
-    CHECK(image != NULL && load_rom_memory(image, image_size) == 0);
+    CHECK(image != NULL);
+    const uint8_t no_ram_program[] = {
+        0xA9, 0x69,             // LDA #$69
+        0x8D, 0x00, 0x60,       // STA $6000
+        0xAD, 0x00, 0x60        // LDA $6000; open bus keeps the operand high byte.
+    };
+    memcpy(image + sizeof(h) + 0x0100, no_ram_program, sizeof(no_ram_program));
+    image[sizeof(h) + 0x7FFC] = 0x00;
+    image[sizeof(h) + 0x7FFD] = 0x81;
+    CHECK(load_rom_memory(image, image_size) == 0);
     free(image);
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    CHECK(cpu_power_on(&cpu) && cpu.pc == 0x8100);
+    CHECK(cpu_step(&cpu) == 2);
+    CHECK(cpu_step(&cpu) == 4);
+    CHECK(cpu_step(&cpu) == 4 && cpu.a == 0x60);
+    CHECK(cart_cpu_read_bus(0x6000, 0xA6) == 0xA6);
+    cart_cpu_write(0x6000, 0x69);
+    CHECK(cart_cpu_read_bus(0x6000, 0xA6) == 0xA6);
     uint8_t *previous_prg = prg_rom;
     uint8_t *previous_chr = chr_rom;
 
@@ -2355,8 +2398,20 @@ static int test_mapper96_banks_latch_and_loader(void) {
     free(image);
     CHECK(prg_rom == previous_prg && chr_rom == previous_chr);
 
+    iNESHeader with_work_ram = h;
+    with_work_ram.flags10 = 7;
+    image = image_for(&with_work_ram, 0x20000, 0, &image_size);
+    CHECK(image != NULL && load_rom_memory(image, image_size) == 0);
+    free(image);
+    cart_cpu_write(0x6000, 0x96);
+    cart_cpu_write(0x7FFF, 0x69);
+    CHECK(cart_cpu_read(0x6000) == 0x96 && cart_cpu_read(0x7FFF) == 0x69);
+
+    CHECK(fixture_with_header(&h, 0x20000, 0x8000) == 96);
+    previous_prg = prg_rom;
+    previous_chr = chr_rom;
     invalid = h;
-    invalid.flags10 = 7;
+    invalid.flags10 = 8;
     image = image_for(&invalid, 0x20000, 0, &image_size);
     CHECK(image != NULL && load_rom_memory(image, image_size) == -1);
     free(image);
@@ -4423,6 +4478,7 @@ static int save_fixture_begin(SaveFixture *paths) {
 static int save_fixture_end(const SaveFixture *paths) {
     cart_battery_shutdown();
     int result = 0;
+    if (remove(paths->rom) != 0 && errno != ENOENT) result = 1;
     if (remove(paths->prg_save) != 0 && errno != ENOENT) result = 1;
     if (remove(paths->chr_save) != 0 && errno != ENOENT) result = 1;
     if (remove(paths->flash_save) != 0 && errno != ENOENT) result = 1;
@@ -4510,6 +4566,38 @@ static int test_prg_nvram_persistence(void) {
     CHECK(save_fixture_begin(&paths) == 0);
     int result = prg_persistence_cases(&paths);
     return result | save_fixture_end(&paths);
+}
+
+static int test_mapper96_legacy_nvram_persistence(void) {
+    SaveFixture paths;
+    CHECK(save_fixture_begin(&paths) == 0);
+
+    iNESHeader h = header_for(96, 0x20000, true);
+    h.flags6 |= 0x02;
+    size_t image_size;
+    uint8_t *image = image_for(&h, 0x20000, 0, &image_size);
+    CHECK(image != NULL);
+    FILE *fp = fopen(paths.rom, "wb");
+    CHECK(fp != NULL);
+    size_t written = fwrite(image, 1, image_size, fp);
+    int closed = fclose(fp);
+    free(image);
+    CHECK(written == image_size && closed == 0);
+
+    CHECK(load_rom(paths.rom) == 0 && rom_mapper_number(&ines_header) == 96);
+    write_mem(0x6000, 0x35);
+    write_mem(0x7FFF, 0xA6);
+    CHECK(read_mem(0x6000) == 0x35 && read_mem(0x7FFF) == 0xA6);
+    CHECK(unload_rom());
+    CHECK(saved_file_size(paths.prg_save) == 0x2000);
+    CHECK(saved_byte(paths.prg_save, 0) == 0x35);
+    CHECK(saved_byte(paths.prg_save, 0x1FFF) == 0xA6);
+
+    CHECK(load_rom(paths.rom) == 0);
+    CHECK(read_mem(0x6000) == 0x35 && read_mem(0x7FFF) == 0xA6);
+
+    CHECK(unload_rom());
+    return save_fixture_end(&paths);
 }
 
 static int vs_nvram_persistence_cases(const SaveFixture *paths) {
@@ -8238,6 +8326,7 @@ int test_mapper_accuracy(void) {
         test_loader_region_and_console_type,
         test_ram_header_sizes, test_prg_ram_capacity, test_mmc1_banked_ram,
         test_mmc5_banked_ram, test_loader_ram_layouts, test_prg_nvram_persistence,
+        test_mapper96_legacy_nvram_persistence,
         test_vs_nvram_persistence,
         test_unrom512_flash_persistence, test_mapper111_flash_persistence,
         test_mmc5_persistence,

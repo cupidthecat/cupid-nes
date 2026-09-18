@@ -947,6 +947,7 @@ static struct {
 } m96;
 
 static uint8_t m96_cpu_read(uint16_t a) {
+    if (a >= 0x6000 && a < 0x8000) return prg_ram_read(a);
     if (a < 0x8000) return cart_cpu_bus_input;
     size_t banks = C.prg_sz / PRG_BANK_32K;
     if (!banks) return cart_cpu_bus_input;
@@ -955,6 +956,10 @@ static uint8_t m96_cpu_read(uint16_t a) {
 }
 
 static void m96_cpu_write(uint16_t a, uint8_t v) {
+    if (a >= 0x6000 && a < 0x8000) {
+        prg_ram_write(a, v);
+        return;
+    }
     if (a < 0x8000) return;
     m96.prg_bank = v & 0x03u;
     m96.outer_chr_bank = v & 0x04u;
@@ -6562,7 +6567,7 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         if (split_prg || prg_total > 0x80000) return false;
     } else if (mapper_no == 19 || mapper_no == 210) {
         if (split_prg || prg_total > 0x2000) return false;
-    } else if (mapper_no == 90 || mapper_no == 96 || mapper_no == 111 || mapper_no == 209 || mapper_no == 211) {
+    } else if (mapper_no == 90 || mapper_no == 111 || mapper_no == 209 || mapper_no == 211) {
         if (prg_total != 0) return false;
     } else if (mapper_no == 30) {
         if (prg_total != 0) return false;
