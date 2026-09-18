@@ -12,6 +12,7 @@
 #include "runtime.hpp"
 #include "bandai.hpp"
 #include "codemasters.hpp"
+#include "homebrew.hpp"
 
 namespace cupid::boards {
 
@@ -20,6 +21,7 @@ std::unique_ptr<Board> CreateBoard(unsigned mapper) {
         case 70: return std::make_unique<Bandai74161>(false);
         case 104: return std::make_unique<GoldenFive>();
         case 152: return std::make_unique<Bandai74161>(true);
+        case 218: return std::make_unique<MagicFloor>();
         default: return nullptr;
     }
 }
@@ -28,7 +30,7 @@ std::unique_ptr<Board> CreateBoard(unsigned mapper) {
 
 bool board_handles_mapper(unsigned mapper) {
     switch (mapper) {
-        case 70: case 104: case 152: return true;
+        case 70: case 104: case 152: case 218: return true;
         default: return false;
     }
 }
