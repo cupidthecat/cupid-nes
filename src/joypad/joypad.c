@@ -49,7 +49,7 @@ static const char *const port_device_names[] = {
 static const char *const expansion_device_names[] = {
     "none", "arkanoid", "family-trainer-a", "family-trainer-b", "zapper", "family-basic",
     "turbo-file", "battle-box", "subor-keyboard", "hori-track", "konami-hyper-shot",
-    "bandai-hyper-shot", "party-tap", "pachinko"
+    "bandai-hyper-shot", "party-tap", "pachinko", "exciting-boxing"
 };
 
 typedef struct {
@@ -246,6 +246,8 @@ uint8_t joypad_read_port(Joypad *jp, unsigned port) {
         value |= party_tap_read(port);
     else if (port == 0 && expansion_device == NES_EXPANSION_PACHINKO)
         value |= pachinko_read(pad1.buttons);
+    else if (expansion_device == NES_EXPANSION_EXCITING_BOXING)
+        value |= exciting_boxing_read(port);
     // The second built-in controller's microphone reaches $4016 D2.
     if (port == 0 && nes_console_model() == NES_CONSOLE_HVC001 && microphone_active)
         value |= 0x04;
@@ -319,6 +321,8 @@ void joypad_write_ports(uint8_t value) {
         party_tap_write(value);
     else if (expansion_device == NES_EXPANSION_PACHINKO)
         pachinko_write(value, pad1.buttons);
+    else if (expansion_device == NES_EXPANSION_EXCITING_BOXING)
+        exciting_boxing_write(value);
 }
 
 NesInputAdapter joypad_adapter(void) {
@@ -379,7 +383,7 @@ NesExpansionDevice joypad_expansion_device(void) {
 }
 
 bool joypad_set_expansion_device(NesExpansionDevice device) {
-    if ((unsigned)device > NES_EXPANSION_PACHINKO) return false;
+    if ((unsigned)device > NES_EXPANSION_EXCITING_BOXING) return false;
     expansion_device = device;
     paddles[2].strobe = paddles[2].shift = 0;
     family_trainer_rows = 0;
@@ -392,6 +396,7 @@ bool joypad_set_expansion_device(NesExpansionDevice device) {
     bandai_hyper_shot_reset();
     party_tap_reset();
     pachinko_reset();
+    exciting_boxing_reset();
     return true;
 }
 
@@ -485,6 +490,11 @@ bool joypad_set_pachinko_controls(bool press, bool release) {
     if (expansion_device != NES_EXPANSION_PACHINKO) return false;
     pachinko_set_controls(press, release);
     return true;
+}
+
+bool joypad_set_boxing_sensor(unsigned sensor, bool pressed) {
+    if (expansion_device != NES_EXPANSION_EXCITING_BOXING) return false;
+    return exciting_boxing_set_sensor(sensor, pressed);
 }
 
 bool joypad_persistent_configure(const char *rom_path) {

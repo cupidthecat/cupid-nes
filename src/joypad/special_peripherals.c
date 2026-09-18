@@ -119,6 +119,13 @@ typedef struct {
 
 static Pachinko pachinko;
 
+typedef struct {
+    bool sensors[8];
+    uint8_t selected;
+} ExcitingBoxing;
+
+static ExcitingBoxing exciting_boxing;
+
 enum { SUBOR_NONE = 0xFF };
 static const uint8_t subor_matrix[104] = {
     SUBOR_KEY_4, SUBOR_KEY_G, SUBOR_KEY_F, SUBOR_KEY_C,
@@ -688,4 +695,27 @@ uint8_t pachinko_read(uint8_t buttons) {
     uint8_t output = (uint8_t)((pachinko.state & 1u) << 1);
     pachinko.state >>= 1;
     return output;
+}
+
+void exciting_boxing_reset(void) {
+    exciting_boxing.selected = 0;
+}
+
+bool exciting_boxing_set_sensor(unsigned sensor, bool pressed) {
+    if (sensor >= 8) return false;
+    exciting_boxing.sensors[sensor] = pressed;
+    return true;
+}
+
+void exciting_boxing_write(uint8_t value) {
+    exciting_boxing.selected = (uint8_t)((value >> 1) & 1u);
+}
+
+uint8_t exciting_boxing_read(unsigned port) {
+    if (port != 1) return 0;
+    unsigned base = exciting_boxing.selected ? 4u : 0u;
+    uint8_t value = 0;
+    for (unsigned bit = 0; bit < 4; ++bit)
+        if (!exciting_boxing.sensors[base + bit]) value |= (uint8_t)(1u << (bit + 1u));
+    return value;
 }

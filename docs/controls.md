@@ -134,6 +134,10 @@ Mouse motion uses SDL relative movement. Left and right mouse buttons map to the
 
 `--console famicom --expansion pachinko` connects the Pachinko controller. Player-one buttons form the first eight serialized bits on expansion `$4016 D1`. Hold the left mouse button to increase the plunger position and the right mouse button to release it. The position changes only when the game latches a report and is bounded from 0 through 99.
 
+## Exciting Boxing
+
+`--console famicom --expansion exciting-boxing` connects the punching-bag sensors. Host keys 1 through 4 map to the first sensor bank and 5 through 8 map to the second. The game selects a bank with `$4016 D1`; inactive sensors read high on `$4017 D1-D4`.
+
 ## ASCII Turbo File
 
 `--console famicom --expansion turbo-file` connects the 8 KiB serial storage device. Games control its reset, clock, data, and read lines through the Famicom expansion connector. The contents are loaded and saved automatically next to the ROM; there is no host key for manually advancing the device.

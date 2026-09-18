@@ -65,4 +65,9 @@ void pachinko_write(uint8_t value, uint8_t buttons);
 uint8_t pachinko_read(uint8_t buttons);
 void pachinko_set_controls(bool press, bool release);
 
+void exciting_boxing_reset(void);
+void exciting_boxing_write(uint8_t value);
+uint8_t exciting_boxing_read(unsigned port);
+bool exciting_boxing_set_sensor(unsigned sensor, bool pressed);
+
 #endif

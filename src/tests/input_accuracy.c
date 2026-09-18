@@ -1729,6 +1729,50 @@ static int pachinko_reports(void) {
     return 0;
 }
 
+static int exciting_boxing_signals(void) {
+    input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+    CHECK(joypad_set_expansion_device_name("exciting-boxing"));
+    CHECK(joypad_expansion_device() == NES_EXPANSION_EXCITING_BOXING);
+    pad2.buttons = 1;
+
+    latch_controllers();
+    CHECK((read_mem(0x4017) & 0x1F) == 0x1F);
+    for (unsigned sensor = 0; sensor < 4; ++sensor) {
+        CHECK(joypad_set_boxing_sensor(sensor, true));
+        uint8_t expected = (uint8_t)(0x1E & ~(1u << (sensor + 1u)));
+        CHECK((read_mem(0x4017) & 0x1E) == expected);
+        CHECK((read_mem(0x4017) & 0x1E) == expected);
+        CHECK(joypad_set_boxing_sensor(sensor, false));
+    }
+    CHECK(joypad_set_boxing_sensor(0, true));
+    CHECK(joypad_set_boxing_sensor(2, true));
+    CHECK((read_mem(0x4017) & 0x1E) == 0x14);
+
+    write_mem(0x4016, 2);
+    CHECK((read_mem(0x4017) & 0x1E) == 0x1E);
+    for (unsigned sensor = 4; sensor < 8; ++sensor) {
+        CHECK(joypad_set_boxing_sensor(sensor, true));
+        uint8_t expected = (uint8_t)(0x1E & ~(1u << (sensor - 3u)));
+        CHECK((read_mem(0x4017) & 0x1E) == expected);
+        CHECK(joypad_set_boxing_sensor(sensor, false));
+    }
+    CHECK(joypad_set_boxing_sensor(4, true));
+    CHECK(joypad_set_boxing_sensor(7, true));
+    CHECK((read_mem(0x4017) & 0x1E) == 0x0C);
+    write_mem(0x4016, 0);
+    CHECK((read_mem(0x4017) & 0x1E) == 0x14);
+    CHECK((read_mem(0x4017) & 1u) == 1u);
+
+    CHECK(!joypad_set_boxing_sensor(8, true));
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_NONE));
+    CHECK(!joypad_set_boxing_sensor(0, true));
+    CHECK((read_mem(0x4017) & 0x1E) == 0);
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_EXCITING_BOXING));
+    write_mem(0x4016, 0);
+    CHECK((read_mem(0x4017) & 0x1E) == 0x14);
+    return 0;
+}
+
 int test_input_accuracy(void) {
     static int (*const tests[])(void) = {
         console_open_bus, console_read_clocks, console_strobe_timing,
@@ -1744,7 +1788,8 @@ int test_input_accuracy(void) {
         turbo_file_persistence, turbo_file_failed_save, battle_box_protocol,
         battle_box_persistence, battle_box_failed_save, subor_keyboard_matrix,
         subor_mouse_packets, hori_track_reports, konami_hyper_shot_signals,
-        bandai_hyper_shot_signals, party_tap_reports, pachinko_reports
+        bandai_hyper_shot_signals, party_tap_reports, pachinko_reports,
+        exciting_boxing_signals
     };
     NesConsoleModel saved_model = nes_console_model();
     NesRegion saved_region = nes_timing()->region;
