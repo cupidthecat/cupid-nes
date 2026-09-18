@@ -9161,6 +9161,116 @@ static int test_discrete_followup_saves(void) {
     return result | save_fixture_end(&paths);
 }
 
+static int trainer_save_overlay_case(const SaveFixture *paths, unsigned mapper,
+                                     bool volatile_ram, size_t save_length) {
+    CHECK(unload_rom());
+    CHECK(remove(paths->prg_save) == 0 || errno == ENOENT);
+    iNESHeader h = header_for(mapper, 0x8000, false);
+    h.flags7 |= 8;
+    h.flags6 |= 6; // Battery and a 512-byte trainer.
+    h.flags10 = volatile_ram ? 7 : 0x70;
+    size_t image_size;
+    uint8_t *image = image_for(&h, 0x8000, 0x2000, &image_size);
+    CHECK(image != NULL);
+    memset(image + sizeof(h), 0x3C, 512);
+    size_t prg_offset = sizeof(h) + 512;
+    image[prg_offset + 0x7FFC] = 0x00;
+    image[prg_offset + 0x7FFD] = 0x81;
+    FILE *fp = fopen(paths->rom, "wb");
+    CHECK(fp != NULL);
+    size_t written = fwrite(image, 1, image_size, fp);
+    int closed = fclose(fp);
+    free(image);
+    CHECK(written == image_size && closed == 0);
+
+    if (save_length != SIZE_MAX) {
+        uint8_t saved[0x2400];
+        CHECK(save_length <= sizeof(saved));
+        memset(saved, 0xA6, sizeof(saved));
+        fp = fopen(paths->prg_save, "wb");
+        CHECK(fp != NULL);
+        written = fwrite(saved, 1, save_length, fp);
+        closed = fclose(fp);
+        CHECK(written == save_length && closed == 0);
+    }
+    CHECK(load_rom(paths->rom) == 0);
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    CHECK(cpu_power_on(&cpu) && cpu.pc == 0x8100);
+    size_t loaded = volatile_ram || save_length == SIZE_MAX ? 0 : save_length;
+    uint8_t early_trainer = loaded > 0x1023 ? 0xA6 : 0x3C;
+    uint8_t late_trainer = loaded > 0x1123 ? 0xA6 : 0x3C;
+    CHECK(discrete_cpu_load(0x6023, loaded > 0x23 ? 0xA6 : 0) == 0);
+    CHECK(discrete_cpu_load(0x7023, early_trainer) == 0);
+    CHECK(discrete_cpu_load(0x7123, late_trainer) == 0);
+    CHECK(discrete_cpu_load(0x7223, loaded > 0x1223 ? 0xA6 : 0) == 0);
+    CHECK(discrete_cpu_load(0x7FFF, loaded >= 0x2000 ? 0xA6 : 0) == 0);
+    if (mapper == 5) {
+        CHECK(discrete_cpu_store(0x5104, 2) == 0);
+        CHECK(discrete_cpu_load(0x5C23, loaded > 0x2023 ? 0xA6 : 0) == 0);
+        CHECK(discrete_cpu_store(0x5102, 2) == 0);
+        CHECK(discrete_cpu_store(0x5103, 1) == 0);
+    } else if (mapper == 19) {
+        CHECK(discrete_cpu_store(0xF800, 0x23) == 0);
+        CHECK(discrete_cpu_load(0x4800, loaded > 0x2023 ? 0xA6 : 0) == 0);
+        CHECK(discrete_cpu_store(0xF800, 0x40) == 0); // Enable PRG RAM writes.
+    }
+
+    uint8_t malformed[sizeof(iNESHeader)] = {0};
+    uint8_t *active_prg = prg_rom;
+    CHECK(load_rom_memory(malformed, sizeof(malformed)) == -1);
+    CHECK(prg_rom == active_prg);
+    CHECK(discrete_cpu_load(0x7123, late_trainer) == 0);
+    CHECK(discrete_cpu_store(0x6023, 0x5D) == 0);
+    CHECK(discrete_cpu_load(0x6023, 0x5D) == 0);
+    CHECK(unload_rom());
+    if (!volatile_ram) {
+        long expected_size = mapper == 5 ? 0x2400 : mapper == 19 ? 0x2080 : 0x2000;
+        CHECK(saved_file_size(paths->prg_save) == expected_size);
+        CHECK(saved_byte(paths->prg_save, 0x23) == 0x5D);
+        CHECK(saved_byte(paths->prg_save, 0x1023) == early_trainer);
+        CHECK(saved_byte(paths->prg_save, 0x1123) == late_trainer);
+        if (mapper == 5 || mapper == 19)
+            CHECK(saved_byte(paths->prg_save, 0x2023) == (loaded > 0x2023 ? 0xA6 : 0));
+    }
+    CHECK(load_rom(paths->rom) == 0);
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    CHECK(cpu_power_on(&cpu));
+    CHECK(discrete_cpu_load(0x6023, volatile_ram ? 0 : 0x5D) == 0);
+    CHECK(discrete_cpu_load(0x7023, early_trainer) == 0);
+    CHECK(discrete_cpu_load(0x7123, late_trainer) == 0);
+    CHECK(unload_rom());
+    return 0;
+}
+
+static int test_trainer_and_existing_saves(void) {
+    SaveFixture paths;
+    CHECK(save_fixture_begin(&paths) == 0);
+    const unsigned boards[] = {0, 79, 5, 19};
+    const size_t lengths[] = {SIZE_MAX, 0, 0x800, 0x1100, 0x2000};
+    int result = 0;
+    for (size_t i = 0; i < sizeof(boards) / sizeof(boards[0]) && !result; ++i) {
+        for (size_t j = 0; j < sizeof(lengths) / sizeof(lengths[0]) && !result; ++j) {
+            size_t length = lengths[j];
+            if (length == 0x2000 && boards[i] == 5) length = 0x2400;
+            if (length == 0x2000 && boards[i] == 19) length = 0x2080;
+            result = trainer_save_overlay_case(&paths, boards[i], false, length);
+        }
+    }
+    unload_rom();
+    return result | save_fixture_end(&paths);
+}
+
+static int test_trainer_volatile_ram_ignores_save(void) {
+    SaveFixture paths;
+    CHECK(save_fixture_begin(&paths) == 0);
+    int result = trainer_save_overlay_case(&paths, 0, true, 0x2000);
+    if (!result) result = trainer_save_overlay_case(&paths, 79, true, 0x2000);
+    unload_rom();
+    return result | save_fixture_end(&paths);
+}
+
 static int test_cartridge_unload(void) {
     iNESHeader h = header_for(0, 0x4000, true);
     size_t image_size;
@@ -9220,6 +9330,7 @@ int test_mapper_accuracy(void) {
         test_discrete_followup_loader_and_ram, test_mapper180_full_prg_range,
         test_discrete_followup_page_geometry, test_discrete_followup_ignored_submappers,
         test_discrete_followup_saves,
+        test_trainer_and_existing_saves, test_trainer_volatile_ram_ignores_save,
         test_mapper15_modes, test_action53_banks_and_mirroring,
         test_action53_game_sizes, test_action53_largest_image,
         test_unrom512_banks_flash_and_mirroring, test_mmc5_memory_windows,

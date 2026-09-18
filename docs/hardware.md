@@ -98,7 +98,9 @@ Mapper 185 submapper 0 keeps the legacy compatibility rule: CHR is enabled when 
 
 Mappers 79 and 146 accept bank writes at `$4100-$5FFF` only when address bit A8 is high. Mapper 113 uses the same register decoding, with three PRG bank bits, four CHR bank bits, and vertical/horizontal mirroring selected by D7. These registers are write-only; reads retain open bus. All three boards keep ordinary RAM reads and writes at `$6000-$7FFF`. Their bank registers survive CPU soft reset.
 
-Mappers 94 and 180 retain fixed 8 KiB CHR ROM or RAM and header-selected mirroring. Mapper 94 supports up to 128 KiB PRG; mapper 180 supports up to 4 MiB and starts with bank zero in both CPU windows. Mappers 79/146 support up to 64 KiB each of PRG and CHR, mapper 113 up to 256 KiB PRG and 128 KiB CHR, and mapper 144 up to 512 KiB PRG and 128 KiB CHR. These variants accept submapper zero. Their loader checks reject unsupported memory layouts before replacing the active cartridge.
+Mappers 94 and 180 retain a fixed CHR window and header-selected mirroring. Mapper 94 uses three bits to select the lower PRG bank and fixes the upper window to the last available bank. Mapper 180 uses all eight bank bits for its upper window and starts with bank zero in both CPU windows. Mappers 79, 94, 113, 144, 146, and 180 select their wiring by mapper number and ignore the NES 2.0 submapper field.
+
+Larger ROM images retain the board's implemented bank-selection bits. Bank numbers wrap across complete available pages; trailing partial pages do not add selectable banks. Small ROMs map their available pages, and uncovered addresses retain open bus. The RAM layout checks remain separate: these six variants reject simultaneous volatile and nonvolatile RAM declarations or CHR ROM combined with separate CHR RAM. Failed loads preserve the active cartridge.
 
 Color Dreams writes resolve ROM bus conflicts before selecting banks. Both mapper 11 and mapper 144 retain all four PRG selection bits. Mapper 144 then takes D0 from the byte in the previously mapped ROM bank, so a CPU write of zero can still select an odd PRG bank.
 

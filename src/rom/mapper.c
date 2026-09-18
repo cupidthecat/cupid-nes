@@ -469,17 +469,16 @@ void cart_battery_shutdown(void) {
 
 static void load_battery(const char *path, uint8_t *data, size_t size) {
     if (!path || !size) return;
-    memset(data, 0, size);
     FILE *fp = fopen(path, "rb");
     if (!fp) return; // first run/no prior save
-    size_t bytes_read = fread(data, 1, size, fp); // Short saves leave the remaining bytes zero.
+    // Preserve initialized memory, including trainer bytes beyond a short save.
+    size_t bytes_read = fread(data, 1, size, fp);
     if (bytes_read < size && ferror(fp))
         fprintf(stderr, "Failed to read battery save '%s' (%zu/%zu bytes)\n", path, bytes_read, size);
     fclose(fp);
 }
 
 static void load_mmc5_battery(const char *path) {
-    if (prg_save_ram.size) memset(prg_save_ram.data, 0, prg_save_ram.size);
     memset(mmc5_exram, 0, sizeof(mmc5_exram));
     if (!path) return;
     FILE *fp = fopen(path, "rb");
@@ -495,7 +494,6 @@ static void load_mmc5_battery(const char *path) {
 }
 
 static void load_namco_battery(const char *path) {
-    if (prg_save_ram.size) memset(prg_save_ram.data, 0, prg_save_ram.size);
     if (namco_has_audio()) memset(namco163_audio_ram(&namco163_audio), 0, NAMCO163_RAM_SIZE);
     if (!path) return;
     FILE *fp = fopen(path, "rb");
