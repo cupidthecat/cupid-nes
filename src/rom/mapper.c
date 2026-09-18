@@ -73,7 +73,7 @@ static Mapper mapper_mmc5, mapper_aorom, mapper_mmc2, mapper_mmc4, mapper_colord
 static Mapper mapper_cprom, mapper_100in1, mapper_bandai, mapper_action53, mapper_unrom512, mapper_fds;
 static Mapper mapper_taito33, mapper_taito48, mapper_jaleco18, mapper_irem32, mapper_irem65;
 static Mapper mapper_rambo1, mapper_rambo158;
-static Mapper mapper_vrc6, mapper_vrc24, mapper_vrc7;
+static Mapper mapper_vrc1, mapper_vrc6, mapper_vrc24, mapper_vrc7;
 static Mapper mapper_sunsoft69, mapper_namco, mapper_m34, mapper_gxrom, mapper_m71, mapper_namco108;
 static Mapper mapper_vs99;
 Mapper *cart = NULL;
@@ -817,6 +817,108 @@ static void cnrom_ppu_write(uint16_t a, uint8_t v) {
 }
 static Mirroring cnrom_mirr(void) { return C.mirr_base; }
 static void cnrom_reset(void) { cn.chr_bank = 0; }
+
+// Mappers 75/151: VRC1.
+static struct {
+    uint8_t prg[3];
+    uint8_t chr[2];
+    bool prg_mapped[3];
+    bool chr_mapped[2];
+    Mirroring mirr;
+} vrc1;
+
+static uint8_t vrc1_cpu_read(uint16_t a) {
+    if (a >= 0x6000 && a <= 0x7FFF) return prg_ram_read(a);
+    if (a < 0x8000) return cart_cpu_bus_input;
+
+    size_t banks = C.prg_sz / PRG_BANK_8K;
+    unsigned slot = (unsigned)((a - 0x8000u) >> 13);
+    size_t bank;
+    if (slot == 3) {
+        bank = banks - 1;
+    } else {
+        if (!vrc1.prg_mapped[slot]) return cart_cpu_bus_input;
+        bank = vrc1.prg[slot] % banks;
+    }
+    return C.prg[bank * PRG_BANK_8K + (a & 0x1FFFu)];
+}
+
+static void vrc1_map_chr(void) {
+    vrc1.chr_mapped[0] = true;
+    vrc1.chr_mapped[1] = true;
+}
+
+static void vrc1_cpu_write(uint16_t a, uint8_t value) {
+    if (a >= 0x6000 && a <= 0x7FFF) {
+        prg_ram_write(a, value);
+        return;
+    }
+    if (a < 0x8000) return;
+
+    switch (a & 0xF000u) {
+        case 0x8000:
+            vrc1.prg[0] = value;
+            vrc1.prg_mapped[0] = true;
+            break;
+        case 0x9000:
+            if (C.mirr_base != MIRROR_FOUR)
+                vrc1.mirr = (value & 1u) ? MIRROR_HORIZONTAL : MIRROR_VERTICAL;
+            vrc1.chr[0] = (uint8_t)((vrc1.chr[0] & 0x0Fu) | ((value & 0x02u) << 3));
+            vrc1.chr[1] = (uint8_t)((vrc1.chr[1] & 0x0Fu) | ((value & 0x04u) << 2));
+            vrc1_map_chr();
+            break;
+        case 0xA000:
+            vrc1.prg[1] = value;
+            vrc1.prg_mapped[1] = true;
+            break;
+        case 0xC000:
+            vrc1.prg[2] = value;
+            vrc1.prg_mapped[2] = true;
+            break;
+        case 0xE000:
+            vrc1.chr[0] = (uint8_t)((vrc1.chr[0] & 0x10u) | (value & 0x0Fu));
+            vrc1_map_chr();
+            break;
+        case 0xF000:
+            vrc1.chr[1] = (uint8_t)((vrc1.chr[1] & 0x10u) | (value & 0x0Fu));
+            vrc1_map_chr();
+            break;
+        default:
+            break;
+    }
+}
+
+static size_t vrc1_chr_offset(uint16_t a) {
+    unsigned slot = (a >> 12) & 1u;
+    size_t banks = C.chr_sz / CHR_BANK_4K;
+    size_t bank = vrc1.chr[slot] % banks;
+    return bank * CHR_BANK_4K + (a & 0x0FFFu);
+}
+
+static uint8_t vrc1_ppu_read(uint16_t a) {
+    a &= 0x1FFFu;
+    unsigned slot = a >> 12;
+    if (!vrc1.chr_mapped[slot]) {
+        if (!C.chr_is_ram) return 0;
+        return C.chr[a % C.chr_sz];
+    }
+    return C.chr[vrc1_chr_offset(a)];
+}
+
+static void vrc1_ppu_write(uint16_t a, uint8_t value) {
+    if (!C.chr_is_ram) return;
+    a &= 0x1FFFu;
+    unsigned slot = a >> 12;
+    size_t offset = vrc1.chr_mapped[slot] ? vrc1_chr_offset(a) : (a % C.chr_sz);
+    chr_ram_write(offset, value);
+}
+
+static Mirroring vrc1_mirr(void) { return vrc1.mirr; }
+
+static void vrc1_reset(void) {
+    memset(&vrc1, 0, sizeof(vrc1));
+    vrc1.mirr = C.mirr_base;
+}
 
 // Mapper 4: MMC3/TxROM.
 static struct {
@@ -4733,6 +4835,7 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         case 13: chr_limit = 0x4000; break;
         case 28: case 30: chr_limit = 0x8000; break;
         case 18: case 32: case 65: chr_limit = 0x40000; break;
+        case 75: case 151: chr_limit = 0x20000; break;
         case 21: case 23: case 25: case 27: case 183: chr_limit = 0x80000; break;
         case 22: chr_limit = 0x40000; break;
         case 19: case 69: case 206: case 210: chr_limit = 0x40000; break;
@@ -4787,7 +4890,7 @@ int mapper_init_from_header(const iNESHeader *h,
         case 16: case 153: case 157: case 159:
         case 18: case 32: case 33: case 34: case 48: case 64: case 65: case 158:
         case 21: case 22: case 23: case 24: case 25: case 26: case 27: case 183:
-        case 19: case 66: case 69: case 71: case 85: case 99: case 206: case 210:
+        case 19: case 66: case 69: case 71: case 75: case 85: case 99: case 151: case 206: case 210:
             break;
         default:
             fprintf(stderr, "Unsupported mapper: %d\n", mapper_no);
@@ -4897,6 +5000,12 @@ int mapper_init_from_header(const iNESHeader *h,
     if ((mapper_no == 24 || mapper_no == 26)
         && (prg_sz > 0x40000 || (prg_sz % PRG_BANK_8K) != 0
             || chr_sz > 0x40000 || (chr_sz % CHR_BANK_1K) != 0)) {
+        fprintf(stderr, "Unsupported ROM size for mapper %d\n", mapper_no);
+        return -1;
+    }
+    if ((mapper_no == 75 || mapper_no == 151)
+        && (prg_sz > 0x200000 || (prg_sz % PRG_BANK_8K) != 0
+            || chr_sz > 0x20000 || (chr_sz % CHR_BANK_4K) != 0)) {
         fprintf(stderr, "Unsupported ROM size for mapper %d\n", mapper_no);
         return -1;
     }
@@ -5098,6 +5207,12 @@ int mapper_init_from_header(const iNESHeader *h,
             build_mapper(&mapper_m71, m71_cpu_read, m71_cpu_write,
                          m71_ppu_read, m71_ppu_write, m71_reset, m71_mirr);
             cart = &mapper_m71;
+            break;
+        case 75: case 151:
+            build_mapper(&mapper_vrc1, vrc1_cpu_read, vrc1_cpu_write,
+                         vrc1_ppu_read, vrc1_ppu_write, vrc1_reset, vrc1_mirr);
+            cart = &mapper_vrc1;
+            vrc1_reset();
             break;
         case 206:
             namco108.fixed_prg = submapper == 1;

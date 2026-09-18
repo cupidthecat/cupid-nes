@@ -199,6 +199,36 @@ static int test_vs_extended_console_header(void) {
     return 0;
 }
 
+static int test_vs_vrc1_metadata(void) {
+    const unsigned mappers[] = {75, 151};
+    for (size_t i = 0; i < sizeof(mappers) / sizeof(mappers[0]); ++i) {
+        iNESHeader h = nes20_vs_header(mappers[i], 2, 1, VS_TYPE_DEFAULT, 0, VS_INPUT_STANDARD);
+        h.flags6 |= 0x08;
+        size_t image_size;
+        uint8_t *image = build_image(&h, 0x8000, 0x2000, &image_size);
+        CHECK(image != NULL);
+        uint8_t *prg = image + sizeof(h);
+        uint8_t *chr = prg + 0x8000;
+        for (size_t bank = 0; bank < 4; ++bank)
+            memset(prg + bank * 0x2000, (int)bank, 0x2000);
+        for (size_t bank = 0; bank < 2; ++bank)
+            memset(chr + bank * 0x1000, (int)(0x40 + bank), 0x1000);
+
+        CHECK(load_rom_memory(image, image_size) == 0);
+        free(image);
+        CHECK(vs_enabled() && rom_mapper_number(&ines_header) == (int)mappers[i]);
+        CHECK(cart_get_mirroring() == MIRROR_FOUR && cart_cpu_read(0xE000) == 3);
+        cart_cpu_write(0x8000, 1);
+        CHECK(cart_cpu_read(0x8000) == 1);
+        cart_cpu_write(0xE000, 0);
+        CHECK(cart_ppu_read(0) == 0x40);
+        cart_cpu_write(0x9000, 1);
+        CHECK(cart_get_mirroring() == MIRROR_FOUR);
+        CHECK(unload_rom());
+    }
+    return 0;
+}
+
 static int test_vs_ppu_models(void) {
     static const uint8_t program[] = {
         0xA9,0x18, 0x8D,0x00,0x20,
@@ -740,6 +770,7 @@ int test_vs_accuracy(void) {
     static int (*const tests[])(void) = {
         test_vs_metadata_transaction,
         test_vs_extended_console_header,
+        test_vs_vrc1_metadata,
         test_vs_ppu_models,
         test_vs_rgb_frame_timing,
         test_vs_dual_rendered_frame_timing,

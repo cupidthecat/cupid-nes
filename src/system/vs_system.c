@@ -64,7 +64,8 @@ static void set_reason(char *reason, size_t size, const char *text) {
 }
 
 static bool mapper_supported(int mapper) {
-    return mapper == 0 || mapper == 1 || mapper == 2 || mapper == 99;
+    return mapper == 0 || mapper == 1 || mapper == 2 || mapper == 75
+        || mapper == 99 || mapper == 151;
 }
 
 static bool mapper99_layout_supported(const iNESHeader *header, const VsRomConfig *config,

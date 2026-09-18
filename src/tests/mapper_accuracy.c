@@ -5841,6 +5841,84 @@ static int test_vrc7_loader_rejection_preserves_cart(void) {
     return 0;
 }
 
+static int test_vrc1_banks_mirroring_and_reset(void) {
+    const unsigned mappers[] = {75, 151};
+    for (size_t i = 0; i < sizeof(mappers) / sizeof(mappers[0]); ++i) {
+        CHECK(fixture(mappers[i], 0x20000, 0x20000, false) == (int)mappers[i]);
+        CHECK(cart_cpu_read_bus(0x8000, 0x56) == 0x56);
+        CHECK(cart_cpu_read_bus(0xA000, 0x69) == 0x69);
+        CHECK(cart_cpu_read_bus(0xC000, 0xA6) == 0xA6);
+        CHECK(cart_cpu_read(0xE000) == 15);
+        CHECK(cart_ppu_read(0) == 0 && cart_ppu_read(0x1000) == 0);
+
+        cart_cpu_write(0x8123, 3);
+        cart_cpu_write(0xAFFF, 5);
+        cart_cpu_write(0xC456, 7);
+        CHECK(cart_cpu_read(0x8000) == 3 && cart_cpu_read(0xA000) == 5);
+        CHECK(cart_cpu_read(0xC000) == 7 && cart_cpu_read(0xE000) == 15);
+
+        cart_cpu_write(0xE000, 3);
+        CHECK(cart_ppu_read(0) == 12 && cart_ppu_read(0x1000) == 0);
+        cart_cpu_write(0xF000, 4);
+        CHECK(cart_ppu_read(0) == 12 && cart_ppu_read(0x1000) == 16);
+        cart_cpu_write(0x9000, 0x06);
+        CHECK(cart_get_mirroring() == MIRROR_VERTICAL);
+        CHECK(cart_ppu_read(0) == 76 && cart_ppu_read(0x1000) == 80);
+        cart_cpu_write(0xEABC, 9);
+        CHECK(cart_ppu_read(0) == 100 && cart_ppu_read(0x1000) == 80);
+        cart_cpu_write(0xF123, 2);
+        CHECK(cart_ppu_read(0) == 100 && cart_ppu_read(0x1000) == 72);
+        cart_cpu_write(0x9000, 1);
+        CHECK(cart_get_mirroring() == MIRROR_HORIZONTAL);
+        CHECK(cart_ppu_read(0) == 36 && cart_ppu_read(0x1000) == 8);
+
+        cart->reset();
+        CHECK(cart_cpu_read_bus(0x8000, 0x35) == 0x35);
+        CHECK(cart_cpu_read_bus(0xA000, 0x53) == 0x53);
+        CHECK(cart_cpu_read_bus(0xC000, 0x96) == 0x96);
+        CHECK(cart_cpu_read(0xE000) == 15);
+        CHECK(cart_ppu_read(0) == 0 && cart_ppu_read(0x1000) == 0);
+        CHECK(cart_get_mirroring() == MIRROR_HORIZONTAL);
+    }
+
+    iNESHeader four = header_for(75, 0x20000, false);
+    four.flags6 |= 0x08;
+    CHECK(fixture_with_header(&four, 0x20000, 0x20000) == 75);
+    CHECK(cart_get_mirroring() == MIRROR_FOUR);
+    cart_cpu_write(0x9000, 1);
+    CHECK(cart_get_mirroring() == MIRROR_FOUR);
+
+    iNESHeader ram = header_for(75, 0x20000, true);
+    CHECK(fixture_with_header(&ram, 0x20000, 0x2000) == 75);
+    cart_ppu_write(0x0123, 0xA6);
+    cart_ppu_write(0x1123, 0x69);
+    CHECK(cart_ppu_read(0x0123) == 0xA6 && cart_ppu_read(0x1123) == 0x69);
+    cart_cpu_write(0xE000, 1);
+    cart_ppu_write(0x0123, 0x35);
+    CHECK(cart_ppu_read(0x0123) == 0x35 && cart_ppu_read(0x1123) == 0xA6);
+    cart_cpu_write(0xF000, 1);
+    CHECK(cart_ppu_read(0x1123) == 0x35);
+    return 0;
+}
+
+static int test_vrc1_loader_rejection_preserves_cart(void) {
+    CHECK(fixture(75, 0x20000, 0x20000, false) == 75);
+    cart_cpu_write(0x8000, 3);
+    Mapper *previous = cart;
+
+    iNESHeader invalid = header_for(75, 0x20000, false);
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x200001, fixture_chr, 0x20000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 3);
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x20000, fixture_chr, 0x20001) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 3);
+
+    invalid.flags7 |= 0x08;
+    invalid.prg_ram_size = 0x10;
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x20000, fixture_chr, 0x20000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 3);
+    return 0;
+}
+
 static int test_cartridge_unload(void) {
     iNESHeader h = header_for(0, 0x4000, true);
     size_t image_size;
@@ -5924,6 +6002,7 @@ int test_mapper_accuracy(void) {
         test_vrc7_banks_wiring_and_ram, test_vrc7_irq_timing, test_vrc7_fm_audio,
         test_vrc7_register_boundaries,
         test_vrc7_loader_rejection_preserves_cart,
+        test_vrc1_banks_mirroring_and_reset, test_vrc1_loader_rejection_preserves_cart,
         test_cartridge_bus_reads, test_mmc6_persistence, test_cartridge_unload
     };
     int failures = 0;
