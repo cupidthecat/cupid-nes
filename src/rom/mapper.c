@@ -5863,6 +5863,7 @@ static struct {
 } irem77;
 
 static uint8_t irem77_cpu_read(uint16_t a) {
+    if (a >= 0x6000u && a < 0x8000u) return prg_ram_read(a);
     if (a < 0x8000u) return cart_cpu_bus_input;
     size_t banks = C.prg_sz / PRG_BANK_32K;
     size_t bank = irem77.prg_bank % banks;
@@ -5870,6 +5871,10 @@ static uint8_t irem77_cpu_read(uint16_t a) {
 }
 
 static void irem77_cpu_write(uint16_t a, uint8_t value) {
+    if (a >= 0x6000u && a < 0x8000u) {
+        prg_ram_write(a, value);
+        return;
+    }
     if (a < 0x8000u) return;
     irem77.prg_bank = value & 0x0Fu;
     irem77.chr_bank = (value >> 4) & 0x0Fu;
@@ -5905,6 +5910,7 @@ static struct {
 } irem97;
 
 static uint8_t irem97_cpu_read(uint16_t a) {
+    if (a >= 0x6000u && a < 0x8000u) return prg_ram_read(a);
     if (a < 0x8000u) return cart_cpu_bus_input;
     size_t banks = C.prg_sz / PRG_BANK_16K;
     size_t bank = a < 0xC000u ? banks - 1 : irem97.upper_prg_bank % banks;
@@ -5912,6 +5918,10 @@ static uint8_t irem97_cpu_read(uint16_t a) {
 }
 
 static void irem97_cpu_write(uint16_t a, uint8_t value) {
+    if (a >= 0x6000u && a < 0x8000u) {
+        prg_ram_write(a, value);
+        return;
+    }
     if (a < 0x8000u) return;
     irem97.upper_prg_bank = value & 0x0Fu;
     switch (value >> 6) {
@@ -6710,14 +6720,6 @@ int mapper_init_from_header(const iNESHeader *h,
     if ((ram.prg_nvram || ram.chr_nvram) && !(h->flags6 & 2)) {
         fprintf(stderr, "Nonvolatile RAM declared without the battery flag\n");
         return -1;
-    }
-    if (mapper_no == 77 || mapper_no == 97) {
-        if (nes2 && (ram.prg_ram || ram.prg_nvram)) {
-            fprintf(stderr, "Unsupported RAM layout for mapper %d\n", mapper_no);
-            return -1;
-        }
-        ram.prg_ram = 0;
-        ram.prg_nvram = 0;
     }
     if (mapper_no == 80 || mapper_no == 82 || mapper_no == 207) {
         size_t expected = mapper_no == 82 ? 0x1400u : 0x100u;
