@@ -62,7 +62,8 @@ static uint32_t loaded_prg_chr_crc32 = 0;
 static int read_file(const char *path, uint8_t **data, size_t *size);
 static bool database_header(const iNESHeader *original, const GameDbEntry *entry,
                             bool headerless, iNESHeader *header);
-static void database_metadata(const GameDbEntry *entry, bool headerless,
+static void database_metadata(const GameDbEntry *entry, const iNESHeader *original,
+                              bool headerless,
                               RomDatabaseInfo *metadata);
 
 bool rom_database_load_file(const char *path) { return game_db_load_file(path); }
@@ -218,7 +219,7 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
                 fprintf(stderr, "Game database entry cannot describe this cartridge\n");
                 return -1;
             }
-            database_metadata(&database_entry, false, &database_info);
+            database_metadata(&database_entry, &original_header, false, &database_info);
             database = &database_info;
             database_applied = true;
             source = ROM_METADATA_DATABASE;
@@ -235,7 +236,7 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
             fprintf(stderr, "Game database entry cannot describe this headerless cartridge\n");
             return -1;
         }
-        database_metadata(&database_entry, true, &database_info);
+        database_metadata(&database_entry, NULL, true, &database_info);
         database = &database_info;
         database_applied = true;
         headerless = true;
@@ -447,16 +448,6 @@ int load_fds_memory(const uint8_t *disk, size_t disk_size,
     return 0;
 }
 
-static bool encode_nes20_rom_size(size_t bytes, size_t unit,
-                                  uint8_t *low, uint8_t *high_nibble) {
-    if (!low || !high_nibble || bytes % unit != 0) return false;
-    size_t units = bytes / unit;
-    if (units > 0x0FFFu) return false;
-    *low = (uint8_t)(units & 0xFFu);
-    *high_nibble = (uint8_t)((units >> 8) & 0x0Fu);
-    return true;
-}
-
 static bool database_mirroring(const GameDbEntry *entry, Mirroring *mirroring) {
     if (!entry || !mirroring || !entry->mirroring) return false;
     switch (entry->mirroring) {
@@ -509,21 +500,44 @@ static bool database_vs_ppu_code(uint8_t ppu_model, uint8_t *header_code) {
     }
 }
 
-static void database_metadata(const GameDbEntry *entry, bool headerless,
+static void database_metadata(const GameDbEntry *entry, const iNESHeader *original,
+                              bool headerless,
                               RomDatabaseInfo *metadata) {
     memset(metadata, 0, sizeof(*metadata));
     metadata->present = true;
     metadata->headerless = headerless;
+    metadata->mapper = entry->mapper;
+    metadata->submapper_present = entry->submapper_present;
+    metadata->submapper = entry->submapper;
+    metadata->prg_rom_size = entry->prg_rom_size;
+    metadata->chr_rom_size = entry->chr_rom_size;
     snprintf(metadata->board, sizeof(metadata->board), "%s", entry->board);
     snprintf(metadata->chip, sizeof(metadata->chip), "%s", entry->chip);
     metadata->bus_conflicts = entry->bus_conflicts;
+
+    iNESHeader inherited_header = {0};
+    if (original) {
+        inherited_header = *original;
+    } else {
+        memcpy(inherited_header.signature, "NES\x1A", 4);
+        inherited_header.flags6 = (uint8_t)((entry->mapper & 0x0Fu) << 4);
+        inherited_header.flags7 = (uint8_t)(entry->mapper & 0xF0u);
+        inherited_header.chr_rom_chunks = entry->chr_rom_size ? 1 : 0;
+        if (entry->battery) inherited_header.flags6 |= 0x02u;
+    }
+    RomRamSizes inherited_ram = {0};
+    (void)rom_ram_sizes(&inherited_header, &inherited_ram);
+
     bool validated = entry->submapper_present;
-    metadata->work_ram_override = validated || entry->work_ram_size != 0;
-    metadata->save_ram_override = validated || entry->save_ram_size != 0;
-    metadata->chr_ram_override = validated || entry->chr_ram_size != 0;
-    metadata->work_ram = entry->work_ram_size;
-    metadata->save_ram = entry->save_ram_size;
-    metadata->chr_ram = entry->chr_ram_size;
+    metadata->work_ram_override = true;
+    metadata->save_ram_override = true;
+    metadata->chr_ram_override = true;
+    metadata->work_ram = validated || entry->work_ram_size
+                       ? entry->work_ram_size : inherited_ram.prg_ram;
+    metadata->save_ram = validated || entry->save_ram_size
+                       ? entry->save_ram_size : inherited_ram.prg_nvram;
+    metadata->chr_ram = validated || entry->chr_ram_size
+                      ? entry->chr_ram_size : inherited_ram.chr_ram;
     metadata->mirroring_override = database_mirroring(entry, &metadata->mirroring);
 }
 
@@ -536,12 +550,11 @@ static bool database_header(const iNESHeader *original, const GameDbEntry *entry
     memset(header, 0, sizeof(*header));
     memcpy(header->signature, "NES\x1A", 4);
 
-    uint8_t prg_high = 0, chr_high = 0;
-    if (!encode_nes20_rom_size(entry->prg_rom_size, PRG_ROM_BANK_SIZE,
-                               &header->prg_rom_chunks, &prg_high)
-        || !encode_nes20_rom_size(entry->chr_rom_size, CHR_ROM_BANK_SIZE,
-                                  &header->chr_rom_chunks, &chr_high))
-        return false;
+    /* Database payload sizes are authoritative byte counts. The synthesized
+       header only needs to identify ROM presence; exact geometry travels in
+       RomDatabaseInfo and the loader's PRG/CHR buffers. */
+    header->prg_rom_chunks = entry->prg_rom_size ? 1 : 0;
+    header->chr_rom_chunks = entry->chr_rom_size ? 1 : 0;
 
     header->flags6 = (uint8_t)((entry->mapper & 0x0Fu) << 4);
     if (!headerless && (source.flags6 & 0x04u)) header->flags6 |= 0x04u;
@@ -589,7 +602,7 @@ static bool database_header(const iNESHeader *original, const GameDbEntry *entry
     header->flags7 = (uint8_t)((entry->mapper & 0xF0u) | 0x08u | console);
     header->prg_ram_size = (uint8_t)(((entry->submapper_present ? entry->submapper : 0u) << 4)
                            | ((entry->mapper >> 8) & 0x0Fu));
-    header->flags9 = (uint8_t)(prg_high | (chr_high << 4));
+    header->flags9 = 0;
     header->zero[1] = region == NES_REGION_PAL ? 1u : region == NES_REGION_DENDY ? 3u : 0u;
     header->zero[2] = vs_descriptor;
     header->zero[4] = header_input;

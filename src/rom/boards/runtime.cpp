@@ -378,9 +378,11 @@ void Board::Initialize(const iNESHeader &header, uint8_t *prg, size_t prgBytes,
                         const RomDatabaseInfo *database) {
     if (!prg || !prgBytes || prgBytes > UINT32_MAX || chrBytes > UINT32_MAX)
         throw std::invalid_argument("unsupported cartridge buffer size");
-    _romInfo.MapperID = static_cast<unsigned>(rom_mapper_number(&header));
+    _romInfo.MapperID = database && database->present
+                      ? database->mapper : static_cast<unsigned>(rom_mapper_number(&header));
     _romInfo.IsNes20Header = (header.flags7 & 0x0C) == 8;
-    _romInfo.SubMapperID = IsNes20() ? header.prg_ram_size >> 4 : 0;
+    _romInfo.SubMapperID = database && database->present && database->submapper_present
+                         ? database->submapper : IsNes20() ? header.prg_ram_size >> 4 : 0;
     _romInfo.HasBattery = (header.flags6 & 2) != 0;
     _romInfo.Header.Byte6 = header.flags6;
     if (database && database->present) {
@@ -390,7 +392,9 @@ void Board::Initialize(const iNESHeader &header, uint8_t *prg, size_t prgBytes,
     }
     _prgRom = prg;
     _prgSize = static_cast<uint32_t>(prgBytes);
-    bool chrRom = header.chr_rom_chunks || (IsNes20() && (header.flags9 & 0xF0));
+    bool chrRom = database && database->present
+                ? database->chr_rom_size != 0
+                : header.chr_rom_chunks || (IsNes20() && (header.flags9 & 0xF0));
     if (chrRom && (!chr || !chrBytes)) throw std::invalid_argument("missing CHR ROM");
     _chrRom = chrRom ? chr : nullptr;
     _chrRomSize = chrRom ? static_cast<uint32_t>(chrBytes) : 0;
@@ -554,7 +558,8 @@ CartridgeBoard *board_create_with_metadata(const iNESHeader *header,
         auto board = std::make_unique<CartridgeBoard>();
         board->instance = board_is_fcns_header(header)
             ? cupid::boards::CreateFcnsBoard()
-            : cupid::boards::CreateBoard(static_cast<unsigned>(rom_mapper_number(header)));
+            : cupid::boards::CreateBoard(database && database->present
+                ? database->mapper : static_cast<unsigned>(rom_mapper_number(header)));
         if (!board->instance) return nullptr;
         board->instance->Initialize(*header, prg, prgBytes, chr, chrBytes, database);
         return board.release();

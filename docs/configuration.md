@@ -73,7 +73,7 @@ The emulator models the local cartridge, character-ROM interface, RAM banking, a
 
 ## Game database and headerless cartridges
 
-`--game-db FILE` loads an optional cartridge metadata database before the positional image. The file uses the 18-field CSV layout for CRC, system, board, PCB, chip, mapper, PRG ROM, CHR ROM, CHR RAM, work RAM, save RAM, battery, mirroring, input, bus conflicts, submapper, VS hardware type, and VS PPU model. Blank optional fields retain the loader or board default where the database format defines one.
+`--game-db FILE` loads an optional cartridge metadata database before the positional image. The file uses the 18-field CSV layout for CRC, system, board, PCB, chip, mapper, PRG ROM, CHR ROM, CHR RAM, work RAM, save RAM, battery, mirroring, input, bus conflicts, submapper, VS hardware type, and VS PPU model. ROM and RAM sizes are KiB unless prefixed with `b`, which records an exact byte count. Blank optional RAM fields on unvalidated legacy entries retain the cartridge header's normal RAM defaults.
 
 For legacy iNES images, Cupid hashes the PRG+CHR payload after the header and optional trainer. A matching entry can correct the mapper, submapper, ROM sizes, supported RAM sizes, battery state, mirroring, regional or VS metadata, input type, board/chip information, and bus-conflict setting. NES 2.0 metadata keeps precedence over ordinary database corrections. `--no-game-db-overrides` disables corrections for headered legacy images.
 

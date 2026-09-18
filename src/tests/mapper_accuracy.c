@@ -10613,6 +10613,72 @@ static int test_game_database_and_headerless_loading(void) {
     CHECK(looked_up.mapper == 2 && looked_up.submapper_present && looked_up.submapper == 2);
     CHECK(strcmp(looked_up.board, "UOROM") == 0 && looked_up.bus_conflicts == 0);
 
+    iNESHeader blank_ram_header = header_for(0, 0x4000, false);
+    size_t blank_ram_size = 0;
+    uint8_t *blank_ram_image = image_for(&blank_ram_header, 0x4000, 0x2000, &blank_ram_size);
+    CHECK(blank_ram_image != NULL);
+    uint32_t blank_ram_crc = game_db_crc32(blank_ram_image + sizeof(blank_ram_header),
+                                           blank_ram_size - sizeof(blank_ram_header));
+    length = snprintf(database, sizeof(database),
+        "%08X,NesNtsc,NROM,,,0,16,8,,,,0,h,1,N,,0,0\n", (unsigned)blank_ram_crc);
+    CHECK(length > 0 && (size_t)length < sizeof(database));
+    CHECK(rom_database_load_memory(database, (size_t)length));
+    CHECK(load_rom_memory(blank_ram_image, blank_ram_size) == 0);
+    cart_cpu_write(0x6123, 0x6A);
+    CHECK(cart_cpu_read(0x6123) == 0x6A); // Blank DB RAM keeps legacy 8 KiB work RAM.
+    free(blank_ram_image);
+
+    iNESHeader battery_header = header_for(0, 0x4000, false);
+    battery_header.flags6 |= 0x02;
+    size_t battery_size = 0;
+    uint8_t *battery_image = image_for(&battery_header, 0x4000, 0x2000, &battery_size);
+    CHECK(battery_image != NULL);
+    uint32_t battery_crc = game_db_crc32(battery_image + sizeof(battery_header),
+                                         battery_size - sizeof(battery_header));
+    length = snprintf(database, sizeof(database),
+        "%08X,NesNtsc,NROM,,,0,16,8,,,,0,h,1,N,,0,0\n", (unsigned)battery_crc);
+    CHECK(length > 0 && (size_t)length < sizeof(database));
+    CHECK(rom_database_load_memory(database, (size_t)length));
+    CHECK(load_rom_memory(battery_image, battery_size) == 0);
+    CHECK((ines_header.flags6 & 0x02) != 0);
+    cart_cpu_write(0x6456, 0xA9);
+    CHECK(cart_cpu_read(0x6456) == 0xA9); // Original battery keeps legacy save-RAM default.
+    free(battery_image);
+
+    iNESHeader chr_ram_header = header_for(0, 0x4000, true);
+    size_t chr_ram_image_size = 0;
+    uint8_t *chr_ram_image = image_for(&chr_ram_header, 0x4000, 0, &chr_ram_image_size);
+    CHECK(chr_ram_image != NULL);
+    uint32_t chr_ram_crc = game_db_crc32(chr_ram_image + sizeof(chr_ram_header),
+                                         chr_ram_image_size - sizeof(chr_ram_header));
+    length = snprintf(database, sizeof(database),
+        "%08X,NesNtsc,NROM,,,0,16,0,4,,,0,h,1,N,,0,0\n", (unsigned)chr_ram_crc);
+    CHECK(length > 0 && (size_t)length < sizeof(database));
+    CHECK(rom_database_load_memory(database, (size_t)length));
+    CHECK(load_rom_memory(chr_ram_image, chr_ram_image_size) == 0);
+    CHECK(chr_size == 4096);
+    ppu_write(0x0123, 0xB7);
+    CHECK(ppu_read(0x0123) == 0xB7);
+    free(chr_ram_image);
+
+    iNESHeader exact_header = header_for(0, 0x4000, false);
+    const size_t exact_prg = 12345, exact_chr = 3000;
+    size_t exact_size = 0;
+    uint8_t *exact_image = image_for(&exact_header, exact_prg, exact_chr, &exact_size);
+    CHECK(exact_image != NULL);
+    exact_image[sizeof(exact_header)] = 0x37;
+    exact_image[sizeof(exact_header) + exact_prg] = 0xA4;
+    uint32_t exact_crc = game_db_crc32(exact_image + sizeof(exact_header),
+                                       exact_size - sizeof(exact_header));
+    length = snprintf(database, sizeof(database),
+        "%08X,NesNtsc,NROM,,,0,b12345,b3000,0,8,0,0,h,1,N,,0,0\n", (unsigned)exact_crc);
+    CHECK(length > 0 && (size_t)length < sizeof(database));
+    CHECK(rom_database_load_memory(database, (size_t)length));
+    CHECK(load_rom_memory(exact_image, exact_size) == 0);
+    CHECK(prg_size == exact_prg && chr_size == exact_chr);
+    CHECK(cart_cpu_read(0x8000) == 0x37 && ppu_read(0) == 0xA4);
+    free(exact_image);
+
     iNESHeader nes2 = header_for(0, 0x8000, false);
     nes2.flags7 |= 0x08;
     size_t nes2_size = 0;

@@ -7257,13 +7257,15 @@ int mapper_init_from_header_metadata(const iNESHeader *h,
         CartridgeBoard *prepared = board_create_with_metadata(h, prg, prg_sz, chr, chr_sz, database);
         if (!prepared) return -1;
         uint16_t mapper_no = board_is_fcns_header(h) ? BOARD_FCNS_MAPPER_ID
-                                                     : (uint16_t)rom_mapper_number(h);
+            : database && database->present ? database->mapper
+                                            : (uint16_t)rom_mapper_number(h);
         return activate_prepared_board(prepared, mapper_no, prg, prg_sz, chr, chr_sz);
     }
     if (!h || !prg || !prg_sz || !chr || !chr_sz) return -1;
-    int mapper_no = rom_mapper_number(h);
+    int mapper_no = database && database->present ? database->mapper : rom_mapper_number(h);
     bool nes2 = (h->flags7 & 0x0C) == 0x08;
-    uint8_t submapper = nes2 ? h->prg_ram_size >> 4 : 0;
+    uint8_t submapper = database && database->present && database->submapper_present
+                      ? database->submapper : nes2 ? h->prg_ram_size >> 4 : 0;
     switch (mapper_no) {
         case 0: case 1: case 2: case 3: case 4: case 5:
         case 7: case 9: case 10: case 11: case 13: case 15: case 28: case 30: case 74: case 111: case 118: case 119: case 155:
@@ -7337,7 +7339,9 @@ int mapper_init_from_header_metadata(const iNESHeader *h,
         ram.prg_ram = (h->flags6 & 2) ? 0 : expected;
         ram.prg_nvram = (h->flags6 & 2) ? expected : 0;
     }
-    bool chr_is_ram = h->chr_rom_chunks == 0 && (!nes2 || (h->flags9 & 0xF0) == 0);
+    bool chr_is_ram = database && database->present
+                    ? database->chr_rom_size == 0
+                    : h->chr_rom_chunks == 0 && (!nes2 || (h->flags9 & 0xF0) == 0);
     size_t chr_page_size = mapper_chr_page_size((uint16_t)mapper_no);
     if (!chr_is_ram && chr_page_size && chr_sz < chr_page_size
         && !mapper_has_shrinking_chr_window((uint16_t)mapper_no)) {

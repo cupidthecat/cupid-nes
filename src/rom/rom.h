@@ -51,6 +51,11 @@ typedef enum {
 typedef struct {
     bool present;
     bool headerless;
+    uint16_t mapper;
+    bool submapper_present;
+    uint8_t submapper;
+    size_t prg_rom_size;
+    size_t chr_rom_size;
     char board[64];
     char chip[64];
     int8_t bus_conflicts; /* -1 = board default, 0 = disabled, 1 = enabled */
