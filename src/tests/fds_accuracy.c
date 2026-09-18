@@ -150,7 +150,12 @@ static uint8_t *make_nrom(size_t *size) {
 
 static uint8_t *make_unsupported_mapper(size_t *size) {
     uint8_t *image = make_nrom(size);
-    if (image) ((iNESHeader *)image)->flags6 = 0x60; // Mapper 6 is not implemented.
+    if (image) {
+        iNESHeader *header = (iNESHeader *)image;
+        header->flags6 = 0xF0;
+        header->flags7 = 0xF8;
+        header->prg_ram_size = 0x0F; // Synthetic unsupported mapper 4095.
+    }
     return image;
 }
 

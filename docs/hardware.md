@@ -82,6 +82,7 @@ PRG is the cartridge memory read by the CPU; CHR holds graphics patterns read by
 | 99 | VS System | Cabinet PRG/CHR selection, shared RAM permissions, and single/dual layouts |
 | 104 | Golden Five | Outer PRG block and inner 16 KiB bank selection, fixed bank within the selected block, and CHR RAM |
 | 31 | NSF cartridge | Eight independent 4 KiB PRG windows selected through `$5000-$5FFF`, with fixed CHR mapping |
+| 6, 8, 17 | Front Fareast | Board-specific PRG/CHR banking, 32 KiB legacy CHR RAM, mirroring registers, and a CPU-clocked 16-bit IRQ counter |
 | 86 | Jaleco JF-13 | 32 KiB PRG and 8 KiB CHR selection through `$6000-$6FFF`; speech is not emulated |
 | 218 | Magic Floor | Fixed PRG and shared pattern-table/nametable CIRAM with four header-selected address wirings |
 | 105 | NES-EVENT | MMC1 serial control, competition PRG modes, fixed CHR RAM, cartridge RAM, and DIP-selected timer IRQ |
@@ -104,6 +105,8 @@ Magic Floor connects pattern-table addresses to the same two CIRAM pages used by
 Jaleco JF-13 starts at PRG bank zero. Writes throughout `$6000-$6FFF` select the 32 KiB PRG bank with D4-D5 and the 8 KiB CHR bank with D0-D1 and D6. CHR ROM remains unmapped until the first bank write. Mirroring follows the header, and bank state survives CPU soft reset. Register writes do not modify underlying PRG RAM. The speech device at `$7000-$7FFF` is not emulated; those writes currently have no effect.
 
 Mapper 31 selects eight 4 KiB PRG windows with the low three address bits of writes at `$5000-$5FFF`. Startup maps bank 255 into `$F000-$FFFF`; the other windows remain on open bus until written. The bank number wraps over complete ROM pages, and CPU soft reset preserves the selected windows. CHR starts at bank zero, and nametable mirroring follows the header. This mapper loads as a cartridge image; NSF and NSFe file execution is a separate media path.
+
+Front Fareast mappers 6 and 8 use a combined PRG/CHR register in the upper CPU address range. Mapper 6 fixes the upper PRG window to banks 14 and 15; mapper 8 retains its initial upper banks 2 and 3. Mapper 17 instead exposes four independent 8 KiB PRG registers and eight 1 KiB CHR registers. All three provide horizontal, vertical, and single-screen mirroring controls. Their 16-bit counter advances on every CPU cycle, including writes and DMA, raises an IRQ when it wraps, and stops until rearmed. Bank and counter state survive CPU soft reset. Legacy images receive 32 KiB of CHR RAM; NES 2.0 declarations determine the actual RAM allocation. On mapper 6, a CHR-only register mode is available when the board has no CHR RAM.
 
 The mapper 72 and 92 cartridge banking and latch behavior is implemented. Optional speech hardware on those boards is not currently emulated.
 

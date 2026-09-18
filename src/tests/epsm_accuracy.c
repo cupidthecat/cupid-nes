@@ -143,11 +143,15 @@ static int test_epsm_metadata_and_failure_preservation(void) {
     uint64_t before = epsm_clock_count();
     CHECK(load_rom_memory(image, IMAGE_BYTES - 1) == -1);
     CHECK(epsm_enabled() && epsm_clock_count() == before && prg_rom == previous_prg);
-    image[6] = 0x60; // Mapper 6 remains unsupported.
+    image[6] = 0xF0;
+    image[7] |= 0xF0;
+    image[8] = 0x0F; // Synthetic unsupported mapper 4095.
     CHECK(load_rom_memory(image, IMAGE_BYTES) == -1);
     CHECK(cart == previous && prg_rom == previous_prg && epsm_enabled());
     CHECK(epsm_clock_count() == before && nes_timing()->region == NES_REGION_DENDY);
     image[6] = 0;
+    image[7] &= 0x0F;
+    image[8] = 0;
     image[13] = 5;
     CHECK(load_rom_memory(image, IMAGE_BYTES) == -1);
     CHECK(cart == previous && epsm_enabled() && epsm_clock_count() == before);
