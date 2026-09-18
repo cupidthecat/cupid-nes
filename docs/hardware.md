@@ -64,13 +64,13 @@ PRG is the cartridge memory read by the CPU; CHR holds graphics patterns read by
 | 71 | Codemasters | PRG banking and the single-screen board variant |
 | 73 | VRC3 | Switchable 16 KiB PRG, fixed CHR, and 8- or 16-bit CPU-clocked IRQ counter |
 | 75, 151 | VRC1 | Three switchable 8 KiB PRG windows, two 4 KiB CHR banks, and board mirroring |
+| 76, 88, 95, 154, 206 | Namco 108 family | Variant-specific PRG/CHR banking, hardwired or register-controlled nametables, and no mapper IRQ source |
 | 85 | VRC7 | PRG/CHR banking, IRQs, RAM control, and six-channel FM audio |
 | 89, 93, 184 | Sunsoft discrete boards | Board-specific PRG/CHR selection, single-screen wiring, CHR access control, and paired 4 KiB CHR banks |
 | 99 | VS System | Cabinet PRG/CHR selection, shared RAM permissions, and single/dual layouts |
 | 118 | TKSROM / TLSROM | MMC3 banking and IRQs with CHR-register-controlled nametable routing |
 | 119 | TQROM | MMC3 banking and IRQs with mixed CHR ROM and RAM |
 | 155 | MMC1A | MMC1 banking with the earlier revision's RAM-enable behavior |
-| 206 | Namco 108 | Register-selected PRG/CHR banks and board-specific nametable wiring |
 
 NES 2.0 submappers select supported wiring and revisions. Examples include MMC1 submapper 5, MMC6 submapper 1, MC-ACC submapper 3, and VRC register-wiring variants. UxROM, CNROM, and AxROM submapper 2 enable ROM bus conflicts. The loader rejects unsupported submappers and memory geometries even when the mapper family appears above. The complete checks are in [`mapper_init_from_header`](../src/rom/mapper.c).
 

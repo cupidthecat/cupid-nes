@@ -5841,6 +5841,123 @@ static int test_vrc7_loader_rejection_preserves_cart(void) {
     return 0;
 }
 
+static int test_namco108_variants(void) {
+    CHECK(fixture(76, 0x200000, 0x80000, false) == 76);
+    CHECK(cart != NULL && cart->clock == NULL);
+    CHECK(cart_ppu_read(0x0000) == 8 && cart_ppu_read(0x0800) == 10);
+    CHECK(cart_ppu_read(0x1000) == 12 && cart_ppu_read(0x1800) == 14);
+    namco108_write_bank(2, 3);
+    namco108_write_bank(3, 7);
+    namco108_write_bank(4, 11);
+    namco108_write_bank(5, 15);
+    CHECK(cart_ppu_read(0x0000) == 6 && cart_ppu_read(0x0400) == 7);
+    CHECK(cart_ppu_read(0x0800) == 14 && cart_ppu_read(0x0C00) == 15);
+    CHECK(cart_ppu_read(0x1000) == 22 && cart_ppu_read(0x1800) == 30);
+    namco108_write_bank(6, 0x33);
+    namco108_write_bank(7, 0x55);
+    CHECK(cart_cpu_read(0x8000) == 0x33 && cart_cpu_read(0xA000) == 0x55);
+    CHECK(cart_cpu_read(0xC000) == 254 && cart_cpu_read(0xE000) == 255);
+
+    CHECK(fixture(88, 0x200000, 0x20000, false) == 88);
+    CHECK(cart_ppu_read(0x1000) == 0x44 && cart_ppu_read(0x1C00) == 0x47);
+    namco108_write_bank(0, 0x7F);
+    namco108_write_bank(1, 0x43);
+    namco108_write_bank(2, 0x05);
+    namco108_write_bank(3, 0x3A);
+    CHECK(cart_ppu_read(0x0000) == 0x3E && cart_ppu_read(0x0400) == 0x3F);
+    CHECK(cart_ppu_read(0x0800) == 0x02 && cart_ppu_read(0x0C00) == 0x03);
+    CHECK(cart_ppu_read(0x1000) == 0x45 && cart_ppu_read(0x1400) == 0x7A);
+    namco108_write_bank(4, 0x09);
+    namco108_write_bank(5, 0xBF);
+    CHECK(cart_ppu_read(0x1800) == 0x49 && cart_ppu_read(0x1C00) == 0x7F);
+    cart->reset();
+    CHECK(cart_ppu_read(0x1000) == 0x44 && cart_ppu_read(0x1C00) == 0x47);
+
+    CHECK(fixture(95, 0x200000, 0x40000, false) == 95);
+    uint8_t nt[0x1000] = {0};
+    nt[0] = 0x10;
+    nt[0x400] = 0x20;
+    CHECK(cart_nt_read(0x2000, nt) == 0x10 && cart_nt_read(0x2800, nt) == 0x20);
+    cart_cpu_write(0xA001, 0); // An odd register write also connects the nametable selectors.
+    CHECK(cart_nt_read(0x2000, nt) == 0x10 && cart_nt_read(0x2800, nt) == 0x10);
+    cart->reset();
+    CHECK(cart_nt_read(0x2800, nt) == 0x20);
+    namco108_write_bank(0, 0x20);
+    namco108_write_bank(1, 0x02);
+    CHECK(cart_nt_read(0x2000, nt) == 0x20 && cart_nt_read(0x2400, nt) == 0x20);
+    CHECK(cart_nt_read(0x2800, nt) == 0x10 && cart_nt_read(0x2C00, nt) == 0x10);
+    namco108_write_bank(1, 0x22);
+    CHECK(cart_nt_read(0x2800, nt) == 0x20 && cart_nt_read(0x2C00, nt) == 0x20);
+    cart_nt_write(0x2001, 0x35, nt);
+    CHECK(nt[0x401] == 0x35 && cart_nt_read(0x2401, nt) == 0x35);
+
+    CHECK(fixture(154, 0x200000, 0x20000, false) == 154);
+    CHECK(cart_ppu_read(0x1000) == 0x44 && cart_ppu_read(0x1C00) == 0x47);
+    cart_cpu_write(0x8000, 0x40);
+    CHECK(cart_get_mirroring() == MIRROR_SINGLE1);
+    cart_cpu_write(0x8001, 0x45);
+    CHECK(cart_get_mirroring() == MIRROR_SINGLE1 && cart_ppu_read(0) == 4);
+    cart_cpu_write(0xA000, 0);
+    CHECK(cart_get_mirroring() == MIRROR_SINGLE0 && cart_ppu_read(0) == 4);
+    cart_notify_ppu_address(0, 0);
+    cart_notify_ppu_address(0x1000, 12);
+    CHECK(!cart_irq_pending());
+    return 0;
+}
+
+static int test_namco108_variant_image_loading(void) {
+    const unsigned boards[] = {76, 88, 95, 154};
+    for (unsigned i = 0; i < sizeof(boards) / sizeof(boards[0]); ++i) {
+        iNESHeader h = header_for(boards[i], 0x20000, false);
+        h.flags7 |= 8;
+        h.chr_rom_chunks = 16;
+        size_t image_size;
+        uint8_t *image = image_for(&h, 0x20000, 0x20000, &image_size);
+        CHECK(image != NULL);
+        for (unsigned bank = 0; bank < 16; ++bank)
+            memset(image + sizeof(h) + bank * 0x2000, (int)bank, 0x2000);
+        CHECK(load_rom_memory(image, image_size) == 0);
+        free(image);
+        CHECK(rom_mapper_number(&ines_header) == (int)boards[i]);
+        CHECK(cart != NULL && cart->clock == NULL);
+        for (unsigned reg = 6; reg <= 7; ++reg) {
+            write_mem(0x9FFE, (uint8_t)(0xC0 | reg));
+            write_mem(0x9FFF, (uint8_t)(3 + reg));
+            CHECK(read_mem((uint16_t)(0x8000 + (reg - 6) * 0x2000)) == 3 + reg);
+        }
+        CHECK(read_mem(0xC000) == 14 && read_mem(0xE000) == 15);
+        write_mem(0xC000, 0);
+        write_mem(0xC001, 0);
+        write_mem(0xE001, 0);
+        cart_notify_ppu_address(0, 0);
+        cart_notify_ppu_address(0x1000, 12);
+        CHECK(!cart_irq_pending());
+        CHECK(unload_rom());
+    }
+    return 0;
+}
+
+static int test_namco108_variant_loader_rejection(void) {
+    CHECK(fixture(76, 0x200000, 0x80000, false) == 76);
+    namco108_write_bank(6, 3);
+    Mapper *previous = cart;
+    iNESHeader h = header_for(76, 0x200000, false);
+    CHECK(mapper_init_from_header(&h, fixture_prg, 0x200000, fixture_chr, 0x80400) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 3);
+    h = header_for(88, 0x200000, false);
+    CHECK(mapper_init_from_header(&h, fixture_prg, 0x200000, fixture_chr, 0x20400) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 3);
+    h = header_for(95, 0x200000, false);
+    CHECK(mapper_init_from_header(&h, fixture_prg, 0x202000, fixture_chr, 0x40000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 3);
+    h = header_for(154, 0x200000, false);
+    h.flags7 |= 8;
+    h.prg_ram_size = 0x10;
+    CHECK(mapper_init_from_header(&h, fixture_prg, 0x200000, fixture_chr, 0x20000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 3);
+    return 0;
+}
+
 static int test_vrc1_banks_mirroring_and_reset(void) {
     const unsigned mappers[] = {75, 151};
     for (size_t i = 0; i < sizeof(mappers) / sizeof(mappers[0]); ++i) {
@@ -6448,6 +6565,8 @@ int test_mapper_accuracy(void) {
         test_mapper71_variants_and_mirroring, test_mapper71_loader_and_chr_rom,
         test_mapper71_image_loading, test_legacy_loader_ram_and_large_prg_metadata,
         test_namco108_banks_aliases_and_irq_absence, test_namco108_submapper_loader_and_chr_ram,
+        test_namco108_variants, test_namco108_variant_loader_rejection,
+        test_namco108_variant_image_loading,
         test_sunsoft69_banks_ram_and_startup, test_sunsoft69_legacy_ram_defaults,
         test_sunsoft69_irq_cpu_clock,
         test_sunsoft5b_tone_noise_envelope, test_sunsoft69_persistence_and_loader,
