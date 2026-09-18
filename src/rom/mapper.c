@@ -70,7 +70,7 @@ typedef struct {
 static CartCommon C;
 static Mapper mapper_nrom, mapper_mmc1, mapper_m105, mapper_m232, mapper_uxrom, mapper_cnrom, mapper_mmc3, mapper_tqrom, mapper_txsrom;
 static Mapper mapper_mmc5, mapper_aorom, mapper_mmc2, mapper_mmc4, mapper_colordreams;
-static Mapper mapper_cprom, mapper_100in1, mapper_bandai, mapper_action53, mapper_unrom512, mapper_fds;
+static Mapper mapper_cprom, mapper_100in1, mapper_bandai, mapper_action53, mapper_unrom512, mapper_m111, mapper_fds;
 static Mapper mapper_taito33, mapper_taito48, mapper_taito_x1005, mapper_taito_x1017;
 static Mapper mapper_jaleco18, mapper_irem32, mapper_irem65, mapper_irem77, mapper_irem97;
 static Mapper mapper_rambo1, mapper_rambo158;
@@ -151,6 +151,19 @@ typedef struct {
     size_t size;
 } RamBlock;
 
+typedef enum {
+    FLASH_WAITING = 0,
+    FLASH_PROGRAM,
+    FLASH_ERASE
+} FlashMode;
+
+static struct {
+    uint8_t bank_latch;
+    uint8_t flash_cycle;
+    FlashMode flash_mode;
+    bool software_id;
+} m111;
+
 static RamBlock prg_work_ram, prg_save_ram;
 static bool prg_ram_dirty = false;
 static bool chr_ram_dirty = false;
@@ -169,6 +182,7 @@ static char *eeprom_save_path[2];
 static char *flash_save_path = NULL;
 static bool flash_dirty = false;
 static bool unrom512_four_screen_chr = false;
+static uint8_t m111_nt_ram[0x4000];
 static RamBlock *mmc5_ram_location(uint16_t a, size_t *offset);
 static Sunsoft5B sunsoft5b_audio;
 static Namco163Audio namco163_audio;
@@ -355,6 +369,10 @@ static bool namco_has_audio(void) {
     return cart == &mapper_namco && namco.variant == NAMCO_VARIANT_163;
 }
 
+static bool cart_has_flash_storage(void) {
+    return cart == &mapper_unrom512 || cart == &mapper_m111;
+}
+
 static void flush_namco_battery(void) {
     bool audio = namco_has_audio();
     if (!battery_enabled || !battery_save_path
@@ -416,7 +434,7 @@ static void flush_flash_battery(void) {
 }
 
 void cart_battery_flush(void) {
-    if (cart == &mapper_unrom512)
+    if (cart_has_flash_storage())
         flush_flash_battery();
     else if (cart == &mapper_mmc5) flush_mmc5_battery();
     else if (cart == &mapper_namco) flush_namco_battery();
@@ -506,15 +524,16 @@ static void load_flash_battery(const char *path) {
 void cart_battery_configure(const char *rom_path, bool has_battery) {
     cart_battery_shutdown();
     bool serial_storage = bandai_eeprom[0].capacity || bandai_eeprom[1].capacity;
-    if (!rom_path || (!has_battery && !serial_storage)) return;
-    if (has_battery && cart == &mapper_unrom512)
+    bool persistent_flash = cart == &mapper_m111 || (has_battery && cart == &mapper_unrom512);
+    if (!rom_path || (!has_battery && !serial_storage && !persistent_flash)) return;
+    if (persistent_flash)
         flash_save_path = build_save_path(rom_path, ".flash.sav");
     if (has_battery && (prg_save_ram.size || namco_has_audio()))
         battery_save_path = build_save_path(rom_path, ".sav");
     if (has_battery && C.ram.chr_nvram) chr_save_path = build_save_path(rom_path, ".chr.sav");
     bool paths_valid = (!has_battery || (!prg_save_ram.size && !namco_has_audio()) || battery_save_path)
                     && (!has_battery || !C.ram.chr_nvram || chr_save_path)
-                    && (!has_battery || cart != &mapper_unrom512 || flash_save_path);
+                    && (!persistent_flash || flash_save_path);
     for (unsigned i = 0; i < 2; ++i) {
         if (!bandai_eeprom[i].capacity) continue;
         eeprom_save_path[i] = build_save_path(rom_path,
@@ -528,7 +547,7 @@ void cart_battery_configure(const char *rom_path, bool has_battery) {
     }
     battery_enabled = battery_save_path || chr_save_path || flash_save_path
                     || eeprom_save_path[0] || eeprom_save_path[1];
-    if (cart == &mapper_unrom512) load_flash_battery(flash_save_path);
+    if (cart_has_flash_storage()) load_flash_battery(flash_save_path);
     else if (cart == &mapper_mmc5) load_mmc5_battery(battery_save_path);
     else if (cart == &mapper_namco) load_namco_battery(battery_save_path);
     else load_battery(battery_save_path, prg_save_ram.data, prg_save_ram.size);
@@ -559,6 +578,7 @@ void mapper_shutdown(void) {
     memset(bandai_eeprom, 0, sizeof(bandai_eeprom));
     mmc5_exram_dirty = false;
     unrom512_four_screen_chr = false;
+    memset(m111_nt_ram, 0, sizeof(m111_nt_ram));
 }
 
 // Helpers
@@ -3759,6 +3779,13 @@ static void vrc6_reset(void) {
 }
 
 uint8_t cart_nt_read(uint16_t addr, uint8_t *nt_ram) {
+    if (cart == &mapper_m111) {
+        (void)nt_ram;
+        uint16_t off = (uint16_t)((addr - 0x2000u) & 0x1FFFu);
+        size_t group = (m111.bank_latch & 0x20u) ? 8u : 0u;
+        size_t page = group + ((off >> 10) & 7u);
+        return m111_nt_ram[page * CHR_BANK_1K + (off & 0x03FFu)];
+    }
     if (cart == &mapper_jy) {
         if (jy.irq_source == JY_IRQ_PPU_READ && cart_ppu_fetch_source != CART_PPU_FETCH_CPU)
             jy_irq_tick();
@@ -3855,6 +3882,14 @@ uint8_t cart_nt_read(uint16_t addr, uint8_t *nt_ram) {
 }
 
 void cart_nt_write(uint16_t addr, uint8_t v, uint8_t *nt_ram) {
+    if (cart == &mapper_m111) {
+        (void)nt_ram;
+        uint16_t off = (uint16_t)((addr - 0x2000u) & 0x1FFFu);
+        size_t group = (m111.bank_latch & 0x20u) ? 8u : 0u;
+        size_t page = group + ((off >> 10) & 7u);
+        m111_nt_ram[page * CHR_BANK_1K + (off & 0x03FFu)] = v;
+        return;
+    }
     if (cart == &mapper_jy) {
         uint16_t off = (uint16_t)((addr - 0x2000u) & 0x0FFFu);
         unsigned slot = (off >> 10) & 3u;
@@ -5182,12 +5217,6 @@ static void m28_power_on(void) {
 }
 
 // Mapper 30: UNROM 512.
-typedef enum {
-    FLASH_WAITING = 0,
-    FLASH_PROGRAM,
-    FLASH_ERASE
-} FlashMode;
-
 static struct {
     uint8_t prg_bank;
     uint8_t chr_bank;
@@ -5378,6 +5407,168 @@ static void m30_power_on(const iNESHeader *h) {
                 break;
         }
     }
+}
+
+// Mapper 111: GTROM with 512 KiB writable flash, 16 KiB CHR RAM and
+// cartridge nametable RAM.
+static void m111_flash_reset_command(void) {
+    m111.flash_mode = FLASH_WAITING;
+    m111.flash_cycle = 0;
+}
+
+static int m111_flash_read(size_t physical) {
+    if (!m111.software_id) return -1;
+    switch (physical & 0x1FFu) {
+        case 0: return 0xBF;
+        case 1: return 0xB7;
+        default: return 0xFF;
+    }
+}
+
+static void m111_flash_program(size_t physical, uint8_t value) {
+    if (physical >= C.prg_sz) return;
+    uint8_t programmed = C.prg[physical] & value;
+    if (programmed == C.prg[physical]) return;
+    C.prg[physical] = programmed;
+    flash_dirty = true;
+}
+
+static void m111_flash_erase_sector(size_t physical) {
+    size_t offset = physical & 0x7F000u;
+    if (offset + 0x1000 > C.prg_sz) return;
+    for (size_t i = 0; i < 0x1000; ++i) {
+        if (C.prg[offset + i] == 0xFF) continue;
+        memset(C.prg + offset, 0xFF, 0x1000);
+        flash_dirty = true;
+        return;
+    }
+}
+
+static void m111_flash_chip_erase(void) {
+    for (size_t i = 0; i < C.prg_sz; ++i) {
+        if (C.prg[i] == 0xFF) continue;
+        memset(C.prg, 0xFF, C.prg_sz);
+        flash_dirty = true;
+        return;
+    }
+}
+
+static void m111_flash_write(size_t physical, uint8_t value) {
+    unsigned command_addr = (unsigned)(physical & 0x7FFFu);
+    if (m111.flash_mode == FLASH_PROGRAM) {
+        m111_flash_program(physical, value);
+        m111_flash_reset_command();
+        return;
+    }
+    if (m111.flash_mode == FLASH_ERASE) {
+        if (m111.flash_cycle == 3 && command_addr == 0x5555 && value == 0xAA) {
+            m111.flash_cycle = 4;
+            return;
+        }
+        if (m111.flash_cycle == 4 && command_addr == 0x2AAA && value == 0x55) {
+            m111.flash_cycle = 5;
+            return;
+        }
+        if (m111.flash_cycle == 5) {
+            if (command_addr == 0x5555 && value == 0x10) m111_flash_chip_erase();
+            else if (value == 0x30) m111_flash_erase_sector(physical);
+        }
+        m111_flash_reset_command();
+        return;
+    }
+
+    if (m111.flash_cycle == 0) {
+        if (command_addr == 0x5555 && value == 0xAA) m111.flash_cycle = 1;
+        else if (value == 0xF0) {
+            m111_flash_reset_command();
+            m111.software_id = false;
+        }
+        return;
+    }
+    if (m111.flash_cycle == 1 && command_addr == 0x2AAA && value == 0x55) {
+        m111.flash_cycle = 2;
+        return;
+    }
+    if (m111.flash_cycle == 2 && command_addr == 0x5555) {
+        m111.flash_cycle = 3;
+        switch (value) {
+            case 0x80:
+                m111.flash_mode = FLASH_ERASE;
+                return;
+            case 0x90:
+                m111_flash_reset_command();
+                m111.software_id = true;
+                return;
+            case 0xA0:
+                m111.flash_mode = FLASH_PROGRAM;
+                return;
+            case 0xF0:
+                m111_flash_reset_command();
+                m111.software_id = false;
+                return;
+            default:
+                return;
+        }
+    }
+    m111.flash_cycle = 0;
+}
+
+static void m111_latch(uint8_t value) {
+    m111.bank_latch = value;
+}
+
+static bool m111_is_register(uint16_t addr) {
+    return (addr >= 0x5000 && addr <= 0x5FFF)
+        || (addr >= 0x7000 && addr <= 0x7FFF);
+}
+
+static uint8_t m111_cpu_read(uint16_t addr) {
+    if (m111_is_register(addr)) {
+        m111_latch(cart_cpu_bus_input);
+        return 0;
+    }
+    if (addr < 0x8000) return cart_cpu_bus_input;
+
+    size_t banks = C.prg_sz / PRG_BANK_32K;
+    if (!banks) return cart_cpu_bus_input;
+    size_t bank = (m111.bank_latch & 0x0Fu) % banks;
+    size_t physical = bank * PRG_BANK_32K + (addr & 0x7FFFu);
+    int flash_value = m111_flash_read(physical);
+    if (flash_value >= 0) return (uint8_t)flash_value;
+    return C.prg[physical];
+}
+
+static void m111_cpu_write(uint16_t addr, uint8_t value) {
+    if (m111_is_register(addr)) {
+        m111_latch(value);
+        return;
+    }
+    if (addr < 0x8000) return;
+    size_t banks = C.prg_sz / PRG_BANK_32K;
+    if (!banks) return;
+    size_t bank = (m111.bank_latch & 0x0Fu) % banks;
+    size_t physical = bank * PRG_BANK_32K + (addr & 0x7FFFu);
+    m111_flash_write(physical, value);
+}
+
+static uint8_t m111_ppu_read(uint16_t addr) {
+    addr &= 0x1FFFu;
+    size_t bank = (m111.bank_latch >> 4) & 1u;
+    return C.chr[bank * CHR_BANK_8K + addr];
+}
+
+static void m111_ppu_write(uint16_t addr, uint8_t value) {
+    addr &= 0x1FFFu;
+    size_t bank = (m111.bank_latch >> 4) & 1u;
+    chr_ram_write(bank * CHR_BANK_8K + addr, value);
+}
+
+static Mirroring m111_mirr(void) { return MIRROR_FOUR; }
+
+static void m111_reset(void) {
+    m111.bank_latch = 0;
+    m111.software_id = false;
+    m111_flash_reset_command();
 }
 
 static void jaleco18_reload_irq(void) {
@@ -6180,7 +6371,7 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         if (split_prg || prg_total > 0x80000) return false;
     } else if (mapper_no == 19 || mapper_no == 210) {
         if (split_prg || prg_total > 0x2000) return false;
-    } else if (mapper_no == 90 || mapper_no == 209 || mapper_no == 211) {
+    } else if (mapper_no == 90 || mapper_no == 111 || mapper_no == 209 || mapper_no == 211) {
         if (prg_total != 0) return false;
     } else if (mapper_no == 30) {
         if (prg_total != 0) return false;
@@ -6189,7 +6380,10 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
     }
 
     size_t mixed_chr_ram = mmc3_mixed_chr_expected_ram(mapper_no);
-    if (mixed_chr_ram) {
+    if (mapper_no == 111) {
+        if (!chr_is_ram || chr_sz != 0x4000) return false;
+        if (nes2 && (ram->chr_ram != 0x4000 || ram->chr_nvram != 0)) return false;
+    } else if (mixed_chr_ram) {
         if (chr_is_ram || chr_sz == 0) return false;
         if (nes2 && (ram->chr_ram != mixed_chr_ram || ram->chr_nvram != 0)) return false;
     } else if (mapper_no == 77) {
@@ -6222,6 +6416,7 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         case 76: chr_limit = 0x80000; break;
         case 88: case 154: chr_limit = 0x20000; break;
         case 90: case 209: case 211: chr_limit = 0x200000; break;
+        case 111: chr_limit = 0x4000; break;
         case 85: chr_limit = 0x40000; break;
         case 74: case 191: case 194: chr_limit = 0x0800; break;
         case 192: case 195: chr_limit = 0x1000; break;
@@ -6271,7 +6466,7 @@ int mapper_init_from_header(const iNESHeader *h,
     uint8_t submapper = nes2 ? h->prg_ram_size >> 4 : 0;
     switch (mapper_no) {
         case 0: case 1: case 2: case 3: case 4: case 5:
-        case 7: case 9: case 10: case 11: case 13: case 15: case 28: case 30: case 74: case 118: case 119: case 155:
+        case 7: case 9: case 10: case 11: case 13: case 15: case 28: case 30: case 74: case 111: case 118: case 119: case 155:
         case 16: case 153: case 157: case 159:
         case 18: case 32: case 33: case 34: case 48: case 64: case 65: case 158:
         case 21: case 22: case 23: case 24: case 25: case 26: case 27: case 183:
@@ -6524,6 +6719,12 @@ int mapper_init_from_header(const iNESHeader *h,
         && (prg_sz > 0x40000 || (prg_sz % PRG_BANK_16K) != 0
             || chr_sz > 0x20000 || (chr_sz % CHR_BANK_4K) != 0)) {
         fprintf(stderr, "Unsupported ROM size for mapper 105\n");
+        return -1;
+    }
+    if (mapper_no == 111
+        && (prg_sz > 0x80000 || (prg_sz % PRG_BANK_32K) != 0
+            || !chr_is_ram || chr_sz != 0x4000)) {
+        fprintf(stderr, "Unsupported ROM/RAM size for mapper 111\n");
         return -1;
     }
     if (mapper_no == 232
@@ -6856,6 +7057,11 @@ int mapper_init_from_header(const iNESHeader *h,
                          m105_ppu_read, nrom_ppu_write, m105_reset, mmc1_mirr);
             mapper_m105.clock = m105_clock;
             cart = &mapper_m105;
+            break;
+        case 111:
+            build_mapper(&mapper_m111, m111_cpu_read, m111_cpu_write,
+                         m111_ppu_read, m111_ppu_write, m111_reset, m111_mirr);
+            cart = &mapper_m111;
             break;
         case 74: case 119: case 191: case 192: case 194: case 195:
             if (!mmc3_mixed_chr_configure(mapper_no)) return -1;

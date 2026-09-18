@@ -1852,6 +1852,26 @@ static iNESHeader unrom512_header(uint8_t submapper, bool battery, uint8_t chr_r
     return h;
 }
 
+static iNESHeader m111_header(void) {
+    iNESHeader h = header_for(111, 0x80000, true);
+    h.flags7 |= 0x08;
+    h.flags10 = 0;
+    h.zero[0] = 8; // 16 KiB CHR RAM.
+    return h;
+}
+
+static void m111_flash_command(uint8_t command) {
+    cart_cpu_write(0xD555, 0xAA);
+    cart_cpu_write(0xAAAA, 0x55);
+    cart_cpu_write(0xD555, command);
+}
+
+static void m111_flash_erase_prefix(void) {
+    m111_flash_command(0x80);
+    cart_cpu_write(0xD555, 0xAA);
+    cart_cpu_write(0xAAAA, 0x55);
+}
+
 static void unrom512_flash_command(uint8_t command) {
     cart_cpu_write(0xC000, 0x01);
     cart_cpu_write(0x9555, 0xAA);
@@ -2116,6 +2136,107 @@ static int test_unrom512_cpu_flash(void) {
     CHECK(cart_cpu_read(0xC000) == 30);
     cpu_soft_reset(&cpu);
     CHECK(cart_cpu_read(0x8123) == 4);
+    return 0;
+}
+
+static int test_mapper111_banks_flash_and_nametables(void) {
+    iNESHeader legacy = header_for(111, 0x80000, true);
+    RomRamSizes ram;
+    CHECK(rom_ram_sizes(&legacy, &ram) == 0);
+    CHECK(ram.prg_ram == 0 && ram.prg_nvram == 0 && ram.chr_ram == 0x4000 && ram.chr_nvram == 0);
+    CHECK(fixture_with_header(&legacy, 0x80000, 0x4000) == 111);
+
+    iNESHeader h = m111_header();
+    CHECK(fixture_with_header(&h, 0x80000, 0x4000) == 111);
+    CHECK(cart_get_mirroring() == MIRROR_FOUR && cart_cpu_read(0x8000) == 0);
+
+    cart_cpu_write(0x5000, 0x03);
+    CHECK(cart_cpu_read(0x8000) == 12);
+    cart_cpu_write(0x7000, 0x06);
+    CHECK(cart_cpu_read(0x8000) == 24);
+
+    CHECK(cart_cpu_read_bus(0x5000, 0x21) == 0);
+    CHECK(cart_cpu_read(0x8000) == 4);
+    CHECK(cart_cpu_read_bus(0x7FFF, 0x32) == 0);
+    CHECK(cart_cpu_read(0x8000) == 8);
+
+    cart_cpu_write(0x5000, 0x00);
+    cart_ppu_write(0x0123, 0xA1);
+    cart_cpu_write(0x5000, 0x10);
+    cart_ppu_write(0x0123, 0xB2);
+    CHECK(cart_ppu_read(0x0123) == 0xB2);
+    cart_cpu_write(0x5000, 0x00);
+    CHECK(cart_ppu_read(0x0123) == 0xA1);
+
+    uint8_t nt[0x1000] = {0};
+    cart_nt_write(0x2000, 0x20, nt);
+    cart_nt_write(0x3C00, 0x27, nt);
+    cart_cpu_write(0x5000, 0x20);
+    CHECK(cart_nt_read(0x2000, nt) == 0 && cart_nt_read(0x3C00, nt) == 0);
+    cart_nt_write(0x2000, 0x30, nt);
+    cart_nt_write(0x3C00, 0x37, nt);
+    cart_cpu_write(0x5000, 0x00);
+    CHECK(cart_nt_read(0x2000, nt) == 0x20 && cart_nt_read(0x3C00, nt) == 0x27);
+    cart_cpu_write(0x5000, 0x20);
+    CHECK(cart_nt_read(0x2000, nt) == 0x30 && cart_nt_read(0x3C00, nt) == 0x37);
+
+    cart_cpu_write(0x5000, 0x03);
+    m111_flash_command(0x90);
+    CHECK(cart_cpu_read(0x8000) == 0xBF && cart_cpu_read(0x8001) == 0xB7);
+    cart_cpu_write(0x8000, 0xF0);
+    CHECK(cart_cpu_read(0x8000) == 12);
+
+    m111_flash_command(0xA0);
+    cart_cpu_write(0x8123, 0x00);
+    CHECK(cart_cpu_read(0x8123) == 0x00);
+    m111_flash_command(0xA0);
+    cart_cpu_write(0x8123, 0xFF);
+    CHECK(cart_cpu_read(0x8123) == 0x00);
+
+    uint8_t untouched = cart_cpu_read(0x9234);
+    cart_cpu_write(0xD555, 0xAA);
+    cart_cpu_write(0xAAAA, 0x54);
+    cart_cpu_write(0x9234, 0x00);
+    CHECK(cart_cpu_read(0x9234) == untouched);
+
+    m111_flash_erase_prefix();
+    cart_cpu_write(0x8123, 0x30);
+    CHECK(cart_cpu_read(0x8123) == 0xFF);
+
+    cart_cpu_write(0x5000, 0x10);
+    cart_ppu_write(0x0456, 0xD4);
+    cart_cpu_write(0x5000, 0x02);
+    CHECK(cart_cpu_read(0x8000) == 8);
+    cart->reset();
+    CHECK(cart_cpu_read(0x8000) == 0);
+    cart_cpu_write(0x5000, 0x10);
+    CHECK(cart_ppu_read(0x0456) == 0xD4);
+
+    m111_flash_command(0xA0);
+    cart_cpu_write(0x8123, 0x00);
+    m111_flash_erase_prefix();
+    cart_cpu_write(0xD555, 0x10);
+    CHECK(cart_cpu_read(0x8123) == 0xFF);
+
+    size_t image_size;
+    uint8_t *image = image_for(&h, 0x80000, 0, &image_size);
+    CHECK(image != NULL && load_rom_memory(image, image_size) == 0);
+    free(image);
+    uint8_t *previous_prg = prg_rom;
+    uint8_t *previous_chr = chr_rom;
+    iNESHeader invalid = h;
+    invalid.zero[0] = 7;
+    image = image_for(&invalid, 0x80000, 0, &image_size);
+    CHECK(image != NULL && load_rom_memory(image, image_size) == -1);
+    free(image);
+    CHECK(prg_rom == previous_prg && chr_rom == previous_chr && rom_mapper_number(&ines_header) == 111);
+
+    invalid = h;
+    invalid.flags10 = 7;
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x80000, fixture_chr, 0x4000) == -1);
+    invalid = h;
+    invalid.prg_ram_size = 0x10;
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x80000, fixture_chr, 0x4000) == -1);
     return 0;
 }
 
@@ -4329,6 +4450,49 @@ static int test_unrom512_flash_persistence(void) {
     cart_battery_configure(paths.rom, true);
     cart_cpu_write(0xC000, 0x03);
     CHECK(cart_cpu_read(0x8123) == 0xFF);
+
+    return save_fixture_end(&paths);
+}
+
+static int test_mapper111_flash_persistence(void) {
+    SaveFixture paths;
+    CHECK(save_fixture_begin(&paths) == 0);
+    iNESHeader h = m111_header();
+    CHECK(fixture_with_header(&h, 0x80000, 0x4000) == 111);
+
+    cart_battery_configure(paths.rom, false);
+    cart_cpu_write(0x5000, 0x03);
+    m111_flash_command(0xA0);
+    cart_cpu_write(0x8123, 0x00);
+    cart_battery_flush();
+    CHECK(saved_file_size(paths.flash_save) == 0x80000);
+    CHECK(saved_byte(paths.flash_save, 3 * 0x8000 + 0x123) == 0x00);
+
+    CHECK(fixture_with_header(&h, 0x80000, 0x4000) == 111);
+    cart_battery_configure(paths.rom, false);
+    cart_cpu_write(0x5000, 0x03);
+    CHECK(cart_cpu_read(0x8123) == 0x00);
+
+    cart_battery_shutdown();
+    CHECK(remove(paths.flash_save) == 0);
+#ifdef _WIN32
+    CHECK(_mkdir(paths.flash_save) == 0);
+#else
+    CHECK(mkdir(paths.flash_save, 0700) == 0);
+#endif
+    cart_battery_configure(paths.rom, false);
+    cart_cpu_write(0x5000, 0x04);
+    m111_flash_command(0xA0);
+    cart_cpu_write(0x8456, 0x00);
+    cart_battery_flush();
+#ifdef _WIN32
+    CHECK(_rmdir(paths.flash_save) == 0);
+#else
+    CHECK(rmdir(paths.flash_save) == 0);
+#endif
+    cart_battery_flush();
+    CHECK(saved_file_size(paths.flash_save) == 0x80000);
+    CHECK(saved_byte(paths.flash_save, 4 * 0x8000 + 0x456) == 0x00);
 
     return save_fixture_end(&paths);
 }
@@ -7576,6 +7740,7 @@ int test_mapper_accuracy(void) {
         test_action53_game_sizes, test_action53_largest_image,
         test_unrom512_banks_flash_and_mirroring, test_mmc5_memory_windows,
         test_unrom512_physical_flash_address, test_unrom512_cpu_flash,
+        test_mapper111_banks_flash_and_nametables,
         test_mmc5_exram_and_irq, test_mmc5_chr_fetch_modes, test_mmc5_extended_rendering,
         test_mmc5_rendered_ppu_paths, test_mmc5_audio_and_pcm, test_header_and_mapper_rejection,
         test_loader_trainers_and_sizes, test_loader_rejection_preserves_cart,
@@ -7583,7 +7748,7 @@ int test_mapper_accuracy(void) {
         test_ram_header_sizes, test_prg_ram_capacity, test_mmc1_banked_ram,
         test_mmc5_banked_ram, test_loader_ram_layouts, test_prg_nvram_persistence,
         test_vs_nvram_persistence,
-        test_unrom512_flash_persistence,
+        test_unrom512_flash_persistence, test_mapper111_flash_persistence,
         test_mmc5_persistence,
         test_chr_nvram_persistence, test_chr_nvram_writers,
         test_mmc6_ram_mirroring, test_mmc6_protection, test_mmc6_banks_and_irq,
