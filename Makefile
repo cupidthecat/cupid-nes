@@ -36,7 +36,7 @@ TEST_SRC = src/tests/accuracy_test.c src/tests/cpu_accuracy.c \
            src/tests/board_mmc3_97_accuracy.c src/tests/board_mmc3_98_accuracy.c \
            src/tests/board_unlicensed_109_accuracy.c src/tests/board_unlicensed_111_accuracy.c \
            src/tests/board_unlicensed_112_accuracy.c src/tests/board_txc_107_accuracy.c \
-           src/tests/board_unlicensed_113_accuracy.c
+           src/tests/board_unlicensed_113_accuracy.c src/tests/board_unlicensed_114_accuracy.c
 CORE_OBJ = $(CORE_SRC:.c=.o) $(CORE_CXX_SRC:.cpp=.o)
 TEST_OBJ = $(TEST_SRC:.c=.o)
 OBJ = $(CORE_OBJ) $(TEST_OBJ) src/main.o

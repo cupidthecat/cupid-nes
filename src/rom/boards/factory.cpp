@@ -34,6 +34,7 @@
 #include "unlicensed_112.hpp"
 #include "txc_107.hpp"
 #include "unlicensed_113.hpp"
+#include "unlicensed_114.hpp"
 
 namespace cupid::boards {
 
@@ -113,6 +114,18 @@ std::unique_ptr<Board> CreateBoard(unsigned mapper) {
         case 264: return std::make_unique<Yoko>();
         case 265: return std::make_unique<T262>();
         case 266: return std::make_unique<CityFighter>();
+        case 274: return std::make_unique<Bmc80013B>();
+        case 283: return std::make_unique<Gs2004>();
+        case 285: return std::make_unique<A65AS>();
+        case 288: return std::make_unique<Gkcx1>();
+        case 289: return std::make_unique<Bmc60311C>();
+        case 300: return std::make_unique<Bmc190in1>();
+        case 301: return std::make_unique<Bmc8157>();
+        case 314: return std::make_unique<Bmc64in1NoRepeat>();
+        case 319: return std::make_unique<Hp898f>();
+        case 320: return std::make_unique<Bmc830425C4391T>();
+        case 328: return std::make_unique<Rt01>();
+        case 329: return std::make_unique<Edu2000>();
         case 70: return std::make_unique<Bandai74161>(false);
         case 86: return std::make_unique<JalecoJf13>();
         case 104: return std::make_unique<GoldenFive>();
@@ -224,6 +237,8 @@ bool board_handles_mapper(unsigned mapper) {
         case 228: case 229: case 230: case 231: case 233: return true;
         case 234: case 235: case 236: case 240: case 241: case 244:
         case 246: case 255: case 261: case 264: case 265: case 266: return true;
+        case 274: case 283: case 285: case 288: case 289: case 300:
+        case 301: case 314: case 319: case 320: case 328: case 329: return true;
         default: return false;
     }
 }

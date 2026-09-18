@@ -75,6 +75,8 @@ PRG is the cartridge memory read by the CPU; CHR holds graphics patterns read by
 | 226, 230, 231, 233 | Reset-sensitive multicarts | Bank-register reset, reset-selected game modes, mirrored or consecutive PRG windows, and retained mirroring where required |
 | 234, 235, 236, 240, 241, 244, 246, 255, 261, 265 | Multicart bank and read latches | Read-triggered bank changes, bus conflicts, DIP-switch reads, chip-select open bus, register overlays, and board-specific reset behavior |
 | 264, 266 | Yoko and City Fighter | PRG/CHR banking, CPU-clocked IRQ counters, nametable wiring, and City Fighter writes to the DMC DAC |
+| 274, 283, 285, 288, 289, 300, 301, 314, 319, 320 | Multicart address decoders | Paired or mirrored PRG windows, fixed low ROM, separate outer-bank latches, DIP-selected open bus, and CHR bank masks |
+| 328, 329 | RT-01 and EDU2000 | Protected read ranges with varying data bits, repeated CHR windows, and separately banked work RAM |
 | 64, 158 | RAMBO-1 | PRG/CHR banks, CPU- or PPU-clocked IRQs, and mapper 158 nametable wiring |
 | 66 | GxROM | Combined PRG/CHR bank selection and bus conflicts |
 | 67 | Sunsoft 3 | 2 KiB CHR banks, switchable 16 KiB PRG, mirroring, and a one-shot CPU IRQ counter |
@@ -222,6 +224,14 @@ Mapper 236 uses the low address bits for either CHR selection or an outer PRG ba
 Mapper 255 selects an outer PRG/CHR group and mirrored or consecutive PRG banks from the write address. Mapper 261 resets to its initial banks and mirroring. Mapper 265 can lock its outer bank, PRG mode, and mirroring until the cartridge is reloaded; subsequent writes still change the inner bank. These boards retain their ordinary declared RAM and battery storage.
 
 Yoko mapper 264 has a 16-bit CPU counter that stops when it asserts IRQ. Its DIP reads preserve the undriven upper six CPU data bits, and its four extra registers have mirrored addresses. Soft reset clears the bank and mode latches while retaining the mapped windows and interrupt state until the next applicable register write. City Fighter mapper 266 keeps counting after IRQ, including 16-bit wraparound. Its decoded audio writes reach `$4011` on the production CPU bus, set the seven-bit DMC DAC value, and do not add another CPU cycle. Both boards implement their PRG and CHR register aliases and interrupt acknowledgement paths.
+
+Mapper 274 selects its bank mode through the CPU write-address window and resets both PRG windows to bank zero. Mapper 283 maps a fixed ROM bank at `$6000-$7FFF`, keeps that window read-only, and restores its initial upper PRG banks on reset. Mapper 285 supports consecutive or separately selected PRG banks and all four horizontal, vertical, and single-screen nametable modes. Mappers 288 and 300 couple PRG and CHR selection through address and data latches respectively; their bank selections survive CPU soft reset.
+
+Mapper 289 exposes outer-bank and mode writes over readable RAM at `$6000-$7FFF`. Its three defined PRG modes select mirrored banks, consecutive banks, or a fixed upper bank. Mode 3 retains the existing PRG windows while mirroring can still change. Mapper 301 can leave PRG reads on open bus when its DIP setting selects a missing chip. Such a selection retains the previous mirroring, and changing the switch takes effect on the next bank-register write. Larger PRG images retain access to the selected chip regardless of that switch.
+
+Mapper 314 has four write registers at `$5000-$5003`. Clearing its full-window mode leaves the lower PRG mapping intact while the upper bank changes. Reset restores both PRG windows, CHR selection, and mirroring. Mapper 319 decodes writes only in `$6000-$7FFF` and `$E000-$FFFF`, with separate PRG and CHR masks. Mapper 320 accepts inner-bank writes throughout the upper CPU range, but its outer bank and bank mode change only on writes to `$F0E0-$F0FF`.
+
+Mapper 328 repeats its first 16 KiB PRG bank and first 2 KiB CHR bank. Reads at `$CE80-$CEFF` and `$FE80-$FEFF` return `$F2` with varying bits 0, 2, and 3; reads outside those ranges return ROM. Mapper 329 selects 32 KiB PRG banks and up to four 8 KiB work-RAM windows. Its unspecified work-RAM size is 32 KiB; explicit NES 2.0 RAM sizes take precedence. When both work RAM and save RAM exist, bank writes select work RAM and leave the separate battery data unchanged. An absent work-RAM source leaves the initial CPU mapping in place. Reloading the cartridge restores battery data while initializing volatile work RAM and applying its trainer again.
 
 The mapper 72 and 92 cartridge banking and latch behavior is implemented. Optional speech hardware on those boards is not currently emulated.
 

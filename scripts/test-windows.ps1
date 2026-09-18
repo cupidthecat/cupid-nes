@@ -79,7 +79,7 @@ $testSources = @('src/tests/accuracy_test.c', 'src/tests/cpu_accuracy.c', 'src/t
                  'src/tests/board_mmc3_97_accuracy.c', 'src/tests/board_mmc3_98_accuracy.c',
                  'src/tests/board_unlicensed_109_accuracy.c', 'src/tests/board_unlicensed_111_accuracy.c',
                  'src/tests/board_unlicensed_112_accuracy.c', 'src/tests/board_txc_107_accuracy.c',
-                 'src/tests/board_unlicensed_113_accuracy.c')
+                 'src/tests/board_unlicensed_113_accuracy.c', 'src/tests/board_unlicensed_114_accuracy.c')
 $application = Join-Path $outputDirectory 'cupid-nes.exe'
 $testProgram = Join-Path $outputDirectory 'accuracy-tests.exe'
 $objectDirectory = Join-Path $outputDirectory 'objects'
