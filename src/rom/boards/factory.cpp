@@ -16,6 +16,7 @@
 #include "jaleco.hpp"
 #include "ffe.hpp"
 #include "farid.hpp"
+#include "mmc3_95.hpp"
 #include "ntdec.hpp"
 #include "racermate.hpp"
 #include "taito.hpp"
@@ -38,9 +39,21 @@ std::unique_ptr<Board> CreateBoard(unsigned mapper) {
         case 298: return std::make_unique<Tf1201>();
         case 6: case 8: case 17: return std::make_unique<FrontFareast>();
         case 31: return std::make_unique<NsfCartridge>();
+        case 12: return std::make_unique<Mmc3_12>();
+        case 14: return std::make_unique<Mmc3_14>();
+        case 37: return std::make_unique<Mmc3_37>();
+        case 44: return std::make_unique<Mmc3_44>();
+        case 45: return std::make_unique<Mmc3_45>();
+        case 47: return std::make_unique<Mmc3_47>();
+        case 49: return std::make_unique<Mmc3_49>();
+        case 52: return std::make_unique<Mmc3_52>();
         case 70: return std::make_unique<Bandai74161>(false);
         case 86: return std::make_unique<JalecoJf13>();
         case 104: return std::make_unique<GoldenFive>();
+        case 114: return std::make_unique<Mmc3_114>();
+        case 115: return std::make_unique<Mmc3_115>();
+        case 121: return std::make_unique<Mmc3_121>();
+        case 123: return std::make_unique<Mmc3_123>();
         case 152: return std::make_unique<Bandai74161>(true);
         case 188: return std::make_unique<BandaiKaraoke>();
         case 218: return std::make_unique<MagicFloor>();
@@ -84,6 +97,8 @@ bool board_handles_mapper(unsigned mapper) {
         case 6: case 8: case 17: return true;
         case 323: case 324: return true;
         case 31: case 70: case 86: case 104: case 152: case 188: case 218: return true;
+        case 12: case 14: case 37: case 44: case 45: case 47: case 49: case 52:
+        case 114: case 115: case 121: case 123: return true;
         default: return false;
     }
 }
