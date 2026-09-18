@@ -181,6 +181,8 @@ static uint8_t mmc3_mixed_chr_ram[CHR_BANK_8K];
 static size_t mmc3_mixed_chr_first_bank;
 static size_t mmc3_mixed_chr_last_bank;
 static size_t mmc3_mixed_chr_ram_size;
+static uint8_t mmc3_mixed_chr_source[0x20];
+static size_t mmc3_mixed_chr_offset[0x20];
 static uint8_t irem77_chr_ram[CHR_BANK_8K];
 static bool mmc5_exram_dirty = false;
 static bool battery_enabled = false;
@@ -684,13 +686,15 @@ static bool mapper_has_shrinking_chr_window(uint16_t mapper_no) {
         case 13: case 15: case 16: case 18: case 21: case 22: case 23: case 24:
         case 25: case 26: case 27:
         case 32: case 33: case 34: case 48: case 64: case 65: case 66: case 67:
-        case 68: case 69: case 71: case 72: case 73: case 75: case 76: case 78:
+        case 68: case 69: case 71: case 72: case 73: case 74: case 75: case 76:
+        case 78:
         case 79: case 80: case 82: case 85: case 87: case 88: case 89: case 90:
         case 92:
-        case 93: case 94: case 95: case 97: case 101: case 105: case 113: case 140:
-        case 144: case 146: case 151: case 154: case 155: case 158: case 180:
-        case 153: case 157: case 159: case 183: case 184: case 185: case 206:
-        case 207: case 209: case 211: case 232:
+        case 93: case 94: case 95: case 97: case 101: case 105: case 113: case 119:
+        case 140: case 144: case 146: case 151: case 153: case 154: case 155:
+        case 157: case 158: case 159: case 180: case 183: case 184: case 185:
+        case 191: case 192: case 194: case 195: case 206: case 207: case 209:
+        case 211: case 232:
             return true;
         default:
             return false;
@@ -1945,6 +1949,7 @@ static struct {
     bool revision_a;
 } mmc3;
 static uint8_t txsrom_nt[4];
+static void mmc3_mixed_chr_update_mapping(void);
 
 typedef struct {
     uint8_t prg[2];
@@ -2422,6 +2427,7 @@ static uint8_t mmc3_cpu_read(uint16_t a) {
 }
 
 static void mmc3_cpu_write(uint16_t a, uint8_t v) {
+    bool update_chr = false;
     if (a >= 0x6000 && a <= 0x7FFF) {
         if (C.submapper == 1) {
             uint8_t required = (a & 0x0200) ? 0xC0 : 0x30;
@@ -2443,9 +2449,11 @@ static void mmc3_cpu_write(uint16_t a, uint8_t v) {
             }
             MMC3_LOG("write %04X=%02X select=%u prg_mode=%u chr_mode=%u", a, v,
                      mmc3.bank_select, mmc3.prg_mode, mmc3.chr_mode);
+            update_chr = true;
         } else if ((a & 0xE001) == 0x8001) {
             mmc3.banks[mmc3.bank_select] = v;
             MMC3_LOG("write %04X=%02X bank[%u]=%02X", a, v, mmc3.bank_select, v);
+            update_chr = true;
         } else if ((a & 0xE001) == 0xA000) {
             if (C.mirr_base != MIRROR_FOUR)
                 mmc3.mirr = (v & 1) ? MIRROR_HORIZONTAL : MIRROR_VERTICAL;
@@ -2468,6 +2476,7 @@ static void mmc3_cpu_write(uint16_t a, uint8_t v) {
             mmc3.irq_enabled = true;
             MMC3_LOG("write %04X=%02X irq_enable", a, v);
         }
+        if (update_chr && cart == &mapper_tqrom) mmc3_mixed_chr_update_mapping();
     }
 }
 
@@ -2488,9 +2497,7 @@ static void txsrom_cpu_write(uint16_t a, uint8_t v) {
     mmc3_cpu_write(a, v);
 }
 
-static size_t mmc3_chr_bank(uint16_t a) {
-    a &= 0x1FFF;
-    uint8_t slot = (uint8_t)(a >> 10);
+static size_t mmc3_chr_bank_for_slot(uint8_t slot) {
     size_t bank = 0;
     if (mmc3.chr_mode == 0) {
         static const uint8_t slot_map[8] = {0, 0, 1, 1, 2, 3, 4, 5};
@@ -2512,6 +2519,10 @@ static size_t mmc3_chr_bank(uint16_t a) {
         }
     }
     return bank;
+}
+
+static size_t mmc3_chr_bank(uint16_t a) {
+    return mmc3_chr_bank_for_slot((uint8_t)((a & 0x1FFFu) >> 10));
 }
 
 static uint8_t mmc3_ppu_read(uint16_t a) {
@@ -2538,29 +2549,54 @@ static bool mmc3_mixed_chr_uses_ram(size_t bank) {
         && bank >= mmc3_mixed_chr_first_bank && bank <= mmc3_mixed_chr_last_bank;
 }
 
-static size_t mmc3_mixed_chr_ram_offset(uint16_t a, size_t bank) {
-    size_t ram_bank = (bank - mmc3_mixed_chr_first_bank)
-                    % (mmc3_mixed_chr_ram_size / CHR_BANK_1K);
-    return ram_bank * CHR_BANK_1K + (a & 0x03FF);
+enum {
+    MMC3_MIXED_CHR_NONE = 0,
+    MMC3_MIXED_CHR_ROM,
+    MMC3_MIXED_CHR_RAM
+};
+
+static void mmc3_mixed_chr_select_page(unsigned slot, size_t bank) {
+    bool use_ram = mmc3_mixed_chr_uses_ram(bank);
+    size_t source_size = use_ram ? mmc3_mixed_chr_ram_size : C.chr_sz;
+    size_t page_size = source_size < CHR_BANK_1K ? source_size : CHR_BANK_1K;
+    if (!page_size) return;
+    size_t page_count = source_size / page_size;
+    if (!page_count) return;
+
+    size_t source_page = use_ram ? bank - mmc3_mixed_chr_first_bank : bank;
+    source_page %= page_count;
+    size_t start = (size_t)slot * page_size;
+    size_t chunks = page_size / 0x100u;
+    for (size_t i = 0; i < chunks; ++i) {
+        size_t destination = start / 0x100u + i;
+        if (destination >= 0x20u) break;
+        mmc3_mixed_chr_source[destination] = use_ram ? MMC3_MIXED_CHR_RAM : MMC3_MIXED_CHR_ROM;
+        mmc3_mixed_chr_offset[destination] = source_page * page_size + i * 0x100u;
+    }
+}
+
+static void mmc3_mixed_chr_update_mapping(void) {
+    for (unsigned slot = 0; slot < 8; ++slot)
+        mmc3_mixed_chr_select_page(slot, mmc3_chr_bank_for_slot((uint8_t)slot));
 }
 
 static uint8_t mmc3_mixed_chr_ppu_read(uint16_t a) {
     a &= 0x1FFF;
-    size_t bank = mmc3_chr_bank(a);
-    if (mmc3_mixed_chr_uses_ram(bank))
-        return mmc3_mixed_chr_ram[mmc3_mixed_chr_ram_offset(a, bank)];
-
-    size_t chr_1k_banks = C.chr_sz / CHR_BANK_1K;
-    if (chr_1k_banks == 0) return 0;
-    bank %= chr_1k_banks;
-    return C.chr[bank * CHR_BANK_1K + (a & 0x03FF)];
+    size_t chunk = a >> 8;
+    size_t offset = mmc3_mixed_chr_offset[chunk] + (a & 0xFFu);
+    if (mmc3_mixed_chr_source[chunk] == MMC3_MIXED_CHR_RAM)
+        return offset < mmc3_mixed_chr_ram_size ? mmc3_mixed_chr_ram[offset] : (uint8_t)a;
+    if (mmc3_mixed_chr_source[chunk] == MMC3_MIXED_CHR_ROM)
+        return offset < C.chr_sz ? C.chr[offset] : (uint8_t)a;
+    return (uint8_t)a;
 }
 
 static void mmc3_mixed_chr_ppu_write(uint16_t a, uint8_t v) {
     a &= 0x1FFF;
-    size_t bank = mmc3_chr_bank(a);
-    if (!mmc3_mixed_chr_uses_ram(bank)) return;
-    mmc3_mixed_chr_ram[mmc3_mixed_chr_ram_offset(a, bank)] = v;
+    size_t chunk = a >> 8;
+    if (mmc3_mixed_chr_source[chunk] != MMC3_MIXED_CHR_RAM) return;
+    size_t offset = mmc3_mixed_chr_offset[chunk] + (a & 0xFFu);
+    if (offset < mmc3_mixed_chr_ram_size) mmc3_mixed_chr_ram[offset] = v;
 }
 
 static size_t mmc3_mixed_chr_expected_ram(int mapper_no) {
@@ -2596,6 +2632,11 @@ static void mmc3_reset(void) {
                    && !(C.mapper_no == 4 && (C.submapper == 1 || C.submapper == 3));
     if (C.submapper == 3 && C.mirr_base != MIRROR_FOUR) mmc3.mirr = MIRROR_VERTICAL;
     mapper_irq_line = false;
+    if (cart == &mapper_tqrom || mmc3_mixed_chr_ram_size) {
+        memset(mmc3_mixed_chr_source, 0, sizeof(mmc3_mixed_chr_source));
+        memset(mmc3_mixed_chr_offset, 0, sizeof(mmc3_mixed_chr_offset));
+        mmc3_mixed_chr_update_mapping();
+    }
 }
 
 static void txsrom_reset(void) {
@@ -7295,8 +7336,7 @@ int mapper_init_from_header(const iNESHeader *h,
         fprintf(stderr, "Unsupported ROM size for mapper 118\n");
         return -1;
     }
-    if (mmc3_mixed_chr_expected_ram(mapper_no)
-        && (chr_is_ram || chr_sz < CHR_BANK_1K)) {
+    if (mmc3_mixed_chr_expected_ram(mapper_no) && chr_is_ram) {
         fprintf(stderr, "Unsupported ROM size for mapper %d\n", mapper_no);
         return -1;
     }

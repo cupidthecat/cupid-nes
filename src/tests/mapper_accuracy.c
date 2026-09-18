@@ -6129,6 +6129,66 @@ static int test_mapper34_loader_preserves_cart(void) {
     return 0;
 }
 
+static int test_mmc3_mixed_chr_source_page_geometry(void) {
+    iNESHeader h = header_for(74, 0x20000, false);
+    h.flags7 |= 0x08;
+    h.flags10 = 7;  // 8 KiB volatile PRG-RAM.
+    h.zero[0] = 5; // 2 KiB volatile CHR-RAM for mapper 74.
+    h.chr_rom_chunks = 0x24; // NES 2.0 exponent encoding: 512-byte CHR-ROM.
+    h.flags9 = (uint8_t)((h.flags9 & 0x0Fu) | 0xF0u);
+
+    size_t image_size;
+    uint8_t *image = tqrom_image(&h, 0x0200, &image_size);
+    CHECK(image != NULL);
+    uint8_t *chr = image + sizeof(h) + 0x20000;
+    memset(chr, 0x5A, 0x0200);
+    CHECK(load_rom_memory(image, image_size) == 0);
+    free(image);
+
+    // The ROM page shrinks to 512 bytes, so MMC3 logical slots 0-7 initially
+    // cover only $0000-$0FFF. The upper half remains unmapped.
+    CHECK(cart_ppu_read(0x0812) == 0x5A);
+    CHECK(cart_ppu_read(0x1012) == 0x12);
+
+    // Register 2 is logical slot 4 in CHR mode 0. Selecting mapper 74's RAM
+    // bank maps a 1 KiB RAM page at slot*1 KiB = $1000, independently of the
+    // existing 512-byte ROM slot at $0800.
+    cart_cpu_write(0x8000, 2);
+    cart_cpu_write(0x8001, 0x08);
+    cart_ppu_write(0x1012, 0xA6);
+    CHECK(cart_ppu_read(0x1012) == 0xA6);
+    CHECK(cart_ppu_read(0x0812) == 0x5A);
+    CHECK(cart_ppu_read(0x1412) == 0x12);
+
+    // Switching that logical slot back to ROM overwrites only the 512-byte
+    // destination range. The RAM mapping at $1000 is outside it and remains,
+    // matching the source mapper's range-overwrite behavior.
+    cart_cpu_write(0x8001, 0x07);
+    CHECK(cart_ppu_read(0x0812) == 0x5A);
+    CHECK(cart_ppu_read(0x1012) == 0xA6);
+    cart_ppu_write(0x0812, 0xFF);
+    CHECK(cart_ppu_read(0x0812) == 0x5A);
+
+    // CPU banking remains live while the PPU source map is mixed.
+    cart_cpu_write(0x8000, 6);
+    cart_cpu_write(0x8001, 3);
+    CHECK(cart_cpu_read(0x8000) == 3);
+
+    // A rejected replacement image is transactional for both CPU and the
+    // source-specific PPU mapping state.
+    uint8_t *previous_prg = prg_rom;
+    uint8_t *previous_chr = chr_rom;
+    iNESHeader invalid = h;
+    invalid.zero[0] = 0; // Missing the board's CHR-RAM source.
+    image = tqrom_image(&invalid, 0x0200, &image_size);
+    CHECK(image != NULL && load_rom_memory(image, image_size) == -1);
+    free(image);
+    CHECK(prg_rom == previous_prg && chr_rom == previous_chr);
+    CHECK(cart_cpu_read(0x8000) == 3);
+    CHECK(cart_ppu_read(0x0812) == 0x5A && cart_ppu_read(0x1012) == 0xA6);
+    return 0;
+}
+
 static int test_mapper34_image_loading(void) {
     for (unsigned submapper = 1; submapper <= 2; ++submapper) {
         bool chr_ram = submapper == 2;
@@ -10428,7 +10488,7 @@ int test_mapper_accuracy(void) {
         test_mmc4_latches_and_chr_ram, test_mmc3_banks_and_protection,
         test_mmc3_irq_edges, test_mmc3_revision_a_irq, test_mmc3_revision_a_cpu_irq,
         test_mmc3_render_trace, test_tqrom_mixed_chr_memory,
-        test_mmc3_mixed_chr_variants,
+        test_mmc3_mixed_chr_variants, test_mmc3_mixed_chr_source_page_geometry,
         test_jy_prg_chr_modes, test_jy_mapper_variants_and_readback,
         test_jy_chr_ram_nametable_reads,
         test_jy_irq_sources_and_cpu_delivery, test_jy_loader_and_reset,
