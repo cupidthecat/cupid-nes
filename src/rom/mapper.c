@@ -7318,12 +7318,7 @@ int mapper_init_from_header_metadata(const iNESHeader *h,
         return -1;
     }
     RomRamSizes ram;
-    rom_ram_sizes(h, &ram);
-    if (database && database->present) {
-        if (database->work_ram_override) ram.prg_ram = database->work_ram;
-        if (database->save_ram_override) ram.prg_nvram = database->save_ram;
-        if (database->chr_ram_override) ram.chr_ram = database->chr_ram;
-    }
+    rom_ram_sizes_with_metadata(h, database, &ram);
     bool is_jy = mapper_no == 90 || mapper_no == 209 || mapper_no == 211;
     if (is_jy && !nes2) ram.prg_ram = ram.prg_nvram = 0;
     if (mapper_no == 99 && !nes2 && !(h->flags6 & 2)) {

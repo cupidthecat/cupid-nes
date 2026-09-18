@@ -403,19 +403,15 @@ void Board::Initialize(const iNESHeader &header, uint8_t *prg, size_t prgBytes,
     _chrRom = chrRom ? chr : nullptr;
     _chrRomSize = chrRom ? static_cast<uint32_t>(chrBytes) : 0;
     RomRamSizes ram{};
-    rom_ram_sizes(&header, &ram);
+    rom_ram_sizes_with_metadata(&header, database, &ram);
     if (database && database->present) {
-        if (database->work_ram_override) ram.prg_ram = database->work_ram;
-        if (database->save_ram_override) ram.prg_nvram = database->save_ram;
-        if (database->chr_ram_override) ram.chr_ram = database->chr_ram;
-    }
-    if (database && database->present) {
-        _saveRamSize = ForceSaveRamSize() ? GetSaveRamSize()
-                     : static_cast<uint32_t>(ram.prg_nvram);
-        _workRamSize = ForceWorkRamSize() ? GetWorkRamSize()
-                     : static_cast<uint32_t>(ram.prg_ram);
+        _saveRamSize = !database->save_ram_override ? (HasBattery() ? GetSaveRamSize() : 0)
+                     : ForceSaveRamSize() ? GetSaveRamSize() : static_cast<uint32_t>(ram.prg_nvram);
+        _workRamSize = !database->work_ram_override ? (HasBattery() ? 0 : GetWorkRamSize())
+                     : ForceWorkRamSize() ? GetWorkRamSize() : static_cast<uint32_t>(ram.prg_ram);
         _saveChrRamSize = static_cast<uint32_t>(ram.chr_nvram);
-        _chrRamSize = static_cast<uint32_t>(ram.chr_ram + ram.chr_nvram);
+        _chrRamSize = database->chr_ram_override ? static_cast<uint32_t>(ram.chr_ram + ram.chr_nvram)
+                    : GetChrRamSize() ? GetChrRamSize() : chrRom ? 0 : 0x2000;
     } else {
         _saveRamSize = !IsNes20() || ForceSaveRamSize()
                      ? (HasBattery() || ForceSaveRamSize() ? GetSaveRamSize() : 0)
@@ -460,9 +456,9 @@ void Board::Initialize(const iNESHeader &header, uint8_t *prg, size_t prgBytes,
     SetupDefaultWorkRam();
     SetMirroringType(header.flags6 & 8 ? MirroringType::FourScreens
                      : header.flags6 & 1 ? MirroringType::Vertical : MirroringType::Horizontal);
-    InitMapper();
     if (database && database->present && database->mirroring_override)
         SetMirroringType(static_cast<MirroringType>(database->mirroring));
+    InitMapper();
 }
 
 void Board::ApplyTrainer(const uint8_t trainer[512]) {

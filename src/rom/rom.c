@@ -62,8 +62,7 @@ static uint32_t loaded_prg_chr_crc32 = 0;
 static int read_file(const char *path, uint8_t **data, size_t *size);
 static bool database_header(const iNESHeader *original, const GameDbEntry *entry,
                             bool headerless, iNESHeader *header);
-static void database_metadata(const GameDbEntry *entry, const iNESHeader *original,
-                              bool headerless,
+static void database_metadata(const GameDbEntry *entry, bool headerless,
                               RomDatabaseInfo *metadata);
 
 bool rom_database_load_file(const char *path) { return game_db_load_file(path); }
@@ -153,6 +152,19 @@ static size_t nes20_ram_size(uint8_t shift) {
     return shift ? (size_t)64 << shift : 0;
 }
 
+static void legacy_ram_sizes(unsigned mapper, bool battery, bool chr_rom_present,
+                             RomRamSizes *sizes) {
+    // Legacy byte 8 does not replace the board's RAM default.
+    if (mapper != 30 && mapper != 111) {
+        size_t banks = mapper == 5 ? 8u : mapper == 69 ? 4u : 1u;
+        if (battery) sizes->prg_nvram = banks * 0x2000;
+        else sizes->prg_ram = banks * 0x2000;
+    }
+    if (!chr_rom_present)
+        sizes->chr_ram = mapper == 13 || mapper == 111 ? 0x4000
+                       : mapper == 30 || mapper == 96 ? 0x8000 : 0x2000;
+}
+
 int rom_ram_sizes(const iNESHeader *header, RomRamSizes *sizes) {
     if (!header || !sizes) return -1;
     memset(sizes, 0, sizeof(*sizes));
@@ -162,20 +174,22 @@ int rom_ram_sizes(const iNESHeader *header, RomRamSizes *sizes) {
         sizes->chr_ram = nes20_ram_size(header->zero[0] & 0x0F);
         sizes->chr_nvram = nes20_ram_size(header->zero[0] >> 4);
     } else {
-        int mapper = rom_mapper_number(header);
-        // Legacy MMC5 and FME-7 boards default to eight and four 8KB RAM banks.
-        // Other iNES boards use the conventional 8KB default. Legacy byte 8 is
-        // not reliable enough to override the board default.
-        if (mapper != 30 && mapper != 111) {
-            size_t default_units = mapper == 5 ? 8u : mapper == 69 ? 4u : 1u;
-            size_t prg_ram_bytes = default_units * 0x2000;
-            if (header->flags6 & 2) sizes->prg_nvram = prg_ram_bytes;
-            else sizes->prg_ram = prg_ram_bytes;
-        }
-        if (!header->chr_rom_chunks)
-            sizes->chr_ram = (mapper == 13 || mapper == 111) ? 0x4000
-                           : (mapper == 30 || mapper == 96) ? 0x8000 : 0x2000;
+        legacy_ram_sizes((unsigned)rom_mapper_number(header), (header->flags6 & 2) != 0,
+                         header->chr_rom_chunks != 0, sizes);
     }
+    return 0;
+}
+
+int rom_ram_sizes_with_metadata(const iNESHeader *header, const RomDatabaseInfo *database,
+                               RomRamSizes *sizes) {
+    if (!database || !database->present) return rom_ram_sizes(header, sizes);
+    if (!header || !sizes) return -1;
+    memset(sizes, 0, sizeof(*sizes));
+    legacy_ram_sizes(database->mapper, (header->flags6 & 2) != 0,
+                     database->chr_rom_size != 0, sizes);
+    if (database->work_ram_override) sizes->prg_ram = database->work_ram;
+    if (database->save_ram_override) sizes->prg_nvram = database->save_ram;
+    if (database->chr_ram_override) sizes->chr_ram = database->chr_ram;
     return 0;
 }
 
@@ -219,7 +233,7 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
                 fprintf(stderr, "Game database entry cannot describe this cartridge\n");
                 return -1;
             }
-            database_metadata(&database_entry, &original_header, false, &database_info);
+            database_metadata(&database_entry, false, &database_info);
             database = &database_info;
             database_applied = true;
             source = ROM_METADATA_DATABASE;
@@ -236,7 +250,7 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
             fprintf(stderr, "Game database entry cannot describe this headerless cartridge\n");
             return -1;
         }
-        database_metadata(&database_entry, NULL, true, &database_info);
+        database_metadata(&database_entry, true, &database_info);
         database = &database_info;
         database_applied = true;
         headerless = true;
@@ -285,8 +299,7 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
     size_t new_chr_size = rom_chr_size;
     if (!new_chr_size) {
         RomRamSizes ram;
-        rom_ram_sizes(&header, &ram);
-        if (database && database->chr_ram_override) ram.chr_ram = database->chr_ram;
+        if (rom_ram_sizes_with_metadata(&header, database, &ram) != 0) return -1;
         new_chr_size = ram.chr_ram + ram.chr_nvram;
         if (!new_chr_size && !board_handles_header(&header)) {
             fprintf(stderr, "Cartridge declares no CHR-ROM or CHR-RAM\n");
@@ -500,8 +513,7 @@ static bool database_vs_ppu_code(uint8_t ppu_model, uint8_t *header_code) {
     }
 }
 
-static void database_metadata(const GameDbEntry *entry, const iNESHeader *original,
-                              bool headerless,
+static void database_metadata(const GameDbEntry *entry, bool headerless,
                               RomDatabaseInfo *metadata) {
     memset(metadata, 0, sizeof(*metadata));
     metadata->present = true;
@@ -515,29 +527,13 @@ static void database_metadata(const GameDbEntry *entry, const iNESHeader *origin
     snprintf(metadata->chip, sizeof(metadata->chip), "%s", entry->chip);
     metadata->bus_conflicts = entry->bus_conflicts;
 
-    iNESHeader inherited_header = {0};
-    if (original) {
-        inherited_header = *original;
-    } else {
-        memcpy(inherited_header.signature, "NES\x1A", 4);
-        inherited_header.flags6 = (uint8_t)((entry->mapper & 0x0Fu) << 4);
-        inherited_header.flags7 = (uint8_t)(entry->mapper & 0xF0u);
-        inherited_header.chr_rom_chunks = entry->chr_rom_size ? 1 : 0;
-        if (entry->battery) inherited_header.flags6 |= 0x02u;
-    }
-    RomRamSizes inherited_ram = {0};
-    (void)rom_ram_sizes(&inherited_header, &inherited_ram);
-
     bool validated = entry->submapper_present;
-    metadata->work_ram_override = true;
-    metadata->save_ram_override = true;
-    metadata->chr_ram_override = true;
-    metadata->work_ram = validated || entry->work_ram_size
-                       ? entry->work_ram_size : inherited_ram.prg_ram;
-    metadata->save_ram = validated || entry->save_ram_size
-                       ? entry->save_ram_size : inherited_ram.prg_nvram;
-    metadata->chr_ram = validated || entry->chr_ram_size
-                      ? entry->chr_ram_size : inherited_ram.chr_ram;
+    metadata->work_ram_override = validated || entry->work_ram_size != 0;
+    metadata->save_ram_override = validated || entry->save_ram_size != 0;
+    metadata->chr_ram_override = validated || entry->chr_ram_size != 0;
+    metadata->work_ram = entry->work_ram_size;
+    metadata->save_ram = entry->save_ram_size;
+    metadata->chr_ram = entry->chr_ram_size;
     metadata->mirroring_override = database_mirroring(entry, &metadata->mirroring);
 }
 
@@ -571,8 +567,8 @@ static bool database_header(const iNESHeader *original, const GameDbEntry *entry
         header->flags6 |= source.flags6 & 0x09u;
     }
 
-    unsigned console = headerless ? 0u : source.flags7 & 0x03u;
-    NesRegion region = headerless ? NES_REGION_NTSC : rom_region(&source);
+    unsigned console = 0;
+    NesRegion region = NES_REGION_NTSC;
     uint8_t vs_descriptor = 0;
     uint8_t header_input = entry->input_type;
     if (entry->system[0]) {
@@ -594,8 +590,9 @@ static bool database_header(const iNESHeader *original, const GameDbEntry *entry
             console = 1;
             region = NES_REGION_NTSC;
             vs_descriptor = (uint8_t)((entry->vs_type << 4) | ppu_code);
-        } else {
-            return false;
+        } else if (strcmp(entry->system, "Playchoice") == 0) {
+            console = 2;
+            region = NES_REGION_NTSC;
         }
     }
 

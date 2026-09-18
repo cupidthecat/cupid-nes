@@ -123,6 +123,8 @@ typedef struct {
 
 // Decode declared RAM capacities, including the iNES 8KB PRG-RAM default.
 int rom_ram_sizes(const iNESHeader *header, RomRamSizes *sizes);
+int rom_ram_sizes_with_metadata(const iNESHeader *header, const RomDatabaseInfo *database,
+                               RomRamSizes *sizes);
 
 // mirroring for PPU
 extern int mirroring_mode;
