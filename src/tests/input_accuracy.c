@@ -1532,6 +1532,46 @@ static int hori_track_reports(void) {
     return 0;
 }
 
+static int konami_hyper_shot_signals(void) {
+    input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+    CHECK(joypad_set_expansion_device_name("konami-hyper-shot"));
+    CHECK(joypad_expansion_device() == NES_EXPANSION_KONAMI_HYPER_SHOT);
+    pad1.buttons = (1u << BTN_A) | (1u << BTN_B);
+    pad2.buttons = (1u << BTN_A) | (1u << BTN_B);
+
+    write_mem(0x4016, 0);
+    CHECK((read_mem(0x4017) & 0x1E) == 0x1E);
+    write_mem(0x4016, 4);
+    CHECK((read_mem(0x4017) & 0x1E) == 0x18);
+    write_mem(0x4016, 2);
+    CHECK((read_mem(0x4017) & 0x1E) == 0x06);
+    write_mem(0x4016, 6);
+    CHECK((read_mem(0x4017) & 0x1E) == 0);
+
+    pad1.buttons = 1u << BTN_A;
+    pad2.buttons = 1u << BTN_B;
+    write_mem(0x4016, 0);
+    CHECK((read_mem(0x4017) & 0x1E) == 0x12);
+    pad1.buttons = 1u << BTN_B;
+    pad2.buttons = 1u << BTN_A;
+    CHECK((read_mem(0x4017) & 0x1E) == 0x0C);
+
+    pad2.buttons |= 1u << BTN_START;
+    latch_controllers();
+    CHECK((read_mem(0x4017) & 1u) == 1u);
+    (void)read_mem(0x4017);
+    (void)read_mem(0x4017);
+    CHECK((read_mem(0x4017) & 1u) == 1u);
+
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_NONE));
+    CHECK((read_mem(0x4017) & 0x1E) == 0);
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_KONAMI_HYPER_SHOT));
+    write_mem(0x4016, 0);
+    CHECK((read_mem(0x4017) & 0x1E) == 0x0C);
+    CHECK(!joypad_set_expansion_device((NesExpansionDevice)999));
+    return 0;
+}
+
 int test_input_accuracy(void) {
     static int (*const tests[])(void) = {
         console_open_bus, console_read_clocks, console_strobe_timing,
@@ -1546,7 +1586,7 @@ int test_input_accuracy(void) {
         family_basic_recording_and_media, turbo_file_protocol,
         turbo_file_persistence, turbo_file_failed_save, battle_box_protocol,
         battle_box_persistence, battle_box_failed_save, subor_keyboard_matrix,
-        subor_mouse_packets, hori_track_reports
+        subor_mouse_packets, hori_track_reports, konami_hyper_shot_signals
     };
     NesConsoleModel saved_model = nes_console_model();
     NesRegion saved_region = nes_timing()->region;

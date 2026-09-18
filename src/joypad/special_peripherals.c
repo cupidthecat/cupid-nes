@@ -86,6 +86,13 @@ typedef struct {
 
 static HoriTrack hori_track;
 
+typedef struct {
+    bool enable_p1;
+    bool enable_p2;
+} KonamiHyperShot;
+
+static KonamiHyperShot konami_hyper_shot = {true, true};
+
 enum { SUBOR_NONE = 0xFF };
 static const uint8_t subor_matrix[104] = {
     SUBOR_KEY_4, SUBOR_KEY_G, SUBOR_KEY_F, SUBOR_KEY_C,
@@ -542,4 +549,28 @@ uint8_t hori_track_read(uint8_t buttons) {
     uint8_t output = (uint8_t)((hori_track.state & 1u) << 1);
     hori_track.state >>= 1;
     return output;
+}
+
+void konami_hyper_shot_reset(void) {
+    konami_hyper_shot.enable_p1 = true;
+    konami_hyper_shot.enable_p2 = true;
+}
+
+void konami_hyper_shot_write(uint8_t value) {
+    konami_hyper_shot.enable_p2 = (value & 0x02u) == 0;
+    konami_hyper_shot.enable_p1 = (value & 0x04u) == 0;
+}
+
+uint8_t konami_hyper_shot_read(unsigned port, uint8_t player1, uint8_t player2) {
+    if (port != 1) return 0;
+    uint8_t value = 0;
+    if (konami_hyper_shot.enable_p1) {
+        if (player1 & (1u << BTN_A)) value |= 0x02;
+        if (player1 & (1u << BTN_B)) value |= 0x04;
+    }
+    if (konami_hyper_shot.enable_p2) {
+        if (player2 & (1u << BTN_A)) value |= 0x08;
+        if (player2 & (1u << BTN_B)) value |= 0x10;
+    }
+    return value;
 }

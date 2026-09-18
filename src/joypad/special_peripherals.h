@@ -47,4 +47,8 @@ void hori_track_add_motion(int dx, int dy);
 void hori_track_write(uint8_t value, uint8_t buttons);
 uint8_t hori_track_read(uint8_t buttons);
 
+void konami_hyper_shot_reset(void);
+void konami_hyper_shot_write(uint8_t value);
+uint8_t konami_hyper_shot_read(unsigned port, uint8_t player1, uint8_t player2);
+
 #endif
