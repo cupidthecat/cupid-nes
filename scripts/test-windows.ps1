@@ -2,12 +2,24 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$SdlRoot,
     [string]$Compiler = 'clang',
+    [string]$CxxCompiler,
     [switch]$Sanitize
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
+if (-not $CxxCompiler) {
+    $compilerName = [System.IO.Path]::GetFileNameWithoutExtension($Compiler)
+    $compilerDirectory = Split-Path -Parent $Compiler
+    $cppName = switch ($compilerName) {
+        'clang' { 'clang++' }
+        'gcc' { 'g++' }
+        default { throw 'Specify -CxxCompiler for this C compiler' }
+    }
+    if ([System.IO.Path]::GetExtension($Compiler) -eq '.exe') { $cppName += '.exe' }
+    $CxxCompiler = if ($compilerDirectory) { Join-Path $compilerDirectory $cppName } else { $cppName }
+}
 $sdkRoot = (Resolve-Path -LiteralPath $SdlRoot).Path
 $sdkInclude = Join-Path $sdkRoot 'include'
 $sdkLibrary = Join-Path $sdkRoot 'lib/x64/SDL2.lib'
@@ -38,26 +50,44 @@ if ($Sanitize) {
 } else {
     $flags += '-O2'
 }
+$cppFlags = @($flags | Where-Object { $_ -ne '-std=c11' }) + @('-std=c++17')
 
 $coreSources = @('src/system/timing.c', 'src/system/hardware.c', 'src/system/vs_system.c', 'src/cpu/cpu.c', 'src/ppu/ppu.c', 'src/rom/rom.c', 'src/rom/mapper.c',
                  'src/rom/fds.c',
                  'src/rom/vrc7_audio.c', 'src/rom/emu2413.c',
                  'src/rom/eeprom.c', 'src/rom/namco163.c', 'src/rom/sunsoft5b.c',
-                 'src/joypad/joypad.c', 'src/joypad/family_basic.c',
+                 'src/joypad/joypad.c', 'src/joypad/family_basic.c', 'src/joypad/special_peripherals.c',
                  'src/apu/apu.c', 'src/ui/palette_tool.c')
+$cppSources = @('src/apu/epsm.cpp', 'src/third_party/ymfm/ymfm_opn.cpp',
+                'src/third_party/ymfm/ymfm_ssg.cpp', 'src/third_party/ymfm/ymfm_adpcm.cpp')
 $testSources = @('src/tests/accuracy_test.c', 'src/tests/cpu_accuracy.c', 'src/tests/cpu_trace.c',
                  'src/tests/apu_accuracy.c', 'src/tests/ppu_accuracy.c', 'src/tests/mapper_accuracy.c',
                  'src/tests/fds_accuracy.c',
                  'src/tests/rom_runner.c', 'src/tests/input_accuracy.c', 'src/tests/bandai_accuracy.c',
-                 'src/tests/vs_accuracy.c')
+                 'src/tests/vs_accuracy.c', 'src/tests/epsm_accuracy.c')
 $application = Join-Path $outputDirectory 'cupid-nes.exe'
 $testProgram = Join-Path $outputDirectory 'accuracy-tests.exe'
+$objectDirectory = Join-Path $outputDirectory 'objects'
+New-Item -ItemType Directory -Force -Path $objectDirectory | Out-Null
+
+function Compile-Source([string]$Source, [string]$Driver, [string[]]$BuildFlags) {
+    $object = Join-Path $objectDirectory ($Source.Replace('/', '_') + '.obj')
+    & $Driver @BuildFlags '-c' $Source '-o' $object
+    if ($LASTEXITCODE -ne 0) { throw "Compilation failed: $Source" }
+    return $object
+}
 
 Push-Location $projectRoot
 try {
-    & $Compiler @flags @coreSources 'src/main.c' $sdkLibrary '-o' $application
+    $coreObjects = @(
+        foreach ($source in $coreSources) { Compile-Source $source $Compiler $flags }
+        foreach ($source in $cppSources) { Compile-Source $source $CxxCompiler $cppFlags }
+    )
+    $mainObject = Compile-Source 'src/main.c' $Compiler $flags
+    $testObjects = @(foreach ($source in $testSources) { Compile-Source $source $Compiler $flags })
+    & $CxxCompiler @cppFlags @coreObjects $mainObject $sdkLibrary '-o' $application
     if ($LASTEXITCODE -ne 0) { throw 'Emulator build failed' }
-    & $Compiler @flags @coreSources @testSources $sdkLibrary '-o' $testProgram
+    & $CxxCompiler @cppFlags @coreObjects @testObjects $sdkLibrary '-o' $testProgram
     if ($LASTEXITCODE -ne 0) { throw 'Hardware test build failed' }
     & $testProgram
     if ($LASTEXITCODE -ne 0) { throw 'Hardware regressions failed' }

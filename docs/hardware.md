@@ -11,8 +11,9 @@ Cupid models the CPU, picture processing unit (PPU), audio processing unit (APU)
 | NES and Famicom cartridges | iNES or NES 2.0 header | NTSC, PAL, and Dendy timing are implemented |
 | Famicom Disk System | NTSC | Requires a supplied BIOS and a supported disk image |
 | VS System | NTSC | Requires supported console, PPU, input, and cartridge metadata |
+| NES with EPSM | NES 2.0 header | Extended subtype 4 adds an 8 MHz YMF288 with stereo output |
 
-NTSC uses 262 scanlines with vblank beginning at line 241. PAL uses 312 scanlines with vblank beginning at line 241, and Dendy uses 312 with vblank beginning at line 291. PAL advances the PPU at 3.2 clocks per CPU clock; NTSC and Dendy use 3. Only NTSC rendering skips a clock on odd frames.
+NTSC uses 262 scanlines with vblank beginning at line 241. PAL uses 312 scanlines with vblank beginning at line 241, and Dendy uses 312 with vblank beginning at line 291. PAL advances the PPU at 3.2 clocks per CPU clock; NTSC and Dendy use 3. The NTSC 2C02 skips one clock on rendered odd frames. VS RGB PPUs retain all 89,342 clocks on both frame parities, including both sides of a dual cabinet.
 
 The [timing table](../src/system/timing.c) supplies device rates and frame pacing. The [loader](../src/rom/rom.c) selects timing from the header. NES 2.0 dual-region images default to NTSC. Console wiring selected with `--console` is independent of this timing choice. The application has no region override; the legacy PAL diagnostic runner has an explicit test-only mode.
 
@@ -22,7 +23,7 @@ The CPU implements official and undocumented opcodes, page-crossing and read-mod
 
 The PPU renders 256 by 240 pixels. Scheduled pattern fetches feed background and sprite shifters, sprite evaluation, overflow, clipping, priority, and sprite-zero hits. Registers include palette mirrors, delayed address and data transfers, buffered reads, open bus, rendering-time address increments, and vblank/NMI edges. PAL has its own vblank OAM refresh and PAL/Dendy color-emphasis wiring.
 
-The APU has two pulse channels, triangle, noise, and DMC. It implements envelopes, length and linear counters, sweep units, frame sequences and interrupts, and nonlinear channel mixing. DMC reads use the CPU DMA engine. The triangle DAC retains its value when the sequencer stops. PAL selects its own APU periods and frame events; Dendy uses NTSC APU periods at its CPU clock rate.
+The APU has two pulse channels, triangle, noise, and DMC. It implements envelopes, length and linear counters, sweep units, frame sequences and interrupts, and nonlinear channel mixing. DMC reads use the CPU DMA engine. Pulse and noise DACs latch their values between channel updates; pulse-register writes also refresh the output. The triangle DAC retains its value when the sequencer stops. PAL selects its own APU periods and frame events; Dendy uses NTSC APU periods at its CPU clock rate.
 
 Power-on and soft reset are separate operations. See [architecture](architecture.md) for state ownership and [accuracy](accuracy.md) for bus phases and reset details.
 
@@ -36,7 +37,7 @@ PRG is the cartridge memory read by the CPU; CHR holds graphics patterns read by
 | 1 | MMC1 / SxROM | Serial banking, consecutive-write filtering, mirroring, outer PRG selection, and supported SOROM/SXROM RAM layouts |
 | 2 | UxROM | Switchable 16 KiB PRG bank and fixed upper bank |
 | 3 | CNROM | CHR bank selection |
-| 4 | MMC3 / MMC6 | PRG/CHR banking, filtered PPU A12 IRQ clocks, and RAM protection; submapper 1 selects MMC6 |
+| 4 | MMC3 / MMC6 | PRG/CHR banking, filtered PPU A12 IRQ clocks, selectable MMC3 revision-A IRQ qualification, and RAM protection; submapper 1 selects MMC6 |
 | 4, submapper 3 | MC-ACC | Falling-edge A12 filtering and IRQ timing |
 | 5 | MMC5, partial | PRG/CHR banking, banked RAM, ExRAM/fill nametables, extended attributes, vertical split, multiplication, PPU-read-driven scanline IRQs, and pulse/PCM audio |
 | 7 | AxROM | 32 KiB PRG banking and single-screen mirroring |
@@ -57,16 +58,41 @@ PRG is the cartridge memory read by the CPU; CHR holds graphics patterns read by
 | 34 | BNROM / NINA-001 | 32 KiB PRG banks, board-specific CHR/RAM access, and BNROM bus conflicts |
 | 64, 158 | RAMBO-1 | PRG/CHR banks, CPU- or PPU-clocked IRQs, and mapper 158 nametable wiring |
 | 66 | GxROM | Combined PRG/CHR bank selection and bus conflicts |
+| 67 | Sunsoft 3 | 2 KiB CHR banks, switchable 16 KiB PRG, mirroring, and a one-shot CPU IRQ counter |
+| 68 | Sunsoft 4 | 2 KiB CHR banks, CHR-backed nametables, protected cartridge RAM, and licensed external PRG selection |
 | 69 | FME-7 / Sunsoft 5B | ROM/RAM bank selection, IRQ counter, and three-channel tone/noise/envelope audio |
 | 71 | Codemasters | PRG banking and the single-screen board variant |
+| 72, 78, 87, 92, 101, 140 | Jaleco discrete boards | Board-specific PRG/CHR banking, latch edges, mapper 78 mirroring, and applicable ROM bus conflicts |
+| 73 | VRC3 | Switchable 16 KiB PRG, fixed CHR, and 8- or 16-bit CPU-clocked IRQ counter |
+| 74 | MMC3 mixed CHR | MMC3 banking and IRQs with CHR pages $08-$09 routed to 2 KiB RAM |
+| 75, 151 | VRC1 | Three switchable 8 KiB PRG windows, two 4 KiB CHR banks, and board mirroring |
+| 76, 88, 95, 154, 206 | Namco 108 family | Variant-specific PRG/CHR banking, hardwired or register-controlled nametables, and no mapper IRQ source |
+| 77 | Irem LROG017 | 32 KiB PRG banking with bus conflicts, cartridge RAM, banked 2 KiB CHR ROM, fixed 6 KiB CHR RAM, and four-screen nametables |
+| 80, 82, 207 | Taito X1-005 / X1-017 | PRG/CHR banking, protected fixed-size cartridge RAM, CHR mode selection, and mapper 207 nametable routing |
 | 85 | VRC7 | PRG/CHR banking, IRQs, RAM control, and six-channel FM audio |
+| 89, 93, 184 | Sunsoft discrete boards | Board-specific PRG/CHR selection, single-screen wiring, CHR access control, and paired 4 KiB CHR banks |
+| 90, 209, 211 | JY Company | PRG/CHR modes, register arithmetic, mapper-specific nametable routing, latches, and selectable IRQ clock sources |
+| 96 | Oeka Kids | 32 KiB PRG selection, cartridge RAM, banked CHR RAM, PPU-address-driven inner CHR selection, and ROM bus conflicts |
+| 97 | Irem TAM-S1 | Fixed lower 16 KiB PRG, switchable upper 16 KiB PRG, cartridge RAM, fixed CHR, and four mirroring modes |
 | 99 | VS System | Cabinet PRG/CHR selection, shared RAM permissions, and single/dual layouts |
+| 105 | NES-EVENT | MMC1 serial control, competition PRG modes, fixed CHR RAM, cartridge RAM, and DIP-selected timer IRQ |
+| 111 | GTROM | 32 KiB PRG flash banking, two CHR-RAM banks, banked cartridge nametable RAM, register-read latching, and flash persistence |
 | 118 | TKSROM / TLSROM | MMC3 banking and IRQs with CHR-register-controlled nametable routing |
 | 119 | TQROM | MMC3 banking and IRQs with mixed CHR ROM and RAM |
 | 155 | MMC1A | MMC1 banking with the earlier revision's RAM-enable behavior |
-| 206 | Namco 108 | Register-selected PRG/CHR banks and board-specific nametable wiring |
+| 185 | Protected CNROM | CHR protection latch, ROM bus conflicts, and D0 pull-up behavior while pattern-table ROM is disabled |
+| 191, 192, 194, 195 | MMC3 mixed CHR | MMC3 banking and IRQs with board-specific CHR ROM/RAM selection ranges |
+| 232 | BF9096 | Outer PRG block and inner bank selection with the submapper-1 outer-bit wiring |
 
 NES 2.0 submappers select supported wiring and revisions. Examples include MMC1 submapper 5, MMC6 submapper 1, MC-ACC submapper 3, and VRC register-wiring variants. UxROM, CNROM, and AxROM submapper 2 enable ROM bus conflicts. The loader rejects unsupported submappers and memory geometries even when the mapper family appears above. The complete checks are in [`mapper_init_from_header`](../src/rom/mapper.c).
+
+The mapper 72 and 92 cartridge banking and latch behavior is implemented. Optional speech hardware on those boards is not currently emulated.
+
+Jaleco 72/78/92, Irem 77/97, and mapper 96 expose their mapped PRG RAM for CPU reads and writes. Jaleco 87/101/140 and Sunsoft 184 read PRG RAM at `$6000-$7FFF`, but writes in that window select banks instead of changing RAM. Explicit NES 2.0 zero-RAM declarations leave those reads on open bus. Trainers and battery saves can supply nonzero data to the readable RAM windows.
+
+Mapper 77 always exposes 6 KiB of fixed CHR RAM at PPU `$0800-$1FFF`; the lower 2 KiB is banked CHR ROM. NES 2.0 images for this mixed layout must declare 8 KiB of volatile CHR RAM, which is the header size accepted by the loader for the board.
+
+Mapper 185 submapper 0 keeps the legacy compatibility rule: CHR is enabled when the low nibble is nonzero except for latch value `0x13`. NES 2.0 submappers 4 through 7 use bits 0 and 1 as an exact enable value from 0 through 3.
 
 ## What the cartridge header controls
 
@@ -79,14 +105,14 @@ An image begins with an iNES or NES 2.0 header that describes the board and its 
 | Mapper and submapper | Register decoding, banking, mirroring, and device behavior |
 | Mirroring flags | Initial nametable layout, subject to board-specific wiring |
 | Volatile and nonvolatile RAM | Allocation, addressability, and persistent storage |
-| Timing and console type | Regional timing or a supported arcade configuration |
+| Timing and console type | Regional timing, supported arcade configuration, or EPSM expansion sound |
 | Trainer flag | A 512-byte initialization window applied through cartridge handling |
 
 The loader checks payload sizes and size overflows before activating a cartridge. A truncated or unsupported image returns an error and preserves an already loaded cartridge. The application exits when its initial load fails; preservation also matters to callers of the loader API.
 
 Legacy iNES RAM fields are unreliable. Cupid uses board defaults and ignores byte 8 as a RAM-size override. Most boards default to 8 KiB, MMC5 to 64 KiB, and FME-7 to 32 KiB. Legacy mapper 99 without a battery flag uses 2 KiB of volatile RAM. UNROM 512 has its own CHR RAM and flash layout. A legacy PRG count of zero represents 256 banks of 16 KiB, or 4 MiB. The image must still contain the complete payload, and its mapper must support that size.
 
-NES 2.0 RAM declarations are explicit, including zero RAM. Unsupported combinations are rejected. Do not change header bytes simply to make the loader accept an image: the resulting bank layout or save format could be wrong. Use the cartridge's board information when correcting a header, and record that correction in a bug report.
+NES 2.0 RAM declarations are normally explicit, including zero RAM. Taito X1-005/X1-017 boards are fixed-size exceptions: mappers 80 and 207 use a 256-byte cartridge-RAM allocation, while mapper 82 uses 5 KiB. For those boards, the battery flag chooses volatile or nonvolatile storage even when the NES 2.0 RAM-size fields are zero. Unsupported combinations are rejected. Do not change header bytes simply to make the loader accept an image: the resulting bank layout or save format could be wrong. Use the cartridge's board information when correcting a header, and record that correction in a bug report.
 
 Trainer initialization runs after save memory loads and copies the bytes into supported `$7000-$71FF` RAM windows. See [saves and media](saves.md) for save layouts, including MMC5 ExRAM and N163 audio RAM.
 
@@ -100,6 +126,38 @@ Some families have substantially different variants. Namco 175/340 variants do n
 
 Expansion sound includes MMC5 pulse/PCM, VRC6 pulse/saw, VRC7 FM, Namco 163 wavetable, Sunsoft 5B tone/noise/envelopes, and disk-system wavetable/modulation output. [Architecture](architecture.md) describes how the audio reaches the application.
 
+## EPSM expansion sound
+
+The YMF288 implementation provides six FM channels, three SSG tone/noise/envelope channels, and six ADPCM percussion voices. The CPU can write through `$401C-$401F` or the `$4016` data-bus/OUT-pin protocol. The delayed OUT1 edge samples the data bus at the time the pin changes. Timer IRQs join the CPU's ordinary interrupt polling path.
+
+The device uses the same 8 MHz oscillator across NTSC, PAL, and Dendy CPU timings. Generated samples pass through the application's stereo callback; SSG output is centered, and FM and percussion retain their panning. A cold power-on restores the chip and protocol state. CPU soft reset preserves them.
+
+Percussion needs a separate, exactly 8 KiB ADPCM ROM supplied with `--epsm-adpcm`. Without it, the device uses zero-filled data. Incorrect-size files are rejected, and failed cartridge or firmware loads preserve the active device. The [EPSM tests](../src/tests/epsm_accuracy.c) cover both bus protocols, CPU-driven delayed edges, timer IRQs, regional clocks, reset, stereo output, firmware validation, and transitions to other hardware.
+
+## Controllers and expansion devices
+
+Device selection changes the signals that CPU reads and writes see at `$4016` and `$4017`. The frontend supplies buttons, keys, pointer coordinates and barcode scans; the controller layer handles each device's latch, shift and timing rules.
+
+| Connection | Devices | Implemented behavior |
+| --- | --- | --- |
+| Controller ports | Gamepads, Four Score, Arkanoid, Power Pad, Zapper | Serial reports, adapter signatures, paddle positions, mat wiring and beam-aware light sensing |
+| VS controller wiring | VS Zapper | Metadata-selected serial gun report, trigger state and beam timing |
+| Famicom expansion | Two- and four-player adapters, Arkanoid, Family Trainer, Zapper | Expansion-line routing with separate ordinary controller bits |
+| Famicom expansion | Family BASIC and Subor keyboards | Scanned key matrices; Family BASIC also supplies the data-recorder signal |
+| Controller port 2 | Subor mouse | Button and signed movement reports, including extended packets |
+| Famicom expansion | Hori Track | Latched buttons and signed trackball movement |
+| Famicom expansion | Konami and Bandai Hyper Shot | Latched running/jumping controls, or serial controls with light-gun sensing |
+| Famicom expansion | Party Tap, Pachinko, Exciting Boxing, Jissen Mahjong | Device-specific switch groups, serial reports, plunger state and matrix selection |
+| Famicom expansion | Oeka Kids tablet | Coordinates, contact/click bits, ready line and an 18-bit serial report; mapper 96 supplies the cartridge's CHR latch |
+| Cartridge or Famicom expansion | Datach and Barcode Battler | Separate barcode formats and CPU-clocked streams |
+| Famicom expansion | ASCII Turbo File and BattleBox | Serial storage commands, memory contents and persistent save files |
+
+The ASCII Turbo File has 8 KiB of storage with D1 reset, D2 clock, D0 write data and `$4017` D2 read data, including bit-position wrap. BattleBox has two 128-word serial chips with command decoding, D0 edge handshake, chip selection, D3 read data, alternating D4 output, write protection, programming and erase commands.
+
+For Oeka Kids input, the frontend treats the left mouse button as both click and touch. Pointer hover counts as touch only while the pointer is on the emulated screen at Y 48 through 239. The tablet protocol then scales the screen coordinates into its serial coordinate fields.
+
+Choose devices explicitly with the options in [configuration](configuration.md). An expansion adapter and another expansion device cannot occupy the same connector. [Controls](controls.md) lists the host input mappings, and [saves and media](saves.md) describes storage formats and failed-save handling.
+
 ## Disk-system media
 
 The disk loader accepts supported headered and raw FDS images, plus the QD layouts recognized from their sizes. FDS sides contain 65,500 bytes; QD sides contain 65,536. An optional FDS header contributes another 16 bytes. The loader validates the declared number of sides and requires an 8 KiB BIOS.
@@ -110,18 +168,20 @@ Writable images are updated at the loaded path. See [saves and media](saves.md) 
 
 ## VS System
 
-The supported VS configurations use mappers 0, 1, 2, or 99 with NTSC timing. Dual cabinets require mapper 99. NES 2.0 metadata selects the hardware type, PPU, and controller wiring. Legacy mapper 99 images use the implemented ROM-size convention to select single or dual operation. Cupid has no database that identifies a game's hardware from its hash.
+The supported VS configurations use mappers 0, 1, 2, 75, 99, or 151 with NTSC timing. Dual cabinets require mapper 99. NES 2.0 metadata selects the hardware type, PPU, and controller wiring. Legacy mapper 99 images use the implemented ROM-size convention to select single or dual operation. Cupid has no database that identifies a game's hardware from its hash.
 
 The PPU choices include the 2C03 RGB palette, four 2C04 palettes, and the implemented 2C05 register/status variants. Cabinet handling includes DIP switches, coin and service inputs, controller routing, and the implemented protection-read sequences.
 
+NES 2.0 console selector 3 with extended subtype 1 also selects VS hardware. That encoding uses the existing 2C03 profile as a compatibility fallback because its subtype occupies the direct descriptor's PPU field. It retains the cabinet type and input metadata. This fallback does not add RP2C03G emulation; direct VS descriptors keep their existing PPU selection and validation.
+
 Dual mode maintains independent CPU, PPU, APU, internal RAM, input, and DMA state. The boards share cartridge RAM with ownership controlled by the hardware signal. Cross-CPU interrupts and synchronized stepping support communication between the two sides. Both screens are presented and both APUs feed mono output.
 
-RP2C03G, VS Zapper input wiring, and unimplemented combinations of console, mapper, memory, or PPU metadata are rejected. The [VS tests](../src/tests/vs_accuracy.c) cover supported paths, including real CPU programs that communicate through shared RAM and produce separate video and audio.
+RP2C03G and unimplemented combinations of console, mapper, memory, or PPU metadata are rejected. NES 2.0 VS Zapper metadata selects the serial gun report on the first controller port. The [VS tests](../src/tests/vs_accuracy.c) cover supported paths, including real CPU programs that communicate through shared RAM and produce separate video and audio.
 
 ## Reading accuracy results
 
 The [checkpoint record](accuracy-checkpoints.md) identifies commits that passed all 144 AccuracyCoin tests without skipped or unfinished results. The [accuracy notes](accuracy.md) describe the separate CPU trace, diagnostic collection, focused hardware tests, and setup conditions for older ROMs.
 
-These results are regression evidence. They do not prove compatibility with every game, physical console revision, or register interleaving. Optional OAM corruption and decay profiles are deterministic approximations. Analog output, arbitrary power-on alignment, MMC5 auxiliary I/O and `$5209/$520A` timers, and unlisted hardware remain outside the implemented or tested scope.
+These results are regression evidence. They do not prove compatibility with every game, physical console revision, or register interleaving. Optional OAM corruption and decay profiles are deterministic approximations. Analog output, MMC5 auxiliary I/O and `$5209/$520A` timers, and unlisted hardware remain outside the implemented or tested scope.
 
 A compatibility report should identify the exact build, image hash, header, hardware profile, and failing behavior. The [reporting guide](../CONTRIBUTING.md#reporting-a-bug) explains how to make that reproducible.

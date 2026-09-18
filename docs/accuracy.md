@@ -4,9 +4,15 @@
 
 The hardware targets use NTSC, PAL, or Dendy timing with the cartridge and input devices listed in the [hardware reference](hardware.md). Disk and VS systems use NTSC timing. The tests below exercise the production core. They do not establish compatibility with every cartridge or hardware revision.
 
+`make test` and the Windows build script run the synthetic hardware suite without external ROMs. The canonical trace and 91-ROM collection use `scripts/run-diagnostics.py`; AccuracyCoin is a separate runner mode. The [development guide](development.md) covers fixture setup, and [combined validation](accuracy-checkpoints.md#combined-validation) links a tested implementation to its CI results.
+
 ## Timing model
 
 Each CPU read or write advances the PPU, APU, and cartridge. Reads and writes place the bus operation at different phases of the CPU clock. Fractional PPU clocks carry across CPU accesses. Interrupt lines are sampled at the CPU cycle boundaries used by instruction polling.
+
+`--cpu-test-mode` enables ordinary 2A03 diagnostic reads: `$4018` packs pulse 1 in the low nibble and pulse 2 in the high nibble, `$4019` packs triangle and noise the same way, and `$401A` returns the DMC's seven-bit output. The values come from the channel DAC latches used by the mixer. Disabling a pulse or noise channel through `$4015` clears its length counter; its preceding DAC value remains visible until the next channel timer edge. Pulse-register writes also refresh their channel's output.
+
+The default retains open bus at these addresses. The profile survives reset and leaves `$4015`'s internal-bus behavior intact. Writable test registers and DMA-specific test-pin interactions are outside this profile's scope.
 
 | Region | Master clocks per CPU/PPU cycle | Scanlines | Vblank starts |
 | --- | --- | ---: | ---: |
@@ -14,7 +20,7 @@ Each CPU read or write advances the PPU, APU, and cartridge. Reads and writes pl
 | PAL | 16 / 5 | 312 | 241 |
 | Dendy | 15 / 5 | 312 | 291 |
 
-The final scanline is pre-render. Only NTSC rendering skips a clock on odd frames. PAL selects its own APU periods and frame-counter events; Dendy keeps the NTSC APU periods at its clock rate. The application paces output from elapsed emulated CPU clocks and carries fractional host delays between frames.
+The final scanline is pre-render. The NTSC 2C02 skips a clock on rendered odd frames; VS RGB PPUs keep all 89,342 clocks on both frame parities. PAL selects its own APU periods and frame-counter events; Dendy keeps the NTSC APU periods at its clock rate. The application paces output from elapsed emulated CPU clocks and carries fractional host delays between frames.
 
 `cpu_step()` includes device clocks and any DMA cycles it encounters. Its return value is elapsed CPU time, not an instruction-table estimate. The application and diagnostic runner must not clock the PPU again with that value.
 
@@ -32,7 +38,11 @@ Secondary OAM keeps its address and increment-freeze state across rendering chan
 
 `--ppu-oam-decay` enables a deterministic primary-OAM decay approximation. Each eight-byte row records its last refresh CPU cycle. A primary-OAM read within 4500 CPU cycles refreshes that row; after the threshold, the row is replaced with its OAM addresses, with nonexistent attribute bits cleared. CPU writes, OAM DMA writes, sprite-evaluation reads, blanking, and PAL's late-vblank OAM refresh update the same row timestamps. Soft reset preserves OAM bytes and clears the timestamps, matching the selected model's reset behavior. The default leaves decay disabled.
 
-Power-on and soft reset are distinct operations. The fixed startup alignment lets the PPU run one clock before the CPU begins its seven reset bus cycles. `--ppu-startup-restriction` models the initial interval where writes to `$2000`, `$2001`, `$2005`, and `$2006` charge the PPU I/O latch but do not change their protected state. The restriction begins on both power-on and soft reset and ends when the PPU enters the next pre-render scanline, so the regional frame length determines the interval. The default keeps the established unrestricted startup behavior. CPU reset reads the current PC twice, reads three stack locations while decrementing SP, and reads the reset vector. Soft reset preserves the running divider phase, CPU registers and RAM, PPU palette/nametable/OAM memory, and mapper state. PPU bus timestamps remain monotonic through reset. Initial memory contents and alignment are deterministic; they do not simulate random power-up state across console revisions.
+Power-on and soft reset are distinct operations. The default startup alignment lets the PPU run one clock before the CPU begins its seven reset bus cycles. `--startup-phase CPU:PPU` selects another legal regional alignment; `--startup-seed SEED` generates repeatable choices on power-on. The applied CPU offset, PPU divider remainder, and supplied seed are recorded at startup. These options change divider alignment, not initial RAM contents. The canonical trace, pinned diagnostics, and AccuracyCoin gates use the unchanged default alignment.
+
+`--ppu-startup-restriction` models the initial interval where writes to `$2000`, `$2001`, `$2005`, and `$2006` charge the PPU I/O latch but do not change their protected state. The restriction begins on both power-on and soft reset and ends when the PPU enters the next pre-render scanline, so the regional frame length determines the interval. The default keeps the established unrestricted startup behavior.
+
+CPU reset reads the current PC twice, reads three stack locations while decrementing SP, and reloads PC from the reset vector. Soft reset preserves A, X, Y, CPU RAM, and the running divider phase; it updates the interrupt, unused, and break status bits. The frontend separately resets the PPU and APU. PPU palette/nametable/OAM memory and mapper state survive that operation, and PPU bus timestamps remain monotonic. [Architecture](architecture.md#power-on-and-reset) describes the reset entry points.
 
 MMC5 detects scanline boundaries from repeated nametable reads and leaves the frame state after three CPU clocks without a PPU read. Address-only notifications do not count as reads. Extended attributes consume the next three physical reads after a qualifying nametable fetch, including reads that cross between the nametable and CHR ports. The mapper also supplies vertical-split tile data, separate CHR banking for large sprites, ExRAM permissions and persistence, and expansion pulse/PCM output. NMI-vector reads clear its frame IRQ state. PCM status follows the documented MMC5A revision, including its revision bit.
 
@@ -48,19 +58,28 @@ Choose a raw tape with `--tape-play program.tap`, or a recording destination wit
 
 The regression cases scan distinct simultaneous key patterns through all ten rows, run CPU loads across tape transitions, preserve controller and microphone signals, and round-trip a recorded byte through a file. A failed tape load leaves the current tape intact, and save replacement occurs only after the temporary file has been written and closed.
 
+## Cartridge RAM and device regressions
+
+The mapper tests distinguish mapped RAM, open bus, and write-register interception. Irem 77/97 and the applicable Jaleco boards execute CPU stores and loads under legacy RAM defaults and explicit NES 2.0 layouts. Jaleco 87/101/140 and Sunsoft 184 also load nonzero trainer or save data: a CPU write in their RAM-read window must change bank selection while a later read still returns the stored byte. Mapper 96 covers legacy RAM, CHR latch edges, reset, and battery persistence.
+
+These cases use production loading and CPU bus paths in [mapper_accuracy.c](../src/tests/mapper_accuracy.c). The [input regressions](../src/tests/input_accuracy.c) include the combined mapper 96/tablet fixture and separate Turbo File/BattleBox protocols and persistence. [EPSM regressions](../src/tests/epsm_accuracy.c) cover CPU writes, delayed output-pin transitions, timer IRQs, regional clocks, firmware validation, reset, and stereo output.
+
+The [CPU diagnostic tests](../src/tests/cpu_accuracy.c) execute `$4015` disable and `$4018/$4019` read instructions before and after pulse/noise timer edges. This checks the output latches consumed by both diagnostic reads and the mixer. A correct packed value from manually seeded state alone would not cover that timing transition.
+
 ## Regression coverage
 
 | Area | Checks |
 | --- | --- |
 | CPU | Official and undocumented instruction behavior, dummy reads/writes, page wraps, status flags, JAM, interrupt polling, vector selection, and power/reset bus sequences |
 | DMA and controllers | OAM transfer parity and wrapping, DMC requests and cancellation, regional DMA start rules, overlapping transfers, strobe/shift behavior, and controller bus interactions |
-| APU | Regional noise/DMC periods and frame events, LFSR taps, sweep targets/reloads, held triangle DAC, delayed writes, length-counter collisions, DMC wrap/loop/IRQ behavior, and reset state |
+| APU | Regional noise/DMC periods and frame events, LFSR taps, sweep targets/reloads, channel DAC latches, diagnostic reads across channel-disable transitions, delayed writes, length-counter collisions, DMC wrap/loop/IRQ behavior, and reset state |
 | PPU | Palette mirrors, register-transfer delays and collisions, open bus, OAM access/refresh, sprite overflow/priority/shifter timing, sprite-zero hit, scrolling, regional frame timing, reset preservation and A12 events |
 | Cartridge | Supported bank and nametable wiring, bus conflicts, startup mapping, RAM permissions, IRQ boundaries and CPU delivery, declared memory sizes, malformed images, failed-load preservation, EEPROM transactions, flash commands, and save round trips |
-| Expansion audio | MMC5 pulse/PCM, VRC6 pulse/saw, VRC7 FM, N163 wavetable, and Sunsoft 5B tone/noise/envelope output, including register access, reset, mute, and timing cases |
+| Expansion audio | MMC5 pulse/PCM, VRC6 pulse/saw, VRC7 FM, N163 wavetable, Sunsoft 5B tone/noise/envelopes, and EPSM FM/SSG/ADPCM output; register access, delayed bus edges, timer IRQs, regional clocks, reset and stereo mixing |
 | Disk system | BIOS/RAM mapping, timer and transfer IRQs, media insertion and side changes, transfer/CRC timing, disk persistence, failed-save preservation, reset, and wavetable/modulation audio |
-| VS System | Header validation, 2C04 colors, 2C05 registers/status, cabinet inputs and protection reads, mapper 99 banks and declared RAM, dual CPU/PPU/APU execution, independent DMA, shared RAM/IRQs, reset, both video outputs, and secondary audio through the production callback |
-| Input devices | Console wiring, multiplayer adapters, Arkanoid serial reports, Power Pad and Family Trainer matrices, beam-aware Zapper reads, Family BASIC keyboard/tape signals, and Datach barcode timing |
+| VS System | Direct and extended console descriptors, RGB frame lengths, 2C04 colors, 2C05 registers/status, serial Zapper reports, cabinet inputs and protection reads, mapper 99 banks and declared RAM, dual CPU/PPU/APU execution, independent DMA, shared RAM/IRQs, reset, both video outputs, and secondary audio through the production callback |
+| Input devices | Console wiring, multiplayer adapters, paddles and mats, beam-aware light guns, Family BASIC keyboard/tape, Subor keyboard/mouse, Hori Track reports, Hyper Shot devices, Party Tap, Pachinko, Boxing and Mahjong switches, Oeka Kids tablet reports with a loaded mapper 96 cartridge, and separate Datach/Barcode Battler timing |
+| Expansion storage | Turbo File bit positions and wrap, BattleBox command/word framing, write protection and erase, complete save round trips, and preservation after failed saves |
 
 The canonical `nestest` comparison checks 8,991 PC/register/status/stack/cycle states and the diagnostic's result bytes. Its trace contains 225 distinct opcode values. The unit cases execute the remaining opcode values separately; neither number means that every possible operand or interrupt alignment has been exhausted. XAA/ANE and other unstable opcodes use a fixed silicon model.
 
@@ -83,7 +102,9 @@ The canonical `nestest` comparison checks 8,991 PC/register/status/stack/cycle s
 | Sprite-zero hit | 11 |
 | Sprite overflow | 5 |
 
-The script runs 91 diagnostic ROMs and fails if expected files are missing. The runner waits for a final result and returns a nonzero exit code for failure, timeout, or a missing result protocol. It honors `$6000=$81` reset requests after at least 100 milliseconds of emulated time, once per request, with a maximum of sixteen resets. The total frame limit still applies. A 7,200-frame limit accommodates the read-buffer test, which takes more than 1,200 frames.
+The script checks each collection's expected file count and fails if files are missing. It reports four groups: 60 ordinary diagnostic ROMs, five MMC3 ROMs, ten PAL APU ROMs, and 16 sprite ROMs. A final line of `Diagnostic ROMs: 16 passed` describes only the last group; the complete run must also pass the CPU trace and the preceding groups.
+
+The runner waits for a final result and returns a nonzero exit code for failure, timeout, or a missing result protocol. It honors `$6000=$81` reset requests after at least 100 milliseconds of emulated time, once per request, with a maximum of sixteen resets. The total frame limit still applies. A 7,200-frame limit accommodates the read-buffer test, which takes more than 1,200 frames. The other three diagnostic groups use 1,200 frames per ROM.
 
 The separate `--accuracycoin` mode runs the 144-test cartridge at commit `9bc42d1e3acbeeaea215b1011d58f4ce72a8a49e`. Its ROM has SHA-256 `7e25ac08d2e7ed14c9b1f16bd853148fef09a824452164f8e0d69fd2bd96176c`. The runner reads the cartridge's test descriptors, presses Start through the controller, and waits for the complete result screen. It checks every stored result against the cartridge's final pass tally and requires all 144 tests to pass. Success codes for documented hardware variants count as passes; skipped tests do not. The optional PPM output contains the rendered framebuffer.
 
@@ -91,12 +112,13 @@ The recorded baseline passes all 144 AccuracyCoin tests with zero skipped or unf
 
 ## Reproducing checks
 
-On Linux:
+Prepare the pinned checkouts described in [development and testing](development.md) before running these commands. On Linux:
 
 ```sh
 make clean
-make CFLAGS='-std=c11 -Wall -Wextra -Werror -O2' all test
+make CC=gcc CXX=g++ CFLAGS='-std=c11 -Wall -Wextra -Werror -O2' all test
 python3 scripts/run-diagnostics.py build/accuracy-tests build/diagnostic-roms
+echo '7e25ac08d2e7ed14c9b1f16bd853148fef09a824452164f8e0d69fd2bd96176c  build/accuracycoin/AccuracyCoin.nes' | sha256sum --check --strict
 build/accuracy-tests --accuracycoin 12000 build/accuracycoin/AccuracyCoin.nes build/accuracycoin.ppm
 ```
 
@@ -104,14 +126,16 @@ For memory and undefined-behavior checks:
 
 ```sh
 make clean
-make CC=clang CFLAGS='-std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer' all test
-ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 python3 scripts/run-diagnostics.py build/accuracy-tests build/diagnostic-roms
-ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 build/accuracy-tests --accuracycoin 12000 build/accuracycoin/AccuracyCoin.nes
+export ASAN_OPTIONS=detect_leaks=1:halt_on_error=1
+export UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1
+make CC=clang CXX=clang++ CFLAGS='-std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer' all test
+python3 scripts/run-diagnostics.py build/accuracy-tests build/diagnostic-roms
+build/accuracy-tests --accuracycoin 12000 build/accuracycoin/AccuracyCoin.nes
 ```
 
 On Windows, the PowerShell build script accepts `-Sanitize` and writes the test executable to `build/windows-sanitized/accuracy-tests.exe`. Windows AddressSanitizer does not provide the Linux leak check. The Linux workflow enables leak detection explicitly.
 
-The diagnostic ROMs are a separate checkout; the build does not download them. The workflow pins both the test collection and its checkout action. See [development and testing](development.md) for setup commands.
+The workflow pins both test collections and its checkout action. It runs on pushes and pull requests without a documentation-path exclusion. Each GCC and Clang job builds the application and test executable, runs the hardware suite, checks the trace and all 91 ROMs, verifies the AccuracyCoin ROM hash, and runs all 144 AccuracyCoin tests. Documentation commits therefore receive the same CI checks as source commits.
 
 ## Interpreting other ROMs
 
@@ -129,6 +153,6 @@ The old test labeled `6-MMC6` expects an alternative MMC3 IRQ-counter revision; 
 
 ## Remaining limits
 
-The [hardware reference](hardware.md) lists the supported devices. Unsupported console types, mapper numbers, submappers, and RAM geometries are rejected. Unlisted peripherals and audio chips, additional cartridge families, RP2C03G, and VS Zapper wiring remain outside the implemented system. VS games require valid header metadata; there is no per-game identification database. MMC5 coverage does not include its auxiliary I/O or `$5209/$520A` timer registers, every undocumented behavior, or every board revision.
+The [hardware reference](hardware.md) lists the supported devices. Unsupported console types, mapper numbers, submappers, and RAM geometries are rejected. Unlisted peripherals and audio chips, additional cartridge families, and RP2C03G remain outside the implemented system. VS games require valid header metadata; there is no per-game identification database. MMC5 coverage does not include its auxiliary I/O or `$5209/$520A` timer registers, every undocumented behavior, or every board revision.
 
-OAM row corruption and decay are deterministic approximations when their opt-in profiles are selected. The `$2003` corruption path uses a worst-case CPU-bus alignment approximation. The 4500-cycle decay threshold and replacement values provide repeatable behavior for testing, but physical OAM charge loss varies with chip, temperature, and refresh history. The startup restriction uses Cupid's fixed power-on alignment and the next pre-render boundary; it does not simulate random power/reset phase variation between physical consoles. The current checks do not cover analog output effects or every DMA/register interleaving. Register-delay tests cover defined collision cases, not every possible interleaving. A new failure should be reduced to its bus operations and timing, then added as a regression. Avoid per-ROM behavior switches or expected-output substitutions in the core.
+OAM row corruption and decay are deterministic approximations when their opt-in profiles are selected. The `$2003` corruption path uses a worst-case CPU-bus alignment approximation. The 4500-cycle decay threshold and replacement values provide repeatable behavior for testing, but physical OAM charge loss varies with chip, temperature, and refresh history. Startup alignment can be selected or generated from a seed, and the register restriction ends at the next pre-render boundary. The current checks do not cover analog output effects or every DMA/register interleaving. Register-delay tests cover defined collision cases, not every possible interleaving. A new failure should be reduced to its bus operations and timing, then added as a regression. Avoid per-ROM behavior switches or expected-output substitutions in the core.

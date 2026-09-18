@@ -146,6 +146,89 @@ static int test_vs_metadata_transaction(void) {
     return 0;
 }
 
+static int test_vs_extended_console_header(void) {
+    iNESHeader h = nes20_vs_header(0, 2, 1, VS_TYPE_DEFAULT, 1, VS_INPUT_SWAPPED);
+    h.flags7 = 0x0B;
+    size_t image_size;
+    uint8_t *image = build_image(&h, 0x8000, 0x2000, &image_size);
+    CHECK(image != NULL);
+    image[sizeof(h)] = 0x5A;
+    CHECK(load_rom_memory(image, image_size) == 0);
+    CHECK(vs_enabled() && !vs_dual_system() && vs_ppu_model() == VS_PPU_2C03);
+    CHECK(vs_system_type() == VS_TYPE_DEFAULT && cart_cpu_read(0x8000) == 0x5A);
+
+    h.zero[2] = (VS_TYPE_TKO_BOXING << 4) | 1;
+    memcpy(image, &h, sizeof(h));
+    CHECK(load_rom_memory(image, image_size) == 0);
+    CHECK(vs_system_type() == VS_TYPE_TKO_BOXING && vs_ppu_model() == VS_PPU_2C03);
+    (void)read_mem(0x5E00);
+    CHECK(read_mem(0x5E01) == 0xFF && read_mem(0x5E01) == 0xBF);
+    Mapper *previous = cart;
+    uint8_t *previous_prg = prg_rom;
+    static const uint8_t unsupported[] = {2, 3, 5, 15};
+    for (size_t i = 0; i < sizeof(unsupported); ++i) {
+        h.zero[2] = unsupported[i];
+        memcpy(image, &h, sizeof(h));
+        CHECK(load_rom_memory(image, image_size) == -1);
+        CHECK(cart == previous && prg_rom == previous_prg);
+        CHECK(vs_system_type() == VS_TYPE_TKO_BOXING && cart_cpu_read(0x8000) == 0x5A);
+    }
+    h.zero[2] = 1;
+    for (unsigned region = 1; region <= 3; region += 2) {
+        h.zero[1] = (uint8_t)region;
+        memcpy(image, &h, sizeof(h));
+        CHECK(load_rom_memory(image, image_size) == -1);
+        CHECK(cart == previous && prg_rom == previous_prg);
+    }
+    h.zero[1] = 0;
+    h.flags6 = 0x30;
+    memcpy(image, &h, sizeof(h));
+    CHECK(load_rom_memory(image, image_size) == -1);
+    CHECK(cart == previous && prg_rom == previous_prg);
+    h.flags6 = 0;
+    h.flags7 = 0x09; // A direct VS descriptor still treats one as the unsupported PPU.
+    memcpy(image, &h, sizeof(h));
+    CHECK(load_rom_memory(image, image_size) == -1);
+    CHECK(cart == previous && prg_rom == previous_prg);
+    h.zero[2] = (VS_TYPE_RBI_BASEBALL << 4) | 3;
+    memcpy(image, &h, sizeof(h));
+    CHECK(load_rom_memory(image, image_size) == 0);
+    CHECK(vs_system_type() == VS_TYPE_RBI_BASEBALL && vs_ppu_model() == VS_PPU_2C04_0002);
+    free(image);
+    CHECK(unload_rom());
+    return 0;
+}
+
+static int test_vs_vrc1_metadata(void) {
+    const unsigned mappers[] = {75, 151};
+    for (size_t i = 0; i < sizeof(mappers) / sizeof(mappers[0]); ++i) {
+        iNESHeader h = nes20_vs_header(mappers[i], 2, 1, VS_TYPE_DEFAULT, 0, VS_INPUT_STANDARD);
+        h.flags6 |= 0x08;
+        size_t image_size;
+        uint8_t *image = build_image(&h, 0x8000, 0x2000, &image_size);
+        CHECK(image != NULL);
+        uint8_t *prg = image + sizeof(h);
+        uint8_t *chr = prg + 0x8000;
+        for (size_t bank = 0; bank < 4; ++bank)
+            memset(prg + bank * 0x2000, (int)bank, 0x2000);
+        for (size_t bank = 0; bank < 2; ++bank)
+            memset(chr + bank * 0x1000, (int)(0x40 + bank), 0x1000);
+
+        CHECK(load_rom_memory(image, image_size) == 0);
+        free(image);
+        CHECK(vs_enabled() && rom_mapper_number(&ines_header) == (int)mappers[i]);
+        CHECK(cart_get_mirroring() == MIRROR_FOUR && cart_cpu_read(0xE000) == 3);
+        cart_cpu_write(0x8000, 1);
+        CHECK(cart_cpu_read(0x8000) == 1);
+        cart_cpu_write(0xE000, 0);
+        CHECK(cart_ppu_read(0) == 0x40);
+        cart_cpu_write(0x9000, 1);
+        CHECK(cart_get_mirroring() == MIRROR_FOUR);
+        CHECK(unload_rom());
+    }
+    return 0;
+}
+
 static int test_vs_ppu_models(void) {
     static const uint8_t program[] = {
         0xA9,0x18, 0x8D,0x00,0x20,
@@ -168,6 +251,84 @@ static int test_vs_ppu_models(void) {
     CHECK(get_color(6) == 0xFF484848u);
     CHECK(get_color(17) == 0xFFDAB66Du);
     unload_rom();
+    return 0;
+}
+
+static int test_vs_rgb_frame_timing(void) {
+    static const uint8_t loop[] = {0x4C, 0x00, 0x80};
+    static const uint8_t models[] = {0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+    const unsigned frame_clocks = 262u * 341u;
+    for (size_t model = 0; model < sizeof(models); ++model) {
+        CHECK(load_vs_program(VS_TYPE_DEFAULT, models[model], VS_INPUT_STANDARD,
+                              loop, sizeof(loop)) == 0);
+        for (unsigned parity = 0; parity < 2; ++parity) {
+            power_main();
+            ppu_reg_write(vs_ppu_is_2c05() ? 0x2000 : 0x2001, 0x18);
+            ppu_step_dots(2);
+            CHECK(ppu.rendering_enabled && ppu.fetches_enabled);
+            ppu.scanline = 0;
+            ppu.dot = 0;
+            ppu.odd_frame = parity != 0;
+            start_frame();
+            uint64_t before = ppu.total_cycles;
+            ppu_step_dots((int)frame_clocks - 2);
+            CHECK(!ppu.frame_complete && ppu.scanline == 261 && ppu.dot == 339);
+            uint16_t sprite_starts[8];
+            memcpy(sprite_starts, ppu.sprite_start_dot, sizeof(sprite_starts));
+            ppu_step_dots(1);
+            CHECK(!ppu.frame_complete && ppu.dot == 340);
+            CHECK(ppu.bus_ale_this_dot && !ppu.bus_read_this_dot);
+            CHECK(!ppu.skipped_frame_dot && ppu.sprite_skip_clocks == 0);
+            CHECK(memcmp(sprite_starts, ppu.sprite_start_dot, sizeof(sprite_starts)) == 0);
+            ppu_step_dots(1);
+            CHECK(ppu.frame_complete && ppu.scanline == 0 && ppu.dot == 0);
+            CHECK(ppu.total_cycles - before == frame_clocks);
+            CHECK(ppu.bus_read_this_dot && !ppu.skipped_frame_dot);
+            ppu_step_dots(1);
+            CHECK(ppu.bus_ale_this_dot && ppu.sprite_skip_clocks == 0);
+        }
+        CHECK(unload_rom());
+    }
+    return 0;
+}
+
+static int test_vs_dual_rendered_frame_timing(void) {
+    iNESHeader h = nes20_vs_header(99, 4, 4, VS_TYPE_DUAL, 0, VS_INPUT_STANDARD);
+    size_t image_size;
+    uint8_t *image = build_image(&h, 0x10000, 0x8000, &image_size);
+    CHECK(image != NULL);
+    uint8_t *prg = image + sizeof(h);
+    static const uint8_t render[] = {0xA9, 0x18, 0x8D, 0x01, 0x20, 0x4C, 0x05, 0x80};
+    for (size_t side = 0; side < 2; ++side) {
+        size_t base = side * 0x8000;
+        memcpy(prg + base, render, sizeof(render));
+        set_vector(prg, base + 0x7FFA, 0x8000);
+        set_vector(prg, base + 0x7FFC, 0x8000);
+        set_vector(prg, base + 0x7FFE, 0x8000);
+    }
+    CHECK(load_rom_memory(image, image_size) == 0);
+    free(image);
+    power_main();
+    vs_power_on_secondary();
+    vs_start_frame();
+    for (unsigned i = 0; i < 40000 && !ppu.frame_complete; ++i) vs_cpu_step();
+    CHECK(ppu.frame_complete && ppu.rendering_enabled);
+    uint64_t before[2] = {vs_side_cpu_cycles(0), vs_side_cpu_cycles(1)};
+    uint64_t frames[2] = {vs_side_frame_count(0), vs_side_frame_count(1)};
+    for (unsigned frame = 0; frame < 96; ++frame) {
+        vs_start_frame();
+        for (unsigned i = 0; i < 40000 && !ppu.frame_complete; ++i) vs_cpu_step();
+        CHECK(ppu.frame_complete && !ppu.skipped_frame_dot);
+        CHECK(vs_side_frame_count(0) == frames[0] + frame + 1);
+        CHECK(vs_side_frame_count(1) == frames[1] + frame + 1);
+    }
+    for (unsigned side = 0; side < 2; ++side) {
+        uint64_t elapsed = (vs_side_cpu_cycles(side) - before[side]) * 3;
+        uint64_t expected = 96u * 262u * 341u;
+        // Instruction boundaries can straddle the beginning and end of a frame.
+        CHECK(elapsed + 18 >= expected && elapsed <= expected + 18);
+    }
+    CHECK(unload_rom());
     return 0;
 }
 
@@ -242,6 +403,122 @@ static int test_vs_inputs_and_protection(void) {
     for (unsigned i = 0; i < 6; ++i) cpu_step(&cpu);
     CHECK(ram[0] == 0x00 && ram[1] == 0x00);
     unload_rom();
+    return 0;
+}
+
+static void vs_sensor_pixel(unsigned x, unsigned y, uint8_t color) {
+    ppu.scanline = (int)y;
+    ppu.dot = (int)x + 1;
+    ppu.mask = 0;
+    ppu.rendering_enabled = false;
+    ppu.fetches_enabled = false;
+    ppu.v = 0;
+    ppu_write(0x3F00, color);
+    ppu_step_dots(1);
+}
+
+static uint8_t read_vs_serial_byte(unsigned port) {
+    uint8_t value = 0;
+    for (unsigned bit = 0; bit < 8; ++bit)
+        value |= (uint8_t)((vs_read_controller_port(port) & 1u) << bit);
+    return value;
+}
+
+static int test_vs_zapper_serial(void) {
+    static const uint8_t loop[] = {0x4C, 0x00, 0x80};
+    CHECK(load_vs_program(VS_TYPE_DEFAULT, 0, VS_INPUT_ZAPPER, loop, sizeof(loop)) == 0);
+    power_main();
+    CHECK(vs_set_dip_switches(0x00A5));
+    CHECK(vs_set_coin(0, true));
+    CHECK(vs_set_service(0, true));
+    CHECK(joypad_set_zapper(0, 32, 20, false));
+
+    vs_write_4016(1);
+    vs_write_4016(0);
+    CHECK(read_vs_serial_byte(0) == 0x10);
+    CHECK((vs_read_controller_port(0) & 1u) == 0);
+
+    CHECK(joypad_set_zapper(0, 32, 20, true));
+    vs_write_4016(1);
+    vs_write_4016(0);
+    CHECK(read_vs_serial_byte(0) == 0x90);
+
+    vs_sensor_pixel(32, 20, 0x20);
+    CHECK(joypad_set_zapper(0, 32, 20, false));
+    vs_write_4016(1);
+    vs_write_4016(0);
+    CHECK(read_vs_serial_byte(0) == 0x50);
+
+    CHECK(joypad_set_zapper(0, 32, 20, true));
+    vs_write_4016(1);
+    vs_write_4016(0);
+    uint8_t first = vs_read_controller_port(0);
+    CHECK((first & 0xFCu) == 0x2Cu);
+    uint8_t rest = 0;
+    for (unsigned bit = 1; bit < 8; ++bit)
+        rest |= (uint8_t)((vs_read_controller_port(0) & 1u) << bit);
+    CHECK((uint8_t)((first & 1u) | rest) == 0xD0);
+
+    CHECK(joypad_set_zapper(0, -1, -1, true));
+    vs_write_4016(1);
+    vs_write_4016(0);
+    CHECK(read_vs_serial_byte(0) == 0x90);
+
+    CHECK(joypad_set_zapper(0, 40, 30, false));
+    vs_sensor_pixel(40, 30, 0x20);
+    ppu.scanline = 30;
+    ppu.dot = 40;
+    vs_write_4016(1);
+    vs_write_4016(0);
+    CHECK(read_vs_serial_byte(0) == 0x10);
+    ppu.dot = 42;
+    vs_write_4016(1);
+    vs_write_4016(0);
+    CHECK(read_vs_serial_byte(0) == 0x50);
+
+    joypad_player(1)->buttons = 0xA3;
+    vs_write_4016(1);
+    vs_write_4016(0);
+    CHECK(read_vs_serial_byte(1) == 0xA3);
+    unload_rom();
+
+    CHECK(load_vs_program(VS_TYPE_DEFAULT, 0, VS_INPUT_STANDARD, loop, sizeof(loop)) == 0);
+    Mapper *previous = cart;
+    uint8_t *previous_prg = prg_rom;
+    iNESHeader invalid = nes20_vs_header(0, 2, 1, VS_TYPE_DEFAULT, 0, 8);
+    size_t image_size;
+    uint8_t *image = build_image(&invalid, 0x8000, 0x2000, &image_size);
+    CHECK(image != NULL);
+    CHECK(load_rom_memory(image, image_size) == -1);
+    free(image);
+    CHECK(cart == previous && prg_rom == previous_prg && vs_enabled());
+    unload_rom();
+    return 0;
+}
+
+static int test_vs_zapper_cpu_port(void) {
+    static const uint8_t program[] = {
+        0xA9, 0x01, 0x8D, 0x16, 0x40, // Strobe high.
+        0xA9, 0x00, 0x8D, 0x16, 0x40, // Latch the report.
+        0xA2, 0x00,
+        0xAD, 0x16, 0x40, 0x29, 0x01, 0x95, 0x10,
+        0xE8, 0xE0, 0x0A, 0xD0, 0xF4, 0x02
+    };
+    CHECK(load_vs_program(VS_TYPE_DEFAULT, 0, VS_INPUT_ZAPPER,
+                          program, sizeof(program)) == 0);
+    power_main();
+    CHECK(joypad_set_zapper(0, -1, -1, true));
+    for (unsigned instruction = 0; instruction < 100 && !cpu.halted; ++instruction)
+        cpu_step(&cpu);
+    CHECK(cpu.halted);
+    static const uint8_t expected[] = {0, 0, 0, 0, 1, 0, 0, 1, 0, 0};
+    CHECK(memcmp(ram + 0x10, expected, sizeof(expected)) == 0);
+    write_mem(0x4016, 1);
+    for (unsigned read = 0; read < 12; ++read) CHECK((read_mem(0x4016) & 1u) == 0);
+    CHECK(joypad_set_zapper(0, -1, -1, false));
+    write_mem(0x4016, 0);
+    CHECK(read_vs_serial_byte(0) == 0x10);
+    CHECK(unload_rom());
     return 0;
 }
 
@@ -492,8 +769,14 @@ static int test_vs_dual_video_and_audio(void) {
 int test_vs_accuracy(void) {
     static int (*const tests[])(void) = {
         test_vs_metadata_transaction,
+        test_vs_extended_console_header,
+        test_vs_vrc1_metadata,
         test_vs_ppu_models,
+        test_vs_rgb_frame_timing,
+        test_vs_dual_rendered_frame_timing,
         test_vs_inputs_and_protection,
+        test_vs_zapper_serial,
+        test_vs_zapper_cpu_port,
         test_mapper99_banks,
         test_vs_dual_execution,
         test_vs_reset_and_declared_ram,

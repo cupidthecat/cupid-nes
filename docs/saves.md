@@ -2,7 +2,7 @@
 
 [Documentation index](README.md)
 
-Cupid persists cartridge nonvolatile memory, writable FDS/QD images, and Family BASIC tape recordings. These files preserve the emulated storage device involved; the application does not expose save-state or rewind commands.
+Cupid persists cartridge nonvolatile memory, writable FDS/QD images, Family BASIC tape recordings, and supported expansion storage. These files preserve the emulated storage device involved; the application does not expose save-state or rewind commands.
 
 ## Cartridge save files
 
@@ -12,7 +12,7 @@ The cartridge loader derives save paths from the image path. It removes the fina
 | --- | --- | --- |
 | PRG NVRAM | `games/game.nes` | `games/game.sav` |
 | CHR NVRAM | `games/game.nes` | `games/game.chr.sav` |
-| UNROM 512 flash | `games/game.nes` | `games/game.flash.sav` |
+| Battery-backed UNROM 512 flash or GTROM flash | `games/game.nes` | `games/game.flash.sav` |
 | 128-byte serial EEPROM | `games/game.nes` | `games/game.eeprom128` |
 | 256-byte serial EEPROM | `games/game.nes` | `games/game.eeprom256` |
 
@@ -20,7 +20,9 @@ Only devices present in the loaded board configuration get persistence paths. Vo
 
 Existing save data is read when the cartridge is loaded. Short PRG, CHR, or EEPROM files leave the unread portion of the allocated device zero-filled. The save size follows the board and NES 2.0 metadata, so `.sav` is not always an 8 KiB file.
 
-A short UNROM 512 flash save behaves differently: it replaces only the bytes read from the file, leaving the remaining PRG flash bytes from the loaded image. An incomplete file should not be treated as a verified backup.
+Taito X1-005/X1-017 boards use fixed cartridge-RAM allocations instead of taking a zero NES 2.0 RAM declaration literally. Mappers 80 and 207 allocate a 256-byte mirrored RAM image, and mapper 82 allocates 5 KiB. With the battery flag set, those bytes use the ordinary `.sav` path; without it, the same RAM is volatile.
+
+A short persistent flash save behaves differently: it replaces only the bytes read from the file, leaving the remaining PRG flash bytes from the loaded image. An incomplete file should not be treated as a verified backup. UNROM 512 gets a flash save path only when the cartridge header has the battery bit set. GTROM exposes persistent PRG flash even when that bit is clear; its CHR and nametable RAM remain volatile.
 
 Persistent cartridge data is flushed when the cartridge is shut down, including normal application exit. The main loop has no timed autosave. Close the emulator normally after making progress you want to retain.
 
@@ -32,12 +34,20 @@ Some mapper save files contain more than one memory area:
 
 - MMC5 writes PRG NVRAM followed by its 1 KiB ExRAM in the same `.sav` file.
 - A battery-backed Namco 163 configuration writes PRG save RAM followed by the N163's 128-byte audio RAM in the same `.sav` file.
-- UNROM 512 flash persistence stores the complete writable PRG flash image in `.flash.sav`.
+- Battery-backed UNROM 512 flash and GTROM flash persistence store the complete writable PRG flash image in `.flash.sav`.
 - Bandai serial EEPROM chips use `.eeprom128` or `.eeprom256` files rather than the ordinary PRG `.sav` path.
 
 Do not assume another emulator uses the same composite layout. Keep a backup before moving saves between emulator versions or board configurations.
 
 Ordinary PRG/CHR battery memory and EEPROM files are written directly to their destination. Flash uses a temporary file and replacement. Failed cartridge saves print an error; they do not keep the application open for recovery as a failed FDS save does.
+
+## Expansion storage
+
+The ASCII Turbo File uses an 8 KiB `.turbofile.sav` file derived from the ROM stem. For example, `games/game.nes` uses `games/game.turbofile.sav`. The file must be exactly 8 KiB when it already exists.
+
+BattleBox uses a 512-byte `.battlebox.sav` file containing both 128-word chips in chip order with each word stored low byte first. Existing files must match that size.
+
+Expansion saves are written to a sibling temporary file and replace the destination only after the complete image is written and closed. If replacement fails during a window-close request, the modified device remains in memory and the emulator stays open so the save can be retried.
 
 ## Writable FDS and QD images
 

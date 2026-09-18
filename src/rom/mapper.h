@@ -61,6 +61,9 @@ uint8_t cart_cpu_read (uint16_t addr);
 // Resolve floating data lines against the CPU latch, without a data-byte sentinel.
 uint8_t cart_cpu_read_bus(uint16_t addr, uint8_t open_bus);
 void    cart_cpu_write(uint16_t addr, uint8_t v);
+// Clock one real CPU bus cycle while exposing whether it is a write to boards
+// whose counters can select CPU-write cycles as their clock source.
+void    cart_clock_cpu_cycle(bool write_cycle);
 uint8_t cart_ppu_read (uint16_t addr);
 void    cart_ppu_write(uint16_t addr, uint8_t v);
 void    cart_set_ppu_fetch_source(CartPpuFetchSource src);
@@ -70,6 +73,13 @@ void    cart_notify_ppu_ctrl_write(uint8_t value);
 float   cart_expansion_audio(void);
 // Scan an EAN-8 or EAN-13 code through the connected Datach reader.
 bool    cart_set_barcode(const char *digits);
+
+// Select the MMC3 IRQ counter revision used by compatible MMC3-family boards.
+// MMC6 and MC-ACC keep their board-specific IRQ behavior.
+bool        cart_set_mmc3_revision_name(const char *name);
+const char *cart_mmc3_revision_name(void);
+bool        cart_set_dip_switches(unsigned value);
+unsigned    cart_dip_switches(void);
 
 // Mapper-aware nametable access ($2000-$2FFF decoded by PPU)
 uint8_t cart_nt_read (uint16_t addr, uint8_t *nt_ram);

@@ -1,0 +1,87 @@
+/*
+ * special_peripherals.h - Famicom expansion peripheral helpers
+ *
+ * Author: @frankischilling
+ *
+ * This file is part of Cupid NES Emulator.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ */
+
+#ifndef SPECIAL_PERIPHERALS_H
+#define SPECIAL_PERIPHERALS_H
+
+#include <stdbool.h>
+#include <stdint.h>
+
+void turbo_file_reset_protocol(void);
+uint8_t turbo_file_read(unsigned port);
+void turbo_file_write(uint8_t value);
+bool turbo_file_configure(const char *rom_path);
+bool turbo_file_flush(void);
+bool turbo_file_shutdown(void);
+
+void battle_box_reset_protocol(void);
+uint8_t battle_box_read(unsigned port);
+void battle_box_write(uint8_t value);
+bool battle_box_configure(const char *rom_path);
+bool battle_box_flush(void);
+bool battle_box_shutdown(void);
+
+void subor_keyboard_reset(void);
+uint8_t subor_keyboard_read(unsigned port);
+void subor_keyboard_write(uint8_t value);
+bool subor_keyboard_set_key(unsigned key, bool pressed);
+
+void subor_mouse_reset(void);
+uint8_t subor_mouse_read(void);
+void subor_mouse_write(uint8_t value);
+void subor_mouse_add_motion(int dx, int dy);
+void subor_mouse_set_buttons(bool left, bool right);
+
+void hori_track_reset(void);
+void hori_track_add_motion(int dx, int dy);
+void hori_track_write(uint8_t value, uint8_t buttons);
+uint8_t hori_track_read(uint8_t buttons);
+
+void konami_hyper_shot_reset(void);
+void konami_hyper_shot_write(uint8_t value);
+uint8_t konami_hyper_shot_read(unsigned port, uint8_t player1, uint8_t player2);
+
+void bandai_hyper_shot_reset(void);
+void bandai_hyper_shot_write(uint8_t value, uint8_t buttons);
+uint8_t bandai_hyper_shot_read(uint8_t buttons);
+
+void party_tap_reset(void);
+void party_tap_write(uint8_t value);
+uint8_t party_tap_read(unsigned port);
+bool party_tap_set_button(unsigned button, bool pressed);
+
+void pachinko_reset(void);
+void pachinko_write(uint8_t value, uint8_t buttons);
+uint8_t pachinko_read(uint8_t buttons);
+void pachinko_set_controls(bool press, bool release);
+
+void exciting_boxing_reset(void);
+void exciting_boxing_write(uint8_t value);
+uint8_t exciting_boxing_read(unsigned port);
+bool exciting_boxing_set_sensor(unsigned sensor, bool pressed);
+
+void jissen_mahjong_reset(void);
+void jissen_mahjong_write(uint8_t value);
+uint8_t jissen_mahjong_read(unsigned port);
+bool jissen_mahjong_set_key(unsigned key, bool pressed);
+
+void barcode_battler_reset(void);
+bool barcode_battler_scan(const char *digits, uint64_t cpu_cycles);
+uint8_t barcode_battler_read(unsigned port, uint64_t cpu_cycles, uint32_t cpu_hz);
+
+void oeka_kids_tablet_reset(void);
+void oeka_kids_tablet_set_state(int x, int y, bool touch, bool click);
+void oeka_kids_tablet_write(uint8_t value);
+uint8_t oeka_kids_tablet_read(unsigned port);
+
+#endif

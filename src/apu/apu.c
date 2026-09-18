@@ -24,6 +24,7 @@
  */
 
 #include "apu.h"
+#include "epsm.h"
 #include "../rom/mapper.h"
 #include "../cpu/cpu.h"
 #include "../system/timing.h"
@@ -116,11 +117,12 @@ static void dmc_clock_output(APU* a);
 
 // Audio ring buffer.
 static inline uint32_t rb_next(uint32_t v){ return (v+1) & (APU_RING_CAP-1); }
-static inline bool rb_push(APU* a, float s){
+static inline bool rb_push(APU* a, float s, float side){
     uint32_t w = atomic_load_explicit(&a->ring_w, memory_order_relaxed);
     uint32_t n = rb_next(w);
     if (n == atomic_load_explicit(&a->ring_r, memory_order_acquire)) return false;
     a->ring[w] = s;
+    a->ring_side[w] = side;
     atomic_store_explicit(&a->ring_w, n, memory_order_release);
     return true;
 }
@@ -129,6 +131,7 @@ static inline int rb_pull(APU* a, float* out, int n){
     uint32_t r = atomic_load_explicit(&a->ring_r, memory_order_relaxed);
     while (got < n && r != atomic_load_explicit(&a->ring_w, memory_order_acquire)) {
         out[got++] = a->ring[r];
+        a->last_read_side = a->ring_side[r];
         r = rb_next(r);
         atomic_store_explicit(&a->ring_r, r, memory_order_release);
     }
@@ -256,6 +259,21 @@ static inline uint16_t sweep_target(uint16_t t, const Sweep* s, bool ch2){
         return t + change;
     }
 }
+
+static inline uint8_t pulse_current_output(const Pulse* p) {
+    if (p->lc.length == 0) return 0;
+    if (p->timer_reload < 8 || p->timer_reload > 0x7FF) return 0;
+    if (!p->sweep.negate && sweep_target(p->timer_reload, &p->sweep, false) > 0x7FF)
+        return 0;
+    if (!DUTY_SEQ[p->duty][p->duty_step]) return 0;
+    return env_output(&p->env);
+}
+
+static inline uint8_t noise_current_output(const Noise* n) {
+    if (n->lc.length == 0 || (n->lfsr & 1)) return 0;
+    return env_output(&n->env);
+}
+
 static void sweep_clock(Pulse* p, bool is_ch2){
     p->sweep.divider--;
     if (p->sweep.divider == 0) {
@@ -348,6 +366,7 @@ void apu_audio_init_state(APU *state, int sample_rate) {
     state->cycles_per_sample = nes_timing()->cpu_hz / state->sample_rate;
     state->sample_accum = 0.0;
     state->last_read_sample = 0.0f;
+    state->last_read_side = 0.0f;
     atomic_store_explicit(&state->ring_w, 0, memory_order_relaxed);
     atomic_store_explicit(&state->ring_r, 0, memory_order_relaxed);
     apu_init_filter_coeffs(state);
@@ -507,6 +526,9 @@ static void pulse_write(Pulse* p, uint16_t reg, uint8_t v){
             p->env.start_flag = true;
             break;
     }
+    // Pulse register writes refresh the DAC immediately. $4015 disable only
+    // clears the length counter; the latched output changes on the next edge.
+    p->output_level = pulse_current_output(p);
 }
 static void triangle_write(Triangle* t, uint16_t reg, uint8_t v){
     switch (reg & 3) {
@@ -607,6 +629,7 @@ static inline void clock_pulse(Pulse* p){
     if (p->timer == 0) {
         p->timer = p->timer_reload;
         p->duty_step = (p->duty_step + 1) & 7;
+        p->output_level = pulse_current_output(p);
     } else {
         p->timer--;
     }
@@ -633,33 +656,39 @@ static inline void clock_noise(Noise* n){
         uint16_t bitX = (n->lfsr >> (n->mode ? 6 : 1)) & 1;
         uint16_t fb = bit0 ^ bitX;
         n->lfsr = (n->lfsr >> 1) | (fb << 14);
+        n->output_level = noise_current_output(n);
     } else {
         n->timer--;
     }
 }
 // DAC-ish sample (0..1 per channel)
 static inline float pulse_out(const Pulse* p){
-    if (p->lc.length == 0) return 0.0f;
-    if (p->timer_reload < 8 || p->timer_reload > 0x7FF) return 0.0f;
-    // The adder can mute the channel even when sweep updates are disabled.
-    if (!p->sweep.negate && sweep_target(p->timer_reload, &p->sweep, false) > 0x7FF)
-        return 0.0f;
-    uint8_t gate = DUTY_SEQ[p->duty][p->duty_step];
-    if (!gate) return 0.0f;
-    return (float)env_output(&p->env); // 0..15 raw DAC domain for nonlinear mixer
+    return (float)p->output_level;
 }
 static inline float triangle_out(const Triangle* t){
     return (float)t->output_level;
 }
 static inline float noise_out(const Noise* n){
-    if (n->lc.length == 0) return 0.0f;
-    // if lfsr bit0 is 1 -> output 0, else envelope
-    if (n->lfsr & 1) return 0.0f;
-    return (float)env_output(&n->env); // 0..15
+    return (float)n->output_level;
 }
 
 static inline float dmc_out(const DMC* d){
     return (float)d->output_level; // 0..127
+}
+
+uint8_t apu_read_test_output(uint16_t addr) {
+    switch (addr) {
+        case 0x4018:
+            return (uint8_t)((uint8_t)pulse_out(&apu.pulse1)
+                           | ((uint8_t)pulse_out(&apu.pulse2) << 4));
+        case 0x4019:
+            return (uint8_t)((uint8_t)triangle_out(&apu.tri)
+                           | ((uint8_t)noise_out(&apu.noise) << 4));
+        case 0x401A:
+            return (uint8_t)dmc_out(&apu.dmc);
+        default:
+            return 0;
+    }
 }
 
 // Nonlinear mixer (NESdev): pulse & TND
@@ -765,11 +794,19 @@ void apu_step(APU *a, int cpu_cycles){
             s += cart_expansion_audio();
             s = apu_post_filter(a, s);
 
-            if (s > 1.0f) s = 1.0f;
-            if (s < -1.0f) s = -1.0f;
-            a->last_output_sample = s;
+            float epsm_left = 0, epsm_right = 0;
+            if (a == main_apu) epsm_sample_stereo(&epsm_left, &epsm_right);
+            float left = s + epsm_left;
+            float right = s + epsm_right;
+            if (left > 1.0f) left = 1.0f;
+            if (left < -1.0f) left = -1.0f;
+            if (right > 1.0f) right = 1.0f;
+            if (right < -1.0f) right = -1.0f;
+            float middle = (left + right) * 0.5f;
+            float side = (left - right) * 0.5f;
+            a->last_output_sample = middle;
 
-            rb_push(a, s);
+            rb_push(a, middle, side);
         }
 
         a->cpu_cycle_odd = !a->cpu_cycle_odd;
@@ -789,4 +826,35 @@ void apu_sdl_audio_callback(void *userdata, uint8_t *stream, int len){
     float *out = (float*)stream;
     int frames = len / sizeof(float);
     apu_audio_pull(main_apu, out, frames);
+}
+
+void apu_audio_pull_stereo(APU *state, float *samples, int frames) {
+    if (!state || !samples || frames <= 0) return;
+    uint32_t read_index = atomic_load_explicit(&state->ring_r, memory_order_relaxed);
+    int frame = 0;
+    while (frame < frames
+           && read_index != atomic_load_explicit(&state->ring_w, memory_order_acquire)) {
+        float middle = state->ring[read_index];
+        float side = state->ring_side[read_index];
+        samples[frame * 2] = middle + side;
+        samples[frame * 2 + 1] = middle - side;
+        state->last_read_sample = middle;
+        state->last_read_side = side;
+        ++frame;
+        read_index = rb_next(read_index);
+        atomic_store_explicit(&state->ring_r, read_index, memory_order_release);
+    }
+    for (; frame < frames; ++frame) {
+        samples[frame * 2] = state->last_read_sample + state->last_read_side;
+        samples[frame * 2 + 1] = state->last_read_sample - state->last_read_side;
+    }
+}
+
+void apu_sdl_stereo_callback(void *userdata, uint8_t *stream, int len) {
+    (void)userdata;
+    if (!stream || len <= 0) return;
+    int frames = len / (int)(2 * sizeof(float));
+    apu_audio_pull_stereo(main_apu, (float *)stream, frames);
+    size_t bytes = (size_t)frames * 2 * sizeof(float);
+    if (bytes < (size_t)len) memset(stream + bytes, 0, (size_t)len - bytes);
 }

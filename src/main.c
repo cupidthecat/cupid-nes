@@ -28,6 +28,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <errno.h>
 #include "rom/rom.h"
 #include "rom/fds.h"
 #include "cpu/cpu.h"
@@ -36,6 +37,7 @@
 #include "joypad/family_basic.h"
 #include "../include/globals.h"
 #include "apu/apu.h"
+#include "apu/epsm.h"
 #include <time.h>
 #include "rom/mapper.h"
 #include <math.h>
@@ -188,6 +190,147 @@ static bool family_basic_key_event(const SDL_KeyboardEvent *event,
     return true;
 }
 
+static bool subor_modifier_event(SDL_Scancode scancode, bool down) {
+    static bool sides[3][2];
+    static const SuborKey keys[] = {SUBOR_KEY_CTRL, SUBOR_KEY_SHIFT, SUBOR_KEY_ALT};
+    unsigned key;
+    unsigned side;
+    switch (scancode) {
+        case SDL_SCANCODE_LCTRL: key = 0; side = 0; break;
+        case SDL_SCANCODE_RCTRL: key = 0; side = 1; break;
+        case SDL_SCANCODE_LSHIFT: key = 1; side = 0; break;
+        case SDL_SCANCODE_RSHIFT: key = 1; side = 1; break;
+        case SDL_SCANCODE_LALT: key = 2; side = 0; break;
+        case SDL_SCANCODE_RALT: key = 2; side = 1; break;
+        default: return false;
+    }
+    sides[key][side] = down;
+    joypad_set_subor_key(keys[key], sides[key][0] || sides[key][1]);
+    return true;
+}
+
+static bool subor_key_event(const SDL_KeyboardEvent *event) {
+    if (!event || joypad_expansion_device() != NES_EXPANSION_SUBOR_KEYBOARD) return false;
+    static const SDL_Scancode keys[SUBOR_KEY_COUNT] = {
+        [SUBOR_KEY_A] = SDL_SCANCODE_A, [SUBOR_KEY_B] = SDL_SCANCODE_B,
+        [SUBOR_KEY_C] = SDL_SCANCODE_C, [SUBOR_KEY_D] = SDL_SCANCODE_D,
+        [SUBOR_KEY_E] = SDL_SCANCODE_E, [SUBOR_KEY_F] = SDL_SCANCODE_F,
+        [SUBOR_KEY_G] = SDL_SCANCODE_G, [SUBOR_KEY_H] = SDL_SCANCODE_H,
+        [SUBOR_KEY_I] = SDL_SCANCODE_I, [SUBOR_KEY_J] = SDL_SCANCODE_J,
+        [SUBOR_KEY_K] = SDL_SCANCODE_K, [SUBOR_KEY_L] = SDL_SCANCODE_L,
+        [SUBOR_KEY_M] = SDL_SCANCODE_M, [SUBOR_KEY_N] = SDL_SCANCODE_N,
+        [SUBOR_KEY_O] = SDL_SCANCODE_O, [SUBOR_KEY_P] = SDL_SCANCODE_P,
+        [SUBOR_KEY_Q] = SDL_SCANCODE_Q, [SUBOR_KEY_R] = SDL_SCANCODE_R,
+        [SUBOR_KEY_S] = SDL_SCANCODE_S, [SUBOR_KEY_T] = SDL_SCANCODE_T,
+        [SUBOR_KEY_U] = SDL_SCANCODE_U, [SUBOR_KEY_V] = SDL_SCANCODE_V,
+        [SUBOR_KEY_W] = SDL_SCANCODE_W, [SUBOR_KEY_X] = SDL_SCANCODE_X,
+        [SUBOR_KEY_Y] = SDL_SCANCODE_Y, [SUBOR_KEY_Z] = SDL_SCANCODE_Z,
+        [SUBOR_KEY_0] = SDL_SCANCODE_0, [SUBOR_KEY_1] = SDL_SCANCODE_1,
+        [SUBOR_KEY_2] = SDL_SCANCODE_2, [SUBOR_KEY_3] = SDL_SCANCODE_3,
+        [SUBOR_KEY_4] = SDL_SCANCODE_4, [SUBOR_KEY_5] = SDL_SCANCODE_5,
+        [SUBOR_KEY_6] = SDL_SCANCODE_6, [SUBOR_KEY_7] = SDL_SCANCODE_7,
+        [SUBOR_KEY_8] = SDL_SCANCODE_8, [SUBOR_KEY_9] = SDL_SCANCODE_9,
+        [SUBOR_KEY_F1] = SDL_SCANCODE_F1, [SUBOR_KEY_F2] = SDL_SCANCODE_F2,
+        [SUBOR_KEY_F3] = SDL_SCANCODE_F3, [SUBOR_KEY_F4] = SDL_SCANCODE_F4,
+        [SUBOR_KEY_F5] = SDL_SCANCODE_F5, [SUBOR_KEY_F6] = SDL_SCANCODE_F6,
+        [SUBOR_KEY_F7] = SDL_SCANCODE_F7, [SUBOR_KEY_F8] = SDL_SCANCODE_F8,
+        [SUBOR_KEY_F9] = SDL_SCANCODE_F9, [SUBOR_KEY_F10] = SDL_SCANCODE_F10,
+        [SUBOR_KEY_F11] = SDL_SCANCODE_F11, [SUBOR_KEY_F12] = SDL_SCANCODE_F12,
+        [SUBOR_KEY_KP0] = SDL_SCANCODE_KP_0, [SUBOR_KEY_KP1] = SDL_SCANCODE_KP_1,
+        [SUBOR_KEY_KP2] = SDL_SCANCODE_KP_2, [SUBOR_KEY_KP3] = SDL_SCANCODE_KP_3,
+        [SUBOR_KEY_KP4] = SDL_SCANCODE_KP_4, [SUBOR_KEY_KP5] = SDL_SCANCODE_KP_5,
+        [SUBOR_KEY_KP6] = SDL_SCANCODE_KP_6, [SUBOR_KEY_KP7] = SDL_SCANCODE_KP_7,
+        [SUBOR_KEY_KP8] = SDL_SCANCODE_KP_8, [SUBOR_KEY_KP9] = SDL_SCANCODE_KP_9,
+        [SUBOR_KEY_KP_ENTER] = SDL_SCANCODE_KP_ENTER, [SUBOR_KEY_KP_DOT] = SDL_SCANCODE_KP_PERIOD,
+        [SUBOR_KEY_KP_PLUS] = SDL_SCANCODE_KP_PLUS,
+        [SUBOR_KEY_KP_MULTIPLY] = SDL_SCANCODE_KP_MULTIPLY,
+        [SUBOR_KEY_KP_DIVIDE] = SDL_SCANCODE_KP_DIVIDE,
+        [SUBOR_KEY_KP_MINUS] = SDL_SCANCODE_KP_MINUS,
+        [SUBOR_KEY_NUMLOCK] = SDL_SCANCODE_NUMLOCKCLEAR,
+        [SUBOR_KEY_COMMA] = SDL_SCANCODE_COMMA, [SUBOR_KEY_DOT] = SDL_SCANCODE_PERIOD,
+        [SUBOR_KEY_SEMICOLON] = SDL_SCANCODE_SEMICOLON,
+        [SUBOR_KEY_APOSTROPHE] = SDL_SCANCODE_APOSTROPHE,
+        [SUBOR_KEY_SLASH] = SDL_SCANCODE_SLASH, [SUBOR_KEY_BACKSLASH] = SDL_SCANCODE_BACKSLASH,
+        [SUBOR_KEY_EQUAL] = SDL_SCANCODE_EQUALS, [SUBOR_KEY_MINUS] = SDL_SCANCODE_MINUS,
+        [SUBOR_KEY_GRAVE] = SDL_SCANCODE_GRAVE,
+        [SUBOR_KEY_LEFT_BRACKET] = SDL_SCANCODE_LEFTBRACKET,
+        [SUBOR_KEY_RIGHT_BRACKET] = SDL_SCANCODE_RIGHTBRACKET,
+        [SUBOR_KEY_CAPSLOCK] = SDL_SCANCODE_CAPSLOCK, [SUBOR_KEY_PAUSE] = SDL_SCANCODE_PAUSE,
+        [SUBOR_KEY_SPACE] = SDL_SCANCODE_SPACE,
+        [SUBOR_KEY_BACKSPACE] = SDL_SCANCODE_BACKSPACE, [SUBOR_KEY_TAB] = SDL_SCANCODE_TAB,
+        [SUBOR_KEY_ESCAPE] = SDL_SCANCODE_ESCAPE, [SUBOR_KEY_ENTER] = SDL_SCANCODE_RETURN,
+        [SUBOR_KEY_END] = SDL_SCANCODE_END, [SUBOR_KEY_HOME] = SDL_SCANCODE_HOME,
+        [SUBOR_KEY_INSERT] = SDL_SCANCODE_INSERT, [SUBOR_KEY_DELETE] = SDL_SCANCODE_DELETE,
+        [SUBOR_KEY_PAGEUP] = SDL_SCANCODE_PAGEUP, [SUBOR_KEY_PAGEDOWN] = SDL_SCANCODE_PAGEDOWN,
+        [SUBOR_KEY_UP] = SDL_SCANCODE_UP, [SUBOR_KEY_DOWN] = SDL_SCANCODE_DOWN,
+        [SUBOR_KEY_LEFT] = SDL_SCANCODE_LEFT, [SUBOR_KEY_RIGHT] = SDL_SCANCODE_RIGHT
+    };
+    bool down = event->type == SDL_KEYDOWN;
+    if (subor_modifier_event(event->keysym.scancode, down)) return true;
+    for (unsigned key = 0; key < SUBOR_KEY_COUNT; ++key) {
+        if (keys[key] != SDL_SCANCODE_UNKNOWN && event->keysym.scancode == keys[key]) {
+            joypad_set_subor_key((SuborKey)key, down);
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool party_tap_key_event(const SDL_KeyboardEvent *event) {
+    if (!event || joypad_expansion_device() != NES_EXPANSION_PARTY_TAP) return false;
+    static const SDL_Keycode keys[] = {SDLK_1, SDLK_2, SDLK_3, SDLK_4, SDLK_5, SDLK_6};
+    for (unsigned button = 0; button < 6; ++button) {
+        if (event->keysym.sym == keys[button]) {
+            joypad_set_party_tap_button(button, event->type == SDL_KEYDOWN);
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool boxing_key_event(const SDL_KeyboardEvent *event) {
+    if (!event || joypad_expansion_device() != NES_EXPANSION_EXCITING_BOXING) return false;
+    static const SDL_Keycode keys[] = {
+        SDLK_1, SDLK_2, SDLK_3, SDLK_4, SDLK_5, SDLK_6, SDLK_7, SDLK_8
+    };
+    for (unsigned sensor = 0; sensor < 8; ++sensor) {
+        if (event->keysym.sym == keys[sensor]) {
+            joypad_set_boxing_sensor(sensor, event->type == SDL_KEYDOWN);
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool jissen_key_event(const SDL_KeyboardEvent *event) {
+    if (!event || joypad_expansion_device() != NES_EXPANSION_JISSEN_MAHJONG) return false;
+    JissenKey key;
+    if (event->keysym.sym >= SDLK_a && event->keysym.sym <= SDLK_n) {
+        key = (JissenKey)(JISSEN_KEY_A + (event->keysym.sym - SDLK_a));
+    } else {
+        switch (event->keysym.sym) {
+            case SDLK_RSHIFT: key = JISSEN_KEY_SELECT; break;
+            case SDLK_RETURN: key = JISSEN_KEY_START; break;
+            case SDLK_1: key = JISSEN_KEY_KAN; break;
+            case SDLK_2: key = JISSEN_KEY_PON; break;
+            case SDLK_3: key = JISSEN_KEY_CHII; break;
+            case SDLK_4: key = JISSEN_KEY_RIICHI; break;
+            case SDLK_5: key = JISSEN_KEY_RON; break;
+            default: return false;
+        }
+    }
+    joypad_set_jissen_key(key, event->type == SDL_KEYDOWN);
+    return true;
+}
+
+static void oeka_kids_pointer_event(int pointer_x, int pointer_y, bool pointer_on_screen,
+                                    uint32_t buttons) {
+    if (joypad_expansion_device() != NES_EXPANSION_OEKA_KIDS_TABLET) return;
+    bool click = (buttons & SDL_BUTTON_LMASK) != 0;
+    bool touch = click || (pointer_on_screen && pointer_y >= 48);
+    joypad_set_oeka_kids_tablet(pointer_x, pointer_y, touch, click);
+}
+
 int main(int argc, char *argv[]) {
     SDL_AudioSpec want;
     SDL_AudioSpec have;
@@ -195,6 +338,7 @@ int main(int argc, char *argv[]) {
 
     const char *rom_path = NULL;
     const char *barcode = NULL;
+    const char *barcode_battler = NULL;
     const char *tape_play_path = NULL;
     const char *tape_record_path = NULL;
     const char *fds_bios_path = NULL;
@@ -204,6 +348,11 @@ int main(int argc, char *argv[]) {
     bool fds_start_write_protected = false;
     bool vs_dip_set = false;
     uint16_t vs_dips = 0;
+    bool startup_phase_set = false;
+    bool startup_seed_set = false;
+    unsigned startup_cpu_offset = 0, startup_ppu_phase = 0;
+    uint32_t startup_seed = 0;
+    const char *epsm_adpcm_path = NULL;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--console") == 0) {
             if (++i == argc || !nes_set_console_model_name(argv[i])) {
@@ -223,6 +372,50 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "CPU revision must be early-2a03 or late-2a03\n");
                 return 1;
             }
+        } else if (strcmp(argv[i], "--cpu-test-mode") == 0) {
+            cpu_set_test_mode(true);
+        } else if (strcmp(argv[i], "--epsm-adpcm") == 0) {
+            if (++i == argc) {
+                fprintf(stderr, "--epsm-adpcm requires an 8 KiB YMF288 ADPCM ROM file\n");
+                return 1;
+            }
+            epsm_adpcm_path = argv[i];
+        } else if (strcmp(argv[i], "--startup-phase") == 0) {
+            if (++i == argc || startup_phase_set || startup_seed_set) {
+                fprintf(stderr, "Choose one startup phase CPU:PPU or startup seed\n");
+                return 1;
+            }
+            char *end;
+            errno = 0;
+            unsigned long cpu_offset = strtoul(argv[i], &end, 10);
+            if (errno || argv[i][0] < '0' || argv[i][0] > '9' || *end != ':' || cpu_offset > 15) {
+                fprintf(stderr, "Startup phase must be CPU:PPU in regional master clocks\n");
+                return 1;
+            }
+            const char *ppu_text = end + 1;
+            errno = 0;
+            unsigned long ppu_phase = strtoul(ppu_text, &end, 10);
+            if (errno || ppu_text[0] < '0' || ppu_text[0] > '9' || *end || ppu_phase > 4) {
+                fprintf(stderr, "Startup phase must be CPU:PPU in regional master clocks\n");
+                return 1;
+            }
+            startup_cpu_offset = (unsigned)cpu_offset;
+            startup_ppu_phase = (unsigned)ppu_phase;
+            startup_phase_set = true;
+        } else if (strcmp(argv[i], "--startup-seed") == 0) {
+            if (++i == argc || startup_phase_set || startup_seed_set) {
+                fprintf(stderr, "Choose one startup phase CPU:PPU or startup seed\n");
+                return 1;
+            }
+            char *end;
+            errno = 0;
+            unsigned long long seed = strtoull(argv[i], &end, 10);
+            if (errno || argv[i][0] < '0' || argv[i][0] > '9' || *end || seed > UINT32_MAX) {
+                fprintf(stderr, "Startup seed must be an integer from 0 to 4294967295\n");
+                return 1;
+            }
+            startup_seed = (uint32_t)seed;
+            startup_seed_set = true;
         } else if (strcmp(argv[i], "--ppu-revision") == 0) {
             if (++i == argc || !ppu_set_revision_name(argv[i])) {
                 fprintf(stderr, "PPU revision must be 2c02-pre-e or 2c02e-plus\n");
@@ -234,6 +427,24 @@ int main(int argc, char *argv[]) {
             ppu_set_startup_write_restriction(true);
         } else if (strcmp(argv[i], "--ppu-oam-decay") == 0) {
             ppu_set_oam_decay(true);
+        } else if (strcmp(argv[i], "--mmc3-revision") == 0) {
+            if (++i == argc || !cart_set_mmc3_revision_name(argv[i])) {
+                fprintf(stderr, "MMC3 revision must be standard or a\n");
+                return 1;
+            }
+        } else if (strcmp(argv[i], "--cart-dip") == 0) {
+            if (++i == argc) {
+                fprintf(stderr, "Cartridge DIP value must be an integer from 0 to 255\n");
+                return 1;
+            }
+            char *end = NULL;
+            errno = 0;
+            unsigned long value = strtoul(argv[i], &end, 0);
+            if (errno || end == argv[i] || *end || argv[i][0] == '-' || value > 0xFFu
+                || !cart_set_dip_switches((unsigned)value)) {
+                fprintf(stderr, "Cartridge DIP value must be an integer from 0 to 255\n");
+                return 1;
+            }
         } else if (strcmp(argv[i], "--adapter") == 0) {
             if (++i == argc || !joypad_set_adapter_name(argv[i])) {
                 fprintf(stderr, "Adapter must be none, four-score, famicom-2, or famicom-4\n");
@@ -242,12 +453,12 @@ int main(int argc, char *argv[]) {
         } else if (strcmp(argv[i], "--port1") == 0 || strcmp(argv[i], "--port2") == 0) {
             unsigned port = argv[i][6] == '2' ? 1 : 0;
             if (++i == argc || !joypad_set_port_device_name(port, argv[i])) {
-                fprintf(stderr, "Port device must be pad, none, arkanoid, power-pad-a, power-pad-b, or zapper\n");
+                fprintf(stderr, "Port device must be pad, none, arkanoid, power-pad-a, power-pad-b, zapper, or subor-mouse (port 2 only)\n");
                 return 1;
             }
         } else if (strcmp(argv[i], "--expansion") == 0) {
             if (++i == argc || !joypad_set_expansion_device_name(argv[i])) {
-                fprintf(stderr, "Expansion device must be none, arkanoid, family-trainer-a, family-trainer-b, zapper, or family-basic\n");
+                fprintf(stderr, "Expansion device must be none, arkanoid, family-trainer-a, family-trainer-b, zapper, family-basic, turbo-file, battle-box, subor-keyboard, hori-track, konami-hyper-shot, bandai-hyper-shot, party-tap, pachinko, exciting-boxing, jissen-mahjong, barcode-battler, or oeka-kids-tablet\n");
                 return 1;
             }
         } else if (strcmp(argv[i], "--zapper-radius") == 0) {
@@ -281,6 +492,12 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             barcode = argv[i];
+        } else if (strcmp(argv[i], "--barcode-battler") == 0) {
+            if (++i == argc) {
+                fprintf(stderr, "Barcode Battler scan requires 8 or 13 decimal digits\n");
+                return 1;
+            }
+            barcode_battler = argv[i];
         } else if (strcmp(argv[i], "--tape-play") == 0 || strcmp(argv[i], "--tape-record") == 0) {
             bool record = strcmp(argv[i], "--tape-record") == 0;
             if (++i == argc || tape_play_path || tape_record_path) {
@@ -321,10 +538,14 @@ int main(int argc, char *argv[]) {
     }
     if (!rom_path) {
         printf("Usage: %s [--console MODEL] [--cpu-revision REVISION] "
+               "[--cpu-test-mode] "
+               "[--epsm-adpcm FILE] "
+               "[--startup-phase CPU:PPU | --startup-seed SEED] "
                "[--ppu-revision REVISION] [--ppu-oam-row-corruption] "
                "[--ppu-startup-restriction] [--ppu-oam-decay] "
+               "[--mmc3-revision REVISION] [--cart-dip VALUE] "
                "[--adapter TYPE] [--port1 DEVICE] [--port2 DEVICE] "
-               "[--expansion DEVICE] [--barcode DIGITS] "
+               "[--expansion DEVICE] [--barcode DIGITS] [--barcode-battler DIGITS] "
                "[--zapper-radius PIXELS] [--vs-dip VALUE] [--tape-play FILE | --tape-record FILE] "
                "[--fds-bios BIOS] [--fds-side N] "
                "[--fds-eject] [--fds-write-protect] <rom-file>\n", argv[0]);
@@ -347,18 +568,41 @@ int main(int argc, char *argv[]) {
     printf("CPU revision: %s\n", apu_get_cpu_revision() == APU_CPU_REVISION_EARLY_2A03
            ? "early-2a03" : "late-2a03");
     printf("PPU revision: %s\n", ppu_revision_name());
+    printf("CPU test-register reads: %s\n", cpu_test_mode_enabled() ? "enabled" : "disabled");
     printf("PPU OAM row corruption: %s\n",
            ppu_oam_row_corruption_worst_case() ? "worst-case" : "compatibility");
     printf("PPU startup write restriction: %s\n",
            ppu_startup_write_restriction_enabled() ? "enabled" : "compatibility");
     printf("PPU OAM decay: %s\n", ppu_oam_decay_enabled() ? "enabled" : "compatibility");
+    printf("MMC3 revision: %s\n", cart_mmc3_revision_name());
     printf("Input adapter: %s\n", joypad_adapter_name());
     printf("Loading ROM: %s\n", rom_path);
+    if (epsm_adpcm_path && !epsm_load_adpcm_file(epsm_adpcm_path)) {
+        fprintf(stderr, "Could not load the 8 KiB YMF288 ADPCM ROM: %s\n", epsm_adpcm_path);
+        return 1;
+    }
     int load_result = fds_bios_path
         ? load_fds(rom_path, fds_bios_path, fds_start_write_protected)
         : load_rom(rom_path);
     if(load_result != 0) {
         fprintf(stderr, "Failed to load ROM\n");
+        return 1;
+    }
+    if (epsm_enabled()) {
+        printf("EPSM: 8 MHz YMF288, stereo output\n");
+        if (!epsm_has_adpcm_rom())
+            fprintf(stderr, "EPSM percussion uses zero-filled data without --epsm-adpcm FILE\n");
+    }
+    if (startup_phase_set && !cpu_set_startup_alignment(startup_cpu_offset, startup_ppu_phase)) {
+        fprintf(stderr, "Startup phase must be CPU 0..%u and PPU 0..%u for this image\n",
+                (unsigned)nes_timing()->cpu_divider - 1, (unsigned)nes_timing()->ppu_divider - 1);
+        unload_rom();
+        return 1;
+    }
+    if (startup_seed_set) cpu_seed_startup_alignment(startup_seed);
+    if (!joypad_persistent_configure(rom_path)) {
+        fprintf(stderr, "Failed to load expansion-device storage\n");
+        unload_rom();
         return 1;
     }
     if (vs_dip_set && !vs_set_dip_switches(vs_dips)) {
@@ -381,6 +625,12 @@ int main(int argc, char *argv[]) {
         if (fds_start_ejected) fds_eject_disk();
     }
     cpu_total_cycles = 0;
+    if (barcode_battler && !joypad_scan_barcode_battler(barcode_battler)) {
+        fprintf(stderr, "Barcode Battler input requires --expansion barcode-battler and 8 or 13 decimal digits\n");
+        unload_rom();
+        return 1;
+    }
+    if (barcode_battler) printf("Press F8 to scan the configured Barcode Battler code\n");
     ppu_power_on(&ppu);
     apu_power_on(&apu);
     // Print ROM metadata at startup so mapper selection can be checked from the log.
@@ -409,7 +659,15 @@ int main(int argc, char *argv[]) {
 
 
     printf("Resetting CPU...\n");
-    cpu_power_on(&cpu);
+    if (!cpu_power_on(&cpu)) {
+        fprintf(stderr, "Invalid CPU startup alignment\n");
+        unload_rom();
+        return 1;
+    }
+    CpuStartupAlignment alignment = cpu_get_startup_alignment();
+    printf("Startup alignment: CPU %u, PPU %u%s\n", (unsigned)alignment.cpu_offset,
+           (unsigned)alignment.ppu_phase, startup_seed_set ? " (seeded)" : "");
+    if (startup_seed_set) printf("Startup seed: %llu\n", (unsigned long long)startup_seed);
     vs_power_on_secondary();
     if (vs_enabled()) {
         printf("VS System: %s, PPU model %u, DIP $%04X\n",
@@ -442,10 +700,10 @@ int main(int argc, char *argv[]) {
     memset(&want, 0, sizeof want);
     memset(&have, 0, sizeof have);
     want.freq = AUDIO_SAMPLE_RATE;
-    want.format = AUDIO_F32;     // float32 mono
-    want.channels = 1;
+    want.format = AUDIO_F32;
+    want.channels = epsm_enabled() ? 2 : 1;
     want.samples = AUDIO_BUFFER_SAMPLES;
-    want.callback = vs_audio_callback;
+    want.callback = epsm_enabled() ? apu_sdl_stereo_callback : vs_audio_callback;
 
     audio_dev = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
     if (!audio_dev) {
@@ -501,21 +759,41 @@ int main(int argc, char *argv[]) {
                 uint32_t buttons = SDL_GetMouseState(&mouse_x, &mouse_y);
                 SDL_GetWindowSize(window, &window_width, &window_height);
                 int position = window_width > 0 ? 0x54 + 160 * mouse_x / window_width : 0x54;
-                bool on_screen = mouse_x >= 0 && mouse_y >= 0 && mouse_x < window_width
-                    && mouse_y < window_height && !(buttons & SDL_BUTTON_RMASK);
-                int aim_x = on_screen ? 256 * mouse_x / window_width : -1;
-                int aim_y = on_screen ? 240 * mouse_y / window_height : -1;
+                bool pointer_on_screen = mouse_x >= 0 && mouse_y >= 0 && mouse_x < window_width
+                    && mouse_y < window_height;
+                bool zapper_on_screen = pointer_on_screen && !(buttons & SDL_BUTTON_RMASK);
+                int pointer_x = pointer_on_screen ? 256 * mouse_x / window_width : -1;
+                int pointer_y = pointer_on_screen ? 240 * mouse_y / window_height : -1;
+                int aim_x = zapper_on_screen ? pointer_x : -1;
+                int aim_y = zapper_on_screen ? pointer_y : -1;
                 bool trigger = (buttons & (SDL_BUTTON_LMASK | SDL_BUTTON_RMASK)) != 0;
                 for (unsigned slot = 0; slot < 3; ++slot) {
                     joypad_set_paddle(slot, position, (buttons & SDL_BUTTON_LMASK) != 0);
                     joypad_set_zapper(slot, aim_x, aim_y, trigger);
                 }
+                if (joypad_port_device(1) == NES_PORT_SUBOR_MOUSE) {
+                    if (e.type == SDL_MOUSEMOTION)
+                        joypad_add_subor_mouse_motion(e.motion.xrel, e.motion.yrel);
+                    joypad_set_subor_mouse_buttons((buttons & SDL_BUTTON_LMASK) != 0,
+                                                   (buttons & SDL_BUTTON_RMASK) != 0);
+                }
+                if (e.type == SDL_MOUSEMOTION
+                    && joypad_expansion_device() == NES_EXPANSION_HORI_TRACK)
+                    joypad_add_hori_track_motion(e.motion.xrel, e.motion.yrel);
+                if (joypad_expansion_device() == NES_EXPANSION_PACHINKO)
+                    joypad_set_pachinko_controls((buttons & SDL_BUTTON_LMASK) != 0,
+                                                 (buttons & SDL_BUTTON_RMASK) != 0);
+                oeka_kids_pointer_event(pointer_x, pointer_y, pointer_on_screen, buttons);
             }
             if (e.type == SDL_QUIT) {
                 if (rom_is_fds() && !fds_flush()) {
                     fprintf(stderr, "Failed to save modified FDS media; keeping the emulator open\n");
                     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "FDS Save Error",
                         "The modified disk image could not be saved. The emulator will remain open so the media changes are not discarded.", window);
+                } else if (!joypad_persistent_flush()) {
+                    fprintf(stderr, "Failed to save expansion-device storage; keeping the emulator open\n");
+                    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Peripheral Save Error",
+                        "Expansion-device storage could not be saved. The emulator will remain open so the changes are not discarded.", window);
                 } else {
                     running = false;
                 }
@@ -523,6 +801,18 @@ int main(int argc, char *argv[]) {
             if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
                 && e.key.windowID == SDL_GetWindowID(window)
                 && family_basic_key_event(&e.key, tape_play_path, tape_record_path)) continue;
+            if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
+                && e.key.windowID == SDL_GetWindowID(window)
+                && subor_key_event(&e.key)) continue;
+            if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
+                && e.key.windowID == SDL_GetWindowID(window)
+                && party_tap_key_event(&e.key)) continue;
+            if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
+                && e.key.windowID == SDL_GetWindowID(window)
+                && boxing_key_event(&e.key)) continue;
+            if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
+                && e.key.windowID == SDL_GetWindowID(window)
+                && jissen_key_event(&e.key)) continue;
             palette_tool_handle_event(&e, renderer);
             
             if (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP) {
@@ -541,6 +831,8 @@ int main(int argc, char *argv[]) {
                         break;
                     case SDLK_F8:
                         if (down && !e.key.repeat && barcode) cart_set_barcode(barcode);
+                        if (down && !e.key.repeat && barcode_battler)
+                            joypad_scan_barcode_battler(barcode_battler);
                         if (down && !e.key.repeat && rom_is_fds()) {
                             if (fds_disk_inserted()) fds_eject_disk();
                             else (void)fds_insert_disk(fds_frontend_side);
@@ -655,6 +947,7 @@ int main(int argc, char *argv[]) {
         if (controllers[player]) SDL_GameControllerClose(controllers[player]);
     bool tape_saved = finish_tape_capture(tape_record_path);
     bool tape_failed = family_basic_tape_failed();
+    bool peripheral_saved = joypad_persistent_shutdown();
     if (tape_failed) fprintf(stderr, "Tape recording stopped because the capture buffer could not grow\n");
     family_basic_shutdown();
     if (!unload_rom()) {
@@ -663,5 +956,5 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     SDL_Quit();
-    return tape_saved && !tape_failed ? 0 : 1;
+    return tape_saved && !tape_failed && peripheral_saved ? 0 : 1;
 }

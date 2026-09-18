@@ -64,7 +64,8 @@ static void set_reason(char *reason, size_t size, const char *text) {
 }
 
 static bool mapper_supported(int mapper) {
-    return mapper == 0 || mapper == 1 || mapper == 2 || mapper == 99;
+    return mapper == 0 || mapper == 1 || mapper == 2 || mapper == 75
+        || mapper == 99 || mapper == 151;
 }
 
 static bool mapper99_layout_supported(const iNESHeader *header, const VsRomConfig *config,
@@ -90,15 +91,18 @@ bool vs_decode_header(const iNESHeader *header, int mapper, size_t prg_bytes,
     bool nes2 = (header->flags7 & 0x0C) == 0x08;
     unsigned console = header->flags7 & 3u;
     if (nes2) {
-        if (console == 0 || (console == 3 && (header->zero[2] & 0x0Fu) == 0)) return true;
-        if (console != 1) {
+        unsigned subtype = header->zero[2] & 0x0Fu;
+        if (console == 0 || (console == 3 && (subtype == 0 || subtype == 4))) return true;
+        bool extended_vs = console == 3 && (header->zero[2] & 0x0Fu) == 1;
+        if (console != 1 && !extended_vs) {
             set_reason(reason, reason_size, "unsupported NES 2.0 console type");
             return false;
         }
         config->enabled = true;
         uint8_t descriptor = header->zero[2];
         uint8_t type = descriptor >> 4;
-        uint8_t ppu = descriptor & 0x0F;
+        // The extended subtype occupies the PPU field. Use the 2C03 fallback.
+        uint8_t ppu = extended_vs ? 0 : descriptor & 0x0F;
         if (type > VS_TYPE_RAID_ON_BUNGELING_BAY) {
             set_reason(reason, reason_size, "unsupported VS hardware type");
             return false;
@@ -122,7 +126,7 @@ bool vs_decode_header(const iNESHeader *header, int mapper, size_t prg_bytes,
         }
         uint8_t input = header->zero[4] & 0x3F;
         if (input == 0) input = VS_INPUT_STANDARD;
-        if (input < VS_INPUT_STANDARD || input > VS_INPUT_SWAP_AB) {
+        if (input < VS_INPUT_STANDARD || input > VS_INPUT_ZAPPER) {
             set_reason(reason, reason_size, "unsupported VS controller wiring");
             return false;
         }
@@ -206,6 +210,9 @@ void vs_power_on_secondary(void) {
     ppu_power_on(&vs.sub_ppu.state);
     apu_power_on(&vs.sub_apu);
     cpu_power_on(&vs.sub_cpu.cpu);
+    CpuStartupAlignment alignment = cpu_get_startup_alignment();
+    printf("VS secondary startup alignment: CPU %u, PPU %u\n",
+           (unsigned)alignment.cpu_offset, (unsigned)alignment.ppu_phase);
     select_side(0);
 }
 
@@ -329,7 +336,8 @@ static void remapped_buttons(unsigned side, uint8_t out[2]) {
 static void latch_controllers(unsigned side) {
     uint8_t buttons[2];
     remapped_buttons(side, buttons);
-    vs.shift[side][0] = buttons[0];
+    vs.shift[side][0] = vs.config.input_type == VS_INPUT_ZAPPER && side == 0
+        ? joypad_zapper_serial_report(0) : buttons[0];
     vs.shift[side][1] = buttons[1];
 }
 
@@ -353,12 +361,19 @@ uint8_t vs_read_controller_port(unsigned port) {
     unsigned side = vs.active_side;
     uint8_t bit;
     if (vs.strobe[side]) {
-        uint8_t buttons[2];
-        remapped_buttons(side, buttons);
-        bit = buttons[port] & 1u;
+        if (vs.config.input_type == VS_INPUT_ZAPPER && side == 0 && port == 0) {
+            bit = joypad_zapper_serial_report(0) & 1u;
+        } else {
+            uint8_t buttons[2];
+            remapped_buttons(side, buttons);
+            bit = buttons[port] & 1u;
+        }
     } else {
         bit = vs.shift[side][port] & 1u;
-        vs.shift[side][port] = (vs.shift[side][port] >> 1) | 0x80;
+        if (vs.config.input_type == VS_INPUT_ZAPPER && side == 0 && port == 0)
+            vs.shift[side][port] >>= 1;
+        else
+            vs.shift[side][port] = (vs.shift[side][port] >> 1) | 0x80;
     }
     if (port == 0) {
         unsigned coin = side * 2;

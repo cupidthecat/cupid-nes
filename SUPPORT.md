@@ -16,6 +16,12 @@ mapper/submapper when known, and image hash. Explain what you expected, what
 happened, and the steps needed to reach it. A public diagnostic ROM or a small
 reproducer helps when one is available.
 
+For FDS problems, say which disk side was selected, whether the disk was write
+protected, and whether an 8 KiB BIOS was supplied. For EPSM percussion problems,
+say whether `--epsm-adpcm` was used and confirm that the external YMF288 ADPCM
+file is exactly 8,192 bytes. These firmware files are supplied by the user and
+are not included with Cupid.
+
 For a save problem, identify the save type, destination, write-protection state,
 and the operation that reports the failure, such as loading, tape stop, or exit.
 Check the [saves guide](docs/saves.md) before moving files while the emulator has

@@ -50,7 +50,8 @@ typedef enum {
     NES_PORT_ARKANOID,
     NES_PORT_POWER_PAD_A,
     NES_PORT_POWER_PAD_B,
-    NES_PORT_ZAPPER
+    NES_PORT_ZAPPER,
+    NES_PORT_SUBOR_MOUSE
 } NesPortDevice;
 
 typedef enum {
@@ -59,8 +60,53 @@ typedef enum {
     NES_EXPANSION_FAMILY_TRAINER_A,
     NES_EXPANSION_FAMILY_TRAINER_B,
     NES_EXPANSION_ZAPPER,
-    NES_EXPANSION_FAMILY_BASIC
+    NES_EXPANSION_FAMILY_BASIC,
+    NES_EXPANSION_TURBO_FILE,
+    NES_EXPANSION_BATTLE_BOX,
+    NES_EXPANSION_SUBOR_KEYBOARD,
+    NES_EXPANSION_HORI_TRACK,
+    NES_EXPANSION_KONAMI_HYPER_SHOT,
+    NES_EXPANSION_BANDAI_HYPER_SHOT,
+    NES_EXPANSION_PARTY_TAP,
+    NES_EXPANSION_PACHINKO,
+    NES_EXPANSION_EXCITING_BOXING,
+    NES_EXPANSION_JISSEN_MAHJONG,
+    NES_EXPANSION_BARCODE_BATTLER,
+    NES_EXPANSION_OEKA_KIDS_TABLET
 } NesExpansionDevice;
+
+typedef enum {
+    JISSEN_KEY_A, JISSEN_KEY_B, JISSEN_KEY_C, JISSEN_KEY_D, JISSEN_KEY_E,
+    JISSEN_KEY_F, JISSEN_KEY_G, JISSEN_KEY_H, JISSEN_KEY_I, JISSEN_KEY_J,
+    JISSEN_KEY_K, JISSEN_KEY_L, JISSEN_KEY_M, JISSEN_KEY_N,
+    JISSEN_KEY_SELECT, JISSEN_KEY_START, JISSEN_KEY_KAN, JISSEN_KEY_PON,
+    JISSEN_KEY_CHII, JISSEN_KEY_RIICHI, JISSEN_KEY_RON, JISSEN_KEY_COUNT
+} JissenKey;
+
+typedef enum {
+    SUBOR_KEY_A, SUBOR_KEY_B, SUBOR_KEY_C, SUBOR_KEY_D, SUBOR_KEY_E, SUBOR_KEY_F,
+    SUBOR_KEY_G, SUBOR_KEY_H, SUBOR_KEY_I, SUBOR_KEY_J, SUBOR_KEY_K, SUBOR_KEY_L,
+    SUBOR_KEY_M, SUBOR_KEY_N, SUBOR_KEY_O, SUBOR_KEY_P, SUBOR_KEY_Q, SUBOR_KEY_R,
+    SUBOR_KEY_S, SUBOR_KEY_T, SUBOR_KEY_U, SUBOR_KEY_V, SUBOR_KEY_W, SUBOR_KEY_X,
+    SUBOR_KEY_Y, SUBOR_KEY_Z,
+    SUBOR_KEY_0, SUBOR_KEY_1, SUBOR_KEY_2, SUBOR_KEY_3, SUBOR_KEY_4,
+    SUBOR_KEY_5, SUBOR_KEY_6, SUBOR_KEY_7, SUBOR_KEY_8, SUBOR_KEY_9,
+    SUBOR_KEY_F1, SUBOR_KEY_F2, SUBOR_KEY_F3, SUBOR_KEY_F4, SUBOR_KEY_F5, SUBOR_KEY_F6,
+    SUBOR_KEY_F7, SUBOR_KEY_F8, SUBOR_KEY_F9, SUBOR_KEY_F10, SUBOR_KEY_F11, SUBOR_KEY_F12,
+    SUBOR_KEY_KP0, SUBOR_KEY_KP1, SUBOR_KEY_KP2, SUBOR_KEY_KP3, SUBOR_KEY_KP4,
+    SUBOR_KEY_KP5, SUBOR_KEY_KP6, SUBOR_KEY_KP7, SUBOR_KEY_KP8, SUBOR_KEY_KP9,
+    SUBOR_KEY_KP_ENTER, SUBOR_KEY_KP_DOT, SUBOR_KEY_KP_PLUS, SUBOR_KEY_KP_MULTIPLY,
+    SUBOR_KEY_KP_DIVIDE, SUBOR_KEY_KP_MINUS, SUBOR_KEY_NUMLOCK,
+    SUBOR_KEY_COMMA, SUBOR_KEY_DOT, SUBOR_KEY_SEMICOLON, SUBOR_KEY_APOSTROPHE,
+    SUBOR_KEY_SLASH, SUBOR_KEY_BACKSLASH, SUBOR_KEY_EQUAL, SUBOR_KEY_MINUS,
+    SUBOR_KEY_GRAVE, SUBOR_KEY_LEFT_BRACKET, SUBOR_KEY_RIGHT_BRACKET,
+    SUBOR_KEY_CAPSLOCK, SUBOR_KEY_PAUSE, SUBOR_KEY_CTRL, SUBOR_KEY_SHIFT, SUBOR_KEY_ALT,
+    SUBOR_KEY_SPACE, SUBOR_KEY_BACKSPACE, SUBOR_KEY_TAB, SUBOR_KEY_ESCAPE,
+    SUBOR_KEY_ENTER, SUBOR_KEY_END, SUBOR_KEY_HOME, SUBOR_KEY_INSERT, SUBOR_KEY_DELETE,
+    SUBOR_KEY_PAGEUP, SUBOR_KEY_PAGEDOWN, SUBOR_KEY_UP, SUBOR_KEY_DOWN,
+    SUBOR_KEY_LEFT, SUBOR_KEY_RIGHT, SUBOR_KEY_UNKNOWN1, SUBOR_KEY_UNKNOWN2,
+    SUBOR_KEY_UNKNOWN3, SUBOR_KEY_COUNT
+} SuborKey;
 
 void    joypad_set(Joypad* jp, int btn, int pressed);
 void    joypad_write_strobe(Joypad* jp, uint8_t value);
@@ -92,7 +138,21 @@ bool    joypad_set_paddle(unsigned slot, int position, bool fire);
 bool    joypad_set_mat_pad(unsigned slot, unsigned pad, bool pressed);
 enum { NES_ZAPPER_MAX_RADIUS = 255 };
 bool    joypad_set_zapper(unsigned slot, int x, int y, bool trigger);
+uint8_t joypad_zapper_serial_report(unsigned slot);
 unsigned joypad_zapper_radius(void);
 bool    joypad_set_zapper_radius(unsigned radius);
+bool    joypad_set_subor_key(SuborKey key, bool pressed);
+bool    joypad_add_subor_mouse_motion(int dx, int dy);
+bool    joypad_set_subor_mouse_buttons(bool left, bool right);
+bool    joypad_add_hori_track_motion(int dx, int dy);
+bool    joypad_set_party_tap_button(unsigned button, bool pressed);
+bool    joypad_set_pachinko_controls(bool press, bool release);
+bool    joypad_set_boxing_sensor(unsigned sensor, bool pressed);
+bool    joypad_set_jissen_key(JissenKey key, bool pressed);
+bool    joypad_scan_barcode_battler(const char *digits);
+bool    joypad_set_oeka_kids_tablet(int x, int y, bool touch, bool click);
+bool    joypad_persistent_configure(const char *rom_path);
+bool    joypad_persistent_flush(void);
+bool    joypad_persistent_shutdown(void);
 
 #endif // JOYPAD_H

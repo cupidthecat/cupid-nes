@@ -77,6 +77,7 @@ typedef struct {
     uint16_t timer_reload;
     uint8_t  duty;       // 0..3 (12.5/25/50/25% neg)
     uint8_t  duty_step;  // sequencer step 0..7
+    uint8_t  output_level; // Last value driven to the channel DAC.
     bool     enabled;    // $4015 bit
 } Pulse;
 
@@ -103,6 +104,7 @@ typedef struct {
     uint16_t period;     // current period from table
     uint8_t  period_idx; // 0..15
     uint16_t timer;
+    uint8_t  output_level; // Last value driven to the channel DAC.
     bool     enabled;
 } Noise;
 
@@ -177,10 +179,12 @@ typedef struct {
     float lp14k_prev_out;
     float last_output_sample;
     float last_read_sample;  // Owned by the audio consumer; used during underruns.
+    float last_read_side;
 
     // Lockless ring buffer (very simple)
     #define APU_RING_CAP 8192
     float    ring[APU_RING_CAP];
+    float    ring_side[APU_RING_CAP];
     _Atomic uint32_t ring_w;
     _Atomic uint32_t ring_r;
 } APU;
@@ -197,6 +201,7 @@ APU *apu_active_state(void);
 void apu_audio_init(int sample_rate);
 void apu_audio_init_state(APU *state, int sample_rate);
 void apu_audio_pull(APU *state, float *samples, int count);
+void apu_audio_pull_stereo(APU *state, float *samples, int frames);
 // Select the DMC CPU timing model. The selection persists across APU resets.
 bool apu_set_cpu_revision(ApuCpuRevision revision);
 ApuCpuRevision apu_get_cpu_revision(void);
@@ -204,6 +209,8 @@ ApuCpuRevision apu_get_cpu_revision(void);
 // memory-mapped access
 void    apu_write(uint16_t addr, uint8_t val);
 uint8_t apu_read(uint16_t addr);
+// Raw channel DAC values used by the optional CPU diagnostic-read profile.
+uint8_t apu_read_test_output(uint16_t addr);
 
 // ticking
 void apu_step(APU *a, int cpu_cycles);
@@ -221,5 +228,6 @@ void apu_dmc_dma_complete(APU *a, uint8_t value);
 
 // SDL glue
 void apu_sdl_audio_callback(void *userdata, uint8_t *stream, int len);
+void apu_sdl_stereo_callback(void *userdata, uint8_t *stream, int len);
 
 #endif

@@ -24,6 +24,7 @@
 
 #include "joypad.h"
 #include "family_basic.h"
+#include "special_peripherals.h"
 #include "../system/hardware.h"
 #include "../system/timing.h"
 #include "../ppu/ppu.h"
@@ -43,10 +44,13 @@ static const char *const adapter_names[] = {
 static NesPortDevice port_devices[2];
 static NesExpansionDevice expansion_device;
 static const char *const port_device_names[] = {
-    "pad", "none", "arkanoid", "power-pad-a", "power-pad-b", "zapper"
+    "pad", "none", "arkanoid", "power-pad-a", "power-pad-b", "zapper", "subor-mouse"
 };
 static const char *const expansion_device_names[] = {
-    "none", "arkanoid", "family-trainer-a", "family-trainer-b", "zapper", "family-basic"
+    "none", "arkanoid", "family-trainer-a", "family-trainer-b", "zapper", "family-basic",
+    "turbo-file", "battle-box", "subor-keyboard", "hori-track", "konami-hyper-shot",
+    "bandai-hyper-shot", "party-tap", "pachinko", "exciting-boxing", "jissen-mahjong",
+    "barcode-battler", "oeka-kids-tablet"
 };
 
 typedef struct {
@@ -209,6 +213,8 @@ uint8_t joypad_read_port(Joypad *jp, unsigned port) {
             value = read_mat(port);
         else if (port_devices[port] == NES_PORT_ZAPPER)
             value = read_zapper(port);
+        else if (port_devices[port] == NES_PORT_SUBOR_MOUSE)
+            value = subor_mouse_read();
         else
             value = port_devices[port] == NES_PORT_GAMEPAD ? joypad_read(jp) : 0;
         if (input_adapter == NES_ADAPTER_FAMICOM_TWO)
@@ -225,6 +231,30 @@ uint8_t joypad_read_port(Joypad *jp, unsigned port) {
         value |= read_zapper(2);
     else if (expansion_device == NES_EXPANSION_FAMILY_BASIC)
         value |= family_basic_read(port, cpu_total_cycles);
+    else if (expansion_device == NES_EXPANSION_TURBO_FILE)
+        value |= turbo_file_read(port);
+    else if (expansion_device == NES_EXPANSION_BATTLE_BOX)
+        value |= battle_box_read(port);
+    else if (expansion_device == NES_EXPANSION_SUBOR_KEYBOARD)
+        value |= subor_keyboard_read(port);
+    else if (port == 0 && expansion_device == NES_EXPANSION_HORI_TRACK)
+        value |= hori_track_read(pad1.buttons);
+    else if (expansion_device == NES_EXPANSION_KONAMI_HYPER_SHOT)
+        value |= konami_hyper_shot_read(port, pad1.buttons, pad2.buttons);
+    else if (expansion_device == NES_EXPANSION_BANDAI_HYPER_SHOT)
+        value |= port == 0 ? bandai_hyper_shot_read(pad1.buttons) : read_zapper(2);
+    else if (expansion_device == NES_EXPANSION_PARTY_TAP)
+        value |= party_tap_read(port);
+    else if (port == 0 && expansion_device == NES_EXPANSION_PACHINKO)
+        value |= pachinko_read(pad1.buttons);
+    else if (expansion_device == NES_EXPANSION_EXCITING_BOXING)
+        value |= exciting_boxing_read(port);
+    else if (expansion_device == NES_EXPANSION_JISSEN_MAHJONG)
+        value |= jissen_mahjong_read(port);
+    else if (expansion_device == NES_EXPANSION_BARCODE_BATTLER)
+        value |= barcode_battler_read(port, cpu_total_cycles, (uint32_t)nes_timing()->cpu_hz);
+    else if (expansion_device == NES_EXPANSION_OEKA_KIDS_TABLET)
+        value |= oeka_kids_tablet_read(port);
     // The second built-in controller's microphone reaches $4016 D2.
     if (port == 0 && nes_console_model() == NES_CONSOLE_HVC001 && microphone_active)
         value |= 0x04;
@@ -273,6 +303,8 @@ void joypad_write_ports(uint8_t value) {
         if (port_devices[port] == NES_PORT_ARKANOID) write_paddle(&paddles[port], value);
         else if (port_devices[port] == NES_PORT_POWER_PAD_A || port_devices[port] == NES_PORT_POWER_PAD_B)
             write_mat(port, value);
+        else if (port_devices[port] == NES_PORT_SUBOR_MOUSE)
+            subor_mouse_write(value);
     }
     if (expansion_device == NES_EXPANSION_ARKANOID) write_paddle(&paddles[2], value);
     else if (expansion_device == NES_EXPANSION_FAMILY_TRAINER_A
@@ -280,6 +312,28 @@ void joypad_write_ports(uint8_t value) {
         family_trainer_rows = value & 7u;
     else if (expansion_device == NES_EXPANSION_FAMILY_BASIC)
         family_basic_write(value, cpu_total_cycles);
+    else if (expansion_device == NES_EXPANSION_TURBO_FILE)
+        turbo_file_write(value);
+    else if (expansion_device == NES_EXPANSION_BATTLE_BOX)
+        battle_box_write(value);
+    else if (expansion_device == NES_EXPANSION_SUBOR_KEYBOARD)
+        subor_keyboard_write(value);
+    else if (expansion_device == NES_EXPANSION_HORI_TRACK)
+        hori_track_write(value, pad1.buttons);
+    else if (expansion_device == NES_EXPANSION_KONAMI_HYPER_SHOT)
+        konami_hyper_shot_write(value);
+    else if (expansion_device == NES_EXPANSION_BANDAI_HYPER_SHOT)
+        bandai_hyper_shot_write(value, pad1.buttons);
+    else if (expansion_device == NES_EXPANSION_PARTY_TAP)
+        party_tap_write(value);
+    else if (expansion_device == NES_EXPANSION_PACHINKO)
+        pachinko_write(value, pad1.buttons);
+    else if (expansion_device == NES_EXPANSION_EXCITING_BOXING)
+        exciting_boxing_write(value);
+    else if (expansion_device == NES_EXPANSION_JISSEN_MAHJONG)
+        jissen_mahjong_write(value);
+    else if (expansion_device == NES_EXPANSION_OEKA_KIDS_TABLET)
+        oeka_kids_tablet_write(value);
 }
 
 NesInputAdapter joypad_adapter(void) {
@@ -313,10 +367,12 @@ NesPortDevice joypad_port_device(unsigned port) {
 }
 
 bool joypad_set_port_device(unsigned port, NesPortDevice device) {
-    if (port >= 2 || (unsigned)device > NES_PORT_ZAPPER) return false;
+    if (port >= 2 || (unsigned)device > NES_PORT_SUBOR_MOUSE) return false;
+    if (device == NES_PORT_SUBOR_MOUSE && port != 1) return false;
     port_devices[port] = device;
     paddles[port].strobe = paddles[port].shift = 0;
     mats[port].strobe = mats[port].low = mats[port].high = 0;
+    if (device == NES_PORT_SUBOR_MOUSE) subor_mouse_reset();
     return true;
 }
 
@@ -338,11 +394,23 @@ NesExpansionDevice joypad_expansion_device(void) {
 }
 
 bool joypad_set_expansion_device(NesExpansionDevice device) {
-    if ((unsigned)device > NES_EXPANSION_FAMILY_BASIC) return false;
+    if ((unsigned)device > NES_EXPANSION_OEKA_KIDS_TABLET) return false;
     expansion_device = device;
     paddles[2].strobe = paddles[2].shift = 0;
     family_trainer_rows = 0;
     family_basic_reset();
+    turbo_file_reset_protocol();
+    battle_box_reset_protocol();
+    subor_keyboard_reset();
+    hori_track_reset();
+    konami_hyper_shot_reset();
+    bandai_hyper_shot_reset();
+    party_tap_reset();
+    pachinko_reset();
+    exciting_boxing_reset();
+    jissen_mahjong_reset();
+    barcode_battler_reset();
+    oeka_kids_tablet_reset();
     return true;
 }
 
@@ -388,6 +456,13 @@ bool joypad_set_zapper(unsigned slot, int x, int y, bool trigger) {
     return true;
 }
 
+uint8_t joypad_zapper_serial_report(unsigned slot) {
+    if (slot >= 3) return 0;
+    return (uint8_t)(0x10
+        | (zapper_light(&zappers[slot]) ? 0x40 : 0)
+        | (zappers[slot].trigger ? 0x80 : 0));
+}
+
 unsigned joypad_zapper_radius(void) {
     return zapper_radius;
 }
@@ -396,4 +471,76 @@ bool joypad_set_zapper_radius(unsigned radius) {
     if (radius > NES_ZAPPER_MAX_RADIUS) return false;
     zapper_radius = radius;
     return true;
+}
+
+bool joypad_set_subor_key(SuborKey key, bool pressed) {
+    return subor_keyboard_set_key((unsigned)key, pressed);
+}
+
+bool joypad_add_subor_mouse_motion(int dx, int dy) {
+    if (port_devices[1] != NES_PORT_SUBOR_MOUSE) return false;
+    subor_mouse_add_motion(dx, dy);
+    return true;
+}
+
+bool joypad_set_subor_mouse_buttons(bool left, bool right) {
+    if (port_devices[1] != NES_PORT_SUBOR_MOUSE) return false;
+    subor_mouse_set_buttons(left, right);
+    return true;
+}
+
+bool joypad_add_hori_track_motion(int dx, int dy) {
+    if (expansion_device != NES_EXPANSION_HORI_TRACK) return false;
+    hori_track_add_motion(dx, dy);
+    return true;
+}
+
+bool joypad_set_party_tap_button(unsigned button, bool pressed) {
+    if (expansion_device != NES_EXPANSION_PARTY_TAP) return false;
+    return party_tap_set_button(button, pressed);
+}
+
+bool joypad_set_pachinko_controls(bool press, bool release) {
+    if (expansion_device != NES_EXPANSION_PACHINKO) return false;
+    pachinko_set_controls(press, release);
+    return true;
+}
+
+bool joypad_set_boxing_sensor(unsigned sensor, bool pressed) {
+    if (expansion_device != NES_EXPANSION_EXCITING_BOXING) return false;
+    return exciting_boxing_set_sensor(sensor, pressed);
+}
+
+bool joypad_set_jissen_key(JissenKey key, bool pressed) {
+    if (expansion_device != NES_EXPANSION_JISSEN_MAHJONG) return false;
+    return jissen_mahjong_set_key((unsigned)key, pressed);
+}
+
+bool joypad_scan_barcode_battler(const char *digits) {
+    if (expansion_device != NES_EXPANSION_BARCODE_BATTLER) return false;
+    return barcode_battler_scan(digits, cpu_total_cycles);
+}
+
+bool joypad_set_oeka_kids_tablet(int x, int y, bool touch, bool click) {
+    if (expansion_device != NES_EXPANSION_OEKA_KIDS_TABLET) return false;
+    oeka_kids_tablet_set_state(x, y, touch, click);
+    return true;
+}
+
+bool joypad_persistent_configure(const char *rom_path) {
+    if (expansion_device == NES_EXPANSION_TURBO_FILE) return turbo_file_configure(rom_path);
+    if (expansion_device == NES_EXPANSION_BATTLE_BOX) return battle_box_configure(rom_path);
+    return true;
+}
+
+bool joypad_persistent_flush(void) {
+    if (expansion_device == NES_EXPANSION_TURBO_FILE) return turbo_file_flush();
+    if (expansion_device == NES_EXPANSION_BATTLE_BOX) return battle_box_flush();
+    return true;
+}
+
+bool joypad_persistent_shutdown(void) {
+    bool turbo_ok = turbo_file_shutdown();
+    bool battle_ok = battle_box_shutdown();
+    return turbo_ok && battle_ok;
 }

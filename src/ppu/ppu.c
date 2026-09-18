@@ -156,8 +156,8 @@ static void ppu_bus_address_phase(uint16_t address) {
 static uint8_t ppu_bus_read_phase(uint16_t par_address, CartPpuFetchSource source) {
     uint16_t address = (par_address & 0x3F00) | ppu.vram_address_latch;
     uint8_t value;
+    cart_set_ppu_fetch_source(source);
     if (address < 0x2000) {
-        cart_set_ppu_fetch_source(source);
         value = cart_ppu_read(address);
     } else {
         value = cart_nt_read(address, active_ppu_vram);
@@ -300,8 +300,8 @@ static uint8_t ppu_bus_read(uint16_t addr, CartPpuFetchSource source) {
     addr &= 0x3FFF;
     ppu_set_bus_address(addr);
     ppu.vram_address_latch = (uint8_t)addr;
+    cart_set_ppu_fetch_source(source);
     if (addr < 0x2000) {
-        cart_set_ppu_fetch_source(source);
         ppu.vram_bus_data = cart_ppu_read(addr);
         return ppu.vram_bus_data;
     }
@@ -986,7 +986,8 @@ void ppu_step_dots(int ppu_cycles) {
             }
         }
 
-        bool skip_dot = nes_timing()->region == NES_REGION_NTSC && prerender && dot == 339
+        bool skip_dot = !vs_enabled() && nes_timing()->region == NES_REGION_NTSC
+                     && prerender && dot == 339
                      && ppu.odd_frame && ppu.rendering_enabled;
         if ((visible || prerender) && dot == 339) {
             if (ppu.rendering_enabled)

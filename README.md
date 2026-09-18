@@ -1,14 +1,16 @@
 # Cupid NES Emulator
 
-Cupid is an NES emulator written in C11. It uses SDL2 for video, audio, and
-controllers, and runs NES/Famicom cartridges, Famicom Disk System images with a
-supplied BIOS, and supported VS System arcade images.
+Cupid runs NES and Famicom cartridges, Famicom Disk System images with a supplied
+BIOS, and supported VS System arcade images. It uses SDL2 for video, audio, and
+controllers. The NES core is C11; EPSM expansion sound uses a C++17 YMF288 engine.
 
-The core implements NTSC, PAL, and Dendy timing. Its recorded test baseline is
-144/144 AccuracyCoin tests with zero skipped or unfinished results, the 91-ROM
+The core implements NTSC, PAL, and Dendy timing. The
+[tested implementation](docs/accuracy-checkpoints.md#combined-validation) passes
+all 144 AccuracyCoin tests with zero skipped or unfinished results, the 91-ROM
 diagnostic collection, and the 8,991-state canonical CPU trace. The
-[accuracy notes](docs/accuracy.md) explain what those tests cover, and the
-[checkpoint record](docs/accuracy-checkpoints.md) identifies the tested commits.
+[accuracy notes](docs/accuracy.md) describe the test setup and coverage. Mapper,
+input, storage, and expansion-audio regressions cover hardware that AccuracyCoin
+does not exercise.
 
 <p align="center">
   <img src="img/smb33.png" alt="Super Mario Bros. 3 running in Cupid">
@@ -16,6 +18,22 @@ diagnostic collection, and the 8,991-state canonical CPU trace. The
 <p align="center">
   <img src="img/coin.png" alt="AccuracyCoin results from the production core">
 </p>
+
+## Emulated hardware
+
+| Area | Implemented behavior |
+| --- | --- |
+| CPU and PPU | Official and undocumented instructions, shared OAM/DMC DMA timing, register delays, sprite evaluation, regional frame timing, and selectable startup alignment |
+| Cartridges | Board-specific PRG/CHR banking, nametable routing, bus conflicts, RAM permissions, IRQs, EEPROM, and flash; the [mapper table](docs/hardware.md#cartridge-mappers) lists supported families and variants |
+| Sound | Five base APU channels, cartridge and disk expansion audio, and EPSM stereo output with timer IRQs |
+| Controllers and storage | Gamepads, multiplayer adapters, light guns, paddles, mats, Family BASIC and Subor keyboards, mouse/trackball/tablet input, specialty expansion controllers, Turbo File, and BattleBox |
+| VS System | Header-selected RGB PPU and controller behavior, cabinet controls and protection, and dual machines with shared RAM, two screens, and mixed audio |
+
+Device selection and timing follow the ROM header and
+[command-line options](docs/configuration.md). Supported mapper families can still
+reject unsupported submappers or memory layouts. The
+[hardware guide](docs/hardware.md#reading-accuracy-results) records remaining
+limits, including optional Jaleco speech, RP2C03G, and MMC5 auxiliary I/O/timers.
 
 ## Build and run
 
@@ -28,7 +46,7 @@ cd cupid-nes
 
 ### Linux
 
-Install a C11 compiler, Make, and the SDL2 development libraries. On Ubuntu:
+Install C11 and C++17 compilers, Make, and the SDL2 development libraries. On Ubuntu:
 
 ```sh
 sudo apt install build-essential libsdl2-dev
@@ -36,7 +54,9 @@ make
 ./cupid-nes path/to/game.nes
 ```
 
-Use `make CC=clang` for Clang. Clean the build before changing compilers or flags.
+Use `make CC=clang CXX=clang++` for Clang. Both language compilers are required
+even when the loaded game does not use EPSM. Run `make clean` before changing
+compilers or flags.
 
 ### Windows
 
@@ -55,7 +75,18 @@ sanitizer builds.
 
 Open games from the command line. File drops load palettes. Running the
 application without arguments prints its usage; it does not have a `--help`
-option.
+option. It accepts one image per launch and has no configuration-file loader.
+
+For example, an Oeka Kids cartridge needs its tablet selected explicitly:
+
+```sh
+./cupid-nes --console famicom --expansion oeka-kids-tablet path/to/oeka-kids.nes
+```
+
+EPSM is selected by NES 2.0 console metadata. A separately supplied 8 KiB
+percussion ROM can be loaded with `--epsm-adpcm`; that option alone does not
+enable EPSM. [Configuration](docs/configuration.md) covers these choices and
+other peripheral combinations.
 
 ## Controls
 
@@ -72,7 +103,9 @@ The keyboard and first SDL game controller both drive player 1. More controllers
 fill the remaining player slots; the selected multiplayer adapter or VS image
 determines which players a game can read. See
 [controls and peripherals](docs/controls.md) for controller assignment, light
-guns, paddles, floor mats, the Famicom microphone, and Family BASIC.
+guns, paddles, floor mats, keyboards, mouse and tablet input, and the Famicom
+expansion devices. Peripheral key handlers can take precedence over the shortcuts
+above; Family BASIC, Subor keyboards, and active mats consume R as device input.
 
 ## Hardware and saves
 
@@ -90,12 +123,18 @@ To open a disk image with its 8 KiB BIOS:
 F8 inserts or ejects the selected side, F9 changes sides, and F10 toggles write
 protection. Cupid writes modified disk data back to the loaded image when it
 flushes media on normal quit, unload, or replacement. Use a working copy to retain
-the original. A failed save during normal quit keeps the application open with
-the modified media still loaded.
+the original.
 
 Cartridge save files live beside their ROM. The
 [saves and media guide](docs/saves.md) covers PRG/CHR save memory, EEPROM, flash,
-disk images, and BASIC tapes, including their different failure behavior.
+disk images, BASIC tapes, and Turbo File/BattleBox storage. Cartridge RAM can
+remain readable at addresses where writes select banks. Its layout and
+persistence follow the selected board and header.
+
+Disk and expansion-storage save failures keep the window open during normal
+quit. Cartridge saves and tape recordings have different failure paths; the
+save guide explains which changes can be retried and which are lost when the
+process exits.
 
 ## Documentation
 
@@ -124,13 +163,19 @@ their pinned revisions and the commands for the CPU trace, diagnostics, and
 AccuracyCoin.
 
 The [accuracy workflow](.github/workflows/accuracy.yml) builds with strict GCC
-and Clang sanitizer settings and runs the pinned suites. Test results apply to
-the checked commit and configuration. Analog output, arbitrary power-on phases,
-and every possible DMA/register alignment remain outside the tested model.
+and Clang sanitizer settings on pushes and pull requests. Both jobs run the
+hardware suite, CPU trace, all 91 diagnostic ROMs, and AccuracyCoin. The Clang job
+enables AddressSanitizer, UndefinedBehaviorSanitizer, and Linux leak detection.
+
+Test results apply to the checked commit and configuration. The baseline uses
+the default startup alignment. Explicit phases, seeded startup choices, and
+optional hardware profiles have separate focused checks; the baseline does not
+establish every possible DMA/register alignment or analog output effect.
 
 ## License and credits
 
 Cupid is GPL-3.0-or-later; see [LICENSE](LICENSE). The bundled emu2413 component
-retains its [MIT license](src/rom/emu2413.LICENSE). See
+retains its [MIT license](src/rom/emu2413.LICENSE), and ymfm retains its
+[BSD 3-Clause license](src/third_party/ymfm/LICENSE). See
 [credits and references](docs/credits.md) for component attribution, test
 sources, and hardware documentation.

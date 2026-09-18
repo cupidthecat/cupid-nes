@@ -13,15 +13,15 @@ Select emulated input hardware with the options in [configuration](configuration
 | Right Shift | Player 1 Select |
 | Enter | Player 1 Start |
 | Arrow keys | Player 1 D-pad |
-| R | Soft reset |
+| R | Soft reset the emulated CPU, PPU, APU, and VS control state |
 | M, held | Original Famicom controller 2 microphone signal |
 | F6 | Restore the built-in palette |
 | F7 | Toggle the palette editor |
 | Ctrl+V | Paste palette text |
 
-Close the window for normal shutdown. The M key supplies the emulated microphone line only; Cupid does not capture a host microphone.
+Close the window for normal shutdown. The M key supplies the emulated microphone line only; Cupid does not capture a host microphone. Soft reset keeps the selected console, CPU/APU and PPU profiles, current CPU/PPU clock alignment, controller configuration, and persistent peripheral contents. It does not rerun command-line setup or reconnect host controllers.
 
-Family BASIC and mat devices consume their matching keyboard events before the normal shortcuts. Their exceptions are listed below.
+Keyboard peripherals are handled before the normal application shortcuts. Family BASIC consumes every keyboard event while selected. Subor, Party Tap, Exciting Boxing, Jissen Mahjong, and mat handlers consume the keys they map, so an overlapping key acts on the selected peripheral instead of the later shortcut. For example, R is a mat key and a Subor letter key, and the number keys used by Party Tap or Boxing take priority over VS coin shortcuts.
 
 ## Game controllers and player slots
 
@@ -39,7 +39,7 @@ The first controller is player 1, the second is player 2, the third is player 3,
 
 Analog sticks are not mapped by the frontend. The keyboard writes player 1's button state, so player 1 can be driven by both the keyboard and the first controller. They update the same button state; avoid using both devices for the same button at once.
 
-Which player slots reach the game depends on the emulated wiring:
+Which player slots reach the game depends on the emulated wiring. Ordinary NES 2.0 input metadata does not automatically choose these frontend devices; use the command-line input options for ordinary NES and Famicom images. Supported VS metadata is decoded separately inside the VS cabinet model.
 
 | Configuration | Player routing |
 | --- | --- |
@@ -67,9 +67,7 @@ For a standard NES light gun configuration:
 
 Move the mouse over the game window to aim. Left click fires on screen. Right click holds the trigger while treating the aim position as off screen, which supports games that use off-screen shots for reload behavior.
 
-The default light-sampling radius is zero. `--zapper-radius N` expands the sampled area up to 255 pixels. The Famicom expansion version uses `--console famicom --expansion zapper`.
-
-VS Zapper controller wiring is not implemented in the current VS input path. See [accuracy](accuracy.md) for current device limits.
+The default light-sampling radius is zero. `--zapper-radius N` expands the sampled area up to 255 pixels. The Famicom expansion version uses `--console famicom --expansion zapper`. VS images whose NES 2.0 metadata selects the VS Zapper use the same mouse aiming and trigger controls.
 
 ## Power Pad and Family Trainer
 
@@ -110,6 +108,48 @@ While Family BASIC is selected, keyboard events are consumed by the keyboard/tap
 
 With `--tape-play FILE`, F10 starts playback. With `--tape-record FILE`, F10 starts a new recording. F11 stops the tape and writes a pending recording. [Saves and media](saves.md) describes the tape file format and retry behavior.
 
+## Subor keyboard and mouse
+
+`--console famicom --expansion subor-keyboard --port2 subor-mouse` connects the supported keyboard-and-mouse arrangement. The keyboard routes letters, number row keys, F1 through F12, navigation keys, punctuation, modifiers, and numeric keypad keys into the 13-row matrix. Mapped Subor keys are consumed before normal application shortcuts, so keys such as R, F6, F7, and F8 act on the keyboard while it is selected.
+
+Left and right Ctrl map to the same emulated Ctrl key; left and right Shift share Shift, and left and right Alt share Alt. Releasing one side keeps the emulated modifier pressed while the other side is still held.
+
+Mouse motion uses SDL relative movement. Left and right mouse buttons map to the two Subor mouse buttons. Small movement uses the one-byte report; larger movement is split across the three-byte report and each axis is bounded to 31 units per packet.
+
+## Hori Track
+
+`--console famicom --expansion hori-track` connects Hori Track. Player-one controller buttons supply its controller byte, while relative mouse movement supplies the trackball axes. Each axis is bounded to -8 through 7 when a report is latched.
+
+## Konami Hyper Shot
+
+`--console famicom --expansion konami-hyper-shot` connects the two-player Hyper Shot controller. Player one and player two use each controller's A button for jump and B button for run. Games control the two active-low player-enable lines through `$4016`.
+
+## Bandai Hyper Shot
+
+`--console famicom --expansion bandai-hyper-shot` connects the combined controller and light gun. Player-one buttons are serialized on expansion `$4016 D1`. Mouse aiming and trigger input use the same beam-aware light detection as the normal Zapper and appear on `$4017 D3-D4`.
+
+## Party Tap
+
+`--console famicom --expansion party-tap` connects the six-button Party Tap. Host keys 1 through 6 map to its six buttons. The first two reads return three buttons each on `$4017 D2-D4`; later reads return the device-detection value.
+
+## Pachinko controller
+
+`--console famicom --expansion pachinko` connects the Pachinko controller. Player-one buttons form the first eight serialized bits on expansion `$4016 D1`. Hold the left mouse button to increase the plunger position and the right mouse button to release it. The position changes only when the game latches a report and is bounded from 0 through 99.
+
+## Exciting Boxing
+
+`--console famicom --expansion exciting-boxing` connects the punching-bag sensors. Host keys 1 through 4 map to the first sensor bank and 5 through 8 map to the second. The game selects a bank with `$4016 D1`; inactive sensors read high on `$4017 D1-D4`.
+
+## Jissen Mahjong
+
+`--console famicom --expansion jissen-mahjong` connects the mahjong panel. Letter keys A through N map to the tile keys, Right Shift is Select, Enter is Start, and number keys 1 through 5 map to Kan, Pon, Chii, Riichi, and Ron. The game selects one of four rows through `$4016 D1-D2` and reads the latched row serially on `$4017 D1`.
+
+## ASCII Turbo File
+
+`--console famicom --expansion turbo-file` connects the 8 KiB serial storage device. Games control its reset, clock, data, and read lines through the Famicom expansion connector. The contents are loaded and saved automatically next to the ROM; there is no host key for manually advancing the device.
+
+`--console famicom --expansion battle-box` connects the two-chip BattleBox serial storage device. Its command, chip-select, read, program, write-enable, and erase signals run entirely through the expansion connector.
+
 ## FDS keys
 
 | Key | Disk-system action |
@@ -136,6 +176,14 @@ Changing or ejecting a side does not flush the disk image. Follow the game's dis
 ## Datach barcode
 
 `--barcode DIGITS` performs the configured Datach scan after a compatible cartridge loads. F8 starts that same scan again. The value must contain exactly 8 or 13 decimal digits.
+
+## Barcode Battler
+
+`--console famicom --expansion barcode-battler --barcode-battler DIGITS` connects the expansion reader and starts an 8- or 13-digit scan. The device transmits its 200-bit framed character stream on `$4017 D2` at 1200 bits per second. F8 restarts the configured scan. Barcode Battler scan state is separate from Datach cartridge input.
+
+## Oeka Kids tablet
+
+`--console famicom --expansion oeka-kids-tablet` connects the drawing tablet. Move the mouse over the game window to position the pen. Holding the left mouse button always reports both click and pen contact, including above NES Y coordinate 48 or when the pointer position is off screen. Without the left button, contact is reported only in the on-screen lower area, NES Y coordinates 48 through 239. Games latch the position and buttons through `$4016`, then clock the report from `$4017 D2-D3`.
 
 ## Palette controls
 

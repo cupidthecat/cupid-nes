@@ -17,10 +17,12 @@ On Linux, use the strict GCC flags from CI:
 
 ```sh
 make clean
-make -j2 CC=gcc CFLAGS='-std=c11 -Wall -Wextra -Werror -O2' all test
+make -j2 CC=gcc CXX=g++ CFLAGS='-std=c11 -Wall -Wextra -Werror -O2' all test
 ```
 
-The application is `./cupid-nes` and the runner is `build/accuracy-tests`. Running the test executable without arguments executes CPU/controller, APU, PPU, mapper, Bandai, disk, input, and VS groups and returns failure if any group fails.
+The application is `./cupid-nes` and the runner is `build/accuracy-tests`. Running the test executable without arguments executes CPU/controller, APU, PPU, mapper, Bandai, disk, input, VS, and EPSM groups and returns failure if any group fails. The C core uses C11; the EPSM wrapper and ymfm engine use C++17.
+
+The Makefile defaults to `CC=gcc` and `CFLAGS='-std=c11 -Wall -Wextra -O2'`. When `CXX` still has GNU Make's built-in default, the Makefile selects `g++` for GCC and `clang++` when `CC` contains `clang`. An explicitly supplied `CXX` is kept. Unless `CXXFLAGS` is supplied separately, the Makefile derives it from `CFLAGS`, removes any C language-standard flag, and appends `-std=c++17`. `LDLIBS` defaults to `-lSDL2 -lm`. Use `make clean` before changing compiler families or flag sets because those settings are not tracked as object-file dependencies.
 
 On Windows:
 
@@ -28,7 +30,9 @@ On Windows:
 .\scripts\test-windows.ps1 -SdlRoot 'C:\dependencies\SDL2-2.32.10'
 ```
 
-The script builds both executables and runs the hardware suite. Its output is under `build/windows`. Supplying `-Compiler` changes the Clang executable; the SDL library path remains the x64 VC SDK layout.
+The script defaults to `clang` and selects `clang++`; `-Compiler gcc` selects `g++`. Any other C compiler basename requires an explicit `-CxxCompiler`. A normal build uses C11 or C++17 with `-Wall -Wextra -Werror -O2`, plus `_CRT_SECURE_NO_WARNINGS`, `SDL_MAIN_HANDLED`, and the generated SDL include path. `-Sanitize` replaces `-O2` with `-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer`. The script passes the matching flags to the final C++ link as well.
+
+Normal Windows output is under `build/windows`; sanitized output is under `build/windows-sanitized`. Each directory contains `cupid-nes.exe`, `accuracy-tests.exe`, `SDL2.dll`, copied SDL headers under `include/SDL2`, and intermediate objects under `objects`. The SDL library input remains `lib/x64/SDL2.lib` from the supplied VC development package.
 
 Tests use the device code listed in [Makefile](../Makefile) and [test-windows.ps1](../scripts/test-windows.ps1). Add any new production or test source to both lists. The older `src/tests/cpu_test.c` harness is excluded because its writable-ROM assumptions do not match the cartridge bus.
 
@@ -43,7 +47,7 @@ git clone https://github.com/100thCoin/AccuracyCoin.git build/accuracycoin
 git -C build/accuracycoin checkout 9bc42d1e3acbeeaea215b1011d58f4ce72a8a49e
 ```
 
-For existing directories, inspect their checkout and local changes before updating them. Do not clone over an existing directory or replace a modified collection. The required revisions are also in [the CI workflow](../.github/workflows/accuracy.yml).
+For existing directories, inspect their checkout and local changes before updating them. Do not clone over an existing directory or replace a modified collection. The required revisions are also in [the CI workflow](../.github/workflows/accuracy.yml). `run-diagnostics.py` checks the expected files and group counts, but it does not inspect the diagnostic repository's Git revision. The AccuracyCoin runner also does not verify the ROM hash, so keep the revision and hash checks as separate validation steps.
 
 | Collection | Required revision |
 | --- | --- |
@@ -115,6 +119,8 @@ These modes belong to `accuracy-tests`, not the SDL application. Replace the Lin
 
 Frame arguments must be between 1 and 100000. The ordinary diagnostic mode returns failure for a timeout or missing result protocol. The legacy modes also require a stable terminal CPU loop before treating `$F8` as a final result. A successful `--render` call means a frame was produced; it is not a test pass.
 
+Unknown modes print the usage line and return status 2. An out-of-range or malformed frame count prints `Frame count must be between 1 and 100000` and also returns 2. `--render` requires exactly one ROM and one output path; `--accuracycoin FRAMES ROM` accepts one optional output path. Incorrect argument counts return 2, sometimes without a usage message.
+
 Examples:
 
 ```sh
@@ -131,7 +137,7 @@ Build a fresh Linux binary with Clang AddressSanitizer and UndefinedBehaviorSani
 
 ```sh
 make clean
-ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 make -j2 CC=clang CFLAGS='-std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer' all test
+ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 make -j2 CC=clang CXX=clang++ CFLAGS='-std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer' all test
 ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 python3 scripts/run-diagnostics.py build/accuracy-tests build/diagnostic-roms
 ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 build/accuracy-tests --accuracycoin 12000 build/accuracycoin/AccuracyCoin.nes
 ```
@@ -166,6 +172,7 @@ The focused suites live in `src/tests`:
 | [fds_accuracy.c](../src/tests/fds_accuracy.c) | Disk memory, controller, media, persistence, and audio |
 | [input_accuracy.c](../src/tests/input_accuracy.c) | Controller wiring, adapters, and peripherals |
 | [vs_accuracy.c](../src/tests/vs_accuracy.c) | VS metadata, machine contexts, input, DMA, shared RAM, video, and audio |
+| [epsm_accuracy.c](../src/tests/epsm_accuracy.c) | EPSM metadata, delayed OUT-pin protocol, direct writes, timers, firmware, reset, and stereo audio |
 
 Run the focused hardware regression first. After each implemented accuracy issue, run the complete pinned AccuracyCoin suite and retain the exact commit and result. Changes to the shared core also need the canonical trace, diagnostic collection, and sanitizer checks. The complete final CI result belongs to the final pushed revision.
 
@@ -173,4 +180,4 @@ Do not lower pass requirements, substitute expected output, add cartridge-specif
 
 ## Documentation-only changes
 
-Check relative links and heading anchors, compare CLI examples with [main.c](../src/main.c), and confirm that build paths and test pins match the scripts. Review tables against their source constants and explain any unsupported path explicitly. A prose edit does not need a new C unit test. The existing CI workflow still runs its full hardware and diagnostic checks on pushes and pull requests.
+Check relative links and heading anchors, compare CLI examples with [main.c](../src/main.c), and confirm that build paths and test pins match the scripts. Review tables against their source constants and explain any unsupported path explicitly. A prose edit does not need a new C unit test. The existing CI workflow still runs the hardware suite, diagnostic collection, and pinned AccuracyCoin check on pushes and pull requests.

@@ -40,6 +40,7 @@ int test_bandai_accuracy(void);
 int test_fds_accuracy(void);
 int test_input_accuracy(void);
 int test_vs_accuracy(void);
+int test_epsm_accuracy(void);
 int test_cpu_trace(const char *rom_path, const char *trace_path);
 int run_diagnostic_rom(const char *path, unsigned frame_limit);
 int run_mmc3_diagnostic_rom(const char *path, unsigned frame_limit);
@@ -99,6 +100,7 @@ int main(int argc, char **argv) {
     failures += test_fds_accuracy();
     failures += test_input_accuracy();
     failures += test_vs_accuracy();
+    failures += test_epsm_accuracy();
     unload_rom();
     printf("Hardware regressions: %s (%d failures)\n", failures ? "FAIL" : "PASS", failures);
     return failures ? 1 : 0;

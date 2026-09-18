@@ -45,7 +45,8 @@ typedef enum {
 typedef enum {
     VS_INPUT_STANDARD = 4,
     VS_INPUT_SWAPPED = 5,
-    VS_INPUT_SWAP_AB = 6
+    VS_INPUT_SWAP_AB = 6,
+    VS_INPUT_ZAPPER = 7
 } VsInputType;
 
 typedef struct {
