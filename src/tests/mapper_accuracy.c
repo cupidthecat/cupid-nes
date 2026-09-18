@@ -5782,16 +5782,59 @@ static int test_sunsoft69_persistence_and_loader(void) {
     sunsoft69_command(8, 0xC3);
     CHECK(cart_cpu_read(0x6123) == 0x5A);
 
+    // NES 2.0 may describe independent work and save chips. FME-7 selects
+    // the save chip when the battery flag is present; the work chip remains
+    // allocated but unmapped. A trainer initializes work RAM before the save
+    // file is loaded, so it must not overwrite the selected save chip.
+    cart_battery_shutdown();
+    CHECK(remove(paths.prg_save) == 0);
+    uint8_t seeded[0x2000];
+    memset(seeded, 0xA6, sizeof(seeded));
+    FILE *fp = fopen(paths.prg_save, "wb");
+    CHECK(fp != NULL);
+    CHECK(fwrite(seeded, 1, sizeof(seeded), fp) == sizeof(seeded));
+    CHECK(fclose(fp) == 0);
+
+    h = header_for(69, 0x20000, false);
+    h.flags7 |= 0x08;
+    h.flags6 |= 0x06; // Battery plus trainer.
+    h.flags10 = 0x77; // Independent 8 KiB work RAM and 8 KiB save RAM.
+    size_t image_size;
+    uint8_t *image = image_for(&h, 0x20000, 0x2000, &image_size);
+    CHECK(image != NULL);
+    fp = fopen(paths.rom, "wb");
+    CHECK(fp != NULL);
+    CHECK(fwrite(image, 1, image_size, fp) == image_size);
+    CHECK(fclose(fp) == 0);
+    free(image);
+    CHECK(load_rom(paths.rom) == 0);
+    sunsoft69_command(8, 0xC0);
+    CHECK(cart_cpu_read(0x7000) == 0xA6 && cart_cpu_read(0x71FF) == 0xA6);
+    cart_cpu_write(0x7123, 0x53);
+    cart_battery_flush();
+    CHECK(saved_file_size(paths.prg_save) == 0x2000);
+    CHECK(saved_byte(paths.prg_save, 0x1123) == 0x53);
+    CHECK(unload_rom());
+    CHECK(load_rom(paths.rom) == 0);
+    sunsoft69_command(8, 0xC0);
+    CHECK(cart_cpu_read(0x7123) == 0x53);
+
     Mapper *previous = cart;
     sunsoft69_command(9, 3);
-    CHECK(cart_cpu_read(0x8000) == 3);
+    CHECK(cart_cpu_read(0x8000) == 0x5C);
     iNESHeader invalid = h;
     invalid.prg_ram_size = 0x10; // Unsupported submapper one remains transactional.
     CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x80001, fixture_chr, 0x2000) == -1);
-    CHECK(cart == previous && cart_cpu_read(0x8000) == 3);
-    h.flags10 = 0xE0; // 1 MiB NVRAM exceeds the six-bit 8 KiB bank selector.
-    CHECK(mapper_init_from_header(&h, fixture_prg, 0x20000, fixture_chr, 0x2000) == -1);
-    CHECK(cart == previous && cart_cpu_read(0x8000) == 3);
+    CHECK(cart == previous && cart_cpu_read(0x8000) == 0x5C);
+    h.flags10 = 0xE0; // 1 MiB NVRAM; the six-bit selector reaches its first 512 KiB.
+    CHECK(mapper_init_from_header(&h, fixture_prg, 0x20000, fixture_chr, 0x2000) == 69);
+    sunsoft69_command(8, 0xFF);
+    cart_cpu_write(0x6123, 0xD2);
+    CHECK(cart_cpu_read(0x6123) == 0xD2);
+    sunsoft69_command(8, 0xC0);
+    CHECK(cart_cpu_read(0x6123) == 0);
+    sunsoft69_command(8, 0xFF);
+    CHECK(cart_cpu_read(0x6123) == 0xD2);
     return save_fixture_end(&paths);
 }
 

@@ -7083,7 +7083,14 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         && prg_total && (prg_total & (prg_total - 1))) return false;
 
     bool split_prg = ram->prg_ram && ram->prg_nvram;
-    if (split_prg && mapper_no != 1 && mapper_no != 5 && mapper_no != 155) return false;
+    bool split_prg_supported = mapper_no == 1 || mapper_no == 4 || mapper_no == 5
+        || mapper_no == 19 || mapper_no == 24 || mapper_no == 26 || mapper_no == 68
+        || mapper_no == 69 || mapper_no == 74 || mapper_no == 76 || mapper_no == 85
+        || mapper_no == 88 || mapper_no == 95 || mapper_no == 105 || mapper_no == 118
+        || mapper_no == 119 || mapper_no == 154 || mapper_no == 155
+        || mapper_no == 191 || mapper_no == 192 || mapper_no == 194
+        || mapper_no == 195 || mapper_no == 206 || mapper_no == 210;
+    if (split_prg && !split_prg_supported) return false;
     if (mapper_no == 1 || mapper_no == 105 || mapper_no == 155) {
         if (prg_total > 0x8000) return false;
     } else if (mapper_no == 5) {
@@ -7102,10 +7109,9 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         if (split_prg || prg_total != 0x100) return false;
     } else if (mapper_no == 82) {
         if (split_prg || prg_total != 0x1400) return false;
-    } else if (mapper_no == 69) {
-        if (split_prg || prg_total > 0x80000) return false;
-    } else if (mapper_no == 19 || mapper_no == 210) {
-        if (split_prg || prg_total > 0x2000) return false;
+    } else if (mapper_no == 69 || mapper_no == 19 || mapper_no == 210) {
+        // These boards select only the pages their registers can address.
+        // Larger declared chips remain partially unreachable, as on hardware.
     } else if (mapper_no == 90 || mapper_no == 111 || mapper_no == 209 || mapper_no == 211) {
         if (prg_total != 0) return false;
     } else if (mapper_no == 30) {
