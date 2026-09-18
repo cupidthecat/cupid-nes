@@ -8028,6 +8028,150 @@ static int test_jaleco_discrete_loader_validation(void) {
     return 0;
 }
 
+static int test_cnrom185_submapper_latches_and_ppu_bus(void) {
+    CHECK(fixture(185, 0x8000, 0x2000, false) == 185);
+    CHECK(cart != NULL && cart->clock == NULL && cart->reset != NULL);
+    fixture_prg[0] = 0xFF;
+    fixture_chr[0x0122] = 0xA6;
+    ppu_power_on(&ppu);
+    CHECK(ppu_read(0x0122) == 0xA6);
+
+    cart_cpu_write(0x8000, 0x00);
+    CHECK(ppu_read(0x0122) == 0x23);
+    CHECK(ppu_read(0x01A6) == 0xA7);
+    CHECK(ppu_read(0x1FFE) == 0xFF);
+    cart_cpu_write(0x8000, 0x01);
+    CHECK(ppu_read(0x0122) == 0xA6);
+    cart_cpu_write(0x8000, 0x13);
+    CHECK(ppu_read(0x0122) == 0x23);
+    cart_cpu_write(0x8000, 0x23);
+    CHECK(ppu_read(0x0122) == 0xA6);
+
+    for (unsigned submapper = 4; submapper <= 7; ++submapper) {
+        iNESHeader h = header_for(185, 0x8000, false);
+        h.flags7 |= 8;
+        h.prg_ram_size = (uint8_t)(submapper << 4);
+        CHECK(fixture_with_header(&h, 0x8000, 0x2000) == 185);
+        fixture_prg[0] = 0xFF;
+        fixture_chr[0x0122] = 0xA6;
+        ppu_power_on(&ppu);
+
+        uint8_t enabled = (uint8_t)(submapper - 4u);
+        uint8_t disabled = (uint8_t)((enabled + 1u) & 3u);
+        for (unsigned latch = 0; latch <= 0xFF; ++latch) {
+            cart_cpu_write(0x8000, (uint8_t)latch);
+            CHECK(ppu_read(0x0122) == ((latch & 3u) == enabled ? 0xA6 : 0x23));
+        }
+        cart_cpu_write(0x8000, enabled);
+        CHECK(ppu_read(0x0122) == 0xA6);
+        cart_cpu_write(0x8000, disabled);
+        CHECK(ppu_read(0x0122) == 0x23);
+        cart->reset();
+        CHECK(ppu_read(0x0122) == 0xA6);
+    }
+    return 0;
+}
+
+static int test_cnrom185_cpu_bus_conflict_control(void) {
+    for (unsigned submapper = 4; submapper <= 7; ++submapper) {
+        iNESHeader h = header_for(185, 0x8000, false);
+        h.flags7 |= 8;
+        h.prg_ram_size = (uint8_t)(submapper << 4);
+        CHECK(fixture_with_header(&h, 0x8000, 0x2000) == 185);
+        fixture_chr[0x0122] = 0xA6;
+
+        nes_set_region(NES_REGION_NTSC);
+        ppu_power_on(&ppu);
+        apu_power_on(&apu);
+        cpu_power_on(&cpu);
+
+        uint8_t enabled = (uint8_t)(submapper - 4u);
+        uint8_t disabled = (uint8_t)((enabled + 1u) & 3u);
+        uint8_t program[] = {
+            0xA9, disabled,
+            0x8D, 0x00, 0x80,
+            0xA9, 0xFF,
+            0x8D, 0x00, 0x80
+        };
+        for (size_t i = 0; i < sizeof(program); ++i)
+            write_mem((uint16_t)(0x0200 + i), program[i]);
+        cpu.pc = 0x0200;
+
+        fixture_prg[0] = 0xFF;
+        CHECK(cpu_step(&cpu) == 2 && cpu_step(&cpu) == 4);
+        CHECK(ppu_read(0x0122) == 0x23);
+
+        fixture_prg[0] = enabled;
+        CHECK(cpu_step(&cpu) == 2 && cpu_step(&cpu) == 4);
+        CHECK(ppu_read(0x0122) == 0xA6);
+
+        fixture_prg[0] = 0xFF;
+        cart_cpu_write(0x8000, disabled);
+        CHECK(ppu_read(0x0122) == 0x23);
+        ppu_soft_reset(&ppu);
+        apu_soft_reset(&apu);
+        cpu_soft_reset(&cpu);
+        CHECK(ppu_read(0x0122) == 0x23);
+        cart->reset();
+        CHECK(ppu_read(0x0122) == 0xA6);
+    }
+    return 0;
+}
+
+static int test_cnrom185_loader_and_cnrom_regression(void) {
+    for (size_t prg_bytes = 0x4000; prg_bytes <= 0x8000; prg_bytes += 0x4000) {
+        iNESHeader h = header_for(185, prg_bytes, false);
+        size_t size;
+        uint8_t *image = image_for(&h, prg_bytes, 0x2000, &size);
+        CHECK(image != NULL);
+        CHECK(load_rom_memory(image, size) == 0);
+        free(image);
+        CHECK(rom_mapper_number(&ines_header) == 185);
+        CHECK(cart_cpu_read(0x8000) == 0x5C && cart_cpu_read(0xC000) == 0x5C);
+        ppu_power_on(&ppu);
+        CHECK(ppu_read(0) == 0xA5);
+        unload_rom();
+    }
+
+    for (unsigned submapper = 4; submapper <= 7; ++submapper) {
+        iNESHeader h = header_for(185, 0x8000, false);
+        h.flags7 |= 8;
+        h.prg_ram_size = (uint8_t)(submapper << 4);
+        size_t size;
+        uint8_t *image = image_for(&h, 0x8000, 0x2000, &size);
+        CHECK(image != NULL);
+        CHECK(load_rom_memory(image, size) == 0);
+        free(image);
+        ppu_power_on(&ppu);
+        CHECK(rom_mapper_number(&ines_header) == 185 && ppu_read(0) == 0xA5);
+        unload_rom();
+    }
+
+    CHECK(fixture(3, 0x8000, 0x8000, false) == 3);
+    cart_cpu_write(0x8000, 2);
+    CHECK(cart_ppu_read(0) == 16);
+    Mapper *previous = cart;
+
+    for (unsigned submapper = 1; submapper <= 3; ++submapper) {
+        iNESHeader invalid = header_for(185, 0x8000, false);
+        invalid.flags7 |= 8;
+        invalid.prg_ram_size = (uint8_t)(submapper << 4);
+        CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x8000, fixture_chr, 0x2000) == -1);
+        CHECK(cart == previous && cart_ppu_read(0) == 16);
+    }
+
+    iNESHeader invalid = header_for(185, 0xC000, false);
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0xC000, fixture_chr, 0x2000) == -1);
+    CHECK(cart == previous && cart_ppu_read(0) == 16);
+    invalid = header_for(185, 0x8000, false);
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x8000, fixture_chr, 0x4000) == -1);
+    CHECK(cart == previous && cart_ppu_read(0) == 16);
+    invalid = header_for(185, 0x8000, true);
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x8000, fixture_chr, 0x2000) == -1);
+    CHECK(cart == previous && cart_ppu_read(0) == 16);
+    return 0;
+}
+
 static int test_cartridge_unload(void) {
     iNESHeader h = header_for(0, 0x4000, true);
     size_t image_size;
@@ -8138,6 +8282,9 @@ int test_mapper_accuracy(void) {
         test_jaleco78_banking_and_submapper_mirroring,
         test_jaleco87_101_140_banks_and_register_ranges,
         test_jaleco_discrete_loader_validation,
+        test_cnrom185_submapper_latches_and_ppu_bus,
+        test_cnrom185_cpu_bus_conflict_control,
+        test_cnrom185_loader_and_cnrom_regression,
         test_cartridge_bus_reads, test_mmc6_persistence, test_cartridge_unload
     };
     int failures = 0;

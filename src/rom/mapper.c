@@ -68,7 +68,8 @@ typedef struct {
 } CartCommon;
 
 static CartCommon C;
-static Mapper mapper_nrom, mapper_mmc1, mapper_m105, mapper_m232, mapper_m96, mapper_uxrom, mapper_cnrom, mapper_mmc3, mapper_tqrom, mapper_txsrom;
+static Mapper mapper_nrom, mapper_mmc1, mapper_m105, mapper_m232, mapper_m96, mapper_uxrom;
+static Mapper mapper_cnrom, mapper_cnrom_protect, mapper_mmc3, mapper_tqrom, mapper_txsrom;
 static Mapper mapper_mmc5, mapper_aorom, mapper_mmc2, mapper_mmc4, mapper_colordreams;
 static Mapper mapper_cprom, mapper_100in1, mapper_bandai, mapper_action53, mapper_unrom512, mapper_m111, mapper_fds;
 static Mapper mapper_taito33, mapper_taito48, mapper_taito_x1005, mapper_taito_x1017;
@@ -1040,6 +1041,44 @@ static void cnrom_ppu_write(uint16_t a, uint8_t v) {
 }
 static Mirroring cnrom_mirr(void) { return C.mirr_base; }
 static void cnrom_reset(void) { cn.chr_bank = 0; }
+
+// Mapper 185: protected CNROM.
+static bool cnrom185_chr_enabled;
+
+static uint8_t cnrom185_cpu_read(uint16_t a) {
+    return cnrom_cpu_read(a);
+}
+
+static void cnrom185_cpu_write(uint16_t a, uint8_t value) {
+    if (a >= 0x6000u && a <= 0x7FFFu) {
+        prg_ram_write(a, value);
+        return;
+    }
+    if (a < 0x8000u) return;
+
+    if (C.submapper == 0) {
+        cnrom185_chr_enabled = (value & 0x0Fu) != 0 && value != 0x13u;
+    } else {
+        cnrom185_chr_enabled = (value & 0x03u) == (C.submapper - 4u);
+    }
+}
+
+static uint8_t cnrom185_ppu_read(uint16_t a) {
+    a &= 0x1FFFu;
+    if (!cnrom185_chr_enabled) return (uint8_t)a | 0x01u;
+    return C.chr[a % C.chr_sz];
+}
+
+static void cnrom185_ppu_write(uint16_t a, uint8_t value) {
+    (void)a;
+    (void)value;
+}
+
+static Mirroring cnrom185_mirr(void) { return C.mirr_base; }
+
+static void cnrom185_reset(void) {
+    cnrom185_chr_enabled = true;
+}
 
 // Mappers 75/151: VRC1.
 static struct {
@@ -6630,7 +6669,7 @@ int mapper_init_from_header(const iNESHeader *h,
         case 21: case 22: case 23: case 24: case 25: case 26: case 27: case 183:
         case 19: case 66: case 67: case 68: case 69: case 71: case 72: case 73: case 75: case 76: case 77: case 78:
         case 80: case 82: case 85: case 87: case 88: case 89: case 92: case 93: case 95: case 96: case 97: case 99: case 101:
-        case 140: case 151: case 154: case 184: case 206: case 207: case 210:
+        case 140: case 151: case 154: case 184: case 185: case 206: case 207: case 210:
         case 90: case 105: case 191: case 192: case 194: case 195: case 209: case 211: case 232:
             break;
         default:
@@ -6648,6 +6687,7 @@ int mapper_init_from_header(const iNESHeader *h,
         || (mapper_no == 71 && submapper == 1)
         || (mapper_no == 232 && submapper == 1)
         || (mapper_no == 78 && (submapper == 1 || submapper == 3))
+        || (mapper_no == 185 && submapper >= 4 && submapper <= 7)
         || (mapper_no == 206 && submapper == 1)
         || (mapper_no == 210 && submapper <= 2)
         || ((mapper_no == 2 || mapper_no == 3 || mapper_no == 7) && submapper <= 2)
@@ -6741,6 +6781,12 @@ int mapper_init_from_header(const iNESHeader *h,
             || (prg_sz != PRG_BANK_16K && (prg_sz % PRG_BANK_32K) != 0)
             || chr_sz > 0x20000 || (chr_sz % CHR_BANK_8K) != 0)) {
         fprintf(stderr, "Unsupported ROM/RAM size for mapper 140\n");
+        return -1;
+    }
+    if (mapper_no == 185
+        && ((prg_sz != PRG_BANK_16K && prg_sz != PRG_BANK_32K)
+            || chr_is_ram || chr_sz != CHR_BANK_8K)) {
+        fprintf(stderr, "Unsupported ROM/RAM size for mapper 185\n");
         return -1;
     }
     if ((mapper_no == 64 || mapper_no == 158)
@@ -6957,7 +7003,7 @@ int mapper_init_from_header(const iNESHeader *h,
     C.mmc1a = mapper_no == 155;
     C.bus_conflicts = mapper_no == 11
         || mapper_no == 72 || mapper_no == 78 || mapper_no == 92
-        || mapper_no == 77 || mapper_no == 96
+        || mapper_no == 77 || mapper_no == 96 || mapper_no == 185
         || (mapper_no == 34 && !mapper34_nina)
         || (submapper == 2 && (mapper_no == 2 || mapper_no == 3 || mapper_no == 7 || mapper_no == 30))
         || (mapper_no == 30 && submapper == 0 && !(h->flags6 & 2));
@@ -6993,6 +7039,12 @@ int mapper_init_from_header(const iNESHeader *h,
             build_mapper(&mapper_cnrom, cnrom_cpu_read, cnrom_cpu_write,
                         cnrom_ppu_read, cnrom_ppu_write, cnrom_reset, cnrom_mirr);
             cart = &mapper_cnrom;
+            break;
+        case 185:
+            build_mapper(&mapper_cnrom_protect, cnrom185_cpu_read, cnrom185_cpu_write,
+                         cnrom185_ppu_read, cnrom185_ppu_write,
+                         cnrom185_reset, cnrom185_mirr);
+            cart = &mapper_cnrom_protect;
             break;
         case 4:
             build_mapper(&mapper_mmc3, mmc3_cpu_read, mmc3_cpu_write,
