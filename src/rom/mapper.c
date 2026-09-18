@@ -998,7 +998,7 @@ static uint8_t vrc1_ppu_read(uint16_t a) {
     a &= 0x1FFFu;
     unsigned slot = a >> 12;
     if (!vrc1.chr_mapped[slot]) {
-        if (!C.chr_is_ram) return 0;
+        if (!C.chr_is_ram) return (uint8_t)a;
         return C.chr[a % C.chr_sz];
     }
     return C.chr[vrc1_chr_offset(a)];
@@ -1199,7 +1199,7 @@ static uint8_t sunsoft3_ppu_read(uint16_t a) {
     a &= 0x1FFFu;
     unsigned slot = a >> 11;
     if (!sunsoft3.chr_mapped[slot]) {
-        if (!C.chr_is_ram) return 0;
+        if (!C.chr_is_ram) return (uint8_t)a;
         return C.chr[a % C.chr_sz];
     }
     return C.chr[sunsoft3_chr_offset(a)];
@@ -1318,7 +1318,7 @@ static uint8_t sunsoft4_ppu_read(uint16_t a) {
     a &= 0x1FFFu;
     unsigned slot = a >> 11;
     if (!sunsoft4.chr_mapped[slot]) {
-        if (!C.chr_is_ram) return 0;
+        if (!C.chr_is_ram) return (uint8_t)a;
         return C.chr[a % C.chr_sz];
     }
     return C.chr[sunsoft4_chr_offset(a)];

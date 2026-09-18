@@ -6119,7 +6119,7 @@ static int test_vrc1_banks_mirroring_and_reset(void) {
         CHECK(cart_cpu_read_bus(0xA000, 0x69) == 0x69);
         CHECK(cart_cpu_read_bus(0xC000, 0xA6) == 0xA6);
         CHECK(cart_cpu_read(0xE000) == 15);
-        CHECK(cart_ppu_read(0) == 0 && cart_ppu_read(0x1000) == 0);
+        CHECK(cart_ppu_read(0x0123) == 0x23 && cart_ppu_read(0x1456) == 0x56);
 
         cart_cpu_write(0x8123, 3);
         cart_cpu_write(0xAFFF, 5);
@@ -6147,7 +6147,7 @@ static int test_vrc1_banks_mirroring_and_reset(void) {
         CHECK(cart_cpu_read_bus(0xA000, 0x53) == 0x53);
         CHECK(cart_cpu_read_bus(0xC000, 0x96) == 0x96);
         CHECK(cart_cpu_read(0xE000) == 15);
-        CHECK(cart_ppu_read(0) == 0 && cart_ppu_read(0x1000) == 0);
+        CHECK(cart_ppu_read(0x0123) == 0x23 && cart_ppu_read(0x1456) == 0x56);
         CHECK(cart_get_mirroring() == MIRROR_HORIZONTAL);
     }
 
@@ -6295,7 +6295,7 @@ static int test_sunsoft3_banks_mirroring_and_irq(void) {
     CHECK(cart != NULL && cart->clock != NULL);
     CHECK(cart_cpu_read_bus(0x8000, 0x56) == 0x56);
     CHECK(cart_cpu_read(0xC000) == 30 && cart_cpu_read(0xE000) == 31);
-    CHECK(cart_ppu_read(0x0000) == 0 && cart_ppu_read(0x1800) == 0);
+    CHECK(cart_ppu_read(0x0123) == 0x23 && cart_ppu_read(0x18A6) == 0xA6);
 
     const uint16_t chr_regs[] = {0x8ABC, 0x9FFF, 0xA923, 0xBFFE};
     for (unsigned slot = 0; slot < 4; ++slot) {
@@ -6347,7 +6347,7 @@ static int test_sunsoft3_banks_mirroring_and_irq(void) {
 
     cart->reset();
     CHECK(!cart_irq_pending() && cart_cpu_read_bus(0x8000, 0xA6) == 0xA6);
-    CHECK(cart_cpu_read(0xC000) == 30 && cart_ppu_read(0) == 0);
+    CHECK(cart_cpu_read(0xC000) == 30 && cart_ppu_read(0x0123) == 0x23);
     return 0;
 }
 
@@ -6394,7 +6394,7 @@ static int test_sunsoft4_banks_nametables_and_timer(void) {
     CHECK(cart != NULL && cart->clock != NULL);
     CHECK(cart_cpu_read(0x8000) == 0 && cart_cpu_read(0xC000) == 14);
     CHECK(cart_cpu_read(0xE000) == 15 && cart_cpu_read_bus(0x6000, 0x56) == 0x56);
-    CHECK(cart_ppu_read(0) == 0 && cart_ppu_read(0x1800) == 0);
+    CHECK(cart_ppu_read(0x0123) == 0x23 && cart_ppu_read(0x18A6) == 0xA6);
 
     for (unsigned slot = 0; slot < 4; ++slot) {
         uint8_t bank = (uint8_t)(3 + slot * 5);
