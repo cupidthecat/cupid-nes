@@ -8174,6 +8174,115 @@ static int test_jaleco87_101_140_banks_and_register_ranges(void) {
     return 0;
 }
 
+static int jaleco_cpu_store_load(uint16_t addr, uint8_t value, uint8_t *loaded) {
+    const uint8_t program[] = {
+        0xA9, value,
+        0x8D, (uint8_t)addr, (uint8_t)(addr >> 8),
+        0xA9, 0xFF,
+        0xAD, (uint8_t)addr, (uint8_t)(addr >> 8)
+    };
+    nes_set_region(NES_REGION_NTSC);
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    CHECK(cpu_power_on(&cpu));
+    for (size_t i = 0; i < sizeof(program); ++i)
+        write_mem((uint16_t)(0x0200u + i), program[i]);
+    cpu.pc = 0x0200;
+    CHECK(cpu_step(&cpu) == 2);
+    CHECK(cpu_step(&cpu) == 4);
+    CHECK(cpu_step(&cpu) == 2);
+    CHECK(cpu_step(&cpu) == 4);
+    *loaded = cpu.a;
+    return 0;
+}
+
+static int jaleco_cpu_load(uint16_t addr, uint8_t *loaded) {
+    const uint8_t program[] = {
+        0xAD, (uint8_t)addr, (uint8_t)(addr >> 8)
+    };
+    nes_set_region(NES_REGION_NTSC);
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    CHECK(cpu_power_on(&cpu));
+    for (size_t i = 0; i < sizeof(program); ++i)
+        write_mem((uint16_t)(0x0200u + i), program[i]);
+    cpu.pc = 0x0200;
+    CHECK(cpu_step(&cpu) == 4);
+    *loaded = cpu.a;
+    return 0;
+}
+
+static int test_jaleco_discrete_ram_cpu_paths(void) {
+    static const struct {
+        unsigned mapper;
+        size_t prg_bytes;
+        size_t chr_bytes;
+        bool register_window;
+        uint8_t register_value;
+        uint8_t expected_chr;
+        uint8_t expected_prg;
+    } cases[] = {
+        {72,  0x20000, 0x20000, false, 0xA6, 0, 0},
+        {78,  0x20000, 0x20000, false, 0xA6, 0, 0},
+        {87,  0x08000, 0x08000, true,  0x01, 16, 0},
+        {92,  0x40000, 0x20000, false, 0xA6, 0, 0},
+        {101, 0x08000, 0x80000, true,  0x05, 40, 0},
+        {140, 0x20000, 0x20000, true,  0x23, 24, 8}
+    };
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+        const unsigned mapper = cases[i].mapper;
+        uint8_t loaded = 0xFF;
+
+        // Legacy headers inherit the board's conventional 8 KiB work RAM.
+        CHECK(fixture(mapper, cases[i].prg_bytes, cases[i].chr_bytes, false) == (int)mapper);
+        CHECK(jaleco_cpu_store_load(0x6123, cases[i].register_value, &loaded) == 0);
+        CHECK(loaded == (cases[i].register_window ? 0 : cases[i].register_value));
+        if (cases[i].register_window) {
+            CHECK(cart_ppu_read(0) == cases[i].expected_chr);
+            if (mapper == 140) CHECK(cart_cpu_read(0x8001) == cases[i].expected_prg);
+        }
+        cart->reset();
+        CHECK(jaleco_cpu_load(0x6123, &loaded) == 0);
+        CHECK(loaded == (cases[i].register_window ? 0 : cases[i].register_value));
+        if (cases[i].register_window) {
+            CHECK(cart_ppu_read(0) == 0);
+            if (mapper == 140) CHECK(cart_cpu_read(0x8001) == 0);
+        }
+
+        // NES 2.0 can explicitly remove PRG RAM; the CPU then sees its open bus.
+        iNESHeader h = header_for(mapper, cases[i].prg_bytes, false);
+        h.flags7 |= 0x08;
+        h.flags10 = 0;
+        CHECK(fixture_with_header(&h, cases[i].prg_bytes, cases[i].chr_bytes) == (int)mapper);
+        CHECK(jaleco_cpu_store_load(0x6123, cases[i].register_value, &loaded) == 0);
+        CHECK(loaded == 0x61);
+        if (cases[i].register_window) {
+            CHECK(cart_ppu_read(0) == cases[i].expected_chr);
+            if (mapper == 140) CHECK(cart_cpu_read(0x8001) == cases[i].expected_prg);
+        }
+
+        // Declared 8 KiB work RAM restores reads. Only 72/78/92 write that RAM;
+        // 87/101/140 keep the same addresses as write-only mapper registers.
+        h.flags10 = 7;
+        CHECK(fixture_with_header(&h, cases[i].prg_bytes, cases[i].chr_bytes) == (int)mapper);
+        CHECK(jaleco_cpu_store_load(0x6123, cases[i].register_value, &loaded) == 0);
+        CHECK(loaded == (cases[i].register_window ? 0 : cases[i].register_value));
+        if (cases[i].register_window) {
+            CHECK(cart_ppu_read(0) == cases[i].expected_chr);
+            if (mapper == 140) CHECK(cart_cpu_read(0x8001) == cases[i].expected_prg);
+        }
+        cart->reset();
+        CHECK(jaleco_cpu_load(0x6123, &loaded) == 0);
+        CHECK(loaded == (cases[i].register_window ? 0 : cases[i].register_value));
+        if (cases[i].register_window) {
+            CHECK(cart_ppu_read(0) == 0);
+            if (mapper == 140) CHECK(cart_cpu_read(0x8001) == 0);
+        }
+    }
+    return 0;
+}
+
 static int test_jaleco_discrete_loader_validation(void) {
     const unsigned mappers[] = {72, 78, 87, 92, 101, 140};
     for (size_t i = 0; i < sizeof(mappers) / sizeof(mappers[0]); ++i) {
@@ -8484,6 +8593,7 @@ int test_mapper_accuracy(void) {
         test_jaleco72_92_latches_cpu_and_bus_conflicts,
         test_jaleco78_banking_and_submapper_mirroring,
         test_jaleco87_101_140_banks_and_register_ranges,
+        test_jaleco_discrete_ram_cpu_paths,
         test_jaleco_discrete_loader_validation,
         test_cnrom185_submapper_latches_and_ppu_bus,
         test_cnrom185_cpu_bus_conflict_control,

@@ -5774,6 +5774,7 @@ static struct {
 } jaleco_discrete;
 
 static uint8_t jaleco_discrete_cpu_read(uint16_t a) {
+    if (a >= 0x6000u && a < 0x8000u) return prg_ram_read(a);
     if (a < 0x8000u) return cart_cpu_bus_input;
 
     if (C.mapper_no == 87 || C.mapper_no == 101) {
@@ -5811,6 +5812,10 @@ static void jaleco_discrete_cpu_write(uint16_t a, uint8_t value) {
         return;
     }
 
+    if (a >= 0x6000u && a < 0x8000u) {
+        prg_ram_write(a, value);
+        return;
+    }
     if (a < 0x8000u) return;
     if (C.mapper_no == 72 || C.mapper_no == 92) {
         bool prg_flag = (value & 0x80u) != 0;
