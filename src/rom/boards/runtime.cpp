@@ -25,6 +25,7 @@ extern "C" {
 #include "../../cpu/cpu.h"
 #include "../../ppu/ppu.h"
 #include "../../system/hardware.h"
+#include "../../system/timing.h"
 }
 
 namespace cupid::boards {

@@ -69,6 +69,9 @@ PRG is the cartridge memory read by the CPU; CHR holds graphics patterns read by
 | 51, 53, 59 | Multicart boards | Outer/inner PRG selection, menu EPROM layouts, CHR RAM or banking, and mapper 59 DIP-switch reads |
 | 166, 167, 170, 177, 179, 190 | Subor and discrete boards | XOR-combined PRG registers, protection-register access, independent bank/mirroring writes, and 2 KiB CHR banking |
 | 200, 201, 202, 203, 204, 212 | Address/data-selected multicarts | Mirrored or consecutive PRG windows, CHR bank selection, nametable wiring, and mapper 212 RAM read masks |
+| 213, 214, 216, 225, 227, 228, 229 | Address-latched multicarts | Separate address/data bank bits, outer PRG and CHR selection, chip-select aliases, and board-specific nametable wiring |
+| 222 | Filtered PPU interrupt board | Two programmable and two fixed PRG banks, eight CHR banks, and an IRQ counter clocked by qualified A12 rises |
+| 226, 230, 231, 233 | Reset-sensitive multicarts | Bank-register reset, reset-selected game modes, mirrored or consecutive PRG windows, and retained mirroring where required |
 | 64, 158 | RAMBO-1 | PRG/CHR banks, CPU- or PPU-clocked IRQs, and mapper 158 nametable wiring |
 | 66 | GxROM | Combined PRG/CHR bank selection and bus conflicts |
 | 67 | Sunsoft 3 | 2 KiB CHR banks, switchable 16 KiB PRG, mirroring, and a one-shot CPU IRQ counter |
@@ -200,6 +203,14 @@ Subor mappers 166 and 167 combine four masked registers through XOR to select th
 Mapper 177 selects its 32 KiB PRG bank and mirroring from the same write value. Mapper 179 changes the PRG bank at `$5000-$5FFF` and mirroring at `$8000-$FFFF`, while retaining normal cartridge RAM access between them. Mapper 190 selects the lower 16 KiB PRG window through two register ranges and leaves the upper window at bank zero. Its four 2 KiB CHR banks also accept the decoded aliases at `$E000-$FFFF`.
 
 Mappers 200 through 204 use their board-specific address or data bits for PRG and CHR selection. Mapper 201 shares the mapper 54 circuit. Mapper 202 can select a consecutive pair of 16 KiB PRG banks; mapper 204 uses a consecutive pair only for banks 6 and 7. Mapper 212 independently selects a mirrored 16 KiB bank or a 32 KiB pair. Reads in its `$6000-$7FFF` window OR bit 7 into the stored byte when address bit 4 is clear, without changing the RAM byte. These boards retain their bank state through CPU soft reset. Small physical CHR chips use the same shortened slots and startup RAM aliases as other cartridge boards.
+
+Mappers 213, 214, and 216 select PRG and CHR from partially decoded write addresses. Mapper 216 also decodes `$5000`: reads return zero, and writes select the banks described by that address. Addresses beside `$5000` retain their ordinary bus behavior. No additional communication protocol is emulated for this board.
+
+Mapper 222 fixes the final two 8 KiB PRG banks at `$C000-$FFFF`. The lower PRG banks and CHR ROM remain unmapped until their bank registers are written; CHR RAM keeps its initial mapping. A12 must remain low for at least ten PPU dots before a rising edge increments the IRQ counter. Writing `$F000` loads the counter and acknowledges IRQ. A loaded value of 239 triggers on the next qualified rise; zero disables counting. The interrupt stays asserted after the counter stops, until acknowledged. CPU writes through PPUADDR and rendered PPU fetches both drive this circuit. CPU soft reset preserves the bank and interrupt state.
+
+Mapper 225 combines an outer address bit with independent PRG and CHR bank fields. Mapper 227 selects mirrored, consecutive, or fixed-upper PRG windows; it uses the initial CHR RAM mapping and does not select CHR ROM. Mapper 228 combines address and data bits for CHR selection and aliases its fourth PRG chip selection to the third chip. Reset returns it to its initial PRG/CHR banks and vertical mirroring. Mapper 229 selects its first PRG pair when the bank field is zero, including addresses whose low bit is set, and otherwise mirrors a 16 KiB bank.
+
+Mapper 226 resets its two bank registers on CPU soft reset while retaining the current mirroring. Mapper 233 adds a reset-selected outer PRG bit, alternating between game groups on each soft reset. Mapper 230 alternates between its fixed-upper Contra layout and the multicart layout; each mode has distinct bank and mirroring rules. Mapper 231 resets both PRG windows to bank zero without resetting mirroring. RAM contents survive these bank-control resets, and battery data is restored after trainer initialization.
 
 The mapper 72 and 92 cartridge banking and latch behavior is implemented. Optional speech hardware on those boards is not currently emulated.
 
