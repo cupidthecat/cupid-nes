@@ -61,6 +61,9 @@ uint8_t cart_cpu_read (uint16_t addr);
 // Resolve floating data lines against the CPU latch, without a data-byte sentinel.
 uint8_t cart_cpu_read_bus(uint16_t addr, uint8_t open_bus);
 void    cart_cpu_write(uint16_t addr, uint8_t v);
+// Clock one real CPU bus cycle while exposing whether it is a write to boards
+// whose counters can select CPU-write cycles as their clock source.
+void    cart_clock_cpu_cycle(bool write_cycle);
 uint8_t cart_ppu_read (uint16_t addr);
 void    cart_ppu_write(uint16_t addr, uint8_t v);
 void    cart_set_ppu_fetch_source(CartPpuFetchSource src);

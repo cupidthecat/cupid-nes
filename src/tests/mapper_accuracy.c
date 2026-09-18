@@ -3238,6 +3238,334 @@ static int test_mmc3_mixed_chr_variants(void) {
     return 0;
 }
 
+static iNESHeader jy_header(unsigned mapper) {
+    iNESHeader h = header_for(mapper, 0x100000, false);
+    h.flags7 |= 0x08;
+    h.prg_rom_chunks = 0x40; // 1 MiB PRG-ROM.
+    h.chr_rom_chunks = 0x40; // 512 KiB CHR-ROM.
+    return h;
+}
+
+static void jy_write_chr(unsigned index, uint16_t bank) {
+    cart_cpu_write((uint16_t)(0x9000 + index), (uint8_t)bank);
+    cart_cpu_write((uint16_t)(0xA000 + index), (uint8_t)(bank >> 8));
+}
+
+static void jy_arm_irq(uint8_t source) {
+    cart_cpu_write(0xC002, 0);
+    cart_cpu_write(0xC006, 0x55);
+    cart_cpu_write(0xC004, 0x52); // XOR -> prescaler 7.
+    cart_cpu_write(0xC005, 0xAA); // XOR -> counter $FF.
+    cart_cpu_write(0xC001, (uint8_t)(0x44 | source)); // Up, 3-bit prescaler.
+    cart_cpu_write(0xC003, 0);
+}
+
+static int test_jy_prg_chr_modes(void) {
+    iNESHeader h = jy_header(90);
+    CHECK(fixture_with_header(&h, 0x100000, 0x80000) == 90);
+
+    // Mode 0 fixes the last 32 KiB unless bit 2 selects register 3.
+    CHECK(cart_cpu_read(0x8000) == 60 && cart_cpu_read(0xA000) == 61);
+    CHECK(cart_cpu_read(0xC000) == 62 && cart_cpu_read(0xE000) == 63);
+    cart_cpu_write(0x8003, 5);
+    cart_cpu_write(0xD000, 0x04);
+    CHECK(cart_cpu_read(0x8000) == 5 && cart_cpu_read(0xA000) == 6);
+    CHECK(cart_cpu_read(0xC000) == 7 && cart_cpu_read(0xE000) == 8);
+
+    // Mode 1 is 16 KiB + 16 KiB, with independently selectable upper pair.
+    cart_cpu_write(0x8001, 7);
+    cart_cpu_write(0x8003, 9);
+    cart_cpu_write(0xD000, 0x01);
+    CHECK(cart_cpu_read(0x8000) == 14 && cart_cpu_read(0xA000) == 15);
+    CHECK(cart_cpu_read(0xC000) == 62 && cart_cpu_read(0xE000) == 63);
+    cart_cpu_write(0xD000, 0x85); // Register-3 upper pair + $6000 PRG window.
+    CHECK(cart_cpu_read(0xC000) == 9 && cart_cpu_read(0xE000) == 10);
+    CHECK(cart_cpu_read(0x6000) == 19);
+
+    // Modes 2 and 3 expose 8 KiB registers; mode 3 reverses register bit order.
+    cart_cpu_write(0x8000, 3);
+    cart_cpu_write(0x8001, 4);
+    cart_cpu_write(0x8002, 5);
+    cart_cpu_write(0x8003, 6);
+    cart_cpu_write(0xD000, 0x02);
+    CHECK(cart_cpu_read(0x8000) == 3 && cart_cpu_read(0xA000) == 4);
+    CHECK(cart_cpu_read(0xC000) == 5 && cart_cpu_read(0xE000) == 63);
+    cart_cpu_write(0xD000, 0x86);
+    CHECK(cart_cpu_read(0xE000) == 6 && cart_cpu_read(0x6000) == 6);
+
+    cart_cpu_write(0x8000, 1);
+    cart_cpu_write(0x8001, 2);
+    cart_cpu_write(0x8002, 4);
+    cart_cpu_write(0x8003, 0x10);
+    cart_cpu_write(0xD000, 0x03);
+    CHECK(cart_cpu_read(0x8000) == 64 && cart_cpu_read(0xA000) == 32);
+    CHECK(cart_cpu_read(0xC000) == 16 && cart_cpu_read(0xE000) == 63);
+    cart_cpu_write(0xD000, 0x87);
+    CHECK(cart_cpu_read(0xE000) == 4 && cart_cpu_read(0x6000) == 4);
+
+    // CHR mode 0: one 8 KiB bank with block bits.
+    cart_cpu_write(0x9000, 3);
+    cart_cpu_write(0xD003, 0x01); // Block 1, block mode.
+    cart_cpu_write(0xD000, 0x00);
+    CHECK(cart_ppu_read(0x0000) == (uint8_t)(35 * 8));
+    CHECK(cart_ppu_read(0x1C00) == (uint8_t)(35 * 8 + 7));
+
+    // CHR mode 1: two 4 KiB windows, selected by the latch registers.
+    cart_cpu_write(0x9000, 1);
+    cart_cpu_write(0x9004, 2);
+    cart_cpu_write(0xD003, 0x01);
+    cart_cpu_write(0xD000, 0x08);
+    CHECK(cart_ppu_read(0x0000) == (uint8_t)(65 * 4));
+    CHECK(cart_ppu_read(0x1000) == (uint8_t)(66 * 4));
+
+    // CHR mode 2 uses registers 0/2/4/6 as four 2 KiB windows.
+    cart_cpu_write(0x9000, 1);
+    cart_cpu_write(0x9002, 2);
+    cart_cpu_write(0x9004, 3);
+    cart_cpu_write(0x9006, 4);
+    cart_cpu_write(0xD003, 0x01);
+    cart_cpu_write(0xD000, 0x10);
+    CHECK(cart_ppu_read(0x0000) == (uint8_t)(129 * 2));
+    CHECK(cart_ppu_read(0x0800) == (uint8_t)(130 * 2));
+    CHECK(cart_ppu_read(0x1000) == (uint8_t)(131 * 2));
+    CHECK(cart_ppu_read(0x1800) == (uint8_t)(132 * 2));
+
+    // CHR mode 3 exposes all eight registers and the high-byte fields.
+    for (unsigned i = 0; i < 8; ++i) jy_write_chr(i, (uint16_t)(0x100 + i));
+    cart_cpu_write(0xD003, 0x20); // High-register mode.
+    cart_cpu_write(0xD000, 0x18);
+    for (unsigned i = 0; i < 8; ++i)
+        CHECK(cart_ppu_read((uint16_t)(i * 0x400)) == i);
+    jy_write_chr(0, 0x101);
+    jy_write_chr(1, 0x102);
+    jy_write_chr(2, 0x107);
+    jy_write_chr(3, 0x108);
+    cart_cpu_write(0xD003, 0xA0); // Mirror registers 2/3 from 0/1.
+    CHECK(cart_ppu_read(0x0800) == 1 && cart_ppu_read(0x0C00) == 2);
+
+    cart->reset();
+    CHECK(cart_cpu_read(0x8000) == 60 && cart_cpu_read(0xE000) == 63);
+    CHECK(cart_ppu_read(0) == 0 && !cart_irq_pending());
+    return 0;
+}
+
+static int test_jy_mapper_variants_and_readback(void) {
+    uint8_t nt[0x1000] = {0};
+    for (unsigned page = 0; page < 4; ++page) nt[page * 0x400] = (uint8_t)(0x10 + page);
+
+    iNESHeader h = jy_header(90);
+    CHECK(fixture_with_header(&h, 0x100000, 0x80000) == 90);
+    cart_cpu_write(0x5800, 0xFF);
+    cart_cpu_write(0x5801, 0xFE);
+    CHECK(cart_cpu_read(0x5800) == 0x02 && cart_cpu_read(0x5801) == 0xFD);
+    cart_cpu_write(0x5803, 0xA6);
+    CHECK(cart_cpu_read(0x5803) == 0xA6);
+    CHECK(cart_cpu_read(0x5000) == 0 && cart_cpu_read_bus(0x5002, 0x5A) == 0x5A);
+
+    // Mapper 90 always uses its simple mirroring register.
+    cart_cpu_write(0xD000, 0x20);
+    cart_cpu_write(0xB000, 0x81);
+    cart_cpu_write(0xB004, 0x01);
+    cart_cpu_write(0xD001, 1);
+    CHECK(cart_nt_read(0x2000, nt) == 0x10 && cart_nt_read(0x2400, nt) == 0x10);
+    CHECK(cart_nt_read(0x2800, nt) == 0x11 && cart_nt_read(0x2C00, nt) == 0x11);
+
+    // Mapper 209 only enters advanced nametable mode when requested and has MMC2-style CHR latches.
+    h = jy_header(209);
+    CHECK(fixture_with_header(&h, 0x100000, 0x80000) == 209);
+    jy_write_chr(0, 1); jy_write_chr(2, 3); jy_write_chr(4, 5); jy_write_chr(6, 7);
+    cart_cpu_write(0xD003, 0x20);
+    cart_cpu_write(0xD000, 0x08);
+    CHECK(cart_ppu_read(0) == 4 && cart_ppu_read(0x1000) == 20);
+    cart_notify_ppu_address(0x0FE8, 1);
+    cart_notify_ppu_address(0x1FE8, 2);
+    CHECK(cart_ppu_read(0) == 12 && cart_ppu_read(0x1000) == 28);
+    cart_notify_ppu_address(0x0FD8, 3);
+    cart_notify_ppu_address(0x1FD8, 4);
+    CHECK(cart_ppu_read(0) == 4 && cart_ppu_read(0x1000) == 20);
+
+    cart_cpu_write(0xB000, 0x82); // CHR page $82 when bit 7 mismatches D002.
+    cart_cpu_write(0xB004, 0);
+    cart_cpu_write(0xD002, 0);
+    cart_cpu_write(0xD000, 0x28);
+    CHECK(cart_nt_read(0x2000, nt) == 0x82);
+    cart_cpu_write(0xD002, 0x80);
+    CHECK(cart_nt_read(0x2000, nt) == 0x10); // Matching select bit uses CIRAM page 0.
+    cart_nt_write(0x2000, 0x66, nt);
+    CHECK(nt[0] == 0x66);
+
+    // Mapper 211 behaves as advanced nametable mode even when D000 bit 5 is clear.
+    h = jy_header(211);
+    CHECK(fixture_with_header(&h, 0x100000, 0x80000) == 211);
+    cart_cpu_write(0xB000, 0x81);
+    cart_cpu_write(0xB001, 0x80);
+    cart_cpu_write(0xB002, 0x81);
+    cart_cpu_write(0xB003, 0x80);
+    cart_cpu_write(0xD002, 0x80);
+    CHECK(cart_nt_read(0x2000, nt) == nt[0x400]);
+    CHECK(cart_nt_read(0x2400, nt) == nt[0]);
+    cart_cpu_write(0xD002, 0);
+    CHECK(cart_nt_read(0x2000, nt) == 0x81); // Bit mismatch selects CHR page $81.
+    cart_cpu_write(0xD000, 0x40); // Disable NT RAM forces CHR reads for every quadrant.
+    CHECK(cart_nt_read(0x2400, nt) == 0x80);
+    cart_nt_write(0x2000, 0x77, nt);
+    CHECK(nt[0x400] == 0x77); // Writes still reach the selected CIRAM page.
+    return 0;
+}
+
+static int test_jy_chr_ram_nametable_reads(void) {
+    const unsigned boards[] = {90, 209, 211};
+    for (unsigned i = 0; i < sizeof(boards) / sizeof(boards[0]); ++i) {
+        iNESHeader h = header_for(boards[i], 0x8000, true);
+        h.flags7 |= 8;
+        h.zero[0] = 7;
+        size_t size;
+        uint8_t *image = image_for(&h, 0x8000, 0, &size);
+        CHECK(image != NULL);
+        int loaded = load_rom_memory(image, size);
+        free(image);
+        CHECK(loaded == 0 && rom_mapper_number(&ines_header) == (int)boards[i]);
+        uint8_t nt[0x1000] = {0};
+        nt[0x123] = 0xA6;
+        cart_ppu_write(0x0123, 0x5A);
+        CHECK(cart_ppu_read(0x0123) == 0x5A);
+        cart_cpu_write(0xD000, 0x60);
+        cart_cpu_write(0xB000, 0);
+        cart_cpu_write(0xB004, 0);
+        // The advanced nametable read port selects ROM, never pattern RAM.
+        CHECK(cart_nt_read(0x2123, nt) == (boards[i] == 90 ? 0xA6 : 0));
+        cart_nt_write(0x2123, 0x69, nt);
+        CHECK(nt[0x123] == 0x69 && cart_ppu_read(0x0123) == 0x5A);
+        cart_cpu_write(0xD000, 0x20);
+        CHECK(cart_nt_read(0x2123, nt) == 0x69);
+    }
+    return 0;
+}
+
+static int test_jy_irq_sources_and_cpu_delivery(void) {
+    iNESHeader h = jy_header(90);
+    CHECK(fixture_with_header(&h, 0x100000, 0x80000) == 90);
+
+    jy_arm_irq(0);
+    cart->clock(1);
+    CHECK(cart_irq_pending());
+    cart_cpu_write(0xC002, 0);
+    CHECK(!cart_irq_pending());
+
+    jy_arm_irq(1);
+    cart_notify_ppu_address(0x0000, 0);
+    cart_notify_ppu_address(0x1000, 1);
+    CHECK(cart_irq_pending());
+    cart_cpu_write(0xC002, 0);
+    cart_notify_ppu_address(0x1001, 2);
+    CHECK(!cart_irq_pending()); // Held-high A12 is not another edge.
+
+    // Rendering nametable and pattern reads both clock source 2.
+    jy_arm_irq(2);
+    ppu_power_on(&ppu);
+    ppu.scanline = 0; ppu.dot = 1; ppu.v = 0;
+    ppu.mask = 0x08; ppu.rendering_enabled = true; ppu.fetches_enabled = true;
+    ppu_step_dots(2);
+    CHECK(cart_irq_pending());
+    cart_cpu_write(0xC002, 0);
+    jy_arm_irq(2);
+    ppu.dot = 5;
+    ppu_step_dots(2);
+    CHECK(cart_irq_pending());
+
+    // CPU $2007 reads use the CPU fetch source and do not clock source 2.
+    cart_cpu_write(0xC002, 0);
+    jy_arm_irq(2);
+    CHECK(!cart_irq_pending());
+    apu_power_on(&apu);
+    CHECK(!cart_irq_pending());
+    ppu_power_on(&ppu);
+    CHECK(!cart_irq_pending());
+    cpu_power_on(&cpu);
+    CHECK(!cart_irq_pending());
+    write_mem(0x2006, 0x00);
+    CHECK(!cart_irq_pending());
+    write_mem(0x2006, 0x00);
+    CHECK(!cart_irq_pending());
+    (void)read_mem(0x2007);
+    CHECK(!cart_irq_pending());
+
+    // Direct mapper clocks are not CPU writes; an executed STA is.
+    jy_arm_irq(3);
+    cart->clock(8);
+    CHECK(!cart_irq_pending());
+    write_mem(0x0200, 0xA9); write_mem(0x0201, 0x42); // LDA #$42
+    write_mem(0x0202, 0x85); write_mem(0x0203, 0x10); // STA $10
+    cpu.pc = 0x0200;
+    CHECK(cpu_step(&cpu) == 2 && !cart_irq_pending());
+    CHECK(cpu_step(&cpu) == 3 && cart_irq_pending() && read_mem(0x0010) == 0x42);
+
+    // OAM DMA cycles remain DMA reads for this source, including its PUT phases.
+    cart_cpu_write(0xC002, 0);
+    write_mem(0x4014, 0x02);
+    write_mem(0x0204, 0xEA);
+    jy_arm_irq(3);
+    cpu.pc = 0x0204;
+    int dma_cycles = cpu_step(&cpu);
+    CHECK(dma_cycles >= 515 && dma_cycles <= 516);
+    CHECK(!cart_irq_pending());
+
+    // Counter XOR and downward counting boundaries.
+    cart_cpu_write(0xC002, 0);
+    cart_cpu_write(0xC006, 0xA5);
+    cart_cpu_write(0xC004, 0xA4); // XOR -> 1.
+    cart_cpu_write(0xC005, 0xA5); // XOR -> 0.
+    cart_cpu_write(0xC001, 0x84); // Down, 3-bit prescaler, CPU clock.
+    cart_cpu_write(0xC000, 1);
+    cart->clock(1);
+    CHECK(cart_irq_pending());
+    cart_cpu_write(0xC000, 0);
+    CHECK(!cart_irq_pending());
+
+    // Asserted JY IRQ reaches the production CPU interrupt path.
+    cart->reset();
+    fixture_prg[0x7FFFE] = 0x00;
+    fixture_prg[0x7FFFF] = 0x03;
+    cpu_power_on(&cpu);
+    cpu.pc = 0x0200;
+    cpu.status = UNUSED_FLAG | INTERRUPT_FLAG;
+    write_mem(0x0200, 0xEA);
+    write_mem(0x0201, 0xEA);
+    jy_arm_irq(0);
+    CHECK(cpu_step(&cpu) == 2 && cart_irq_pending());
+    cpu.status &= (uint8_t)~INTERRUPT_FLAG;
+    for (unsigned i = 0; i < 3 && cpu.pc != 0x0300; ++i) (void)cpu_step(&cpu);
+    CHECK(cpu.pc == 0x0300 && (cpu.status & INTERRUPT_FLAG));
+    return 0;
+}
+
+static int test_jy_loader_and_reset(void) {
+    iNESHeader h = jy_header(211);
+    size_t size;
+    uint8_t *image = image_for(&h, 0x100000, 0x80000, &size);
+    CHECK(image != NULL && load_rom_memory(image, size) == 0);
+    free(image);
+    cart_cpu_write(0x5803, 0x91);
+    cart_cpu_write(0xD001, 3);
+    CHECK(cart_cpu_read(0x5803) == 0x91 && cart_get_mirroring() == MIRROR_SINGLE1);
+    cart->reset();
+    CHECK(cart_cpu_read(0x5803) == 0 && !cart_irq_pending());
+
+    uint8_t *previous_prg = prg_rom;
+    uint8_t *previous_chr = chr_rom;
+    h.prg_ram_size = 0x10; // Unsupported nonzero submapper.
+    image = image_for(&h, 0x100000, 0x80000, &size);
+    CHECK(image != NULL && load_rom_memory(image, size) == -1);
+    free(image);
+    CHECK(prg_rom == previous_prg && chr_rom == previous_chr && rom_mapper_number(&ines_header) == 211);
+
+    h = jy_header(90);
+    h.flags10 = 7; // These boards do not expose CPU PRG-RAM.
+    CHECK(mapper_init_from_header(&h, fixture_prg, 0x100000, fixture_chr, 0x80000) == -1);
+    CHECK(prg_rom == previous_prg && chr_rom == previous_chr);
+    return 0;
+}
+
 static uint8_t *txsrom_image(size_t *size) {
     const size_t prg_bytes = 0x20000, chr_bytes = 0x40000;
     iNESHeader h = header_for(118, prg_bytes, false);
@@ -7080,6 +7408,9 @@ int test_mapper_accuracy(void) {
         test_mmc3_irq_edges, test_mmc3_revision_a_irq, test_mmc3_revision_a_cpu_irq,
         test_mmc3_render_trace, test_tqrom_mixed_chr_memory,
         test_mmc3_mixed_chr_variants,
+        test_jy_prg_chr_modes, test_jy_mapper_variants_and_readback,
+        test_jy_chr_ram_nametable_reads,
+        test_jy_irq_sources_and_cpu_delivery, test_jy_loader_and_reset,
         test_mcacc_irq_divider, test_mcacc_irq_reload_and_enable,
         test_mcacc_banks_ram_and_loader, test_mcacc_cpu_ppu_irq_path,
         test_taito_banks_aliases_and_mirroring, test_taito48_irq, test_taito_loader_transaction,

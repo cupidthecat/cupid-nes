@@ -69,6 +69,7 @@ PRG is the cartridge memory read by the CPU; CHR holds graphics patterns read by
 | 76, 88, 95, 154, 206 | Namco 108 family | Variant-specific PRG/CHR banking, hardwired or register-controlled nametables, and no mapper IRQ source |
 | 85 | VRC7 | PRG/CHR banking, IRQs, RAM control, and six-channel FM audio |
 | 89, 93, 184 | Sunsoft discrete boards | Board-specific PRG/CHR selection, single-screen wiring, CHR access control, and paired 4 KiB CHR banks |
+| 90, 209, 211 | JY Company | PRG/CHR modes, register arithmetic, mapper-specific nametable routing, latches, and selectable IRQ clock sources |
 | 99 | VS System | Cabinet PRG/CHR selection, shared RAM permissions, and single/dual layouts |
 | 105 | NES-EVENT | MMC1 serial control, competition PRG modes, fixed CHR RAM, cartridge RAM, and DIP-selected timer IRQ |
 | 118 | TKSROM / TLSROM | MMC3 banking and IRQs with CHR-register-controlled nametable routing |

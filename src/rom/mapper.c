@@ -77,13 +77,14 @@ static Mapper mapper_rambo1, mapper_rambo158;
 static Mapper mapper_vrc1, mapper_vrc3, mapper_vrc6, mapper_vrc24, mapper_vrc7;
 static Mapper mapper_sunsoft3, mapper_sunsoft4, mapper_sunsoft89, mapper_sunsoft93, mapper_sunsoft184;
 static Mapper mapper_sunsoft69, mapper_namco, mapper_m34, mapper_gxrom, mapper_m71, mapper_namco108;
-static Mapper mapper_vs99;
+static Mapper mapper_vs99, mapper_jy;
 Mapper *cart = NULL;
 static bool mapper_irq_line = false;
 static uint8_t cart_cpu_bus_input = 0xFF;
 static CartPpuFetchSource cart_ppu_fetch_source = CART_PPU_FETCH_CPU;
 static bool mmc3_revision_a_profile = false;
 static unsigned cart_dip_value = 0;
+static bool cart_cpu_cycle_is_write = false;
 static void mmc3_irq_clock(void);
 static size_t namco_chr_bank(uint8_t bank);
 static float vrc7_expansion_output(void);
@@ -546,6 +547,7 @@ void mapper_shutdown(void) {
     cart = NULL;
     memset(&C, 0, sizeof(C));
     mapper_irq_line = false;
+    cart_cpu_cycle_is_write = false;
     cart_ppu_fetch_source = CART_PPU_FETCH_CPU;
     memset(mmc5_exram, 0, sizeof(mmc5_exram));
     memset(mmc3_mixed_chr_ram, 0, sizeof(mmc3_mixed_chr_ram));
@@ -602,6 +604,12 @@ void cart_cpu_write(uint16_t a, uint8_t v) {
     if (!cart) return;
     if (a >= 0x8000 && C.bus_conflicts) v &= cart->cpu_read(a);
     cart->cpu_write(a, v);
+}
+void cart_clock_cpu_cycle(bool write_cycle) {
+    if (!cart || !cart->clock) return;
+    cart_cpu_cycle_is_write = write_cycle;
+    cart->clock(1);
+    cart_cpu_cycle_is_write = false;
 }
 uint8_t cart_ppu_read(uint16_t a) { return cart ? cart->ppu_read(a) : 0x00; }
 void cart_ppu_write(uint16_t a, uint8_t v) { if (cart) cart->ppu_write(a, v); }
@@ -1578,7 +1586,311 @@ static struct {
 
 static void rambo1_irq_clock(uint8_t delay);
 
+typedef enum {
+    JY_IRQ_CPU_CLOCK = 0,
+    JY_IRQ_PPU_A12 = 1,
+    JY_IRQ_PPU_READ = 2,
+    JY_IRQ_CPU_WRITE = 3
+} JyIrqSource;
+
+static struct {
+    uint8_t prg[4];
+    uint8_t chr_low[8], chr_high[8], chr_latch[2];
+    uint8_t nt_low[4], nt_high[4];
+    uint8_t prg_mode, chr_mode;
+    bool enable_prg_6000;
+    bool chr_block_mode;
+    uint8_t chr_block;
+    bool mirror_chr;
+    uint8_t mirroring_reg;
+    bool advanced_nt;
+    bool disable_nt_ram;
+    uint8_t nt_ram_select_bit;
+    bool irq_enabled;
+    JyIrqSource irq_source;
+    uint8_t irq_direction;
+    bool irq_funky_mode;
+    uint8_t irq_funky_reg;
+    bool irq_small_prescaler;
+    uint8_t irq_prescaler, irq_counter, irq_xor;
+    uint8_t multiply_a, multiply_b, register_ram;
+    uint16_t last_ppu_addr;
+} jy;
+
+static uint8_t jy_invert_prg(uint8_t value) {
+    if ((jy.prg_mode & 3u) != 3u) return value;
+    return (uint8_t)(((value & 0x01u) << 6)
+                   | ((value & 0x02u) << 4)
+                   | ((value & 0x04u) << 2)
+                   | ((value & 0x10u) >> 2)
+                   | ((value & 0x20u) >> 4)
+                   | ((value & 0x40u) >> 6));
+}
+
+static size_t jy_prg_bank(uint16_t addr) {
+    uint8_t regs[4];
+    for (unsigned i = 0; i < 4; ++i) regs[i] = jy_invert_prg(jy.prg[i]);
+    if (addr >= 0x6000 && addr < 0x8000) {
+        switch (jy.prg_mode & 3u) {
+            case 0: return (size_t)regs[3] * 4u + 3u;
+            case 1: return (size_t)regs[3] * 2u + 1u;
+            default: return regs[3];
+        }
+    }
+
+    unsigned slot = (unsigned)((addr - 0x8000u) >> 13);
+    switch (jy.prg_mode & 3u) {
+        case 0: {
+            size_t base = (jy.prg_mode & 4u) ? regs[3] : 0x3Cu;
+            return base + slot;
+        }
+        case 1:
+            if (slot < 2) return (size_t)regs[1] * 2u + slot;
+            return ((jy.prg_mode & 4u) ? regs[3] : 0x3Eu) + (slot - 2u);
+        default:
+            if (slot < 3) return regs[slot];
+            return (jy.prg_mode & 4u) ? regs[3] : 0x3Fu;
+    }
+}
+
+static uint16_t jy_chr_reg(unsigned index) {
+    if (jy.chr_mode >= 2 && jy.mirror_chr && (index == 2 || index == 3)) index -= 2;
+    if (!jy.chr_block_mode)
+        return (uint16_t)(jy.chr_low[index] | ((uint16_t)jy.chr_high[index] << 8));
+
+    uint8_t mask, shift;
+    switch (jy.chr_mode) {
+        case 0: mask = 0x1F; shift = 5; break;
+        case 1: mask = 0x3F; shift = 6; break;
+        case 2: mask = 0x7F; shift = 7; break;
+        default: mask = 0xFF; shift = 8; break;
+    }
+    return (uint16_t)((jy.chr_low[index] & mask) | ((uint16_t)jy.chr_block << shift));
+}
+
+static size_t jy_chr_bank(uint16_t addr) {
+    unsigned slot = (unsigned)((addr & 0x1FFFu) >> 10);
+    switch (jy.chr_mode) {
+        case 0:
+            return (size_t)jy_chr_reg(0) * 8u + slot;
+        case 1: {
+            unsigned half = slot >> 2;
+            unsigned index = jy.chr_latch[half];
+            return (size_t)jy_chr_reg(index) * 4u + (slot & 3u);
+        }
+        case 2: {
+            unsigned index = (slot >> 1) * 2u;
+            return (size_t)jy_chr_reg(index) * 2u + (slot & 1u);
+        }
+        default:
+            return jy_chr_reg(slot);
+    }
+}
+
+static bool jy_advanced_nt(void) {
+    return (jy.advanced_nt || C.mapper_no == 211) && C.mapper_no != 90;
+}
+
+static uint8_t jy_ciram_page(unsigned slot) {
+    if (jy_advanced_nt()) return jy.nt_low[slot & 3u] & 1u;
+    switch (jy.mirroring_reg & 3u) {
+        case 0: return slot & 1u;
+        case 1: return (slot >> 1) & 1u;
+        case 2: return 0;
+        default: return 1;
+    }
+}
+
+static void jy_irq_tick(void) {
+    uint8_t mask = jy.irq_small_prescaler ? 0x07u : 0xFFu;
+    uint8_t prescaler = jy.irq_prescaler & mask;
+    bool clock_counter = false;
+    if (jy.irq_direction == 1) {
+        prescaler++;
+        if ((prescaler & mask) == 0) clock_counter = true;
+    } else if (jy.irq_direction == 2) {
+        prescaler--;
+        if (prescaler == 0) clock_counter = true;
+    }
+    jy.irq_prescaler = (uint8_t)((jy.irq_prescaler & (uint8_t)~mask) | (prescaler & mask));
+    if (!clock_counter) return;
+
+    if (jy.irq_direction == 1) {
+        jy.irq_counter++;
+        if (jy.irq_counter == 0 && jy.irq_enabled) mapper_irq_line = true;
+    } else if (jy.irq_direction == 2) {
+        jy.irq_counter--;
+        if (jy.irq_counter == 0xFF && jy.irq_enabled) mapper_irq_line = true;
+    }
+}
+
+static uint8_t jy_cpu_read(uint16_t addr) {
+    if (addr >= 0x5000 && addr < 0x6000) {
+        switch (addr & 0xF803u) {
+            case 0x5000: return 0;
+            case 0x5800: return (uint8_t)((uint16_t)jy.multiply_a * jy.multiply_b);
+            case 0x5801: return (uint8_t)(((uint16_t)jy.multiply_a * jy.multiply_b) >> 8);
+            case 0x5803: return jy.register_ram;
+            default: return cart_cpu_bus_input;
+        }
+    }
+    if (addr >= 0x6000 && addr < 0x8000) {
+        if (!jy.enable_prg_6000) return cart_cpu_bus_input;
+        size_t banks = C.prg_sz / PRG_BANK_8K;
+        return banks ? C.prg[(jy_prg_bank(addr) % banks) * PRG_BANK_8K + (addr & 0x1FFFu)]
+                     : cart_cpu_bus_input;
+    }
+    if (addr >= 0x8000) {
+        size_t banks = C.prg_sz / PRG_BANK_8K;
+        return banks ? C.prg[(jy_prg_bank(addr) % banks) * PRG_BANK_8K + (addr & 0x1FFFu)]
+                     : cart_cpu_bus_input;
+    }
+    return cart_cpu_bus_input;
+}
+
+static void jy_cpu_write(uint16_t addr, uint8_t value) {
+    if (addr < 0x8000) {
+        switch (addr & 0xF803u) {
+            case 0x5800: jy.multiply_a = value; break;
+            case 0x5801: jy.multiply_b = value; break;
+            case 0x5803: jy.register_ram = value; break;
+        }
+        return;
+    }
+
+    switch (addr & 0xF007u) {
+        case 0x8000: case 0x8001: case 0x8002: case 0x8003:
+        case 0x8004: case 0x8005: case 0x8006: case 0x8007:
+            jy.prg[addr & 3u] = value & 0x7Fu;
+            break;
+        case 0x9000: case 0x9001: case 0x9002: case 0x9003:
+        case 0x9004: case 0x9005: case 0x9006: case 0x9007:
+            jy.chr_low[addr & 7u] = value;
+            break;
+        case 0xA000: case 0xA001: case 0xA002: case 0xA003:
+        case 0xA004: case 0xA005: case 0xA006: case 0xA007:
+            jy.chr_high[addr & 7u] = value;
+            break;
+        case 0xB000: case 0xB001: case 0xB002: case 0xB003:
+            jy.nt_low[addr & 3u] = value;
+            break;
+        case 0xB004: case 0xB005: case 0xB006: case 0xB007:
+            jy.nt_high[addr & 3u] = value;
+            break;
+        case 0xC000:
+            jy.irq_enabled = (value & 1u) != 0;
+            if (!jy.irq_enabled) mapper_irq_line = false;
+            break;
+        case 0xC001:
+            jy.irq_direction = (value >> 6) & 3u;
+            jy.irq_funky_mode = (value & 0x08u) != 0;
+            jy.irq_small_prescaler = (value & 0x04u) != 0;
+            jy.irq_source = (JyIrqSource)(value & 3u);
+            break;
+        case 0xC002:
+            jy.irq_enabled = false;
+            mapper_irq_line = false;
+            break;
+        case 0xC003:
+            jy.irq_enabled = true;
+            break;
+        case 0xC004:
+            jy.irq_prescaler = value ^ jy.irq_xor;
+            break;
+        case 0xC005:
+            jy.irq_counter = value ^ jy.irq_xor;
+            break;
+        case 0xC006:
+            jy.irq_xor = value;
+            break;
+        case 0xC007:
+            jy.irq_funky_reg = value;
+            break;
+        case 0xD000:
+            jy.prg_mode = value & 7u;
+            jy.chr_mode = (value >> 3) & 3u;
+            jy.advanced_nt = (value & 0x20u) != 0;
+            jy.disable_nt_ram = (value & 0x40u) != 0;
+            jy.enable_prg_6000 = (value & 0x80u) != 0;
+            break;
+        case 0xD001:
+            jy.mirroring_reg = value & 3u;
+            break;
+        case 0xD002:
+            jy.nt_ram_select_bit = value & 0x80u;
+            break;
+        case 0xD003:
+            jy.mirror_chr = (value & 0x80u) != 0;
+            jy.chr_block_mode = (value & 0x20u) == 0;
+            jy.chr_block = (uint8_t)(((value & 0x18u) >> 2) | (value & 1u));
+            break;
+    }
+}
+
+static uint8_t jy_ppu_read(uint16_t addr) {
+    if (jy.irq_source == JY_IRQ_PPU_READ && cart_ppu_fetch_source != CART_PPU_FETCH_CPU)
+        jy_irq_tick();
+    addr &= 0x1FFFu;
+    size_t banks = C.chr_sz / CHR_BANK_1K;
+    if (!banks) return 0;
+    size_t bank = jy_chr_bank(addr) % banks;
+    return C.chr[bank * CHR_BANK_1K + (addr & 0x03FFu)];
+}
+
+static void jy_ppu_write(uint16_t addr, uint8_t value) {
+    if (!C.chr_is_ram) return;
+    addr &= 0x1FFFu;
+    size_t banks = C.chr_sz / CHR_BANK_1K;
+    if (!banks) return;
+    size_t bank = jy_chr_bank(addr) % banks;
+    chr_ram_write(bank * CHR_BANK_1K + (addr & 0x03FFu), value);
+}
+
+static void jy_clock(int cycles) {
+    if (cycles <= 0) return;
+    for (int i = 0; i < cycles; ++i) {
+        if (jy.irq_source == JY_IRQ_CPU_CLOCK
+            || (jy.irq_source == JY_IRQ_CPU_WRITE && cart_cpu_cycle_is_write)) {
+            jy_irq_tick();
+        }
+    }
+}
+
+static Mirroring jy_mirr(void) {
+    switch (jy.mirroring_reg & 3u) {
+        case 0: return MIRROR_VERTICAL;
+        case 1: return MIRROR_HORIZONTAL;
+        case 2: return MIRROR_SINGLE0;
+        default: return MIRROR_SINGLE1;
+    }
+}
+
+static void jy_reset(void) {
+    memset(&jy, 0, sizeof(jy));
+    jy.chr_latch[0] = 0;
+    jy.chr_latch[1] = 4;
+    jy.irq_source = JY_IRQ_CPU_CLOCK;
+    mapper_irq_line = false;
+}
+
 void cart_notify_ppu_address(uint16_t addr, uint64_t ppu_cycle) {
+    if (cart == &mapper_jy) {
+        if (jy.irq_source == JY_IRQ_PPU_A12 && (addr & 0x1000u) && !(jy.last_ppu_addr & 0x1000u))
+            jy_irq_tick();
+        jy.last_ppu_addr = addr;
+        if (C.mapper_no == 209) {
+            switch (addr & 0x2FF8u) {
+                case 0x0FD8:
+                case 0x0FE8: {
+                    unsigned half = (addr >> 12) & 1u;
+                    jy.chr_latch[half] = (uint8_t)((addr >> 4)
+                        & ((((addr >> 10) & 0x04u)) | 0x02u));
+                    break;
+                }
+            }
+        }
+        return;
+    }
     if (cart == &mapper_rambo1 || cart == &mapper_rambo158) {
         if (rambo1.irq_cycle_mode) return;
         if (!(addr & 0x1000)) {
@@ -3445,6 +3757,21 @@ static void vrc6_reset(void) {
 }
 
 uint8_t cart_nt_read(uint16_t addr, uint8_t *nt_ram) {
+    if (cart == &mapper_jy) {
+        if (jy.irq_source == JY_IRQ_PPU_READ && cart_ppu_fetch_source != CART_PPU_FETCH_CPU)
+            jy_irq_tick();
+        uint16_t off = (uint16_t)((addr - 0x2000u) & 0x0FFFu);
+        unsigned slot = (off >> 10) & 3u;
+        uint16_t in = off & 0x03FFu;
+        if (jy_advanced_nt()
+            && (jy.disable_nt_ram
+                || (jy.nt_low[slot] & 0x80u) != (jy.nt_ram_select_bit & 0x80u))) {
+            size_t page = (size_t)jy.nt_low[slot] | ((size_t)jy.nt_high[slot] << 8);
+            size_t offset = page * CHR_BANK_1K + in;
+            return !C.chr_is_ram && offset < C.chr_sz ? C.chr[offset] : 0;
+        }
+        return nt_ram[(size_t)jy_ciram_page(slot) * CHR_BANK_1K + in];
+    }
     if (cart == &mapper_txsrom) {
         uint16_t off = (uint16_t)((addr - 0x2000u) & 0x0FFFu);
         return nt_ram[(size_t)txsrom_nt[off >> 10] * 0x400u + (off & 0x03FFu)];
@@ -3526,6 +3853,12 @@ uint8_t cart_nt_read(uint16_t addr, uint8_t *nt_ram) {
 }
 
 void cart_nt_write(uint16_t addr, uint8_t v, uint8_t *nt_ram) {
+    if (cart == &mapper_jy) {
+        uint16_t off = (uint16_t)((addr - 0x2000u) & 0x0FFFu);
+        unsigned slot = (off >> 10) & 3u;
+        nt_ram[(size_t)jy_ciram_page(slot) * CHR_BANK_1K + (off & 0x03FFu)] = v;
+        return;
+    }
     if (cart == &mapper_txsrom) {
         uint16_t off = (uint16_t)((addr - 0x2000u) & 0x0FFFu);
         nt_ram[(size_t)txsrom_nt[off >> 10] * 0x400u + (off & 0x03FFu)] = v;
@@ -5763,6 +6096,8 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         if (split_prg || prg_total > 0x80000) return false;
     } else if (mapper_no == 19 || mapper_no == 210) {
         if (split_prg || prg_total > 0x2000) return false;
+    } else if (mapper_no == 90 || mapper_no == 209 || mapper_no == 211) {
+        if (prg_total != 0) return false;
     } else if (mapper_no == 30) {
         if (prg_total != 0) return false;
     } else if (prg_total > 0x2000) {
@@ -5799,6 +6134,7 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         case 19: case 69: case 95: case 206: case 210: chr_limit = 0x40000; break;
         case 76: chr_limit = 0x80000; break;
         case 88: case 154: chr_limit = 0x20000; break;
+        case 90: case 209: case 211: chr_limit = 0x200000; break;
         case 85: chr_limit = 0x40000; break;
         case 74: case 191: case 194: chr_limit = 0x0800; break;
         case 192: case 195: chr_limit = 0x1000; break;
@@ -5854,7 +6190,7 @@ int mapper_init_from_header(const iNESHeader *h,
         case 21: case 22: case 23: case 24: case 25: case 26: case 27: case 183:
         case 19: case 66: case 67: case 68: case 69: case 71: case 73: case 75: case 76: case 80: case 82: case 85:
         case 88: case 89: case 93: case 95: case 99: case 105: case 151: case 154: case 184: case 206: case 207: case 210:
-        case 191: case 192: case 194: case 195: case 232:
+        case 90: case 191: case 192: case 194: case 195: case 209: case 211: case 232:
             break;
         default:
             fprintf(stderr, "Unsupported mapper: %d\n", mapper_no);
@@ -5879,6 +6215,8 @@ int mapper_init_from_header(const iNESHeader *h,
     }
     RomRamSizes ram;
     rom_ram_sizes(h, &ram);
+    bool is_jy = mapper_no == 90 || mapper_no == 209 || mapper_no == 211;
+    if (is_jy && !nes2) ram.prg_ram = ram.prg_nvram = 0;
     if (mapper_no == 99 && !nes2 && !(h->flags6 & 2)) {
         ram.prg_ram = 0x800;
     }
@@ -6068,6 +6406,11 @@ int mapper_init_from_header(const iNESHeader *h,
         || (prg_sz != 0x8000 && prg_sz != 0xA000 && prg_sz != 0xC000 && prg_sz != 0x10000)
         || (chr_sz != 0x2000 && chr_sz != 0x4000 && chr_sz != 0x8000))) {
         fprintf(stderr, "Unsupported ROM size for mapper 99\n");
+        return -1;
+    }
+    if (is_jy && (prg_sz > 0x100000 || (prg_sz % PRG_BANK_8K) != 0
+        || chr_sz > 0x800000 || (chr_sz % CHR_BANK_1K) != 0)) {
+        fprintf(stderr, "Unsupported ROM/RAM size for mapper %d\n", mapper_no);
         return -1;
     }
     if (mapper_no == 105
@@ -6376,6 +6719,12 @@ int mapper_init_from_header(const iNESHeader *h,
                         vrc7_ppu_read, vrc7_ppu_write, vrc7_reset, vrc7_mirr);
             mapper_vrc7.clock = vrc7_clock;
             cart = &mapper_vrc7;
+            break;
+        case 90: case 209: case 211:
+            build_mapper(&mapper_jy, jy_cpu_read, jy_cpu_write,
+                         jy_ppu_read, jy_ppu_write, jy_reset, jy_mirr);
+            mapper_jy.clock = jy_clock;
+            cart = &mapper_jy;
             break;
         case 99:
             build_mapper(&mapper_vs99, m99_cpu_read, m99_cpu_write,

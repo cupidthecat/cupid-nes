@@ -169,7 +169,7 @@ static void begin_cpu_cycle(bool read) {
     in_bus_cycle = true;
     clock_ppu_master(read ? start_clocks - 1 : start_clocks + 1);
     active_cpu_cycles++;
-    if (cart && cart->clock) cart->clock(1);
+    cart_clock_cpu_cycle(!read);
     apu_step(apu_active_state(), 1);
     if (joypad_write_pending && --joypad_write_pending == 0) {
         epsm_write_4016(cpu_external_bus, joypad_write_value);
