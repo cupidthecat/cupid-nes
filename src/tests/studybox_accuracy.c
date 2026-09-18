@@ -42,7 +42,7 @@ static void put32(uint8_t *data, uint32_t value) {
 }
 
 static StudyBoxBlob make_wav(void) {
-    enum { sample_count = 64, header_size = 44, data_size = sample_count * 2 };
+    enum { sample_count = 13000, header_size = 44, data_size = sample_count * 2 };
     StudyBoxBlob blob = {0};
     blob.size = header_size + data_size;
     blob.data = (uint8_t *)calloc(1, blob.size);
@@ -59,13 +59,11 @@ static StudyBoxBlob make_wav(void) {
     put16(blob.data + 34, 16);
     memcpy(blob.data + 36, "data", 4);
     put32(blob.data + 40, data_size);
-    int16_t samples[sample_count] = {0};
-    samples[4] = 16384;
-    samples[5] = 8192;
-    samples[12] = -16384;
-    samples[13] = -8192;
-    for (unsigned i = 0; i < sample_count; ++i)
-        put16(blob.data + header_size + i * 2, (uint16_t)samples[i]);
+    put16(blob.data + header_size + 4 * 2, 16384);
+    put16(blob.data + header_size + 5 * 2, 8192);
+    put16(blob.data + header_size + 12 * 2, (uint16_t)-16384);
+    put16(blob.data + header_size + 13 * 2, (uint16_t)-8192);
+    put16(blob.data + header_size + 11979 * 2, 4096);
     return blob;
 }
 
@@ -91,7 +89,7 @@ static StudyBoxBlob make_stbx(void) {
     put32(blob.data + 40, 16);
     put32(blob.data + 44, 8);
     put32(blob.data + 48, 12);
-    const uint8_t page1[8] = {0xC5, 0x20, 0x21, 0x22, 0x23, 1, 0x25, 0x26};
+    const uint8_t page1[8] = {0xC5, 0x20, 0x21, 0x22, 0x23, 0xFF, 0x25, 0x26};
     memcpy(blob.data + 52, page1, sizeof(page1));
 
     memcpy(blob.data + 60, "AUDI", 4);
@@ -192,12 +190,24 @@ static int test_studybox_device(void) {
     STUDY_CHECK(cart_irq_pending() && cart_cpu_read(0x4200) == 0x10);
 
     STUDY_CHECK(send_command(0x86, 0x03));
-    STUDY_CHECK((cart_cpu_read(0x4201) & 0xC0) == 0xC0);
+    STUDY_CHECK((cart_cpu_read(0x4201) & 0xE0) == 0xE0);
+    sample = cart_expansion_audio();
+    STUDY_CHECK(sample > 0.124f && sample < 0.126f);
     cart->clock(4);
     STUDY_CHECK(cart_irq_pending());
     sample = cart_expansion_audio();
     STUDY_CHECK(sample < -0.49f && sample > -0.51f);
     (void)cart_cpu_read(0x4200);
+
+    STUDY_CHECK(send_command(0x41, 0x03));
+    cart->clock(3000000);
+    STUDY_CHECK((cart_cpu_read(0x4201) & 0xE0) == 0xE0);
+    cart->clock(4);
+    STUDY_CHECK(cart_irq_pending() && cart_cpu_read(0x4200) == 0xAA);
+    cart->clock(7820);
+    STUDY_CHECK(cart_irq_pending() && cart_cpu_read(0x4200) == 0xC5);
+    cart->clock(3355);
+    STUDY_CHECK(cart_irq_pending() && cart_cpu_read(0x4200) == 0x10);
 
     cpu_soft_reset(&cpu);
     STUDY_CHECK(read_mem(0x8000) == 2);

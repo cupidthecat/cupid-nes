@@ -241,8 +241,6 @@ class StudyBox final : public Board {
         _byteReadDelay = 0;
         _motorDisabled = false;
         _pageFound = true;
-        _inDataRegion = false;
-        _audioPlaying = false;
     }
 
     uint16_t RegisterStartAddress() override { return 0x4200; }
@@ -305,7 +303,7 @@ class StudyBox final : public Board {
 
                 _pageIndex = 0;
                 for (size_t i = 0; i < _tapeData.Pages.size(); ++i) {
-                    if (_tapeData.Pages[i].Data[5] == static_cast<uint8_t>(_currentPage - 1)) {
+                    if (_tapeData.Pages[i].Data[5] == _currentPage - 1) {
                         _pageIndex = static_cast<int32_t>(i);
                         break;
                     }
