@@ -57,6 +57,8 @@ PPU pattern-table accesses reach CHR through the mapper. Nametable accesses go t
 
 The cartridge bus API distinguishes a real byte from floating data lines. `cart_cpu_read_bus()` resolves those lines using the supplied bus latch; a particular byte value is not an open-bus sentinel. PPU address notifications and data reads are separate events, allowing A12-based IRQ logic to observe physical address changes without inventing extra reads.
 
+JY boards can clock IRQs from CPU cycles, CPU writes, PPU A12 edges, or physical PPU reads. Fetch-source tags distinguish background and sprite pattern accesses for their extended CHR mode. Mapper 96 uses the address hook to latch an inner CHR bank when the bus enters `$2xxx` from another address range. Consecutive nametable accesses do not create a second entry edge.
+
 ## State and ownership
 
 | State | Owner or access path |
@@ -67,6 +69,7 @@ The cartridge bus API distinguishes a real byte from floating data lines. `cart_
 | Ordinary CPU, PPU, and APU | Main machine globals and their runtime state |
 | Secondary VS CPU/PPU/APU and framebuffer | Static secondary machine storage in `vs_system.c` |
 | Host player button state | Controller layer, updated by frontend events |
+| Specialty input reports and expansion storage | Controller layer and `special_peripherals.c`; the frontend supplies host input and storage paths |
 | Audio producer/consumer positions | Atomic indices inside each APU ring buffer |
 | EPSM chip, protocol, and copied ADPCM ROM | Active `EpsmDevice`, prepared before cartridge activation |
 

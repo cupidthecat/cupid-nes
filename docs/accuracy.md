@@ -16,7 +16,7 @@ Each CPU read or write advances the PPU, APU, and cartridge. Reads and writes pl
 | PAL | 16 / 5 | 312 | 241 |
 | Dendy | 15 / 5 | 312 | 291 |
 
-The final scanline is pre-render. Only NTSC rendering skips a clock on odd frames. PAL selects its own APU periods and frame-counter events; Dendy keeps the NTSC APU periods at its clock rate. The application paces output from elapsed emulated CPU clocks and carries fractional host delays between frames.
+The final scanline is pre-render. The NTSC 2C02 skips a clock on rendered odd frames; VS RGB PPUs keep all 89,342 clocks on both frame parities. PAL selects its own APU periods and frame-counter events; Dendy keeps the NTSC APU periods at its clock rate. The application paces output from elapsed emulated CPU clocks and carries fractional host delays between frames.
 
 `cpu_step()` includes device clocks and any DMA cycles it encounters. Its return value is elapsed CPU time, not an instruction-table estimate. The application and diagnostic runner must not clock the PPU again with that value.
 
@@ -61,10 +61,11 @@ The regression cases scan distinct simultaneous key patterns through all ten row
 | APU | Regional noise/DMC periods and frame events, LFSR taps, sweep targets/reloads, held triangle DAC, delayed writes, length-counter collisions, DMC wrap/loop/IRQ behavior, and reset state |
 | PPU | Palette mirrors, register-transfer delays and collisions, open bus, OAM access/refresh, sprite overflow/priority/shifter timing, sprite-zero hit, scrolling, regional frame timing, reset preservation and A12 events |
 | Cartridge | Supported bank and nametable wiring, bus conflicts, startup mapping, RAM permissions, IRQ boundaries and CPU delivery, declared memory sizes, malformed images, failed-load preservation, EEPROM transactions, flash commands, and save round trips |
-| Expansion audio | MMC5 pulse/PCM, VRC6 pulse/saw, VRC7 FM, N163 wavetable, and Sunsoft 5B tone/noise/envelope output, including register access, reset, mute, and timing cases |
+| Expansion audio | MMC5 pulse/PCM, VRC6 pulse/saw, VRC7 FM, N163 wavetable, Sunsoft 5B tone/noise/envelopes, and EPSM FM/SSG/ADPCM output; register access, delayed bus edges, timer IRQs, regional clocks, reset and stereo mixing |
 | Disk system | BIOS/RAM mapping, timer and transfer IRQs, media insertion and side changes, transfer/CRC timing, disk persistence, failed-save preservation, reset, and wavetable/modulation audio |
-| VS System | Header validation, 2C04 colors, 2C05 registers/status, cabinet inputs and protection reads, mapper 99 banks and declared RAM, dual CPU/PPU/APU execution, independent DMA, shared RAM/IRQs, reset, both video outputs, and secondary audio through the production callback |
-| Input devices | Console wiring, multiplayer adapters, Arkanoid serial reports, Power Pad and Family Trainer matrices, beam-aware Zapper reads, Family BASIC keyboard/tape signals, and Datach barcode timing |
+| VS System | Direct and extended console descriptors, RGB frame lengths, 2C04 colors, 2C05 registers/status, serial Zapper reports, cabinet inputs and protection reads, mapper 99 banks and declared RAM, dual CPU/PPU/APU execution, independent DMA, shared RAM/IRQs, reset, both video outputs, and secondary audio through the production callback |
+| Input devices | Console wiring, multiplayer adapters, paddles and mats, beam-aware light guns, Family BASIC keyboard/tape, Subor keyboard/mouse, Hori Track reports, Hyper Shot devices, Party Tap, Pachinko, Boxing and Mahjong switches, Oeka Kids tablet reports with a loaded mapper 96 cartridge, and separate Datach/Barcode Battler timing |
+| Expansion storage | Turbo File bit positions and wrap, BattleBox command/word framing, write protection and erase, complete save round trips, and preservation after failed saves |
 
 The canonical `nestest` comparison checks 8,991 PC/register/status/stack/cycle states and the diagnostic's result bytes. Its trace contains 225 distinct opcode values. The unit cases execute the remaining opcode values separately; neither number means that every possible operand or interrupt alignment has been exhausted. XAA/ANE and other unstable opcodes use a fixed silicon model.
 

@@ -55,7 +55,6 @@ PRG is the cartridge memory read by the CPU; CHR holds graphics patterns read by
 | 30 | UNROM 512 | PRG/CHR banking, cartridge nametable memory, and flash programming and erase commands |
 | 32, 65 | Irem G-101 / H-3001 | PRG/CHR banking, board mirroring, and H-3001 IRQ timing |
 | 33, 48 | Taito | PRG/CHR banking, mirroring, and mapper 48 IRQ timing |
-| 80, 82, 207 | Taito X1-005 / X1-017 | PRG/CHR banking, protected cartridge RAM, CHR mode selection, and mapper 207 nametable routing |
 | 34 | BNROM / NINA-001 | 32 KiB PRG banks, board-specific CHR/RAM access, and BNROM bus conflicts |
 | 64, 158 | RAMBO-1 | PRG/CHR banks, CPU- or PPU-clocked IRQs, and mapper 158 nametable wiring |
 | 66 | GxROM | Combined PRG/CHR bank selection and bus conflicts |
@@ -69,6 +68,7 @@ PRG is the cartridge memory read by the CPU; CHR holds graphics patterns read by
 | 75, 151 | VRC1 | Three switchable 8 KiB PRG windows, two 4 KiB CHR banks, and board mirroring |
 | 76, 88, 95, 154, 206 | Namco 108 family | Variant-specific PRG/CHR banking, hardwired or register-controlled nametables, and no mapper IRQ source |
 | 77 | Irem LROG017 | 32 KiB PRG banking with bus conflicts, banked 2 KiB CHR ROM, fixed 6 KiB CHR RAM, and four-screen nametables |
+| 80, 82, 207 | Taito X1-005 / X1-017 | PRG/CHR banking, protected cartridge RAM, CHR mode selection, and mapper 207 nametable routing |
 | 85 | VRC7 | PRG/CHR banking, IRQs, RAM control, and six-channel FM audio |
 | 89, 93, 184 | Sunsoft discrete boards | Board-specific PRG/CHR selection, single-screen wiring, CHR access control, and paired 4 KiB CHR banks |
 | 90, 209, 211 | JY Company | PRG/CHR modes, register arithmetic, mapper-specific nametable routing, latches, and selectable IRQ clock sources |
@@ -122,8 +122,6 @@ Some families have substantially different variants. Namco 175/340 variants do n
 
 Expansion sound includes MMC5 pulse/PCM, VRC6 pulse/saw, VRC7 FM, Namco 163 wavetable, Sunsoft 5B tone/noise/envelopes, and disk-system wavetable/modulation output. [Architecture](architecture.md) describes how the audio reaches the application.
 
-The Famicom expansion connector supports the ASCII Turbo File as an 8 KiB serial storage device. Its D1 reset, D2 clock, D0 write-data, and $4017 D2 read-data lines are handled through the normal controller bus, including bit-position wrap and separate persistent storage. BattleBox provides two 128-word serial chips with its command decoder, D0 edge handshake, chip-select behavior, D3 read data, D4 alternating output, write-enable latch, program, and erase commands.
-
 ## EPSM expansion sound
 
 The YMF288 implementation provides six FM channels, three SSG tone/noise/envelope channels, and six ADPCM percussion voices. The CPU can write through `$401C-$401F` or the `$4016` data-bus/OUT-pin protocol. The delayed OUT1 edge samples the data bus at the time the pin changes. Timer IRQs join the CPU's ordinary interrupt polling path.
@@ -131,6 +129,28 @@ The YMF288 implementation provides six FM channels, three SSG tone/noise/envelop
 The device uses the same 8 MHz oscillator across NTSC, PAL, and Dendy CPU timings. Generated samples pass through the application's stereo callback; SSG output is centered, and FM and percussion retain their panning. A cold power-on restores the chip and protocol state. CPU soft reset preserves them.
 
 Percussion needs a separate, exactly 8 KiB ADPCM ROM supplied with `--epsm-adpcm`. Without it, the device uses zero-filled data. Incorrect-size files are rejected, and failed cartridge or firmware loads preserve the active device. The [EPSM tests](../src/tests/epsm_accuracy.c) cover both bus protocols, CPU-driven delayed edges, timer IRQs, regional clocks, reset, stereo output, firmware validation, and transitions to other hardware.
+
+## Controllers and expansion devices
+
+Device selection changes the signals that CPU reads and writes see at `$4016` and `$4017`. The frontend supplies buttons, keys, pointer coordinates and barcode scans; the controller layer handles each device's latch, shift and timing rules.
+
+| Connection | Devices | Implemented behavior |
+| --- | --- | --- |
+| Controller ports | Gamepads, Four Score, Arkanoid, Power Pad, Zapper | Serial reports, adapter signatures, paddle positions, mat wiring and beam-aware light sensing |
+| VS controller wiring | VS Zapper | Metadata-selected serial gun report, trigger state and beam timing |
+| Famicom expansion | Two- and four-player adapters, Arkanoid, Family Trainer, Zapper | Expansion-line routing with separate ordinary controller bits |
+| Famicom expansion | Family BASIC and Subor keyboards | Scanned key matrices; Family BASIC also supplies the data-recorder signal |
+| Controller port 2 | Subor mouse | Button and signed movement reports, including extended packets |
+| Famicom expansion | Hori Track | Latched buttons and signed trackball movement |
+| Famicom expansion | Konami and Bandai Hyper Shot | Latched running/jumping controls, or serial controls with light-gun sensing |
+| Famicom expansion | Party Tap, Pachinko, Exciting Boxing, Jissen Mahjong | Device-specific switch groups, serial reports, plunger state and matrix selection |
+| Famicom expansion | Oeka Kids tablet | Coordinates, contact/click bits, ready line and an 18-bit serial report; mapper 96 supplies the cartridge's CHR latch |
+| Cartridge or Famicom expansion | Datach and Barcode Battler | Separate barcode formats and CPU-clocked streams |
+| Famicom expansion | ASCII Turbo File and BattleBox | Serial storage commands, memory contents and persistent save files |
+
+The ASCII Turbo File has 8 KiB of storage with D1 reset, D2 clock, D0 write data and `$4017` D2 read data, including bit-position wrap. BattleBox has two 128-word serial chips with command decoding, D0 edge handshake, chip selection, D3 read data, alternating D4 output, write protection, programming and erase commands.
+
+Choose devices explicitly with the options in [configuration](configuration.md). An expansion adapter and another expansion device cannot occupy the same connector. [Controls](controls.md) lists the host input mappings, and [saves and media](saves.md) describes storage formats and failed-save handling.
 
 ## Disk-system media
 

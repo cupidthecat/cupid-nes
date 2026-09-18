@@ -73,7 +73,8 @@ The keyboard and first SDL game controller both drive player 1. More controllers
 fill the remaining player slots; the selected multiplayer adapter or VS image
 determines which players a game can read. See
 [controls and peripherals](docs/controls.md) for controller assignment, light
-guns, paddles, floor mats, the Famicom microphone, and Family BASIC.
+guns, paddles, floor mats, keyboards, mouse and tablet input, and the Famicom
+expansion devices.
 
 ## Hardware and saves
 

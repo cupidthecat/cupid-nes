@@ -181,7 +181,7 @@ Changing or ejecting a side does not flush the disk image. Follow the game's dis
 
 ## Oeka Kids tablet
 
-`--console famicom --expansion oeka-kids-tablet` connects the drawing tablet. Move the mouse over the game window to position the pen and hold the left mouse button for the tablet click input. The lower tablet area, starting at NES Y coordinate 48, reports pen contact. Games latch the position and buttons through `$4016`, then clock the report from `$4017 D2-D3`.
+`--console famicom --expansion oeka-kids-tablet` connects the drawing tablet. Move the mouse over the game window to position the pen. Holding the left mouse button reports both click and pen contact, including in the upper area or outside the screen. Hovering over the lower tablet area, starting at NES Y coordinate 48, also reports contact. Games latch the position and buttons through `$4016`, then clock the report from `$4017 D2-D3`.
 
 ## Palette controls
 
