@@ -460,6 +460,98 @@ static int test_mapper105_dips_and_cpu_irq(void) {
     return 0;
 }
 
+static int test_mapper232_multicart_banks(void) {
+    iNESHeader h = header_for(232, 0x40000, true);
+    for (unsigned submapper = 0; submapper <= 1; ++submapper) {
+        if (submapper) {
+            h.flags7 |= 0x08;
+            h.prg_ram_size = 0x10;
+            h.flags10 = 7;
+            h.zero[0] = 7;
+        }
+        CHECK(fixture_with_header(&h, 0x40000, 0x2000) == 232);
+        CHECK(cart_cpu_read(0x8000) == 0 && cart_cpu_read(0xC000) == 6);
+        static const uint8_t standard_values[4] = {0x00, 0x08, 0x10, 0x18};
+        static const uint8_t swapped_values[4] = {0x00, 0x10, 0x08, 0x18};
+        for (unsigned block = 0; block < 4; ++block) {
+            uint8_t outer = submapper ? swapped_values[block] : standard_values[block];
+            cart_cpu_write(0x8000, (uint8_t)(outer | 0xE7));
+            for (unsigned page = 0; page < 4; ++page) {
+                cart_cpu_write(0xC000, (uint8_t)(0xFC | page));
+                CHECK(cart_cpu_read(0x8000) == 2u * (block * 4u + page));
+                CHECK(cart_cpu_read(0xC000) == 2u * (block * 4u + 3u));
+            }
+        }
+        cart_ppu_write(0x1234, (uint8_t)(0x70 + submapper));
+        CHECK(cart_ppu_read(0x1234) == 0x70 + submapper);
+        cart->reset();
+        CHECK(cart_cpu_read(0x8000) == 0 && cart_cpu_read(0xC000) == 6);
+    }
+
+    CHECK(fixture(71, 0x40000, 0x2000, true) == 71);
+    cart_cpu_write(0xC000, 2);
+    CHECK(cart_cpu_read(0x8000) == 4);
+
+    h.flags7 |= 0x08;
+    h.prg_ram_size = 0x20;
+    h.flags10 = 7;
+    h.zero[0] = 7;
+    CHECK(mapper_init_from_header(&h, fixture_prg, 0x40000, fixture_chr, 0x2000) == -1);
+    CHECK(cart_cpu_read(0x8000) == 4);
+    return 0;
+}
+
+static int test_mapper232_loader_and_cpu_bus(void) {
+    for (unsigned submapper = 0; submapper <= 1; ++submapper) {
+        iNESHeader h = header_for(232, 0x40000, true);
+        h.flags6 |= 1;
+        h.flags7 |= 0x08;
+        h.prg_ram_size = (uint8_t)(submapper << 4);
+        h.zero[0] = 7;
+        size_t size;
+        uint8_t *image = image_for(&h, 0x40000, 0, &size);
+        CHECK(image != NULL);
+        for (size_t i = 0; i < 0x40000; ++i)
+            image[sizeof(h) + i] = (uint8_t)(i / 0x4000);
+        CHECK(load_rom_memory(image, size) == 0);
+        CHECK(rom_mapper_number(&ines_header) == 232);
+        ppu_power_on(&ppu);
+        apu_power_on(&apu);
+        CHECK(cpu_power_on(&cpu));
+        CHECK(read_mem(0x8000) == 0 && read_mem(0xFFFF) == 3);
+        CHECK(cart_get_mirroring() == MIRROR_VERTICAL);
+        write_mem(0xBFFF, submapper ? 0x10 : 0x08);
+        write_mem(0xFFFF, 0xFE);
+        CHECK(read_mem(0x8000) == 6 && read_mem(0xBFFF) == 6);
+        CHECK(read_mem(0xC000) == 7 && read_mem(0xFFFF) == 7);
+        write_mem(0x7FFF, 0x18);
+        CHECK(read_mem(0x8000) == 6 && cart_get_mirroring() == MIRROR_VERTICAL);
+        cart_ppu_write(0x1FFF, 0xA6);
+
+        Mapper *previous = cart;
+        uint8_t *previous_prg = prg_rom;
+        image[8] = 0x20;
+        CHECK(load_rom_memory(image, size) == -1);
+        memcpy(image, &h, sizeof(h));
+        CHECK(load_rom_memory(image, size - 1) == -1);
+        iNESHeader oversized = h;
+        oversized.prg_rom_chunks = 32;
+        size_t oversized_size;
+        uint8_t *oversized_image = image_for(&oversized, 0x80000, 0, &oversized_size);
+        CHECK(oversized_image != NULL);
+        int loaded = load_rom_memory(oversized_image, oversized_size);
+        free(oversized_image);
+        CHECK(loaded == -1);
+        image[11] = 8;
+        CHECK(load_rom_memory(image, size) == -1);
+        free(image);
+        CHECK(cart == previous && prg_rom == previous_prg);
+        CHECK(read_mem(0x8000) == 6 && read_mem(0xFFFF) == 7);
+        CHECK(cart_ppu_read(0x1FFF) == 0xA6);
+    }
+    return 0;
+}
+
 static int test_mmc3_revision_a_irq(void) {
     iNESHeader h = header_for(4, 0x20000, false);
     size_t image_size = 0;
@@ -6678,6 +6770,8 @@ int test_mapper_accuracy(void) {
         test_small_cartridges, test_mmc1_banks_and_ram, test_mmc1_serial_timing,
         test_mapper105_competition_board,
         test_mapper105_fixed_chr_and_serial_timing, test_mapper105_dips_and_cpu_irq,
+        test_mapper232_multicart_banks,
+        test_mapper232_loader_and_cpu_bus,
         test_mmc1a_ram_revision, test_mmc1a_cpu_serial_writes, test_mmc1a_ram_layouts_and_loader,
         test_mmc1_outer_and_fixed_banks, test_mmc2_banks_and_latches,
         test_mmc4_latches_and_chr_ram, test_mmc3_banks_and_protection,

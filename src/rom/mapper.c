@@ -68,7 +68,7 @@ typedef struct {
 } CartCommon;
 
 static CartCommon C;
-static Mapper mapper_nrom, mapper_mmc1, mapper_m105, mapper_uxrom, mapper_cnrom, mapper_mmc3, mapper_tqrom, mapper_txsrom;
+static Mapper mapper_nrom, mapper_mmc1, mapper_m105, mapper_m232, mapper_uxrom, mapper_cnrom, mapper_mmc3, mapper_tqrom, mapper_txsrom;
 static Mapper mapper_mmc5, mapper_aorom, mapper_mmc2, mapper_mmc4, mapper_colordreams;
 static Mapper mapper_cprom, mapper_100in1, mapper_bandai, mapper_action53, mapper_unrom512, mapper_fds;
 static Mapper mapper_taito33, mapper_taito48, mapper_jaleco18, mapper_irem32, mapper_irem65;
@@ -863,6 +863,41 @@ static void m105_reset(void) {
     mmc1.chr_bank0 = 0x10;
     m105_update_state();
 }
+
+// Mapper 232: Codemasters BF9096 multicart board.
+static struct { uint8_t block, page; } m232;
+
+static uint8_t m232_cpu_read(uint16_t a) {
+    if (a >= 0x6000 && a < 0x8000) return prg_ram_read(a);
+    if (a < 0x8000) return cart_cpu_bus_input;
+    size_t banks = C.prg_sz / PRG_BANK_16K;
+    if (!banks) return cart_cpu_bus_input;
+    size_t bank = ((size_t)m232.block << 2) | (a < 0xC000 ? m232.page : 3u);
+    bank %= banks;
+    return C.prg[bank * PRG_BANK_16K + (a & 0x3FFF)];
+}
+
+static void m232_cpu_write(uint16_t a, uint8_t v) {
+    if (a >= 0x6000 && a < 0x8000) {
+        prg_ram_write(a, v);
+        return;
+    }
+    if (a < 0x8000) return;
+    if (a >= 0xC000) {
+        m232.page = v & 3u;
+    } else if (C.submapper == 1) {
+        m232.block = (uint8_t)(((v >> 4) & 1u) | ((v >> 2) & 2u));
+    } else {
+        m232.block = (v >> 3) & 3u;
+    }
+}
+
+static uint8_t m232_ppu_read(uint16_t a) { return C.chr[(a & 0x1FFFu) % C.chr_sz]; }
+static void m232_ppu_write(uint16_t a, uint8_t v) {
+    if (C.chr_is_ram) chr_ram_write((a & 0x1FFFu) % C.chr_sz, v);
+}
+static Mirroring m232_mirr(void) { return C.mirr_base; }
+static void m232_reset(void) { memset(&m232, 0, sizeof(m232)); }
 
 // Mapper 2: UxROM.
 static struct { uint8_t bank; } ux;
@@ -5515,6 +5550,7 @@ int mapper_init_from_header(const iNESHeader *h,
         case 21: case 22: case 23: case 24: case 25: case 26: case 27: case 183:
         case 19: case 66: case 67: case 68: case 69: case 71: case 73: case 75: case 76: case 85:
         case 88: case 89: case 93: case 95: case 99: case 105: case 151: case 154: case 184: case 206: case 210:
+        case 232:
             break;
         default:
             fprintf(stderr, "Unsupported mapper: %d\n", mapper_no);
@@ -5529,6 +5565,7 @@ int mapper_init_from_header(const iNESHeader *h,
         || (mapper_no == 48 && submapper == 1)
         || (mapper_no == 32 && submapper == 1)
         || (mapper_no == 71 && submapper == 1)
+        || (mapper_no == 232 && submapper == 1)
         || (mapper_no == 206 && submapper == 1)
         || (mapper_no == 210 && submapper <= 2)
         || ((mapper_no == 2 || mapper_no == 3 || mapper_no == 7) && submapper <= 2)
@@ -5715,6 +5752,12 @@ int mapper_init_from_header(const iNESHeader *h,
         && (prg_sz > 0x40000 || (prg_sz % PRG_BANK_16K) != 0
             || chr_sz > 0x20000 || (chr_sz % CHR_BANK_4K) != 0)) {
         fprintf(stderr, "Unsupported ROM size for mapper 105\n");
+        return -1;
+    }
+    if (mapper_no == 232
+        && (prg_sz > 0x40000 || (prg_sz % PRG_BANK_16K) != 0
+            || chr_sz != CHR_BANK_8K)) {
+        fprintf(stderr, "Unsupported ROM/RAM size for mapper 232\n");
         return -1;
     }
     if (!ram_geometry_supported(mapper_no, nes2, &ram, chr_is_ram, chr_sz)
@@ -5927,6 +5970,11 @@ int mapper_init_from_header(const iNESHeader *h,
                          namco108_ppu_read, namco108_ppu_write, namco108_reset, namco108_mirr);
             cart = &mapper_namco108;
             namco108_reset();
+            break;
+        case 232:
+            build_mapper(&mapper_m232, m232_cpu_read, m232_cpu_write,
+                         m232_ppu_read, m232_ppu_write, m232_reset, m232_mirr);
+            cart = &mapper_m232;
             break;
         case 48:
             build_mapper(&mapper_taito48, taito48_cpu_read, taito48_cpu_write,
