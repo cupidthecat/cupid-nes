@@ -64,6 +64,9 @@ PRG is the cartridge memory read by the CPU; CHR holds graphics patterns read by
 | 32, 65 | Irem G-101 / H-3001 | PRG/CHR banking, board mirroring, and H-3001 IRQ timing |
 | 33, 48 | Taito | PRG/CHR banking, mirroring, and mapper 48 IRQ timing |
 | 34 | BNROM / NINA-001 | 32 KiB PRG banks, board-specific CHR/RAM access, and BNROM bus conflicts |
+| 38, 39, 46, 54, 57, 58 | Discrete unlicensed boards | Address/data bank selection, board-specific reset behavior, split or mirrored PRG windows, and nametable mirroring |
+| 42, 43, 50 | Unlicensed IRQ boards | Fixed and switchable ROM windows, register aliases, CPU-clocked interrupt counters, and board-specific CHR/mirroring controls |
+| 51, 53, 59 | Multicart boards | Outer/inner PRG selection, menu EPROM layouts, CHR RAM or banking, and mapper 59 DIP-switch reads |
 | 64, 158 | RAMBO-1 | PRG/CHR banks, CPU- or PPU-clocked IRQs, and mapper 158 nametable wiring |
 | 66 | GxROM | Combined PRG/CHR bank selection and bus conflicts |
 | 67 | Sunsoft 3 | 2 KiB CHR banks, switchable 16 KiB PRG, mirroring, and a one-shot CPU IRQ counter |
@@ -183,6 +186,12 @@ The CPU counter supports automatic reload and separate acknowledgement, includin
 Rainbow audio uses two 16-step pulse generators and a 14-step sawtooth generator. The output-control register selects cartridge expansion pins, and the master-volume register controls their contribution to the audio mixer. Reading `$4011` returns twice the most recently clocked generator sum, allowing a CPU read-modify-write instruction to feed the native DMC DAC. Soft reset restores the documented control registers without clearing the audio generators, RAM, or flash command state. The PRG and CHR flash chips independently support identification, byte programming, bypass programming, sector erase, and chip erase; programming only clears bits. Their persisted images use separate files described in [saves and media](saves.md).
 
 The Rainbow Wi-Fi control bits and buffer-page registers are stored, but receive/transmit status reads return zero. Wi-Fi communication, SD-card access, and external network services are not emulated.
+
+Mapper 38 selects its PRG and CHR banks only on writes at `$7000-$7FFF`. Mapper 39 switches the entire 32 KiB PRG window and returns to bank zero on soft reset. Mapper 46 combines the registers at `$6000-$7FFF` and `$8000-$FFFF` for outer and inner PRG/CHR selection; soft reset clears both. Mappers 54 and 58 derive their banks from the write address, ignoring the written value. Mapper 57 combines two data registers and can mirror one 16 KiB PRG bank or select a consecutive pair. These boards retain their registers on soft reset except for mappers 39 and 46.
+
+Mapper 42 keeps the final 32 KiB of PRG fixed and banks ROM at `$6000-$7FFF`. Its counter repeats every 32,768 CPU clocks and asserts IRQ during the final 8,192 clocks while enabled. Only a value of `$02` enables it. Mapper 43 uses separate register aliases, a fixed ROM window at `$5000-$5FFF`, and a 4,096-clock one-shot IRQ. Mapper 50 also has a 4,096-clock one-shot IRQ, but enabling it again preserves its counter; disabling it clears both counter and IRQ. Its `$C000-$DFFF` ROM window stays open bus until a bank write. All three counters advance through actual CPU bus cycles.
+
+Mapper 51 combines mode and bank bits to switch between a 32 KiB PRG block and split 16 KiB windows. Mapper 53 recognizes both menu-EPROM image orders and applies the corresponding bank offsets. Both use the initial CHR RAM mapping and do not select CHR ROM. Mapper 59 can return its two DIP-switch bits throughout `$8000-$FFFF` instead of ROM data. Those reads drive the complete byte. Bank selection, RAM contents, and nametable routing follow each board's reset and write decoding.
 
 The mapper 72 and 92 cartridge banking and latch behavior is implemented. Optional speech hardware on those boards is not currently emulated.
 

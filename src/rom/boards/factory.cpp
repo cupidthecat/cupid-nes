@@ -29,6 +29,7 @@
 #include "nintendo.hpp"
 #include "drip_game.hpp"
 #include "rainbow.hpp"
+#include "unlicensed_109.hpp"
 
 namespace cupid::boards {
 
@@ -54,6 +55,18 @@ std::unique_ptr<Board> CreateBoard(unsigned mapper) {
         case 47: return std::make_unique<Mmc3_47>();
         case 49: return std::make_unique<Mmc3_49>();
         case 52: return std::make_unique<Mmc3_52>();
+        case 38: return std::make_unique<UnlPci556>();
+        case 39: return std::make_unique<Mapper39>();
+        case 42: return std::make_unique<Mapper42>();
+        case 43: return std::make_unique<Mapper43>();
+        case 46: return std::make_unique<ColorDreams46>();
+        case 50: return std::make_unique<Mapper50>();
+        case 51: return std::make_unique<Bmc51>();
+        case 53: return std::make_unique<Supervision>();
+        case 54: return std::make_unique<NovelDiamond>();
+        case 57: return std::make_unique<Mapper57>();
+        case 58: return std::make_unique<Mapper58>();
+        case 59: return std::make_unique<UnlD1038>();
         case 70: return std::make_unique<Bandai74161>(false);
         case 86: return std::make_unique<JalecoJf13>();
         case 104: return std::make_unique<GoldenFive>();
@@ -156,6 +169,8 @@ bool board_handles_mapper(unsigned mapper) {
         case 250: case 254: case 258: case 259: case 260: case 262: return true;
         case 263: case 268: case 287: case 292: case 313: case 325:
         case 333: case 348: case 366: return true;
+        case 38: case 39: case 42: case 43: case 46: case 50: case 51:
+        case 53: case 54: case 57: case 58: case 59: return true;
         default: return false;
     }
 }
