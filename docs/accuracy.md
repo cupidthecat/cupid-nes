@@ -8,7 +8,9 @@ The hardware targets use NTSC, PAL, or Dendy timing with the cartridge and input
 
 Each CPU read or write advances the PPU, APU, and cartridge. Reads and writes place the bus operation at different phases of the CPU clock. Fractional PPU clocks carry across CPU accesses. Interrupt lines are sampled at the CPU cycle boundaries used by instruction polling.
 
-`--cpu-test-mode` enables ordinary 2A03 diagnostic reads: `$4018` packs pulse 1 in the low nibble and pulse 2 in the high nibble, `$4019` packs triangle and noise the same way, and `$401A` returns the DMC's seven-bit output. The values come from the live channel DACs used by the mixer. The default retains open bus at these addresses. The profile survives reset and leaves `$4015`'s internal-bus behavior intact. Writable test registers and DMA-specific test-pin interactions are outside this profile's scope.
+`--cpu-test-mode` enables ordinary 2A03 diagnostic reads: `$4018` packs pulse 1 in the low nibble and pulse 2 in the high nibble, `$4019` packs triangle and noise the same way, and `$401A` returns the DMC's seven-bit output. The values come from the channel DAC latches used by the mixer. Disabling a pulse or noise channel through `$4015` clears its length counter; its preceding DAC value remains visible until the next channel timer edge. Pulse-register writes also refresh their channel's output.
+
+The default retains open bus at these addresses. The profile survives reset and leaves `$4015`'s internal-bus behavior intact. Writable test registers and DMA-specific test-pin interactions are outside this profile's scope.
 
 | Region | Master clocks per CPU/PPU cycle | Scanlines | Vblank starts |
 | --- | --- | ---: | ---: |
@@ -58,7 +60,7 @@ The regression cases scan distinct simultaneous key patterns through all ten row
 | --- | --- |
 | CPU | Official and undocumented instruction behavior, dummy reads/writes, page wraps, status flags, JAM, interrupt polling, vector selection, and power/reset bus sequences |
 | DMA and controllers | OAM transfer parity and wrapping, DMC requests and cancellation, regional DMA start rules, overlapping transfers, strobe/shift behavior, and controller bus interactions |
-| APU | Regional noise/DMC periods and frame events, LFSR taps, sweep targets/reloads, held triangle DAC, delayed writes, length-counter collisions, DMC wrap/loop/IRQ behavior, and reset state |
+| APU | Regional noise/DMC periods and frame events, LFSR taps, sweep targets/reloads, channel DAC latches, diagnostic reads across channel-disable transitions, delayed writes, length-counter collisions, DMC wrap/loop/IRQ behavior, and reset state |
 | PPU | Palette mirrors, register-transfer delays and collisions, open bus, OAM access/refresh, sprite overflow/priority/shifter timing, sprite-zero hit, scrolling, regional frame timing, reset preservation and A12 events |
 | Cartridge | Supported bank and nametable wiring, bus conflicts, startup mapping, RAM permissions, IRQ boundaries and CPU delivery, declared memory sizes, malformed images, failed-load preservation, EEPROM transactions, flash commands, and save round trips |
 | Expansion audio | MMC5 pulse/PCM, VRC6 pulse/saw, VRC7 FM, N163 wavetable, Sunsoft 5B tone/noise/envelopes, and EPSM FM/SSG/ADPCM output; register access, delayed bus edges, timer IRQs, regional clocks, reset and stereo mixing |

@@ -106,8 +106,16 @@ Additional review checkpoints passed the same hardware and AccuracyCoin requirem
 | GTROM bank and flash-command state across actual CPU soft reset | `32e5be9ae9fe0a25b34fa58b51c823764c304167` |
 | Subor left/right modifier keys remain pressed until both are released | `8bcbbefd6c0558ea370d508a12aba8f7a979f509` |
 | Oeka Kids pointer clicks assert contact in the upper area and offscreen | `e67908051946afc9c7f79fed3a13f22f5750bfa4` |
+| Mapper 96 legacy PRG RAM, CPU access and battery persistence | `1b46cfbaf4ac8c70ddd73f457d5df12b5f007b4f` |
+| Irem 77/97 inherited RAM, explicit RAM layouts and save round trips | `28636a4f7f856f7653064b2fa3195d0e2e28b3fe` |
+| Jaleco discrete PRG RAM reads and board-specific write interception | `4b66328521126a38df21b110777158142ac655c1` |
+| Nonzero Jaleco trainer RAM survives register writes and CPU soft reset | `bc1dbc0617e89154d5db1f43d9164db4bbbb4189` |
+| Mapper 184 inherited RAM reads with CHR-register writes in the same window | `b021c90723c54d1807fc9e9410ba6fa710333fd9` |
+| Pulse and noise DAC latches remain visible after channel disable until the next timer edge | `922c4da75c24e2c32344e5e31a19439222fd49a4` |
 
-The JY integration also prevents advanced nametable reads from exposing CHR RAM through a ROM-only path. The Subor integration uses unsigned keyboard shifts to avoid undefined behavior. Both corrections are included in their issue checkpoints above. The complete combined revision still requires the final GCC and Clang sanitizer CI runs, the 8,991-state trace, all 91 diagnostic ROMs, and AccuracyCoin; earlier checkpoints do not replace those checks.
+The RAM regressions execute CPU loads and stores across legacy defaults, declared RAM and explicit no-RAM layouts. Nonzero trainer and save data distinguish readable RAM from open bus or a constant return value. Writes to Jaleco 87/101/140 and Sunsoft 184 continue selecting banks without changing that RAM. The APU regression executes channel-disable and diagnostic-read instructions on both sides of a DAC timer edge.
+
+The JY integration also prevents advanced nametable reads from exposing CHR RAM through a ROM-only path. The Subor integration uses unsigned keyboard shifts to avoid undefined behavior. Both corrections are included in their issue checkpoints above. Every combined revision must pass the GCC and Clang sanitizer CI runs, the 8,991-state trace, all 91 diagnostic ROMs, and AccuracyCoin; earlier checkpoints do not replace those checks.
 
 ## Reproducing a checkpoint
 
