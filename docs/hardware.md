@@ -88,6 +88,7 @@ PRG is the cartridge memory read by the CPU; CHR holds graphics patterns read by
 | 218 | Magic Floor | Fixed PRG and shared pattern-table/nametable CIRAM with four header-selected address wirings |
 | 323, 324 | Farid multicarts | Serial MMC1 or UNROM inner banks, outer-bank locking, board-specific reset latches, and mapper 324 ROM bus conflicts |
 | 168 | Racermate | PRG and CHR RAM banking, periodic CPU-clocked IRQ, and partial CHR persistence; exercise-bike input is not emulated |
+| 552 | Taito X1-017 variant | Reversed PRG register bits, paired and independent CHR banks, and three save-RAM permission registers |
 | 41, 63, 112, 174, 193, 221, 290, 298 | NTDEC | Address and data bank registers, board-specific open-bus windows and resets, and TF1201 CPU-clocked IRQs |
 | 105 | NES-EVENT | MMC1 serial control, competition PRG modes, fixed CHR RAM, cartridge RAM, and DIP-selected timer IRQ |
 | 111 | GTROM | 32 KiB PRG flash banking, two CHR-RAM banks, banked cartridge nametable RAM, register-read latching, and flash persistence |
@@ -123,6 +124,8 @@ The NTDEC boards keep their separate register layouts. Caltron 41 permits inner 
 Mapper 174 follows documented address wiring, but that wiring has not been verified against hardware. TF1201 (298) uses a CPU-driven prescaler and an incrementing IRQ counter; the implementation retains the known uncertainty in that timing model. Its IRQ acknowledgement clears the line without stopping or reloading the counter, while the enable register reloads both counter and prescaler. These two boards should not be treated as hardware-verified solely because the regression suite passes.
 
 Racermate (168) banks the lower 16 KiB PRG window and upper 4 KiB CHR window through writes at `$8000-$BFFF`. The last PRG bank and first CHR bank stay fixed. Its interrupt counter runs on every CPU cycle, including writes, DMA, and soft reset. It begins at zero, first wraps after 65,536 cycles, and then reloads to 1,024 cycles. Writes at `$C000-$FFFF` acknowledge the interrupt and restart that interval. Legacy images use 64 KiB of CHR RAM and save only its upper 32 KiB to `.chr.sav`; NES 2.0 CHR persistence follows the declared nonvolatile tail. Explicit PRG NVRAM uses the normal `.sav` path. The exercise-bike peripheral is not emulated.
+
+Taito mapper 552 reverses the six low bits of each PRG register value before selecting an 8 KiB bank. The upper bank stays fixed. Six CHR registers select two even-aligned 2 KiB pairs and four 1 KiB banks, with a mode bit exchanging their pattern-table halves. The exact unlock values `$CA`, `$69`, and `$84` independently enable the first 2 KiB, next 2 KiB, and next 1 KiB of save RAM. Other values block both reads and writes to that region. Additional RAM declared outside those 5 KiB retains its initial mapping. The control and bank registers survive CPU soft reset. A fresh load locks the save regions and leaves the lower PRG windows and CHR ROM unmapped until their bank registers are written.
 
 The mapper 72 and 92 cartridge banking and latch behavior is implemented. Optional speech hardware on those boards is not currently emulated.
 

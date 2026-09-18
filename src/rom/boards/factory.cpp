@@ -18,6 +18,7 @@
 #include "farid.hpp"
 #include "ntdec.hpp"
 #include "racermate.hpp"
+#include "taito.hpp"
 
 namespace cupid::boards {
 
@@ -42,6 +43,7 @@ std::unique_ptr<Board> CreateBoard(unsigned mapper) {
         case 218: return std::make_unique<MagicFloor>();
         case 323: return std::make_unique<FaridSlrom>();
         case 324: return std::make_unique<FaridUnrom>();
+        case 552: return std::make_unique<TaitoX1017>();
         default: return nullptr;
     }
 }
@@ -52,6 +54,7 @@ bool board_handles_mapper(unsigned mapper) {
     switch (mapper) {
         case 29: return true;
         case 168: return true;
+        case 552: return true;
         case 41: case 63: case 112: case 174: case 193: case 221: case 290: case 298: return true;
         case 6: case 8: case 17: return true;
         case 323: case 324: return true;
