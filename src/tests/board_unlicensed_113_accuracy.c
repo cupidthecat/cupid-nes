@@ -10,6 +10,7 @@
  * Public License for details. See <https://www.gnu.org/licenses/>.
  */
 #include "board_tests.h"
+#include "../rom/board.h"
 #include "../apu/apu.h"
 #include <time.h>
 
@@ -386,6 +387,28 @@ static int test_246_persistent_ram(void) {
     return 0;
 }
 
+static int test_discrete113_invalid_buffers(void) {
+    BoardImage image;
+    BOARD_CHECK(board_image_create(&image, 244, 0x20000, 0x2000, true));
+    BOARD_CHECK(board_image_load(&image) == 0 && store113(0x8000, 3) == 0);
+    iNESHeader header;
+    memcpy(&header, image.data, sizeof(header));
+    uint8_t *prg = image.data + sizeof(header);
+    uint8_t *chr = prg + 0x20000;
+    BOARD_CHECK(board_create(NULL, prg, 0x20000, chr, 0x2000) == NULL);
+    BOARD_CHECK(board_create(&header, NULL, 0x20000, chr, 0x2000) == NULL);
+    BOARD_CHECK(board_create(&header, prg, 0, chr, 0x2000) == NULL);
+    BOARD_CHECK(board_create(&header, prg, 0x20000, NULL, 0x2000) == NULL);
+    BOARD_CHECK(board_create(&header, prg, 0x20000, chr, 0) == NULL);
+#if SIZE_MAX > UINT32_MAX
+    BOARD_CHECK(board_create(&header, prg, (size_t)UINT32_MAX + 1, chr, 0x2000) == NULL);
+    BOARD_CHECK(board_create(&header, prg, 0x20000, chr, (size_t)UINT32_MAX + 1) == NULL);
+#endif
+    BOARD_CHECK(read_mem(0x8000) == 24 && ppu_read(0x1FFF) == 7);
+    board_image_free(&image);
+    return 0;
+}
+
 int test_board_unlicensed_113_accuracy(void) {
     int failures = 0;
     failures += test_234_read_latches_and_conflicts();
@@ -398,7 +421,8 @@ int test_board_unlicensed_113_accuracy(void) {
     failures += test_city_fighter_banks_dac_and_irq();
     failures += test_discrete113_geometry_and_replacement();
     failures += test_246_persistent_ram();
+    failures += test_discrete113_invalid_buffers();
     unload_rom();
-    printf("Discrete cartridge group 113: 10 groups, %d failures\n", failures);
+    printf("Discrete cartridge group 113: 11 groups, %d failures\n", failures);
     return failures;
 }

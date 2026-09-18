@@ -519,6 +519,16 @@ struct CartridgeBoard {
 CartridgeBoard *board_create(const iNESHeader *header, uint8_t *prg, size_t prgBytes,
                              uint8_t *chr, size_t chrBytes) {
     if (!header) return nullptr;
+    if (!prg || !prgBytes || prgBytes > UINT32_MAX || chrBytes > UINT32_MAX) {
+        std::fprintf(stderr, "Unsupported cartridge buffer size\n");
+        return nullptr;
+    }
+    bool nes20 = (header->flags7 & 0x0C) == 8;
+    bool hasChrRom = header->chr_rom_chunks || (nes20 && (header->flags9 & 0xF0));
+    if (hasChrRom && (!chr || !chrBytes)) {
+        std::fprintf(stderr, "Missing cartridge CHR ROM\n");
+        return nullptr;
+    }
     try {
         auto board = std::make_unique<CartridgeBoard>();
         board->instance = board_is_fcns_header(header)
