@@ -5919,6 +5919,107 @@ static int test_vrc1_loader_rejection_preserves_cart(void) {
     return 0;
 }
 
+static void vrc3_write_reload(uint16_t reload) {
+    cart_cpu_write(0x8000, (uint8_t)reload);
+    cart_cpu_write(0x9000, (uint8_t)(reload >> 4));
+    cart_cpu_write(0xA000, (uint8_t)(reload >> 8));
+    cart_cpu_write(0xB000, (uint8_t)(reload >> 12));
+}
+
+static int test_vrc3_banks_irq_and_reset(void) {
+    CHECK(fixture(73, 0x20000, 0x2000, false) == 73);
+    CHECK(cart != NULL && cart->clock != NULL);
+    CHECK(cart_cpu_read_bus(0x8000, 0x56) == 0x56);
+    CHECK(cart_cpu_read(0xC000) == 14 && cart_cpu_read(0xE000) == 15);
+    CHECK(cart_ppu_read(0x0123) == 0 && cart_ppu_read(0x1C12) == 7);
+
+    cart_cpu_write(0xFABC, 3);
+    CHECK(cart_cpu_read(0x8000) == 6 && cart_cpu_read(0xA000) == 7);
+    CHECK(cart_cpu_read(0xC000) == 14 && cart_cpu_read(0xE000) == 15);
+
+    vrc3_write_reload(0x1234);
+    cart_cpu_write(0x8000, 0xFA);
+    cart_cpu_write(0x9000, 0xEB);
+    cart_cpu_write(0xA000, 0xDC);
+    cart_cpu_write(0xB000, 0xCD);
+    cart_cpu_write(0xC000, 2);
+    cart->clock((int)(0x10000u - 0xDCBAu - 1u));
+    CHECK(!cart_irq_pending());
+    cart->clock(1);
+    CHECK(cart_irq_pending());
+
+    vrc3_write_reload(0xFFFE);
+    cart_cpu_write(0xC000, 3);
+    cart->clock(1);
+    CHECK(!cart_irq_pending());
+    cart->clock(1);
+    CHECK(cart_irq_pending());
+    cart_cpu_write(0xDFFF, 0);
+    CHECK(!cart_irq_pending());
+    cart->clock(2);
+    CHECK(cart_irq_pending());
+
+    cart_cpu_write(0xC000, 0);
+    CHECK(!cart_irq_pending());
+    cart->clock(32);
+    CHECK(!cart_irq_pending());
+
+    vrc3_write_reload(0xABFE);
+    cart_cpu_write(0xC000, 6);
+    cart->clock(1);
+    CHECK(!cart_irq_pending());
+    cart->clock(1);
+    CHECK(cart_irq_pending());
+    cart_cpu_write(0xD000, 0);
+    CHECK(!cart_irq_pending());
+    cart->clock(4);
+    CHECK(!cart_irq_pending());
+
+    cart_cpu_write(0x6000, 0xA6);
+    cart->reset();
+    CHECK(!cart_irq_pending() && cart_cpu_read(0x6000) == 0xA6);
+    CHECK(cart_cpu_read_bus(0x8000, 0x35) == 0x35 && cart_cpu_read(0xC000) == 14);
+    return 0;
+}
+
+static int test_vrc3_cpu_irq_and_loader(void) {
+    CHECK(fixture(73, 0x4000, 0x2000, false) == 73);
+    fixture_prg[0] = 0xEA;
+    fixture_prg[0x3FFE] = 0;
+    fixture_prg[0x3FFF] = 3;
+    cart_cpu_write(0xF000, 0);
+    nes_set_region(NES_REGION_NTSC);
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    cpu_power_on(&cpu);
+    cpu.pc = 0x8000;
+    cpu.status = INTERRUPT_FLAG | UNUSED_FLAG;
+    vrc3_write_reload(0xFFFE);
+    cart_cpu_write(0xC000, 2);
+    CHECK(cpu_step(&cpu) == 2 && cart_irq_pending());
+
+    for (unsigned i = 0; i < 8; ++i) write_mem((uint16_t)(0x0200 + i), 0xEA);
+    cpu.pc = 0x0200;
+    cpu.status &= (uint8_t)~INTERRUPT_FLAG;
+    for (unsigned step = 0; step < 3 && cpu.pc != 0x0300; ++step) (void)cpu_step(&cpu);
+    CHECK(cpu.pc == 0x0300 && (cpu.status & INTERRUPT_FLAG) && cart_irq_pending());
+    cart_cpu_write(0xD000, 0);
+    CHECK(!cart_irq_pending());
+
+    cart_cpu_write(0x6000, 0xA7);
+    Mapper *previous = cart;
+    iNESHeader invalid = header_for(73, 0x20000, false);
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x22000, fixture_chr, 0x2000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x6000) == 0xA7);
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x20000, fixture_chr, 0x4000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x6000) == 0xA7);
+    invalid.flags7 |= 0x08;
+    invalid.prg_ram_size = 0x10;
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x20000, fixture_chr, 0x2000) == -1);
+    CHECK(cart == previous && cart_cpu_read(0x6000) == 0xA7);
+    return 0;
+}
+
 static int test_cartridge_unload(void) {
     iNESHeader h = header_for(0, 0x4000, true);
     size_t image_size;
@@ -6003,6 +6104,7 @@ int test_mapper_accuracy(void) {
         test_vrc7_register_boundaries,
         test_vrc7_loader_rejection_preserves_cart,
         test_vrc1_banks_mirroring_and_reset, test_vrc1_loader_rejection_preserves_cart,
+        test_vrc3_banks_irq_and_reset, test_vrc3_cpu_irq_and_loader,
         test_cartridge_bus_reads, test_mmc6_persistence, test_cartridge_unload
     };
     int failures = 0;

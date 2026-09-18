@@ -73,7 +73,7 @@ static Mapper mapper_mmc5, mapper_aorom, mapper_mmc2, mapper_mmc4, mapper_colord
 static Mapper mapper_cprom, mapper_100in1, mapper_bandai, mapper_action53, mapper_unrom512, mapper_fds;
 static Mapper mapper_taito33, mapper_taito48, mapper_jaleco18, mapper_irem32, mapper_irem65;
 static Mapper mapper_rambo1, mapper_rambo158;
-static Mapper mapper_vrc1, mapper_vrc6, mapper_vrc24, mapper_vrc7;
+static Mapper mapper_vrc1, mapper_vrc3, mapper_vrc6, mapper_vrc24, mapper_vrc7;
 static Mapper mapper_sunsoft69, mapper_namco, mapper_m34, mapper_gxrom, mapper_m71, mapper_namco108;
 static Mapper mapper_vs99;
 Mapper *cart = NULL;
@@ -918,6 +918,107 @@ static Mirroring vrc1_mirr(void) { return vrc1.mirr; }
 static void vrc1_reset(void) {
     memset(&vrc1, 0, sizeof(vrc1));
     vrc1.mirr = C.mirr_base;
+}
+
+// Mapper 73: VRC3.
+static struct {
+    uint16_t reload;
+    uint16_t counter;
+    uint8_t prg_bank;
+    bool prg_mapped;
+    bool enabled;
+    bool enable_after_ack;
+    bool eight_bit;
+} vrc3;
+
+static uint8_t vrc3_cpu_read(uint16_t a) {
+    if (a >= 0x6000 && a <= 0x7FFF) return prg_ram_read(a);
+    if (a < 0x8000) return cart_cpu_bus_input;
+
+    size_t banks = C.prg_sz / PRG_BANK_16K;
+    size_t bank;
+    if (a < 0xC000) {
+        if (!vrc3.prg_mapped) return cart_cpu_bus_input;
+        bank = vrc3.prg_bank % banks;
+    } else {
+        bank = banks - 1;
+    }
+    return C.prg[bank * PRG_BANK_16K + (a & 0x3FFFu)];
+}
+
+static void vrc3_cpu_write(uint16_t a, uint8_t value) {
+    if (a >= 0x6000 && a <= 0x7FFF) {
+        prg_ram_write(a, value);
+        return;
+    }
+    if (a < 0x8000) return;
+
+    switch (a & 0xF000u) {
+        case 0x8000:
+            vrc3.reload = (uint16_t)((vrc3.reload & 0xFFF0u) | (value & 0x0Fu));
+            break;
+        case 0x9000:
+            vrc3.reload = (uint16_t)((vrc3.reload & 0xFF0Fu) | ((uint16_t)(value & 0x0Fu) << 4));
+            break;
+        case 0xA000:
+            vrc3.reload = (uint16_t)((vrc3.reload & 0xF0FFu) | ((uint16_t)(value & 0x0Fu) << 8));
+            break;
+        case 0xB000:
+            vrc3.reload = (uint16_t)((vrc3.reload & 0x0FFFu) | ((uint16_t)(value & 0x0Fu) << 12));
+            break;
+        case 0xC000:
+            vrc3.enable_after_ack = (value & 0x01u) != 0;
+            vrc3.enabled = (value & 0x02u) != 0;
+            vrc3.eight_bit = (value & 0x04u) != 0;
+            if (vrc3.enabled) vrc3.counter = vrc3.reload;
+            mapper_irq_line = false;
+            break;
+        case 0xD000:
+            mapper_irq_line = false;
+            vrc3.enabled = vrc3.enable_after_ack;
+            break;
+        case 0xF000:
+            vrc3.prg_bank = value & 0x07u;
+            vrc3.prg_mapped = true;
+            break;
+        default:
+            break;
+    }
+}
+
+static uint8_t vrc3_ppu_read(uint16_t a) {
+    return C.chr[(a & 0x1FFFu) % C.chr_sz];
+}
+
+static void vrc3_ppu_write(uint16_t a, uint8_t value) {
+    chr_ram_write((a & 0x1FFFu) % C.chr_sz, value);
+}
+
+static void vrc3_clock(int cpu_cycles) {
+    while (cpu_cycles-- > 0 && vrc3.enabled) {
+        if (vrc3.eight_bit) {
+            uint8_t low = (uint8_t)vrc3.counter;
+            low++;
+            if (low == 0) {
+                low = (uint8_t)vrc3.reload;
+                mapper_irq_line = true;
+            }
+            vrc3.counter = (uint16_t)((vrc3.counter & 0xFF00u) | low);
+        } else {
+            vrc3.counter++;
+            if (vrc3.counter == 0) {
+                vrc3.counter = vrc3.reload;
+                mapper_irq_line = true;
+            }
+        }
+    }
+}
+
+static Mirroring vrc3_mirr(void) { return C.mirr_base; }
+
+static void vrc3_reset(void) {
+    memset(&vrc3, 0, sizeof(vrc3));
+    mapper_irq_line = false;
 }
 
 // Mapper 4: MMC3/TxROM.
@@ -4835,6 +4936,7 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         case 13: chr_limit = 0x4000; break;
         case 28: case 30: chr_limit = 0x8000; break;
         case 18: case 32: case 65: chr_limit = 0x40000; break;
+        case 73: chr_limit = CHR_BANK_8K; break;
         case 75: case 151: chr_limit = 0x20000; break;
         case 21: case 23: case 25: case 27: case 183: chr_limit = 0x80000; break;
         case 22: chr_limit = 0x40000; break;
@@ -4890,7 +4992,7 @@ int mapper_init_from_header(const iNESHeader *h,
         case 16: case 153: case 157: case 159:
         case 18: case 32: case 33: case 34: case 48: case 64: case 65: case 158:
         case 21: case 22: case 23: case 24: case 25: case 26: case 27: case 183:
-        case 19: case 66: case 69: case 71: case 75: case 85: case 99: case 151: case 206: case 210:
+        case 19: case 66: case 69: case 71: case 73: case 75: case 85: case 99: case 151: case 206: case 210:
             break;
         default:
             fprintf(stderr, "Unsupported mapper: %d\n", mapper_no);
@@ -5007,6 +5109,11 @@ int mapper_init_from_header(const iNESHeader *h,
         && (prg_sz > 0x200000 || (prg_sz % PRG_BANK_8K) != 0
             || chr_sz > 0x20000 || (chr_sz % CHR_BANK_4K) != 0)) {
         fprintf(stderr, "Unsupported ROM size for mapper %d\n", mapper_no);
+        return -1;
+    }
+    if (mapper_no == 73
+        && (prg_sz > 0x20000 || (prg_sz % PRG_BANK_16K) != 0 || chr_sz > CHR_BANK_8K)) {
+        fprintf(stderr, "Unsupported ROM/RAM size for mapper 73\n");
         return -1;
     }
     if (mapper_no == 85 && (prg_sz > 0x80000 || (prg_sz % PRG_BANK_8K) != 0
@@ -5207,6 +5314,13 @@ int mapper_init_from_header(const iNESHeader *h,
             build_mapper(&mapper_m71, m71_cpu_read, m71_cpu_write,
                          m71_ppu_read, m71_ppu_write, m71_reset, m71_mirr);
             cart = &mapper_m71;
+            break;
+        case 73:
+            build_mapper(&mapper_vrc3, vrc3_cpu_read, vrc3_cpu_write,
+                         vrc3_ppu_read, vrc3_ppu_write, vrc3_reset, vrc3_mirr);
+            mapper_vrc3.clock = vrc3_clock;
+            cart = &mapper_vrc3;
+            vrc3_reset();
             break;
         case 75: case 151:
             build_mapper(&mapper_vrc1, vrc1_cpu_read, vrc1_cpu_write,
