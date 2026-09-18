@@ -290,6 +290,19 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "MMC3 revision must be standard or a\n");
                 return 1;
             }
+        } else if (strcmp(argv[i], "--cart-dip") == 0) {
+            if (++i == argc) {
+                fprintf(stderr, "Cartridge DIP value must be an integer from 0 to 255\n");
+                return 1;
+            }
+            char *end = NULL;
+            errno = 0;
+            unsigned long value = strtoul(argv[i], &end, 0);
+            if (errno || end == argv[i] || *end || argv[i][0] == '-' || value > 0xFFu
+                || !cart_set_dip_switches((unsigned)value)) {
+                fprintf(stderr, "Cartridge DIP value must be an integer from 0 to 255\n");
+                return 1;
+            }
         } else if (strcmp(argv[i], "--adapter") == 0) {
             if (++i == argc || !joypad_set_adapter_name(argv[i])) {
                 fprintf(stderr, "Adapter must be none, four-score, famicom-2, or famicom-4\n");
@@ -382,7 +395,7 @@ int main(int argc, char *argv[]) {
                "[--startup-phase CPU:PPU | --startup-seed SEED] "
                "[--ppu-revision REVISION] [--ppu-oam-row-corruption] "
                "[--ppu-startup-restriction] [--ppu-oam-decay] "
-               "[--mmc3-revision REVISION] "
+               "[--mmc3-revision REVISION] [--cart-dip VALUE] "
                "[--adapter TYPE] [--port1 DEVICE] [--port2 DEVICE] "
                "[--expansion DEVICE] [--barcode DIGITS] "
                "[--zapper-radius PIXELS] [--vs-dip VALUE] [--tape-play FILE | --tape-record FILE] "

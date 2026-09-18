@@ -24,6 +24,7 @@ On Windows, replace `./cupid-nes` with `.\build\windows\cupid-nes.exe`. Supply o
 | `--ppu-startup-restriction` | No value | Off | Enables the protected PPU register-write interval after power-on and soft reset |
 | `--ppu-oam-decay` | No value | Off | Enables OAM row refresh and decay tracking |
 | `--mmc3-revision REVISION` | `standard`, `a` | `standard` | Selects the MMC3 IRQ counter revision for compatible MMC3-family cartridges |
+| `--cart-dip VALUE` | Integer from 0 through 255 | `0` | Sets cartridge-board DIP inputs, including mapper 105 competition timing |
 
 The ROM header selects the timing region. `--console famicom` changes console wiring and does not force NTSC, PAL, or Dendy timing. There is no application `--region` option.
 
@@ -32,6 +33,8 @@ The three optional PPU profiles are compatibility models with documented assumpt
 Choose either `--startup-phase` or `--startup-seed`. The CPU offset delays reset release in master clocks; the PPU phase selects the initial divider remainder. NTSC accepts CPU `0..11` and PPU `0..3`, PAL accepts `0..15` and `0..4`, and Dendy accepts `0..14` and `0..4`. The startup log records the applied pair and any supplied seed. For example, `--startup-phase 0:3` selects the default NTSC alignment. Soft reset retains the running phase. A seeded dual VS cabinet draws an alignment for each CPU in main-then-secondary order.
 
 `--mmc3-revision a` selects the earlier IRQ qualification rule. MMC6 and MC-ACC keep their own board-specific IRQ behavior.
+
+`--cart-dip` accepts decimal and C-style base prefixes such as `0x`. Mapper 105 uses the low four bits to select its competition timer interval.
 
 ## EPSM sound
 

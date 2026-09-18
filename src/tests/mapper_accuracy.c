@@ -307,6 +307,159 @@ static int test_mmc3_irq_edges(void) {
     return 0;
 }
 
+static int test_mapper105_competition_board(void) {
+    iNESHeader h = header_for(105, 0x40000, true);
+    CHECK(cart_set_dip_switches(0));
+    CHECK(fixture_with_header(&h, 0x40000, 0x2000) == 105);
+    CHECK(cart_cpu_read(0x8000) == 0 && cart_cpu_read(0xC000) == 2);
+
+    serial_write(0xA000, 0x00);
+    CHECK(cart_cpu_read(0x8000) == 0 && cart_cpu_read(0xC000) == 2);
+    serial_write(0xA000, 0x10);
+    CHECK(cart_cpu_read(0x8000) == 0 && cart_cpu_read(0xC000) == 2);
+    serial_write(0xA000, 0x06);
+    CHECK(cart_cpu_read(0x8000) == 12 && cart_cpu_read(0xC000) == 14);
+
+    serial_write(0xA000, 0x08);
+    CHECK(cart_cpu_read(0x8000) == 16 && cart_cpu_read(0xC000) == 30);
+    serial_write(0xE000, 3);
+    CHECK(cart_cpu_read(0x8000) == 22 && cart_cpu_read(0xC000) == 30);
+    serial_write(0x8000, 0x08);
+    CHECK(cart_cpu_read(0x8000) == 16 && cart_cpu_read(0xC000) == 22);
+    serial_write(0x8000, 0x00);
+    CHECK(cart_cpu_read(0x8000) == 20 && cart_cpu_read(0xC000) == 22);
+
+    cart_cpu_write(0x6000, 0xA5);
+    CHECK(cart_cpu_read(0x6000) == 0xA5);
+    serial_write(0xE000, 0x10);
+    CHECK(cart_cpu_read_bus(0x6000, 0x5A) == 0x5A);
+    serial_write(0xE000, 0);
+    CHECK(cart_cpu_read(0x6000) == 0xA5);
+
+    serial_write(0xA000, 0x00);
+    CHECK(!cart_irq_pending());
+    cart->clock(0x1FFFFFFF);
+    CHECK(!cart_irq_pending());
+    cart->clock(1);
+    CHECK(cart_irq_pending());
+    cart_irq_ack();
+    cart->clock(100);
+    CHECK(!cart_irq_pending());
+
+    serial_write(0xA000, 0x10);
+    CHECK(!cart_irq_pending());
+    CHECK(cart_set_dip_switches(3));
+    serial_write(0xA000, 0x00);
+    cart->clock(0x25FFFFFF);
+    CHECK(!cart_irq_pending());
+    cart->clock(1);
+    CHECK(cart_irq_pending());
+
+    cart->reset();
+    CHECK(!cart_irq_pending() && cart_cpu_read(0x8000) == 0 && cart_cpu_read(0xC000) == 2);
+    CHECK(cart_set_dip_switches(0));
+
+    size_t image_size;
+    uint8_t *image = image_for(&h, 0x40000, 0, &image_size);
+    CHECK(image != NULL && load_rom_memory(image, image_size) == 0);
+    free(image);
+    uint8_t *previous = prg_rom;
+    uint8_t previous_value = cart_cpu_read(0x8000);
+    h.flags7 |= 0x08;
+    h.prg_ram_size = 0x10;
+    h.zero[0] = 7;
+    image = image_for(&h, 0x40000, 0, &image_size);
+    CHECK(image != NULL && load_rom_memory(image, image_size) == -1);
+    free(image);
+    CHECK(prg_rom == previous && cart_cpu_read(0x8000) == previous_value);
+    return 0;
+}
+
+static int test_mapper105_fixed_chr_and_serial_timing(void) {
+    CHECK(fixture(105, 0x40000, 0x2000, true) == 105);
+    cart_ppu_write(0x0003, 0xA5);
+    cart_ppu_write(0x1003, 0x5A);
+    serial_write(0x8000, 0x1C);
+    serial_write(0xA000, 3);
+    serial_write(0xC000, 0);
+    CHECK(cart_ppu_read(0x0003) == 0xA5 && cart_ppu_read(0x1003) == 0x5A);
+    cart_ppu_write(0x0003, 0x7B);
+    CHECK(fixture_chr[3] == 0x7B && fixture_chr[0x1003] == 0x5A);
+
+    CHECK(cart_set_dip_switches(0));
+    cart->reset();
+    serial_write(0xA000, 0);
+    cart->clock(0x20000000);
+    CHECK(cart_irq_pending());
+    cart_irq_ack();
+    ++cpu_total_cycles;
+    cart_cpu_write(0xC000, 0);
+    cart->clock(1);
+    CHECK(!cart_irq_pending()); // The consecutive write must not shift or restart the timer.
+    for (unsigned bit = 0; bit < 4; ++bit) {
+        cpu_total_cycles += 2;
+        cart_cpu_write(0xC000, 0);
+        cart->clock(1);
+        CHECK(!cart_irq_pending());
+    }
+    cpu_total_cycles += 2;
+    cart_cpu_write(0xC000, 0);
+    cart->clock(1);
+    CHECK(cart_irq_pending()); // A completed register write updates timer control.
+    serial_write(0xA000, 0x10);
+    CHECK(!cart_irq_pending());
+    cpu_total_cycles += 2;
+    cart_cpu_write(0x8000, 0x80);
+    CHECK(!cart_irq_pending() && cart_ppu_read(0x0003) == 0x7B);
+
+    CHECK(fixture(105, 0x40000, 0x2000, false) == 105);
+    CHECK(cart_ppu_read(0x0123) == 0x23);
+    serial_write(0xA000, 0x1F);
+    cart_ppu_write(0x0123, 0x69);
+    CHECK(cart_ppu_read(0x0123) == 0x23 && fixture_chr[0x0123] == 0);
+    return 0;
+}
+
+static int test_mapper105_dips_and_cpu_irq(void) {
+    CHECK(fixture(105, 0x40000, 0x2000, true) == 105);
+    for (unsigned dips = 0; dips < 16; ++dips) {
+        CHECK(cart_set_dip_switches(dips));
+        CHECK(!cart_set_dip_switches(256) && cart_dip_switches() == dips);
+        cart->reset();
+        serial_write(0xA000, 0);
+        uint32_t limit = 0x20000000u | (dips << 25);
+        cart->clock((int)(limit - 1));
+        CHECK(!cart_irq_pending());
+        cart->clock(1);
+        CHECK(cart_irq_pending());
+    }
+    cart->reset();
+    CHECK(cart_set_dip_switches(15));
+    serial_write(0xA000, 0);
+    cart->clock(0x21000000);
+    CHECK(!cart_irq_pending());
+    CHECK(cart_set_dip_switches(0));
+    cart->clock(1);
+    CHECK(cart_irq_pending());
+
+    cart->reset();
+    fixture_prg[0x7FFC] = 0;
+    fixture_prg[0x7FFD] = 2;
+    fixture_prg[0x7FFE] = 0;
+    fixture_prg[0x7FFF] = 3;
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    CHECK(cpu_power_on(&cpu) && cpu.pc == 0x0200);
+    write_mem(0x0200, 0xEA);
+    cpu.status &= (uint8_t)~INTERRUPT_FLAG;
+    serial_write(0xA000, 0);
+    cart->clock(0x1FFFFFFF);
+    CHECK(cpu_step(&cpu) == 9 && cpu.pc == 0x0300 && cart_irq_pending());
+    serial_write(0xA000, 0x10);
+    CHECK(!cart_irq_pending());
+    return 0;
+}
+
 static int test_mmc3_revision_a_irq(void) {
     iNESHeader h = header_for(4, 0x20000, false);
     size_t image_size = 0;
@@ -6523,6 +6676,8 @@ static int test_cartridge_unload(void) {
 int test_mapper_accuracy(void) {
     static int (*const tests[])(void) = {
         test_small_cartridges, test_mmc1_banks_and_ram, test_mmc1_serial_timing,
+        test_mapper105_competition_board,
+        test_mapper105_fixed_chr_and_serial_timing, test_mapper105_dips_and_cpu_irq,
         test_mmc1a_ram_revision, test_mmc1a_cpu_serial_writes, test_mmc1a_ram_layouts_and_loader,
         test_mmc1_outer_and_fixed_banks, test_mmc2_banks_and_latches,
         test_mmc4_latches_and_chr_ram, test_mmc3_banks_and_protection,

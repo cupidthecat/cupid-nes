@@ -75,6 +75,8 @@ bool    cart_set_barcode(const char *digits);
 // MMC6 and MC-ACC keep their board-specific IRQ behavior.
 bool        cart_set_mmc3_revision_name(const char *name);
 const char *cart_mmc3_revision_name(void);
+bool        cart_set_dip_switches(unsigned value);
+unsigned    cart_dip_switches(void);
 
 // Mapper-aware nametable access ($2000-$2FFF decoded by PPU)
 uint8_t cart_nt_read (uint16_t addr, uint8_t *nt_ram);
