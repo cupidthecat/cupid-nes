@@ -84,9 +84,11 @@ static bool parse_nsf(const uint8_t *data, size_t size, NsfImage *image) {
     m->load_address = read_u16(data + 8);
     m->init_address = read_u16(data + 10);
     m->play_address = read_u16(data + 12);
-    copy_fixed_string(m->title, sizeof(m->title), data + 14, 32);
-    copy_fixed_string(m->artist, sizeof(m->artist), data + 46, 32);
-    copy_fixed_string(m->copyright, sizeof(m->copyright), data + 78, 32);
+    /* Classic NSF metadata fields are 32-byte C strings.  Reserve the final
+       byte for the terminator even when a malformed file fills the field. */
+    copy_fixed_string(m->title, sizeof(m->title), data + 14, 31);
+    copy_fixed_string(m->artist, sizeof(m->artist), data + 46, 31);
+    copy_fixed_string(m->copyright, sizeof(m->copyright), data + 78, 31);
     m->play_speed_ntsc = read_u16(data + 110);
     memcpy(m->bank_setup, data + 112, sizeof(m->bank_setup));
     m->play_speed_pal = read_u16(data + 120);
@@ -99,8 +101,8 @@ static bool parse_nsf(const uint8_t *data, size_t size, NsfImage *image) {
 static size_t copy_nsfe_strings(char output[][NSF_TRACK_NAME_BYTES], size_t output_count,
                                 const uint8_t *data, size_t size) {
     size_t item = 0, start = 0;
-    for (size_t i = 0; i <= size && item < output_count; ++i) {
-        if (i != size && data[i]) continue;
+    for (size_t i = 0; i < size && item < output_count; ++i) {
+        if (data[i]) continue;
         size_t length = i - start;
         copy_fixed_string(output[item], NSF_TRACK_NAME_BYTES, data + start, length);
         item++;

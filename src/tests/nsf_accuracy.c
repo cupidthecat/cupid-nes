@@ -21,6 +21,7 @@
 #include "../rom/nsf.h"
 #include "../rom/rom.h"
 #include "../system/timing.h"
+#include "../ui/nsf_frontend.h"
 
 #define CHECK(condition) do { \
     if (!(condition)) { \
@@ -111,6 +112,75 @@ static int test_nsf_init_play_and_tracks(void) {
     CHECK(rom_nsf_select_track(0));
     CHECK(cart_cpu_read(0x6001) == 0);
     CHECK(run_until_init(0) == 0 && rom_nsf_current_track() == 0);
+    return 0;
+}
+
+typedef struct {
+    unsigned lock_calls;
+    unsigned unlock_calls;
+    unsigned expected_track;
+    bool locked;
+    bool reset_seen_while_locked;
+} NsfFrontendGuardState;
+
+static void nsf_test_audio_lock(void *context) {
+    NsfFrontendGuardState *guard = (NsfFrontendGuardState *)context;
+    guard->lock_calls++;
+    guard->locked = true;
+}
+
+static void nsf_test_audio_unlock(void *context) {
+    NsfFrontendGuardState *guard = (NsfFrontendGuardState *)context;
+    guard->unlock_calls++;
+    if (guard->locked
+        && rom_nsf_current_track() == guard->expected_track
+        && cart_cpu_read(0x6001) == 0
+        && cpu.pc == 0x4100)
+        guard->reset_seen_while_locked = true;
+    guard->locked = false;
+}
+
+static int wait_for_play_call(void) {
+    for (unsigned i = 0; i < 1000 && cart_cpu_read(0x6001) == 0; ++i)
+        (void)cpu_step(&cpu);
+    return cart_cpu_read(0x6001) ? 0 : -1;
+}
+
+static int test_nsf_frontend_track_controls(void) {
+    cpu_use_default_startup_alignment();
+    uint8_t payload[0x100];
+    uint8_t image[0x180];
+    make_play_program(payload, sizeof(payload));
+    size_t size = make_nsf(image, sizeof(image), 0, 0, 1000, 1000, 1,
+                           payload, sizeof(payload));
+    CHECK(size != 0 && load_rom_memory(image, size) == 0 && power_music() == 0);
+    CHECK(run_until_init(0) == 0 && wait_for_play_call() == 0);
+
+    NsfFrontendGuardState guard = {0};
+    unsigned selected = 0;
+    guard.expected_track = 1;
+    CHECK(nsf_frontend_step_track(-1, nsf_test_audio_lock, nsf_test_audio_unlock,
+                                  &guard, &selected));
+    CHECK(selected == 1 && guard.lock_calls == 1 && guard.unlock_calls == 1);
+    CHECK(!guard.locked && guard.reset_seen_while_locked);
+    CHECK(run_until_init(1) == 0 && wait_for_play_call() == 0);
+
+    memset(&guard, 0, sizeof(guard));
+    guard.expected_track = 0;
+    CHECK(nsf_frontend_step_track(1, nsf_test_audio_lock, nsf_test_audio_unlock,
+                                  &guard, &selected));
+    CHECK(selected == 0 && guard.lock_calls == 1 && guard.unlock_calls == 1);
+    CHECK(!guard.locked && guard.reset_seen_while_locked);
+    CHECK(run_until_init(0) == 0 && wait_for_play_call() == 0);
+
+    uint8_t rom[16 + 0x4000 + 0x2000] = {0};
+    memcpy(rom, "NES\x1A", 4);
+    rom[4] = 1; rom[5] = 1;
+    CHECK(load_rom_memory(rom, sizeof(rom)) == 0 && !rom_is_nsf());
+    memset(&guard, 0, sizeof(guard));
+    CHECK(!nsf_frontend_step_track(1, nsf_test_audio_lock, nsf_test_audio_unlock,
+                                   &guard, &selected));
+    CHECK(guard.lock_calls == 0 && guard.unlock_calls == 0);
     return 0;
 }
 
@@ -460,6 +530,118 @@ static int test_nsf_expansion_audio(void) {
     return 0;
 }
 
+static void configure_nsf_audio(uint8_t chips) {
+    if (chips & NSF_SOUND_MMC5) write_mem(0x5011, 0x20);
+    if (chips & NSF_SOUND_FDS) {
+        write_mem(0x4089, 0x80);
+        for (uint16_t address = 0x4040; address <= 0x407F; ++address)
+            write_mem(address, 0x3F);
+        write_mem(0x4089, 0);
+        write_mem(0x4080, 0xBF);
+        write_mem(0x4082, 0xFF);
+        write_mem(0x4083, 0x0F);
+    }
+    if (chips & NSF_SOUND_NAMCO163) {
+        write_mem(0xF800, 0x80);
+        write_mem(0x4800, 0xFF);
+        static const uint8_t registers[][2] = {
+            {0x78, 0x01}, {0x7A, 0x00}, {0x7C, 0x00}, {0x7E, 0x00}, {0x7F, 0x0F}
+        };
+        for (size_t i = 0; i < sizeof(registers) / sizeof(registers[0]); ++i) {
+            write_mem(0xF800, registers[i][0]);
+            write_mem(0x4800, registers[i][1]);
+        }
+    }
+    if (chips & NSF_SOUND_VRC6) {
+        write_mem(0x9000, 0x8F);
+        write_mem(0x9001, 0x00);
+        write_mem(0x9002, 0x80);
+    }
+    if (chips & NSF_SOUND_SUNSOFT5B) {
+        write_mem(0xC000, 8);
+        write_mem(0xE000, 0x0F);
+        write_mem(0xC000, 7);
+        write_mem(0xE000, 0x3F);
+    }
+    if (chips & NSF_SOUND_VRC7) {
+        write_mem(0x9010, 0x30);
+        write_mem(0x9030, 0x10);
+        write_mem(0x9010, 0x10);
+        write_mem(0x9030, 0x80);
+        write_mem(0x9010, 0x20);
+        write_mem(0x9030, 0x15);
+    }
+}
+
+static float nsf_audio_peak(unsigned cycles) {
+    float peak = fabsf(cart_expansion_audio());
+    for (unsigned i = 0; i < cycles; ++i) {
+        cart_clock_cpu_cycle(false);
+        float sample = fabsf(cart_expansion_audio());
+        if (sample > peak) peak = sample;
+    }
+    return peak;
+}
+
+static int test_nsf_expansion_combinations_and_reset(void) {
+    for (unsigned mask = 0; mask <= NSF_SOUND_SUPPORTED; ++mask) {
+        CHECK(load_audio_nsf((uint8_t)mask) == 0);
+        configure_nsf_audio((uint8_t)mask);
+        float peak = nsf_audio_peak(10000);
+        if (mask) CHECK(peak > 0.0001f);
+        else CHECK(peak == 0.0f);
+
+        if (mask & NSF_SOUND_MMC5) {
+            write_mem(0x5205, 13);
+            write_mem(0x5206, 7);
+            CHECK(read_mem(0x5205) == 91 && read_mem(0x5206) == 0);
+        }
+        CHECK(rom_nsf_select_track(1));
+        CHECK(fabsf(cart_expansion_audio()) < 0.000001f);
+        if (mask & NSF_SOUND_MMC5)
+            CHECK(read_mem(0x5205) == 0 && read_mem(0x5206) == 0);
+        if (mask & NSF_SOUND_NAMCO163) {
+            write_mem(0xF800, 0x00);
+            CHECK(read_mem(0x4800) == 0);
+        }
+    }
+
+    const uint8_t overlap = NSF_SOUND_NAMCO163 | NSF_SOUND_SUNSOFT5B;
+    CHECK(load_audio_nsf(overlap) == 0);
+    write_mem(0xC000, 8);
+    write_mem(0xE000, 0x0F);
+    write_mem(0xC000, 7);
+    write_mem(0xE000, 0x3F);
+    float sunsoft = cart_expansion_audio();
+    CHECK(sunsoft < -0.001f);
+    write_mem(0xC000, 8);
+    write_mem(0xF800, 0x00);
+    CHECK(fabsf(cart_expansion_audio() - sunsoft) < 0.000001f);
+    write_mem(0xE000, 0x00);
+    CHECK(fabsf(cart_expansion_audio()) < 0.000001f);
+    write_mem(0xF800, 0x80);
+    write_mem(0x4800, 0xA5);
+    write_mem(0xF800, 0x00);
+    CHECK(read_mem(0x4800) == 0xA5);
+
+    const uint8_t mixed = NSF_SOUND_MMC5 | NSF_SOUND_VRC6 | NSF_SOUND_SUNSOFT5B;
+    CHECK(load_audio_nsf(mixed) == 0);
+    write_mem(0x5011, 0x20);
+    float mmc5_only = cart_expansion_audio();
+    CHECK(mmc5_only < -0.001f);
+    write_mem(0x9000, 0x8F);
+    write_mem(0x9001, 0x00);
+    write_mem(0x9002, 0x80);
+    float with_vrc6 = cart_expansion_audio();
+    CHECK(with_vrc6 < mmc5_only - 0.001f);
+    write_mem(0xC000, 8);
+    write_mem(0xE000, 0x0F);
+    write_mem(0xC000, 7);
+    write_mem(0xE000, 0x3F);
+    CHECK(cart_expansion_audio() < with_vrc6 - 0.001f);
+    return 0;
+}
+
 static int test_nsfe_fade_and_replacement(void) {
     cpu_use_default_startup_alignment();
     uint8_t program[0x100];
@@ -467,8 +649,20 @@ static int test_nsfe_fade_and_replacement(void) {
     make_play_program(program, sizeof(program));
     size_t size = make_nsfe(file, sizeof(file), program, sizeof(program), false);
     CHECK(load_rom_memory(file, size) == 0 && power_music() == 0);
-    for (unsigned i = 0; i < 1500; ++i) (void)cpu_step(&cpu);
-    CHECK(cart_audio_gain() == 0.0f);
+    CHECK(cart_audio_gain() == 1.0f);
+    float gain = 1.0f;
+    for (unsigned i = 0; i < 2000 && gain >= 1.0f; ++i) {
+        (void)cpu_step(&cpu);
+        gain = cart_audio_gain();
+    }
+    CHECK(gain > 0.0f && gain < 1.0f);
+    for (unsigned i = 0; i < 2000 && gain > 0.0f; ++i) {
+        (void)cpu_step(&cpu);
+        gain = cart_audio_gain();
+    }
+    CHECK(gain == 0.0f);
+    CHECK(rom_nsf_select_track(0));
+    CHECK(cart_audio_gain() == 1.0f);
 
     uint8_t rom[16 + 0x4000 + 0x2000] = {0};
     memcpy(rom, "NES\x1A", 4);
@@ -476,6 +670,46 @@ static int test_nsfe_fade_and_replacement(void) {
     CHECK(load_rom_memory(rom, sizeof(rom)) == 0);
     CHECK(!rom_is_nsf() && !cart_nsf_active());
     CHECK(cart_audio_gain() == 1.0f && cart_expansion_audio() == 0.0f);
+    return 0;
+}
+
+static int test_nsf_metadata_string_boundaries(void) {
+    uint8_t payload[0x20] = {0x60};
+    uint8_t image[0xA0];
+    size_t size = make_nsf(image, sizeof(image), 0, 0, 1000, 1000, 1,
+                           payload, sizeof(payload));
+    memset(image + 14, 'T', 32);
+    memset(image + 46, 'A', 32);
+    memset(image + 78, 'C', 32);
+    NsfImage parsed = {0};
+    CHECK(nsf_parse_image(image, size, &parsed));
+    CHECK(strlen(parsed.metadata.title) == 31 && parsed.metadata.title[30] == 'T');
+    CHECK(strlen(parsed.metadata.artist) == 31 && parsed.metadata.artist[30] == 'A');
+    CHECK(strlen(parsed.metadata.copyright) == 31 && parsed.metadata.copyright[30] == 'C');
+    nsf_image_free(&parsed);
+
+    uint8_t program[0x20] = {0x60};
+    uint8_t file[0x500];
+    memcpy(file, "NSFE", 4);
+    size_t off = 4;
+    uint8_t info[10] = {0};
+    put16(info, 0x8000); put16(info + 2, 0x8000); put16(info + 4, 0x8000);
+    info[8] = 1;
+    off = append_chunk(file, sizeof(file), off, "INFO", info, sizeof(info));
+    uint8_t auth[260];
+    memset(auth, 'L', 255);
+    auth[255] = 0;
+    auth[256] = 'B'; auth[257] = 0;
+    auth[258] = 'C'; auth[259] = 0;
+    off = append_chunk(file, sizeof(file), off, "auth", auth, sizeof(auth));
+    off = append_chunk(file, sizeof(file), off, "DATA", program, sizeof(program));
+    off = append_chunk(file, sizeof(file), off, "NEND", NULL, 0);
+    CHECK(off != 0 && nsf_parse_image(file, off, &parsed));
+    CHECK(strlen(parsed.metadata.title) == 255);
+    CHECK(parsed.metadata.title[0] == 'L' && parsed.metadata.title[254] == 'L');
+    CHECK(strcmp(parsed.metadata.artist, "B") == 0);
+    CHECK(strcmp(parsed.metadata.copyright, "C") == 0);
+    nsf_image_free(&parsed);
     return 0;
 }
 
@@ -521,14 +755,17 @@ static int test_nsf_invalid_images(void) {
 int test_nsf_accuracy(void) {
     int failures = 0;
     failures += test_nsf_init_play_and_tracks();
+    failures += test_nsf_frontend_track_controls();
     failures += test_nsf_pal_and_banking();
     failures += test_nsf_zero_reload_and_irq_mask();
     failures += test_nsf_ppu_clock_only_and_restore();
     failures += test_nsfe_metadata_and_required_chunks();
     failures += test_nsf_expansion_audio();
+    failures += test_nsf_expansion_combinations_and_reset();
     failures += test_nsfe_fade_and_replacement();
+    failures += test_nsf_metadata_string_boundaries();
     failures += test_nsf_invalid_images();
     unload_rom();
-    printf("NSF/NSFe accuracy: 8 groups, %d failures\n", failures);
+    printf("NSF/NSFe accuracy: 11 groups, %d failures\n", failures);
     return failures;
 }

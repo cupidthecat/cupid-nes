@@ -42,6 +42,7 @@
 #include "rom/mapper.h"
 #include <math.h>
 #include "ui/palette_tool.h"
+#include "ui/nsf_frontend.h"
 #include "system/timing.h"
 #include "system/hardware.h"
 #include "system/vs_system.h"
@@ -55,6 +56,16 @@ uint32_t framebuffer[SCREEN_WIDTH * SCREEN_HEIGHT];
 static uint32_t composite_framebuffer[NTSC_COMPOSITE_WIDTH * NTSC_COMPOSITE_HEIGHT];
 
 Joypad pad1 = {0}, pad2 = {0};
+
+static void nsf_audio_lock(void *context) {
+    SDL_AudioDeviceID device = *(SDL_AudioDeviceID *)context;
+    if (device) SDL_LockAudioDevice(device);
+}
+
+static void nsf_audio_unlock(void *context) {
+    SDL_AudioDeviceID device = *(SDL_AudioDeviceID *)context;
+    if (device) SDL_UnlockAudioDevice(device);
+}
 
 static SDL_GameController *controllers[NES_INPUT_PLAYERS];
 static void open_controller(int device) {
@@ -857,7 +868,7 @@ int main(int argc, char *argv[]) {
     ppu_power_on(&ppu);
     apu_power_on(&apu);
     // Print ROM metadata at startup so mapper selection can be checked from the log.
-    if (!rom_is_fds() && !rom_is_studybox()) {
+    if (!rom_is_fds() && !rom_is_studybox() && !rom_is_nsf()) {
         printf("=== ROM Header Info ===\n");
         printf("Signature: %c%c%c 0x%02X\n",
                ines_header.signature[0],
@@ -872,14 +883,22 @@ int main(int argc, char *argv[]) {
         printf("=======================\n");
     }
     
-    if (!rom_is_fds() && !rom_is_studybox()
+    if (!rom_is_fds() && !rom_is_studybox() && !rom_is_nsf()
         && (ines_header.prg_rom_chunks > 1 || (ines_header.flags6 & 0xF0))) {
         printf("WARNING: This ROM likely uses a mapper (mapper number: %d).\n",
             (ines_header.flags7 & 0xF0) | ((ines_header.flags6 & 0xF0) >> 4));
     }
     
-    if (!rom_is_fds() && !rom_is_studybox())
+    if (!rom_is_fds() && !rom_is_studybox() && !rom_is_nsf())
         printf("Mapper detected: %d\n", ((ines_header.flags7 & 0xF0) | ((ines_header.flags6 & 0xF0) >> 4)));
+    if (rom_is_nsf()) {
+        const NsfMetadata *music = rom_nsf_metadata();
+        printf("Music track: %u/%u", rom_nsf_current_track() + 1u,
+               music ? (unsigned)music->total_songs : 0u);
+        if (music && music->track_names[rom_nsf_current_track()][0])
+            printf(" - %s", music->track_names[rom_nsf_current_track()]);
+        printf("\nPage Up/Page Down changes tracks.\n");
+    }
 
 
     printf("Resetting CPU...\n");
@@ -1057,6 +1076,24 @@ int main(int argc, char *argv[]) {
                 int down = (e.type == SDL_KEYDOWN);
     
                 switch (e.key.keysym.sym) {
+                    case SDLK_PAGEUP:
+                    case SDLK_PAGEDOWN:
+                        if (down && !e.key.repeat && rom_is_nsf()) {
+                            const NsfMetadata *music = rom_nsf_metadata();
+                            unsigned track = 0;
+                            if (music && music->total_songs) {
+                                int direction = e.key.keysym.sym == SDLK_PAGEUP ? 1 : -1;
+                                bool changed = nsf_frontend_step_track(direction,
+                                    nsf_audio_lock, nsf_audio_unlock, &audio_dev, &track);
+                                if (changed) {
+                                    printf("Music track: %u/%u", track + 1u,
+                                           (unsigned)music->total_songs);
+                                    if (music->track_names[track][0]) printf(" - %s", music->track_names[track]);
+                                    printf("\n");
+                                }
+                            }
+                        }
+                        break;
                     case SDLK_F10:
                         if (down && rom_is_fds()) fds_set_write_protected(!fds_write_protected());
                         break;
