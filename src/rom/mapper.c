@@ -1235,6 +1235,7 @@ static size_t m96_chr_bank(uint16_t a) {
 static uint8_t m96_ppu_read(uint16_t a) {
     a &= 0x1FFFu;
     if (!C.chr_sz) return (uint8_t)a;
+    if (!C.chr_is_ram && !m96.chr_banking_active) return (uint8_t)a;
     if (C.chr_sz < CHR_BANK_4K) return C.chr[a % C.chr_sz];
     size_t banks = C.chr_sz / CHR_BANK_4K;
     size_t bank = m96_chr_bank(a) % banks;
@@ -6070,6 +6071,7 @@ static struct {
     uint8_t mirroring_bit;
     size_t prg_bank[2];
     uint8_t chr_bank;
+    bool chr_selected;
     bool prg_selected;
     Mirroring mirr;
 } m28;
@@ -6110,6 +6112,7 @@ static void m28_update_state(void) {
             | ((selected | 1u) & inner_mask[game_size])) % banks;
     }
     m28.chr_bank = m28.regs[0] & 0x03;
+    m28.chr_selected = true;
 }
 
 static uint8_t m28_cpu_read(uint16_t a) {
@@ -6177,6 +6180,7 @@ static void m28_cpu_write(uint16_t a, uint8_t v) {
 static uint8_t m28_ppu_read(uint16_t a) {
     a &= 0x1FFF;
     if (!C.chr_sz) return (uint8_t)a;
+    if (!C.chr_is_ram && !m28.chr_selected) return (uint8_t)a;
     if (C.chr_sz < CHR_BANK_8K) return C.chr[a % C.chr_sz];
     size_t banks = C.chr_sz / CHR_BANK_8K;
     size_t bank = m28.chr_bank % banks;

@@ -1999,15 +1999,16 @@ static int test_action53_largest_image(void) {
     CHECK(cart_cpu_read(0x8000) == 0xFE && cart_cpu_read(0x8001) == 1);
     CHECK(cart_cpu_read(0xC000) == 0xFF && cart_cpu_read(0xC001) == 1);
     uint8_t *old_prg = prg_rom;
-    h = action53_header(0x20000, 0);
+    h = action53_header(0x20000, 7); // 8 KiB CHR RAM is present beside CHR ROM.
     h.chr_rom_chunks = 1;
     image = image_for(&h, 0x20000, 0x2000, &bytes);
     CHECK(image != NULL);
     memset(image + sizeof(h) + 0x20000, 0xA6, 0x2000);
     loaded = load_rom_memory(image, bytes);
     CHECK(loaded == 0 && prg_rom != old_prg);
-    CHECK(cart_ppu_read(0x0123) == 0xA6);
+    CHECK(cart_ppu_read(0x0123) == 0x23); // CHR ROM has not been selected yet.
     cart_cpu_write(0x5000, 0);
+    CHECK(cart_ppu_read(0x0123) == 0x23);
     cart_cpu_write(0x8000, 3);
     CHECK(cart_ppu_read(0x0123) == 0xA6);
     Mapper *previous = cart;
@@ -2583,6 +2584,25 @@ static int test_mapper96_banks_latch_and_loader(void) {
     previous_prg = prg_rom;
     previous_chr = chr_rom;
 
+    // CHR ROM starts unmapped even when a separate CHR RAM chip is declared.
+    // The first mapper write selects ROM; the sidecar RAM remains independent.
+    iNESHeader rom_with_sidecar = h;
+    rom_with_sidecar.chr_rom_chunks = 1;
+    rom_with_sidecar.zero[0] = 7;
+    image = image_for(&rom_with_sidecar, 0x20000, 0x2000, &image_size);
+    CHECK(image != NULL);
+    image[sizeof(rom_with_sidecar) + 0x7FFE] = 0xFF;
+    memset(image + sizeof(rom_with_sidecar) + 0x20000, 0xA6, 0x2000);
+    CHECK(load_rom_memory(image, image_size) == 0);
+    free(image);
+    CHECK(cart_ppu_read(0x0123) == 0x23);
+    cart_ppu_write(0x0123, 0x5D);
+    CHECK(cart_ppu_read(0x0123) == 0x23);
+    cart_cpu_write(0xFFFE, 0);
+    CHECK(cart_ppu_read(0x0123) == 0xA6);
+    cart_ppu_write(0x0123, 0x5D);
+    CHECK(cart_ppu_read(0x0123) == 0xA6);
+
     iNESHeader with_work_ram = h;
     with_work_ram.flags10 = 7;
     image = image_for(&with_work_ram, 0x20000, 0, &image_size);
@@ -2622,11 +2642,14 @@ static int test_mapper96_banks_latch_and_loader(void) {
     chr_rom.zero[0] = 0;
     image = image_for(&chr_rom, 0x20000, 0x2000, &image_size);
     CHECK(image != NULL);
+    image[sizeof(chr_rom) + 0x7FFE] = 0xFF;
     memset(image + sizeof(chr_rom) + 0x20000, 0xB7, 0x2000);
     CHECK(load_rom_memory(image, image_size) == 0);
     free(image);
-    CHECK(rom_mapper_number(&ines_header) == 96 && cart_ppu_read(0x0123) == 0xB7);
+    CHECK(rom_mapper_number(&ines_header) == 96 && cart_ppu_read(0x0123) == 0x23);
     cart_ppu_write(0x0123, 0x35);
+    CHECK(cart_ppu_read(0x0123) == 0x23);
+    cart_cpu_write(0xFFFE, 0);
     CHECK(cart_ppu_read(0x0123) == 0xB7);
     return 0;
 }
