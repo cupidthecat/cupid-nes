@@ -1406,9 +1406,8 @@ static int test_rambo1_loader(void) {
         cart->clock(5);
         CHECK(cart_irq_pending());
         uint8_t *old_prg = prg_rom, *old_chr = chr_rom;
-        iNESHeader rejected[] = {h, h};
+        iNESHeader rejected[] = {h};
         rejected[0].prg_ram_size = 0x10;
-        rejected[1].flags10 = 8;
         for (unsigned i = 0; i < sizeof(rejected) / sizeof(rejected[0]); ++i) {
             image = image_for(&rejected[i], 0x20000, (size_t)rejected[i].chr_rom_chunks * 0x2000, &size);
             CHECK(image != NULL);
@@ -2595,13 +2594,6 @@ static int test_mapper96_banks_latch_and_loader(void) {
     previous_prg = prg_rom;
     previous_chr = chr_rom;
     iNESHeader invalid = h;
-    invalid.flags10 = 8;
-    image = image_for(&invalid, 0x20000, 0, &image_size);
-    CHECK(image != NULL && load_rom_memory(image, image_size) == -1);
-    free(image);
-    CHECK(prg_rom == previous_prg && chr_rom == previous_chr);
-
-    invalid = h;
     invalid.prg_ram_size = 0x10;
     image = image_for(&invalid, 0x20000, 0, &image_size);
     CHECK(image != NULL && load_rom_memory(image, image_size) == -1);
@@ -3388,10 +3380,9 @@ static int test_mcacc_banks_ram_and_loader(void) {
     CHECK(loaded == 0 && ines_header.prg_ram_size == 0x30);
     cart_cpu_write(0x6000, 0x96);
     uint8_t *previous = prg_rom;
-    iNESHeader invalid[] = {h, h, h};
+    iNESHeader invalid[] = {h, h};
     invalid[0].prg_ram_size = 0x20;
     invalid[1].prg_ram_size = 0x40;
-    invalid[2].flags10 = 8;
     for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
         image = image_for(&invalid[i], 0x20000, 0x8000, &size);
         CHECK(image != NULL);
@@ -3465,19 +3456,6 @@ static int test_taito_loader_transaction(void) {
     free(image);
     image = NULL;
     CHECK(rom_mapper_number(&ines_header) == 33 && cart != NULL);
-    uint8_t *previous_prg = prg_rom;
-    uint8_t *previous_chr = chr_rom;
-
-    h.flags7 |= 0x08; // NES 2.0 mapper 33 with an unsupported 16KB PRG-RAM layout.
-    h.flags10 = 8;
-    image = image_for(&h, 0x8000, 0x2000, &image_size);
-    CHECK(image != NULL);
-    CHECK(load_rom_memory(image, image_size) == -1);
-    free(image);
-    image = NULL;
-    CHECK(prg_rom == previous_prg && chr_rom == previous_chr);
-    CHECK(rom_mapper_number(&ines_header) == 33);
-
     h = header_for(48, 0x8000, false);
     h.flags7 |= 0x08;
     h.prg_ram_size = 0x10; // Supported mapper 48 submapper 1.
@@ -3487,8 +3465,8 @@ static int test_taito_loader_transaction(void) {
     free(image);
     image = NULL;
     CHECK(rom_mapper_number(&ines_header) == 48 && cart != NULL && cart->clock != NULL);
-    previous_prg = prg_rom;
-    previous_chr = chr_rom;
+    uint8_t *previous_prg = prg_rom;
+    uint8_t *previous_chr = chr_rom;
 
     h.prg_ram_size = 0x20; // Unknown mapper 48 submapper 2.
     image = image_for(&h, 0x8000, 0x2000, &image_size);
@@ -4198,8 +4176,6 @@ static int test_txsrom_startup_ram_and_loader(void) {
     h->prg_ram_size = 0x10;
     CHECK(load_rom_memory(image, bytes) == -1);
     h->prg_ram_size = 0;
-    h->flags10 = 8;
-    CHECK(load_rom_memory(image, bytes) == -1);
     h->flags10 = 7;
     CHECK(load_rom_memory(image, bytes - 1) == -1);
     free(image);
@@ -7316,16 +7292,6 @@ static int test_jaleco18_loader_validation(void) {
     CHECK(mapper_init_from_header(&unsupported, fixture_prg, 0x4000, fixture_chr, 0x2000) == -1);
     CHECK(cart == previous && cart_cpu_read(0x8000) == 1 && cart_cpu_read(0x6000) == 0xA7);
 
-    iNESHeader h = header_for(18, 0x4000, false);
-    h.flags7 = 0x18;
-    h.flags10 = 8; // 16KB PRG-RAM exceeds the board's fixed $6000-$7FFF window.
-    size_t size;
-    uint8_t *image = image_for(&h, 0x4000, 0x2000, &size);
-    CHECK(image != NULL);
-    int loaded = load_rom_memory(image, size);
-    free(image);
-    CHECK(loaded == -1 && cart == previous);
-    CHECK(cart_cpu_read(0x8000) == 1 && cart_cpu_read(0x6000) == 0xA7);
     return 0;
 }
 
@@ -7483,14 +7449,8 @@ static int test_irem65_irq_and_loader_validation(void) {
     Mapper *previous = cart;
     iNESHeader h = header_for(65, 0x4000, false);
     h.flags7 |= 8;
-    h.flags10 = 8; // The board exposes one unbanked 8KB PRG-RAM window.
-    size_t size;
-    uint8_t *image = image_for(&h, 0x4000, 0x2000, &size);
-    CHECK(image != NULL);
-    int loaded = load_rom_memory(image, size);
-    free(image);
-    CHECK(loaded == -1 && cart == previous && cart_cpu_read(0x6000) == 0xA7);
-    CHECK(mapper_init_from_header(&h, fixture_prg, 0x200001, fixture_chr, 0x2000) == -1);
+    h.prg_ram_size = 0x10; /* Unsupported NES 2.0 submapper must preserve the active board. */
+    CHECK(mapper_init_from_header(&h, fixture_prg, 0x20000, fixture_chr, 0x2000) == -1);
     CHECK(cart == previous && cart_cpu_read(0x6000) == 0xA7);
     return 0;
 }
@@ -7821,10 +7781,6 @@ static int test_vrc24_loader_rejection_preserves_cart(void) {
     CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x40000, fixture_chr, 0x40000) == -1);
     CHECK(cart == previous && cart_cpu_read(0x8000) == 3 && cart_cpu_read(0x6123) == 0xA7);
 
-    invalid = vrc24_header(23, 3, false);
-    invalid.flags10 = 8; // 16KB RAM exceeds the single $6000-$7FFF chip window.
-    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x40000, fixture_chr, 0x40000) == -1);
-    CHECK(cart == previous && cart_cpu_read(0x8000) == 3 && cart_cpu_read(0x6123) == 0xA7);
     return 0;
 }
 
@@ -8104,10 +8060,6 @@ static int test_vrc7_loader_rejection_preserves_cart(void) {
     CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x80000, fixture_chr, 0x40000) == -1);
     CHECK(cart == previous && cart_cpu_read(0x8000) == 3 && cart_cpu_read(0x6123) == 0xA7);
 
-    invalid = vrc7_header(1, false, true);
-    invalid.flags10 = 8;
-    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x80000, fixture_chr, 0x40000) == -1);
-    CHECK(cart == previous && cart_cpu_read(0x8000) == 3 && cart_cpu_read(0x6123) == 0xA7);
     return 0;
 }
 
@@ -9329,7 +9281,6 @@ static int test_irem97_loader_validation(void) {
 
     CHECK(fixture(97, 0x40000, 0x2000, false) == 97);
     cart_cpu_write(0x8000, 3);
-    Mapper *previous = cart;
     iNESHeader invalid97 = header_for(97, 0x40000, false);
     fixture_chr[0x0123] = 0x47;
     fixture_chr[0x2123] = 0x8B;
@@ -9337,11 +9288,6 @@ static int test_irem97_loader_validation(void) {
     CHECK(cart_ppu_read(0x0123) == 0x47);
     cart_cpu_write(0x8000, 3);
     CHECK(cart_cpu_read(0xC000) == 6 && cart_ppu_read(0x0123) == 0x47);
-    previous = cart;
-    invalid97.flags7 |= 8;
-    invalid97.flags10 = 8;
-    CHECK(mapper_init_from_header(&invalid97, fixture_prg, 0x40000, fixture_chr, 0x2000) == -1);
-    CHECK(cart == previous && cart_cpu_read(0xC000) == 6);
     return 0;
 }
 

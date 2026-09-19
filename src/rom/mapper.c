@@ -7428,8 +7428,16 @@ static bool bandai_layout(int mapper, uint8_t submapper, bool nes2,
 
 static bool default_prg_ram_geometry_supported(int mapper_no) {
     switch (mapper_no) {
-        case 0: case 2: case 3: case 7: case 11: case 13: case 66:
-        case 79: case 94: case 113: case 144: case 146: case 180:
+        case 0: case 2: case 3: case 4: case 7: case 9: case 10: case 11:
+        case 13: case 15: case 18: case 21: case 22: case 23: case 24:
+        case 25: case 26: case 27: case 28: case 32: case 33: case 48:
+        case 64: case 65: case 66: case 67: case 68: case 71: case 72:
+        case 73: case 74: case 75: case 76: case 78: case 79: case 85:
+        case 87: case 88: case 89: case 92: case 93: case 94: case 95:
+        case 96: case 97: case 101: case 105: case 113: case 118:
+        case 119: case 140: case 144: case 146: case 151: case 154:
+        case 158: case 180: case 184: case 185: case 191: case 192:
+        case 194: case 195: case 206: case 232:
             return true;
         default:
             return false;
