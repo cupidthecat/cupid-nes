@@ -1928,21 +1928,28 @@ static int test_action53_banks_and_mirroring(void) {
     cart_cpu_write(0x8000, 0x02);
     CHECK(cart_ppu_read(0x0123) == 0xC2);
 
-    // Unsupported CHR-RAM geometry fails transactionally through the loader.
+    // Larger declared CHR RAM is accepted; the two-bit selector reaches the
+    // first four 8 KiB pages and leaves later physical pages unreachable.
     size_t image_size;
     iNESHeader valid = action53_header(0x20000, 9);
     uint8_t *image = image_for(&valid, 0x20000, 0, &image_size);
     CHECK(image != NULL && load_rom_memory(image, image_size) == 0);
     free(image);
-    uint8_t *previous_prg = prg_rom;
-    uint8_t *previous_chr = chr_rom;
-    iNESHeader previous_header = ines_header;
-    iNESHeader invalid = action53_header(0x20000, 10); // 64KB exceeds the board's CHR-RAM lines.
-    image = image_for(&invalid, 0x20000, 0, &image_size);
-    CHECK(image != NULL && load_rom_memory(image, image_size) == -1);
+    iNESHeader large = action53_header(0x20000, 10); // 64 KiB CHR RAM.
+    image = image_for(&large, 0x20000, 0, &image_size);
+    CHECK(image != NULL && load_rom_memory(image, image_size) == 0);
     free(image);
-    CHECK(prg_rom == previous_prg && chr_rom == previous_chr);
-    CHECK(memcmp(&ines_header, &previous_header, sizeof(ines_header)) == 0);
+    cart_cpu_write(0x5000, 0);
+    cart_cpu_write(0x8000, 3);
+    cart_ppu_write(0x0123, 0xD4);
+    cart_cpu_write(0x8000, 7);
+    CHECK(cart_ppu_read(0x0123) == 0xD4); // Selector 7 aliases physical page 3.
+    cart_cpu_write(0x8000, 0);
+    CHECK(cart_ppu_read(0x0123) == 0);
+    cart_cpu_write(0x8000, 4);
+    CHECK(cart_ppu_read(0x0123) == 0); // Selector 4 aliases page 0.
+    cart_cpu_write(0x8000, 3);
+    CHECK(cart_ppu_read(0x0123) == 0xD4);
     CHECK(cart_cpu_read(0xC000) == 0x5C);
     unload_rom();
     return 0;
@@ -1995,9 +2002,18 @@ static int test_action53_largest_image(void) {
     h.chr_rom_chunks = 1;
     image = image_for(&h, 0x20000, 0x2000, &bytes);
     CHECK(image != NULL);
+    memset(image + sizeof(h) + 0x20000, 0xA6, 0x2000);
     loaded = load_rom_memory(image, bytes);
+    CHECK(loaded == 0 && prg_rom != old_prg);
+    CHECK(cart_ppu_read(0x0123) == 0xA6);
+    cart_cpu_write(0x5000, 0);
+    cart_cpu_write(0x8000, 3);
+    CHECK(cart_ppu_read(0x0123) == 0xA6);
+    Mapper *previous = cart;
+    uint8_t *previous_prg = prg_rom;
+    CHECK(load_rom_memory(image, bytes - 1) == -1);
     free(image);
-    CHECK(loaded == -1 && prg_rom == old_prg && cart_cpu_read(0x8001) == 1);
+    CHECK(cart == previous && prg_rom == previous_prg && cart_ppu_read(0x0123) == 0xA6);
     return 0;
 }
 
@@ -2190,7 +2206,8 @@ static int test_unrom512_banks_flash_and_mirroring(void) {
     ppu_write(0x3F00, 0x2A);
     CHECK(ppu_read(0x3F00) == 0x2A && fixture_chr[0x7F00] != 0x2A);
 
-    // Malformed flash metadata and undersized four-screen CHR fail transactionally.
+    // Malformed flash metadata still fails transactionally. Four-screen boards
+    // with less than 32 KiB CHR RAM fall back to cartridge nametable RAM.
     iNESHeader valid = unrom512_header(1, false, 9);
     size_t image_size;
     uint8_t *image = image_for(&valid, 0x40000, 0, &image_size);
@@ -2203,13 +2220,18 @@ static int test_unrom512_banks_flash_and_mirroring(void) {
     image = image_for(&invalid, 0x40000, 0, &image_size);
     CHECK(image != NULL && load_rom_memory(image, image_size) == -1);
     free(image);
-    invalid = unrom512_header(1, false, 8);
-    invalid.flags6 |= 0x09;
-    image = image_for(&invalid, 0x40000, 0, &image_size);
-    CHECK(image != NULL && load_rom_memory(image, image_size) == -1);
-    free(image);
     CHECK(prg_rom == previous_prg && chr_rom == previous_chr);
     CHECK(memcmp(&ines_header, &previous_header, sizeof(ines_header)) == 0);
+    iNESHeader small_four = unrom512_header(1, false, 8);
+    small_four.flags6 |= 0x09;
+    image = image_for(&small_four, 0x40000, 0, &image_size);
+    CHECK(image != NULL && load_rom_memory(image, image_size) == 0);
+    free(image);
+    uint8_t small_nt[0x1000] = {0};
+    cart_nt_write(0x2001, 0x35, small_nt);
+    cart_nt_write(0x2C01, 0x53, small_nt);
+    CHECK(cart_nt_read(0x2001, small_nt) == 0x35);
+    CHECK(cart_nt_read(0x2C01, small_nt) == 0x53);
     unload_rom();
     return 0;
 }
@@ -2389,16 +2411,16 @@ static int test_mapper111_banks_flash_and_nametables(void) {
     uint8_t *image = image_for(&h, 0x80000, 0, &image_size);
     CHECK(image != NULL && load_rom_memory(image, image_size) == 0);
     free(image);
-    uint8_t *previous_prg = prg_rom;
-    uint8_t *previous_chr = chr_rom;
-    iNESHeader invalid = h;
-    invalid.zero[0] = 7;
-    image = image_for(&invalid, 0x80000, 0, &image_size);
-    CHECK(image != NULL && load_rom_memory(image, image_size) == -1);
+    iNESHeader smaller_chr = h;
+    smaller_chr.zero[0] = 7; // 8 KiB CHR RAM.
+    image = image_for(&smaller_chr, 0x80000, 0, &image_size);
+    CHECK(image != NULL && load_rom_memory(image, image_size) == 0);
     free(image);
-    CHECK(prg_rom == previous_prg && chr_rom == previous_chr && rom_mapper_number(&ines_header) == 111);
-
-    invalid = h;
+    cart_ppu_write(0x0123, 0x69);
+    CHECK(cart_ppu_read(0x0123) == 0x69);
+    cart_cpu_write(0x5000, 0x10);
+    CHECK(cart_ppu_read(0x0123) == 0x69);
+    iNESHeader invalid = h;
     invalid.flags10 = 7;
     CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x80000, fixture_chr, 0x4000) == -1);
     invalid = h;
@@ -2550,12 +2572,15 @@ static int test_mapper96_banks_latch_and_loader(void) {
     uint8_t *previous_prg = prg_rom;
     uint8_t *previous_chr = chr_rom;
 
-    iNESHeader invalid = h;
-    invalid.zero[0] = 8;
-    image = image_for(&invalid, 0x20000, 0, &image_size);
-    CHECK(image != NULL && load_rom_memory(image, image_size) == -1);
+    iNESHeader smaller_chr = h;
+    smaller_chr.zero[0] = 8; // 16 KiB CHR RAM.
+    image = image_for(&smaller_chr, 0x20000, 0, &image_size);
+    CHECK(image != NULL && load_rom_memory(image, image_size) == 0);
     free(image);
-    CHECK(prg_rom == previous_prg && chr_rom == previous_chr);
+    cart_ppu_write(0x0123, 0x79);
+    CHECK(cart_ppu_read(0x0123) == 0x79);
+    previous_prg = prg_rom;
+    previous_chr = chr_rom;
 
     iNESHeader with_work_ram = h;
     with_work_ram.flags10 = 7;
@@ -2569,7 +2594,7 @@ static int test_mapper96_banks_latch_and_loader(void) {
     CHECK(fixture_with_header(&h, 0x20000, 0x8000) == 96);
     previous_prg = prg_rom;
     previous_chr = chr_rom;
-    invalid = h;
+    iNESHeader invalid = h;
     invalid.flags10 = 8;
     image = image_for(&invalid, 0x20000, 0, &image_size);
     CHECK(image != NULL && load_rom_memory(image, image_size) == -1);
@@ -2583,20 +2608,32 @@ static int test_mapper96_banks_latch_and_loader(void) {
     free(image);
     CHECK(prg_rom == previous_prg && chr_rom == previous_chr);
 
-    invalid = h;
-    invalid.prg_rom_chunks = 4;
-    image = image_for(&invalid, 0x10000, 0, &image_size);
-    CHECK(image != NULL && load_rom_memory(image, image_size) == -1);
+    iNESHeader smaller_prg = h;
+    smaller_prg.prg_rom_chunks = 4;
+    image = image_for(&smaller_prg, 0x10000, 0, &image_size);
+    CHECK(image != NULL);
+    memset(image + sizeof(smaller_prg), 0x31, 0x8000);
+    memset(image + sizeof(smaller_prg) + 0x8000, 0x52, 0x8000);
+    image[sizeof(smaller_prg) + 0x7FFE] = 0xFF;
+    CHECK(load_rom_memory(image, image_size) == 0);
     free(image);
-    CHECK(prg_rom == previous_prg && chr_rom == previous_chr);
+    CHECK(cart_cpu_read(0x8100) == 0x31);
+    cart_cpu_write(0xFFFE, 1);
+    CHECK(cart_cpu_read(0x8100) == 0x52);
+    previous_prg = prg_rom;
+    previous_chr = chr_rom;
 
-    invalid = h;
-    invalid.chr_rom_chunks = 1;
-    invalid.zero[0] = 0;
-    image = image_for(&invalid, 0x20000, 0x2000, &image_size);
-    CHECK(image != NULL && load_rom_memory(image, image_size) == -1);
+    iNESHeader chr_rom = h;
+    chr_rom.chr_rom_chunks = 1;
+    chr_rom.zero[0] = 0;
+    image = image_for(&chr_rom, 0x20000, 0x2000, &image_size);
+    CHECK(image != NULL);
+    memset(image + sizeof(chr_rom) + 0x20000, 0xB7, 0x2000);
+    CHECK(load_rom_memory(image, image_size) == 0);
     free(image);
-    CHECK(prg_rom == previous_prg && chr_rom == previous_chr && rom_mapper_number(&ines_header) == 96);
+    CHECK(rom_mapper_number(&ines_header) == 96 && cart_ppu_read(0x0123) == 0xB7);
+    cart_ppu_write(0x0123, 0x35);
+    CHECK(cart_ppu_read(0x0123) == 0xB7);
     return 0;
 }
 
@@ -6866,8 +6903,17 @@ static int test_namco108_submapper_loader_and_chr_ram(void) {
     CHECK(cart == previous && cart_cpu_read(0x8000) == 0xC3);
 
     invalid = h;
-    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x10000, fixture_chr, 0x40000) == -1);
-    CHECK(cart == previous && cart_cpu_read(0x8000) == 0xC3);
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x10000, fixture_chr, 0x40000) == 206);
+    CHECK(cart_cpu_read(0x8000) == 0 && cart_cpu_read(0xA000) == 1);
+    CHECK(cart_cpu_read(0xC000) == 2 && cart_cpu_read(0xE000) == 3);
+    namco108_write_bank(6, 7);
+    CHECK(cart_cpu_read(0x8000) == 0 && cart_cpu_read(0xE000) == 3);
+    CHECK(mapper_init_from_header(&active, prg_rom, 0x200000, chr_rom, 0x40000) == 206);
+    namco108_write_bank(6, 0xC3);
+    namco108_write_bank(2, 0x85);
+    cart_cpu_write(0x6123, 0xA6);
+    previous = cart;
+    CHECK(cart_cpu_read(0x8000) == 0xC3 && cart_ppu_read(0x1000) == 0x85);
     image = image_for(&load_h, 0x200000, 0x40000, &size);
     CHECK(image != NULL);
     CHECK(load_rom_memory(image, size - 1) == -1);
@@ -10457,6 +10503,163 @@ static int test_native_reduced_prg_page_geometry(void) {
     return 0;
 }
 
+static int test_remaining_native_geometry_caps(void) {
+    size_t size;
+    uint8_t *image;
+
+    // Action 53 shrinks a 16 KiB native PRG page to a 12 KiB image. Two full
+    // copies fit in the CPU window and the final 8 KiB remains open bus.
+    iNESHeader h = action53_header(0x4000, 5);
+    h.prg_rom_chunks = 0x31;
+    h.flags9 = (uint8_t)((h.flags9 & 0xF0u) | 0x0Fu);
+    image = image_for(&h, 0x3000, 0, &size);
+    CHECK(image != NULL);
+    uint8_t *prg = image + sizeof(h);
+    memset(prg, 0x21, 0x1000);
+    memset(prg + 0x1000, 0x42, 0x1000);
+    memset(prg + 0x2000, 0x63, 0x1000);
+    CHECK(load_rom_memory(image, size) == 0);
+    ppu_power_on(&ppu); apu_power_on(&apu); CHECK(cpu_power_on(&cpu));
+    CHECK(discrete_cpu_load(0x8100, 0x21) == 0);
+    CHECK(discrete_cpu_load(0xD100, 0x63) == 0);
+    CHECK(discrete_cpu_load(0xE100, 0xE1) == 0);
+    cart_ppu_write(0x0123, 0x91);
+    CHECK(cart_ppu_read(0x0123) == 0x91 && cart_ppu_read(0x0923) == 0x91);
+    cart_cpu_write(0x5000, 1); cart_cpu_write(0x8000, 7);
+    CHECK(discrete_cpu_load(0x8100, 0x21) == 0);
+    Mapper *previous = cart; uint8_t *previous_prg = prg_rom;
+    CHECK(load_rom_memory(image, size - 1) == -1);
+    CHECK(cart == previous && prg_rom == previous_prg);
+    free(image);
+
+    // UNROM 512 accepts an irregular three-page image. Reads wrap complete
+    // 16 KiB pages, while flash writes keep their raw physical bank address.
+    h = unrom512_header(1, true, 5);
+    h.prg_rom_chunks = 0x39; h.flags9 = (uint8_t)((h.flags9 & 0xF0u) | 0x0Fu);
+    image = image_for(&h, 0xC000, 0, &size);
+    CHECK(image != NULL); prg = image + sizeof(h);
+    memset(prg, 0x31, 0x4000); memset(prg + 0x4000, 0x52, 0x4000); memset(prg + 0x8000, 0x73, 0x4000);
+    CHECK(load_rom_memory(image, size) == 0);
+    ppu_power_on(&ppu); apu_power_on(&apu); CHECK(cpu_power_on(&cpu));
+    cart_ppu_write(0x0123, 0xA2);
+    CHECK(cart_ppu_read(0x0123) == 0xA2 && cart_ppu_read(0x0923) == 0xA2);
+    cart_cpu_write(0xC000, 7);
+    CHECK(discrete_cpu_load(0x8100, 0x52) == 0 && discrete_cpu_load(0xC100, 0x73) == 0);
+    unrom512_flash_command(0xA0); cart_cpu_write(0xC000, 7); cart_cpu_write(0x8123, 0x00);
+    CHECK(cart_cpu_read(0x8123) == 0x52);
+    unrom512_flash_command(0xA0); cart_cpu_write(0xC000, 1); cart_cpu_write(0x8123, 0x00);
+    CHECK(cart_cpu_read(0x8123) == 0x00);
+    previous = cart; previous_prg = prg_rom;
+    CHECK(load_rom_memory(image, size - 1) == -1 && cart == previous && prg_rom == previous_prg);
+    free(image);
+
+    // Oeka Kids accepts a non-128 KiB PRG image. The complete 32 KiB page is
+    // banked normally and the trailing 16 KiB cannot form another page.
+    h = m96_header(); h.zero[0] = 5; h.prg_rom_chunks = 0x39; h.flags9 = (uint8_t)((h.flags9 & 0xF0u) | 0x0Fu);
+    image = image_for(&h, 0xC000, 0, &size); CHECK(image != NULL); prg = image + sizeof(h);
+    memset(prg, 0x41, 0x8000); memset(prg + 0x8000, 0x82, 0x4000); prg[0x7FFE] = 0xFF;
+    CHECK(load_rom_memory(image, size) == 0);
+    ppu_power_on(&ppu); apu_power_on(&apu); CHECK(cpu_power_on(&cpu));
+    CHECK(discrete_cpu_load(0x8100, 0x41) == 0 && discrete_cpu_load(0xE100, 0x41) == 0);
+    CHECK(discrete_cpu_store(0xFFFE, 7) == 0 && discrete_cpu_load(0x8100, 0x41) == 0);
+    cart_ppu_write(0x0123, 0xA6);
+    CHECK(cart_ppu_read(0x0123) == 0xA6 && cart_ppu_read(0x0923) == 0xA6);
+    previous = cart; previous_prg = prg_rom;
+    CHECK(load_rom_memory(image, size - 1) == -1 && cart == previous && prg_rom == previous_prg);
+    free(image);
+
+    // GTROM has the same complete-page/read versus physical-flash distinction
+    // with 32 KiB pages.
+    h = m111_header(); h.zero[0] = 5; h.prg_rom_chunks = 0x39; h.flags9 = (uint8_t)((h.flags9 & 0xF0u) | 0x0Fu);
+    image = image_for(&h, 0xC000, 0, &size); CHECK(image != NULL); prg = image + sizeof(h);
+    memset(prg, 0x51, 0x8000); memset(prg + 0x8000, 0x92, 0x4000);
+    CHECK(load_rom_memory(image, size) == 0);
+    ppu_power_on(&ppu); apu_power_on(&apu); CHECK(cpu_power_on(&cpu));
+    cart_cpu_write(0x5000, 3); CHECK(discrete_cpu_load(0x8100, 0x51) == 0);
+    m111_flash_command(0xA0); cart_cpu_write(0x8123, 0x00); CHECK(cart_cpu_read(0x8123) == 0x51);
+    cart_cpu_write(0x5000, 0); m111_flash_command(0xA0); cart_cpu_write(0x8123, 0x00); CHECK(cart_cpu_read(0x8123) == 0x00);
+    cart_cpu_write(0x5000, 0x10); cart_ppu_write(0x0123, 0xB7);
+    CHECK(cart_ppu_read(0x0123) == 0xB7 && cart_ppu_read(0x0923) == 0xB7);
+    previous = cart; previous_prg = prg_rom;
+    CHECK(load_rom_memory(image, size - 1) == -1 && cart == previous && prg_rom == previous_prg);
+    free(image);
+
+    // Namco 108 submapper 1 fixes four CPU slots starting at page zero. With
+    // two physical 8 KiB pages the slots wrap 0,1,0,1.
+    h = header_for(206, 0x4000, false); h.flags7 |= 8; h.prg_ram_size = 0x10;
+    image = image_for(&h, 0x4000, 0x2000, &size); CHECK(image != NULL); prg = image + sizeof(h);
+    memset(prg, 0x61, 0x2000); memset(prg + 0x2000, 0x82, 0x2000);
+    uint8_t *chr = prg + 0x4000;
+    for (unsigned bank = 0; bank < 8; ++bank) memset(chr + bank * 0x0400, (int)bank, 0x0400);
+    CHECK(load_rom_memory(image, size) == 0);
+    ppu_power_on(&ppu); apu_power_on(&apu); CHECK(cpu_power_on(&cpu));
+    CHECK(discrete_cpu_load(0x8100, 0x61) == 0 && discrete_cpu_load(0xA100, 0x82) == 0);
+    CHECK(discrete_cpu_load(0xC100, 0x61) == 0 && discrete_cpu_load(0xE100, 0x82) == 0);
+    namco108_write_bank(6, 1); CHECK(discrete_cpu_load(0x8100, 0x61) == 0);
+    namco108_write_bank(2, 5); CHECK(cart_ppu_read(0x1000) == 5);
+    previous = cart; previous_prg = prg_rom;
+    CHECK(load_rom_memory(image, size - 1) == -1 && cart == previous && prg_rom == previous_prg);
+    free(image);
+
+    // Mapper 105's fixed CHR RAM can be smaller than MMC1's nominal 4 KiB
+    // page. A 2 KiB device remains writable and aliases across PPU space.
+    h = header_for(105, 0x40000, true); h.flags7 |= 8; h.flags10 = 7;
+    h.zero[0] = 5; // 2 KiB CHR RAM.
+    image = image_for(&h, 0x40000, 0, &size); CHECK(image != NULL);
+    CHECK(load_rom_memory(image, size) == 0);
+    cart_ppu_write(0x0123, 0xA5);
+    CHECK(cart_ppu_read(0x0123) == 0xA5 && cart_ppu_read(0x0923) == 0xA5);
+    cart_ppu_write(0x0923, 0xB6);
+    CHECK(cart_ppu_read(0x0123) == 0xB6 && cart_ppu_read(0x1123) == 0xB6);
+    serial_write(0xA000, 7); CHECK(cart_ppu_read(0x0123) == 0xB6);
+    previous = cart; previous_prg = prg_rom;
+    CHECK(load_rom_memory(image, size - 1) == -1 && cart == previous && prg_rom == previous_prg);
+    free(image);
+
+    // TxSROM also shrinks its native 1 KiB CHR pages. Eight 512-byte slots
+    // cover the first 4 KiB and the upper pattern-table half stays open bus.
+    h = header_for(118, 0x20000, false); h.flags7 |= 8; h.flags10 = 7;
+    h.chr_rom_chunks = 0x24; h.flags9 = (uint8_t)((h.flags9 & 0x0Fu) | 0xF0u);
+    image = image_for(&h, 0x20000, 0x0200, &size); CHECK(image != NULL);
+    memset(image + sizeof(h) + 0x20000, 0xB6, 0x0200);
+    CHECK(load_rom_memory(image, size) == 0);
+    CHECK(cart_ppu_read(0x0123) == 0xB6 && cart_ppu_read(0x1123) == 0x23);
+    cart_cpu_write(0x8000, 2); cart_cpu_write(0x8001, 7);
+    CHECK(cart_ppu_read(0x0123) == 0xB6);
+    previous = cart; previous_prg = prg_rom;
+    CHECK(load_rom_memory(image, size - 1) == -1 && cart == previous && prg_rom == previous_prg);
+    free(image);
+
+    // With 512 bytes of CHR RAM, TxSROM's selected 512-byte pages cover the
+    // first 4 KiB and the default RAM mapping aliases through the upper half.
+    h = header_for(118, 0x20000, true); h.flags7 |= 8; h.flags10 = 7;
+    h.zero[0] = 3; // 512-byte CHR RAM.
+    image = image_for(&h, 0x20000, 0, &size); CHECK(image != NULL);
+    CHECK(load_rom_memory(image, size) == 0);
+    free(image);
+    cart_ppu_write(0x0123, 0xC7);
+    CHECK(cart_ppu_read(0x0123) == 0xC7 && cart_ppu_read(0x1123) == 0xC7);
+    cart_ppu_write(0x1123, 0x6D);
+    CHECK(cart_ppu_read(0x0123) == 0x6D);
+    cart_cpu_write(0x8000, 2); cart_cpu_write(0x8001, 7);
+    CHECK(cart_ppu_read(0x0123) == 0x6D);
+
+    // LROG017 shrinks its ROM-backed 2 KiB slot while retaining the separate
+    // writable CHR region above $07FF.
+    h = header_for(77, 0x8000, false); h.flags7 |= 8; h.zero[0] = 7;
+    h.chr_rom_chunks = 0x28; h.flags9 = (uint8_t)((h.flags9 & 0x0Fu) | 0xF0u);
+    image = image_for(&h, 0x8000, 0x0400, &size); CHECK(image != NULL);
+    memset(image + sizeof(h) + 0x8000, 0xC7, 0x0400);
+    CHECK(load_rom_memory(image, size) == 0);
+    CHECK(cart_ppu_read(0x0123) == 0xC7 && cart_ppu_read(0x0523) == 0x23);
+    cart_ppu_write(0x0801, 0x35); CHECK(cart_ppu_read(0x0801) == 0x35);
+    previous = cart; previous_prg = prg_rom;
+    CHECK(load_rom_memory(image, size - 1) == -1 && cart == previous && prg_rom == previous_prg);
+    free(image);
+    CHECK(unload_rom());
+    return 0;
+}
+
 static void small_chr_board_bank_write(unsigned mapper) {
     switch (mapper) {
         case 66:  cart_cpu_write(0x8000, 0x30); break;
@@ -11339,7 +11542,7 @@ int test_mapper_accuracy(void) {
         test_nina_cpu_decode_and_mirroring, test_nina_chr_ram_banks,
         test_discrete_followup_loader_and_ram, test_mapper180_full_prg_range,
         test_uxrom94_180_sub16_prg_geometry, test_native_8k_prg_page_geometry,
-        test_native_reduced_prg_page_geometry,
+        test_native_reduced_prg_page_geometry, test_remaining_native_geometry_caps,
         test_native_shrunk_chr8_windows, test_discrete_followup_page_geometry,
         test_discrete_followup_ignored_submappers,
         test_discrete_followup_saves,

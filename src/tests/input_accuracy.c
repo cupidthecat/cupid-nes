@@ -2426,11 +2426,13 @@ static int oeka_kids_cartridge_and_tablet(void) {
         CHECK(read_mem(0x8100) == 0x51 && ppu_read(0x0123) == 0xA2);
     }
 
-    Mapper *previous = cart;
     image[11] = 8;
-    CHECK(load_rom_memory(image, sizeof(image)) == -1 && cart == previous);
+    CHECK(load_rom_memory(image, sizeof(image)) == 0);
+    CHECK(rom_mapper_number(&ines_header) == 96 && chr_size == 0x4000);
     CHECK(joypad_expansion_device() == NES_EXPANSION_OEKA_KIDS_TABLET);
-    CHECK(read_mem(0x8100) == 0x51 && ppu_read(0x1123) == 0xA3);
+    ppu_write(0x0123, 0xB4);
+    CHECK(ppu_read(0x0123) == 0xB4);
+    CHECK(read_mem(0x8100) == 0x50);
     CHECK(joypad_set_adapter(NES_ADAPTER_FAMICOM_TWO));
     CHECK(!joypad_configuration_valid());
     CHECK(joypad_set_adapter(NES_ADAPTER_NONE) && joypad_configuration_valid());

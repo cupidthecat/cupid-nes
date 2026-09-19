@@ -90,21 +90,11 @@ static bool mapper_supported(int mapper) {
         || mapper == 99 || mapper == 151;
 }
 
-static bool mapper99_layout_supported(const iNESHeader *header, const VsRomConfig *config,
-                                      size_t prg_bytes, size_t chr_bytes) {
-    if (!header->chr_rom_chunks) return false;
-    if (config->dual)
-        return (prg_bytes == 0xC000 || prg_bytes == 0x10000) && chr_bytes == 0x8000;
-    if (config->type == VS_TYPE_RAID_ON_BUNGELING_BAY)
-        return prg_bytes == 0xC000 && (chr_bytes == 0x2000 || chr_bytes == 0x4000);
-    return (prg_bytes == 0x8000 || prg_bytes == 0xA000 || prg_bytes == 0xC000)
-        && (chr_bytes == 0x2000 || chr_bytes == 0x4000);
-}
-
 bool vs_decode_header(const iNESHeader *header, int mapper, size_t prg_bytes,
                       size_t chr_bytes, VsRomConfig *config,
                       char *reason, size_t reason_size) {
     if (!header || !config) return false;
+    (void)chr_bytes;
     memset(config, 0, sizeof(*config));
     config->type = VS_TYPE_DEFAULT;
     config->ppu_model = VS_PPU_2C03;
@@ -188,10 +178,6 @@ bool vs_decode_header(const iNESHeader *header, int mapper, size_t prg_bytes,
     }
     if (config->dual && mapper != 99) {
         set_reason(reason, reason_size, "dual VS System requires mapper 99");
-        return false;
-    }
-    if (mapper == 99 && !mapper99_layout_supported(header, config, prg_bytes, chr_bytes)) {
-        set_reason(reason, reason_size, "unsupported mapper 99 PRG/CHR layout");
         return false;
     }
     return true;

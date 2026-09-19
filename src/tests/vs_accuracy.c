@@ -577,6 +577,49 @@ static int test_mapper99_banks(void) {
     write_mem(0x4016, 0x04);
     CHECK(cart_cpu_read(0x8000) == 4 && cart_ppu_read(0) == 0x21);
     unload_rom();
+
+    // The reference page mapper accepts reduced and irregular mapper 99 images.
+    // Two complete 8 KiB PRG pages wrap across the four CPU slots while a
+    // smaller CHR page occupies only the covered portion of PPU space.
+    h = nes20_vs_header(99, 1, 1, VS_TYPE_DEFAULT, 0, VS_INPUT_STANDARD);
+    h.prg_rom_chunks = 0x38; // 16 KiB PRG.
+    h.chr_rom_chunks = 0x30; // 4 KiB CHR.
+    h.flags9 = 0xFF;
+    image = build_image(&h, 0x4000, 0x1000, &image_size);
+    CHECK(image != NULL);
+    prg = image + sizeof(h);
+    chr = prg + 0x4000;
+    memset(prg, 0x31, 0x2000);
+    memset(prg + 0x2000, 0x52, 0x2000);
+    memset(chr, 0xA3, 0x1000);
+    CHECK(load_rom_memory(image, image_size) == 0);
+    CHECK(cart_cpu_read(0x8100) == 0x31 && cart_cpu_read(0xA100) == 0x52);
+    CHECK(cart_cpu_read(0xC100) == 0x31 && cart_cpu_read(0xE100) == 0x52);
+    CHECK(cart_ppu_read(0x0123) == 0xA3 && cart_ppu_read(0x1123) == 0x23);
+    write_mem(0x4016, 0x04);
+    CHECK(cart_cpu_read(0x8100) == 0x31 && cart_ppu_read(0x0123) == 0xA3);
+    Mapper *previous = cart;
+    uint8_t *previous_prg = prg_rom;
+    CHECK(load_rom_memory(image, image_size - 1) == -1);
+    CHECK(cart == previous && prg_rom == previous_prg);
+    CHECK(cart_cpu_read(0xA100) == 0x52 && cart_ppu_read(0x1123) == 0x23);
+    free(image);
+    unload_rom();
+
+    // Explicit 4 KiB CHR RAM shrinks mapper 99's CHR page and aliases through
+    // the pattern-table window. OUT0 cannot select a nonexistent second page.
+    h = nes20_vs_header(99, 2, 0, VS_TYPE_DEFAULT, 0, VS_INPUT_STANDARD);
+    h.zero[0] = 6; // 4 KiB CHR RAM.
+    image = build_image(&h, 0x8000, 0, &image_size);
+    CHECK(image != NULL && load_rom_memory(image, image_size) == 0);
+    free(image);
+    cart_ppu_write(0x0123, 0xA5);
+    CHECK(cart_ppu_read(0x0123) == 0xA5 && cart_ppu_read(0x1123) == 0xA5);
+    write_mem(0x4016, 0x04);
+    CHECK(cart_ppu_read(0x0123) == 0xA5 && cart_ppu_read(0x1123) == 0xA5);
+    cart_ppu_write(0x1123, 0x5A);
+    CHECK(cart_ppu_read(0x0123) == 0x5A);
+    unload_rom();
     return 0;
 }
 

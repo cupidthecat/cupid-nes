@@ -21,6 +21,7 @@ CORE_CXX_SRC = src/apu/epsm.cpp src/third_party/ymfm/ymfm_opn.cpp \
 TEST_SRC = src/tests/accuracy_test.c src/tests/cpu_accuracy.c \
            src/tests/cpu_trace.c src/tests/apu_accuracy.c \
            src/tests/ppu_accuracy.c src/tests/mapper_accuracy.c \
+           src/tests/native_flash_geometry_accuracy.c \
            src/tests/fds_accuracy.c src/tests/studybox_accuracy.c src/tests/nsf_accuracy.c \
            src/tests/rom_runner.c src/tests/input_accuracy.c src/tests/bandai_accuracy.c \
            src/tests/vs_accuracy.c src/tests/epsm_accuracy.c src/tests/board_accuracy.c \

@@ -718,16 +718,16 @@ static size_t mapper_chr_page_size(uint16_t mapper_no) {
 
 static bool mapper_has_shrinking_chr_window(uint16_t mapper_no) {
     switch (mapper_no) {
-        case 0: case 1: case 2: case 3: case 7: case 9: case 10: case 11:
+        case 0: case 1: case 2: case 3: case 4: case 7: case 9: case 10: case 11:
         case 13: case 15: case 16: case 18: case 19: case 21: case 22: case 23:
         case 24:
         case 25: case 26: case 27:
         case 32: case 33: case 34: case 48: case 64: case 65: case 66: case 67:
         case 68: case 69: case 71: case 72: case 73: case 74: case 75: case 76:
-        case 78:
+        case 77: case 78:
         case 79: case 80: case 82: case 85: case 87: case 88: case 89: case 90:
         case 92:
-        case 93: case 94: case 95: case 97: case 101: case 105: case 113: case 119:
+        case 93: case 94: case 95: case 97: case 99: case 101: case 105: case 113: case 118: case 119:
         case 140: case 144: case 146: case 151: case 153: case 154: case 155:
         case 157: case 158: case 159: case 180: case 183: case 184: case 185:
         case 191: case 192: case 194: case 195: case 206: case 207: case 209:
@@ -1236,17 +1236,21 @@ static size_t m96_chr_bank(uint16_t a) {
 
 static uint8_t m96_ppu_read(uint16_t a) {
     a &= 0x1FFFu;
+    if (!C.chr_sz) return (uint8_t)a;
+    if (C.chr_sz < CHR_BANK_4K) return C.chr[a % C.chr_sz];
     size_t banks = C.chr_sz / CHR_BANK_4K;
-    if (!banks) return 0;
     size_t bank = m96_chr_bank(a) % banks;
     return C.chr[bank * CHR_BANK_4K + (a & 0x0FFFu)];
 }
 
 static void m96_ppu_write(uint16_t a, uint8_t v) {
-    if (!C.chr_is_ram) return;
+    if (!C.chr_is_ram || !C.chr_sz) return;
     a &= 0x1FFFu;
+    if (C.chr_sz < CHR_BANK_4K) {
+        chr_ram_write(a % C.chr_sz, v);
+        return;
+    }
     size_t banks = C.chr_sz / CHR_BANK_4K;
-    if (!banks) return;
     size_t bank = m96_chr_bank(a) % banks;
     chr_ram_write(bank * CHR_BANK_4K + (a & 0x0FFFu), v);
 }
@@ -2570,27 +2574,30 @@ static size_t mmc3_chr_bank_for_slot(uint8_t slot) {
     return bank;
 }
 
-static size_t mmc3_chr_bank(uint16_t a) {
-    return mmc3_chr_bank_for_slot((uint8_t)((a & 0x1FFFu) >> 10));
-}
-
 static uint8_t mmc3_ppu_read(uint16_t a) {
     a &= 0x1FFF;
-    size_t chr_1k_banks = C.chr_sz / CHR_BANK_1K;
-    if (chr_1k_banks == 0) return nrom_ppu_read(a);
-
-    size_t bank = mmc3_chr_bank(a) % chr_1k_banks;
-    return C.chr[bank * CHR_BANK_1K + (a & 0x03FF)];
+    size_t page_size = shrunk_chr_page_size(CHR_BANK_1K);
+    if (!page_size) return chr_unmapped_read(a);
+    size_t slot = a / page_size;
+    if (slot >= 8) return chr_unmapped_read(a);
+    size_t page_count = C.chr_sz / page_size;
+    size_t bank = mmc3_chr_bank_for_slot((uint8_t)slot) % page_count;
+    return C.chr[bank * page_size + (a % page_size)];
 }
 
 static void mmc3_ppu_write(uint16_t a, uint8_t v) {
     if (!C.chr_is_ram) return;
     a &= 0x1FFF;
-    size_t chr_1k_banks = C.chr_sz / CHR_BANK_1K;
-    if (chr_1k_banks == 0) { nrom_ppu_write(a, v); return; }
-
-    size_t bank = mmc3_chr_bank(a) % chr_1k_banks;
-    chr_ram_write(bank * CHR_BANK_1K + (a & 0x03FF), v);
+    size_t page_size = shrunk_chr_page_size(CHR_BANK_1K);
+    if (!page_size) return;
+    size_t slot = a / page_size;
+    if (slot >= 8) {
+        chr_ram_write(a % C.chr_sz, v);
+        return;
+    }
+    size_t page_count = C.chr_sz / page_size;
+    size_t bank = mmc3_chr_bank_for_slot((uint8_t)slot) % page_count;
+    chr_ram_write(bank * page_size + (a % page_size), v);
 }
 
 static bool mmc3_mixed_chr_uses_ram(size_t bank) {
@@ -6089,7 +6096,10 @@ static void m28_update_state(void) {
     static const unsigned inner_mask[4] = {0x01, 0x03, 0x07, 0x0F};
     size_t banks = C.prg_sz / PRG_BANK_16K;
 
-    if (prg_16k) {
+    if (!banks) {
+        m28.prg_bank[0] = 0;
+        m28.prg_bank[1] = 0;
+    } else if (prg_16k) {
         unsigned selected = (outer & outer_mask[game_size]) | (prg_select & inner_mask[game_size]);
         unsigned fixed = (outer & 0x1FE) | (slot_select ? 1u : 0u);
         m28.prg_bank[slot_select ? 0 : 1] = selected % banks;
@@ -6168,13 +6178,20 @@ static void m28_cpu_write(uint16_t a, uint8_t v) {
 
 static uint8_t m28_ppu_read(uint16_t a) {
     a &= 0x1FFF;
+    if (!C.chr_sz) return (uint8_t)a;
+    if (C.chr_sz < CHR_BANK_8K) return C.chr[a % C.chr_sz];
     size_t banks = C.chr_sz / CHR_BANK_8K;
     size_t bank = m28.chr_bank % banks;
     return C.chr[bank * CHR_BANK_8K + a];
 }
 
 static void m28_ppu_write(uint16_t a, uint8_t v) {
+    if (!C.chr_sz) return;
     a &= 0x1FFF;
+    if (C.chr_sz < CHR_BANK_8K) {
+        chr_ram_write(a % C.chr_sz, v);
+        return;
+    }
     size_t banks = C.chr_sz / CHR_BANK_8K;
     size_t bank = m28.chr_bank % banks;
     chr_ram_write(bank * CHR_BANK_8K + a, v);
@@ -6310,7 +6327,8 @@ static void m30_flash_write(size_t physical, uint8_t value) {
 }
 
 static void m30_latch(uint8_t value) {
-    size_t chr_banks = C.chr_sz / CHR_BANK_8K;
+    size_t chr_page_size = C.chr_sz < CHR_BANK_8K ? C.chr_sz : CHR_BANK_8K;
+    size_t chr_banks = chr_page_size ? C.chr_sz / chr_page_size : 1;
     m30.prg_bank = value & 0x1F;
     m30.chr_bank = (uint8_t)(((value >> 5) & 0x03) % chr_banks);
     if (m30.mirroring_bit_enabled) {
@@ -6323,13 +6341,15 @@ static void m30_latch(uint8_t value) {
 
 static uint8_t m30_cpu_read(uint16_t a) {
     if (a < 0x8000) return cart_cpu_bus_input;
-    size_t bank = a < 0xC000 ? m30.prg_bank : C.prg_sz / PRG_BANK_16K - 1;
-    size_t physical = bank * PRG_BANK_16K + (a & 0x3FFF);
     if (m30.flash_writable) {
-        int flash_value = m30_flash_read(physical);
+        int flash_value = m30_flash_read(a);
         if (flash_value >= 0) return (uint8_t)flash_value;
     }
-    return C.prg[physical % C.prg_sz];
+    if (C.prg_sz < PRG_BANK_16K)
+        return repeated_prg_window_read(a, 0x8000, PRG_BANK_32K);
+    size_t banks = C.prg_sz / PRG_BANK_16K;
+    size_t bank = a < 0xC000 ? m30.prg_bank % banks : banks - 1;
+    return C.prg[bank * PRG_BANK_16K + (a & 0x3FFF)];
 }
 
 static void m30_cpu_write(uint16_t a, uint8_t value) {
@@ -6345,12 +6365,20 @@ static void m30_cpu_write(uint16_t a, uint8_t value) {
 
 static uint8_t m30_ppu_read(uint16_t a) {
     a &= 0x1FFF;
-    return C.chr[(size_t)m30.chr_bank * CHR_BANK_8K + a];
+    if (!C.chr_sz) return (uint8_t)a;
+    size_t page_size = C.chr_sz < CHR_BANK_8K ? C.chr_sz : CHR_BANK_8K;
+    size_t pages = C.chr_sz / page_size;
+    size_t bank = m30.chr_bank % pages;
+    return C.chr[bank * page_size + (a % page_size)];
 }
 
 static void m30_ppu_write(uint16_t a, uint8_t value) {
+    if (!C.chr_sz) return;
     a &= 0x1FFF;
-    chr_ram_write((size_t)m30.chr_bank * CHR_BANK_8K + a, value);
+    size_t page_size = C.chr_sz < CHR_BANK_8K ? C.chr_sz : CHR_BANK_8K;
+    size_t pages = C.chr_sz / page_size;
+    size_t bank = m30.chr_bank % pages;
+    chr_ram_write(bank * page_size + (a % page_size), value);
 }
 
 static Mirroring m30_mirr(void) { return m30.mirr; }
@@ -6502,12 +6530,13 @@ static uint8_t m111_cpu_read(uint16_t addr) {
     }
     if (addr < 0x8000) return cart_cpu_bus_input;
 
+    int flash_value = m111_flash_read(addr);
+    if (flash_value >= 0) return (uint8_t)flash_value;
+    if (C.prg_sz < PRG_BANK_32K)
+        return repeated_prg_window_read(addr, 0x8000, PRG_BANK_32K);
     size_t banks = C.prg_sz / PRG_BANK_32K;
-    if (!banks) return cart_cpu_bus_input;
     size_t bank = (m111.bank_latch & 0x0Fu) % banks;
     size_t physical = bank * PRG_BANK_32K + (addr & 0x7FFFu);
-    int flash_value = m111_flash_read(physical);
-    if (flash_value >= 0) return (uint8_t)flash_value;
     return C.prg[physical];
 }
 
@@ -6517,23 +6546,27 @@ static void m111_cpu_write(uint16_t addr, uint8_t value) {
         return;
     }
     if (addr < 0x8000) return;
-    size_t banks = C.prg_sz / PRG_BANK_32K;
-    if (!banks) return;
-    size_t bank = (m111.bank_latch & 0x0Fu) % banks;
+    size_t bank = m111.bank_latch & 0x0Fu;
     size_t physical = bank * PRG_BANK_32K + (addr & 0x7FFFu);
     m111_flash_write(physical, value);
 }
 
 static uint8_t m111_ppu_read(uint16_t addr) {
     addr &= 0x1FFFu;
-    size_t bank = (m111.bank_latch >> 4) & 1u;
-    return C.chr[bank * CHR_BANK_8K + addr];
+    if (!C.chr_sz) return (uint8_t)addr;
+    size_t page_size = C.chr_sz < CHR_BANK_8K ? C.chr_sz : CHR_BANK_8K;
+    size_t pages = C.chr_sz / page_size;
+    size_t bank = ((m111.bank_latch >> 4) & 1u) % pages;
+    return C.chr[bank * page_size + (addr % page_size)];
 }
 
 static void m111_ppu_write(uint16_t addr, uint8_t value) {
+    if (!C.chr_sz) return;
     addr &= 0x1FFFu;
-    size_t bank = (m111.bank_latch >> 4) & 1u;
-    chr_ram_write(bank * CHR_BANK_8K + addr, value);
+    size_t page_size = C.chr_sz < CHR_BANK_8K ? C.chr_sz : CHR_BANK_8K;
+    size_t pages = C.chr_sz / page_size;
+    size_t bank = ((m111.bank_latch >> 4) & 1u) % pages;
+    chr_ram_write(bank * page_size + (addr % page_size), value);
 }
 
 static Mirroring m111_mirr(void) { return MIRROR_FOUR; }
@@ -6751,9 +6784,11 @@ static void irem77_cpu_write(uint16_t a, uint8_t value) {
 static uint8_t irem77_ppu_read(uint16_t a) {
     a &= 0x1FFFu;
     if (a < 0x0800u) {
-        size_t banks = C.chr_sz / 0x0800u;
+        size_t page_size = C.chr_sz < 0x0800u ? C.chr_sz : 0x0800u;
+        if (!page_size || a >= page_size) return (uint8_t)a;
+        size_t banks = C.chr_sz / page_size;
         size_t bank = irem77.chr_bank % banks;
-        return C.chr[bank * 0x0800u + a];
+        return C.chr[bank * page_size + a];
     }
     return irem77_chr_ram[a - 0x0800u];
 }
@@ -7356,6 +7391,8 @@ static uint8_t m99_cpu_read(uint16_t addr) {
     if (addr >= 0x6000 && addr < 0x8000)
         return vs_shared_ram_access_allowed() ? prg_ram_read(addr) : cart_cpu_bus_input;
     if (addr < 0x8000) return cart_cpu_bus_input;
+    if (C.prg_sz < PRG_BANK_8K)
+        return repeated_prg_window_read(addr, 0x8000, PRG_BANK_32K);
 
     unsigned slot = (addr - 0x8000u) >> 13;
     size_t bank;
@@ -7369,8 +7406,9 @@ static uint8_t m99_cpu_read(uint16_t addr) {
     } else {
         bank = slot;
     }
-    size_t offset = bank * PRG_BANK_8K + (addr & 0x1FFFu);
-    return offset < C.prg_sz ? C.prg[offset] : cart_cpu_bus_input;
+    size_t banks = C.prg_sz / PRG_BANK_8K;
+    bank %= banks;
+    return C.prg[bank * PRG_BANK_8K + (addr & 0x1FFFu)];
 }
 
 static void m99_cpu_write(uint16_t addr, uint8_t value) {
@@ -7380,14 +7418,23 @@ static void m99_cpu_write(uint16_t addr, uint8_t value) {
 
 static uint8_t m99_ppu_read(uint16_t addr) {
     addr &= 0x1FFF;
+    size_t page_size = C.chr_sz < CHR_BANK_8K ? C.chr_sz : CHR_BANK_8K;
+    if (!page_size) return (uint8_t)addr;
     size_t bank = (vs_dual_system() ? vs_active_side() * 2u : 0u) + vs_prg_chr_select_bit();
-    size_t offset = bank * CHR_BANK_8K + addr;
-    return offset < C.chr_sz ? C.chr[offset] : (uint8_t)addr;
+    size_t pages = C.chr_sz / page_size;
+    bank %= pages;
+    if (!C.chr_is_ram && addr >= page_size) return (uint8_t)addr;
+    return C.chr[bank * page_size + (addr % page_size)];
 }
 
 static void m99_ppu_write(uint16_t addr, uint8_t value) {
-    (void)addr;
-    (void)value;
+    if (!C.chr_is_ram || !C.chr_sz) return;
+    addr &= 0x1FFF;
+    size_t page_size = C.chr_sz < CHR_BANK_8K ? C.chr_sz : CHR_BANK_8K;
+    size_t pages = C.chr_sz / page_size;
+    size_t bank = ((vs_dual_system() ? vs_active_side() * 2u : 0u)
+                 + vs_prg_chr_select_bit()) % pages;
+    chr_ram_write(bank * page_size + (addr % page_size), value);
 }
 
 static Mirroring m99_mirr(void) { return C.mirr_base; }
@@ -7488,12 +7535,9 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
 
     size_t mixed_chr_ram = mmc3_mixed_chr_expected_ram(mapper_no);
     bool unmapped_chr_storage = false;
-    if (mapper_no == 96) {
-        if (!chr_is_ram || chr_sz != 0x8000) return false;
-        if (nes2 && (ram->chr_ram != 0x8000 || ram->chr_nvram != 0)) return false;
-    } else if (mapper_no == 111) {
-        if (!chr_is_ram || chr_sz != 0x4000) return false;
-        if (nes2 && (ram->chr_ram != 0x4000 || ram->chr_nvram != 0)) return false;
+    if (mapper_no == 111) {
+        if (!chr_is_ram) return false;
+        if (nes2 && (ram->chr_ram != chr_sz || ram->chr_nvram != 0)) return false;
     } else if (mixed_chr_ram) {
         if (chr_is_ram || chr_sz == 0) return false;
         if (nes2 && (ram->chr_ram != mixed_chr_ram || ram->chr_nvram != 0)) return false;
@@ -7526,7 +7570,7 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         case 13: chr_limit = 0x4000; break;
         case 93: chr_limit = CHR_BANK_8K; break;
         case 184: chr_limit = 0x8000; break;
-        case 28: case 30: case 96: chr_limit = 0x8000; break;
+        case 28: case 30: case 96: case 111: chr_limit = SIZE_MAX; break;
         case 18: case 32: case 65: chr_limit = 0x40000; break;
         case 73: chr_limit = CHR_BANK_8K; break;
         case 75: case 151: chr_limit = 0x20000; break;
@@ -7536,7 +7580,6 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         case 76: chr_limit = 0x80000; break;
         case 88: case 154: chr_limit = 0x20000; break;
         case 90: case 209: case 211: chr_limit = 0x200000; break;
-        case 111: chr_limit = 0x4000; break;
         case 85: chr_limit = 0x40000; break;
         case 74: case 191: case 194: chr_limit = 0x0800; break;
         case 192: case 195: chr_limit = 0x1000; break;
@@ -7667,9 +7710,7 @@ int mapper_init_from_header_metadata(const iNESHeader *h,
     // path that repeats whole physical copies through the CPU window.
     size_t prg_page_size = mapper_prg_page_size((uint16_t)mapper_no);
     bool has_native_prg_page = prg_page_size && prg_sz >= prg_page_size;
-    bool reduced_prg_supported = prg_page_size
-        && mapper_no != 28 && mapper_no != 30 && mapper_no != 96
-        && mapper_no != 99 && mapper_no != 111;
+    bool reduced_prg_supported = prg_page_size != 0;
     if (prg_sz < PRG_BANK_16K && !has_native_prg_page && !reduced_prg_supported) {
         fprintf(stderr, "Unsupported PRG size for mapper %d\n", mapper_no);
         return -1;
@@ -7736,8 +7777,7 @@ int mapper_init_from_header_metadata(const iNESHeader *h,
         return -1;
     }
     if (mapper_no == 77
-        && (chr_is_ram || chr_sz < CHR_BANK_2K
-            || ram.chr_nvram || (nes2 && ram.chr_ram != CHR_BANK_8K))) {
+        && (chr_is_ram || ram.chr_nvram || (nes2 && ram.chr_ram != CHR_BANK_8K))) {
         fprintf(stderr, "Unsupported ROM/RAM size for mapper 77\n");
         return -1;
     }
@@ -7745,22 +7785,11 @@ int mapper_init_from_header_metadata(const iNESHeader *h,
         fprintf(stderr, "Unsupported ROM/RAM size for mapper 185\n");
         return -1;
     }
-    if (mapper_no == 118 && chr_sz < CHR_BANK_1K) {
-        fprintf(stderr, "Unsupported ROM size for mapper 118\n");
-        return -1;
-    }
     if (mmc3_mixed_chr_expected_ram(mapper_no) && chr_is_ram) {
         fprintf(stderr, "Unsupported ROM size for mapper %d\n", mapper_no);
         return -1;
     }
-    if (mapper_no == 28
-        && (!chr_is_ram || (chr_sz != 0x2000 && chr_sz != 0x4000 && chr_sz != 0x8000))) {
-        fprintf(stderr, "Unsupported ROM/RAM size for mapper 28\n");
-        return -1;
-    }
-    if (mapper_no == 30 && (prg_sz > 0x80000 || (prg_sz & (prg_sz - 1)) != 0
-        || !chr_is_ram || (chr_sz != 0x2000 && chr_sz != 0x4000 && chr_sz != 0x8000)
-        || ((h->flags6 & 0x09) == 0x09 && submapper != 3 && chr_sz != 0x8000))) {
+    if (mapper_no == 30 && !chr_is_ram) {
         fprintf(stderr, "Unsupported ROM/RAM size for mapper 30\n");
         return -1;
     }
@@ -7768,28 +7797,7 @@ int mapper_init_from_header_metadata(const iNESHeader *h,
         fprintf(stderr, "Unsupported ROM/RAM size for mapper 68\n");
         return -1;
     }
-    if (mapper_no == 96 && (prg_sz != 0x20000 || !chr_is_ram || chr_sz != 0x8000)) {
-        fprintf(stderr, "Unsupported ROM/RAM size for mapper 96\n");
-        return -1;
-    }
-    if (mapper_no == 206 && submapper == 1 && prg_sz != PRG_BANK_32K) {
-        fprintf(stderr, "Unsupported ROM/RAM size for mapper 206\n");
-        return -1;
-    }
-    if (mapper_no == 99 && (chr_is_ram
-        || (prg_sz != 0x8000 && prg_sz != 0xA000 && prg_sz != 0xC000 && prg_sz != 0x10000)
-        || (chr_sz != 0x2000 && chr_sz != 0x4000 && chr_sz != 0x8000))) {
-        fprintf(stderr, "Unsupported ROM size for mapper 99\n");
-        return -1;
-    }
-    if (mapper_no == 105
-        && chr_sz < CHR_BANK_4K) {
-        fprintf(stderr, "Unsupported ROM size for mapper 105\n");
-        return -1;
-    }
-    if (mapper_no == 111
-        && (prg_sz > 0x80000 || (prg_sz % PRG_BANK_32K) != 0
-            || !chr_is_ram || chr_sz != 0x4000)) {
+    if (mapper_no == 111 && !chr_is_ram) {
         fprintf(stderr, "Unsupported ROM/RAM size for mapper 111\n");
         return -1;
     }
