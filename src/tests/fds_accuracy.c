@@ -275,6 +275,64 @@ static int test_fds_timer_irq(void) {
     return 0;
 }
 
+static bool wait_for_disk_irq(unsigned max_cycles);
+
+static int test_fds_cpu_reset_irq_sources(void) {
+    CHECK(load_fixture(1, true, NULL, false) == 0);
+    memset(&cpu, 0, sizeof(cpu));
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    CHECK(cpu_power_on(&cpu));
+
+    // A pending one-shot timer IRQ is a CPU source. Reset acknowledges it without
+    // resetting the FDS control state that produced it.
+    cart_cpu_write(0x4023, 3);
+    cart_cpu_write(0x4025, 0x08);
+    cart_cpu_write(0x4020, 1);
+    cart_cpu_write(0x4021, 0);
+    cart_cpu_write(0x4022, 2);
+    cart_cpu_write(0x6123, 0xA5);
+    fds_clock_cpu(2);
+    CHECK(fds_irq_pending());
+    cpu_soft_reset(&cpu);
+    CHECK(!fds_irq_pending());
+    CHECK((cart_cpu_read_bus(0x4030, 0) & 1u) == 0);
+    CHECK(cart_get_mirroring() == MIRROR_HORIZONTAL);
+    CHECK(cart_cpu_read(0x6123) == 0xA5);
+    cpu.status &= (uint8_t)~INTERRUPT_FLAG;
+    CHECK(cpu_step(&cpu) == 2 && cpu.pc == 0xE001);
+
+    // The timer itself survives reset. If its preserved counter expires during
+    // the seven reset bus cycles, the newly raised IRQ remains pending.
+    cart_cpu_write(0x4020, 3);
+    cart_cpu_write(0x4022, 3);
+    CHECK(!fds_irq_pending());
+    cpu_soft_reset(&cpu);
+    CHECK(fds_irq_pending());
+    CHECK(cart_cpu_read(0x6123) == 0xA5);
+    cpu.status &= (uint8_t)~INTERRUPT_FLAG;
+    CHECK(cpu_step(&cpu) == 9 && cpu.pc == 0xE100);
+    CHECK((cart_cpu_read_bus(0x4030, 0) & 1u) == 1u);
+    CHECK(!fds_irq_pending());
+
+    // Disk IRQ acknowledgement on reset must not consume the completed transfer
+    // or its data. The drive also keeps running and can raise the next disk IRQ.
+    cart_cpu_write(0x4022, 0);
+    cart_cpu_write(0x4025, 0xC5);
+    fds_clock_cpu(FDS_FIRST_DATA_IRQ_CYCLES - 1u);
+    CHECK(!fds_irq_pending());
+    fds_clock_cpu(1);
+    CHECK(fds_irq_pending());
+    cpu_soft_reset(&cpu);
+    CHECK(!fds_irq_pending());
+    CHECK((cart_cpu_read_bus(0x4030, 0) & 0x80u) == 0x80u);
+    CHECK(cart_cpu_read_bus(0x4031, 0) == 1);
+    CHECK(!fds_irq_pending());
+    CHECK(wait_for_disk_irq(150));
+    CHECK(cart_cpu_read_bus(0x4031, 0) == 0x2A);
+    return 0;
+}
+
 static bool wait_for_disk_irq(unsigned max_cycles) {
     for (unsigned cycle = 0; cycle < max_cycles; ++cycle) {
         fds_clock_cpu(1);
@@ -643,6 +701,7 @@ int test_fds_accuracy(void) {
     static int (*const tests[])(void) = {
         test_fds_loader_and_memory,
         test_fds_timer_irq,
+        test_fds_cpu_reset_irq_sources,
         test_fds_disk_transfer,
         test_fds_persistence,
         test_fds_audio,

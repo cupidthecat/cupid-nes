@@ -50,6 +50,7 @@ void fds_clock_cpu(int cpu_cycles);
 void fds_reset(void);
 Mirroring fds_mirroring(void);
 bool fds_irq_pending(void);
+void fds_irq_ack(void);
 float fds_expansion_audio(void);
 void fds_nsf_audio_reset(void);
 void fds_nsf_audio_clock(int cpu_cycles);

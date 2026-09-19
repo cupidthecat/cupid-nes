@@ -765,6 +765,10 @@ void fds_reset(void) {
 }
 
 bool fds_irq_pending(void) { return fds.timer_irq || fds.disk_irq; }
+void fds_irq_ack(void) {
+    fds.timer_irq = false;
+    fds.disk_irq = false;
+}
 Mirroring fds_mirroring(void) { return fds.mirroring; }
 float fds_expansion_audio(void) { return -(float)fds.audio.output * (20.0f / 5000.0f); }
 void fds_nsf_audio_reset(void) { audio_reset(&fds.audio); }

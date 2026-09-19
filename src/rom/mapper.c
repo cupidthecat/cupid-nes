@@ -827,6 +827,7 @@ bool cart_irq_pending(void) {
 void cart_irq_ack(void) {
     mapper_irq_line = false;
     board_irq_ack(active_board);
+    if (cart == &mapper_fds) fds_irq_ack();
 }
 void cart_console_reset(bool soft_reset) {
     if (cart == &mapper_nsf) nsf_reset(soft_reset);
