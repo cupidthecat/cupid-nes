@@ -767,6 +767,15 @@ void fds_reset(void) {
 bool fds_irq_pending(void) { return fds.timer_irq || fds.disk_irq; }
 Mirroring fds_mirroring(void) { return fds.mirroring; }
 float fds_expansion_audio(void) { return -(float)fds.audio.output * (20.0f / 5000.0f); }
+void fds_nsf_audio_reset(void) { audio_reset(&fds.audio); }
+void fds_nsf_audio_clock(int cpu_cycles) {
+    for (int cycle = 0; cycle < cpu_cycles; ++cycle) audio_clock(&fds.audio);
+}
+uint8_t fds_nsf_audio_read(uint16_t addr, uint8_t open_bus) {
+    return audio_read(&fds.audio, addr, open_bus);
+}
+void fds_nsf_audio_write(uint16_t addr, uint8_t value) { audio_write(&fds.audio, addr, value); }
+float fds_nsf_audio_output(void) { return -(float)fds.audio.output * (20.0f / 5000.0f); }
 
 uint8_t fds_ppu_read(uint16_t addr) {
     return fds.chr_ram[addr & 0x1FFF];

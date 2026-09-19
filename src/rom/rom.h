@@ -27,6 +27,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
+#include "nsf.h"
 
 typedef struct __attribute__((packed)) {
     uint8_t signature[4];      // "NES\x1A"
@@ -77,7 +78,8 @@ typedef enum {
     ROM_METADATA_DATABASE_HEADERLESS,
     ROM_METADATA_FDS,
     ROM_METADATA_STUDYBOX,
-    ROM_METADATA_UNIF
+    ROM_METADATA_UNIF,
+    ROM_METADATA_NSF
 } RomMetadataSource;
 
 // expose sizes so CPU/PPU can reason about mirroring
@@ -105,6 +107,10 @@ int load_studybox_memory(const uint8_t *media, size_t media_size,
                          const uint8_t *bios, size_t bios_size);
 bool rom_is_fds(void);
 bool rom_is_studybox(void);
+bool rom_is_nsf(void);
+bool rom_nsf_select_track(unsigned track);
+unsigned rom_nsf_current_track(void);
+const NsfMetadata *rom_nsf_metadata(void);
 int rom_mapper_number(const iNESHeader *header);
 bool rom_database_load_file(const char *path);
 bool rom_database_load_memory(const char *text, size_t size);

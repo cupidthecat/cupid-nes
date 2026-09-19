@@ -40,6 +40,9 @@
 #include "../ppu/ppu.h"
 #include "vrc7_audio.h"
 #include "fds.h"
+#include "nsf.h"
+#include "../cpu/cpu.h"
+#include "../apu/apu.h"
 #include "../system/timing.h"
 #include "../system/hardware.h"
 #include "../system/vs_system.h"
@@ -81,7 +84,7 @@ static Mapper mapper_vrc1, mapper_vrc3, mapper_vrc6, mapper_vrc24, mapper_vrc7;
 static Mapper mapper_sunsoft3, mapper_sunsoft4, mapper_sunsoft89, mapper_sunsoft93, mapper_sunsoft184;
 static Mapper mapper_sunsoft69, mapper_namco, mapper_m34, mapper_gxrom, mapper_m71, mapper_namco108;
 static Mapper mapper_vs99, mapper_jy, mapper_nina;
-static Mapper mapper_board;
+static Mapper mapper_board, mapper_nsf;
 static CartridgeBoard *active_board = NULL;
 Mapper *cart = NULL;
 static bool mapper_irq_line = false;
@@ -93,6 +96,12 @@ static bool cart_cpu_cycle_is_write = false;
 static void mmc3_irq_clock(void);
 static float vrc7_expansion_output(void);
 static void vrc7_shutdown(void);
+static void nsf_reset(bool soft_reset);
+static void nsf_after_reset(void);
+static void build_mapper(Mapper *m,
+    uint8_t(*cr)(uint16_t), void(*cw)(uint16_t,uint8_t),
+    uint8_t(*pr)(uint16_t), void(*pw)(uint16_t,uint8_t),
+    void(*rst)(void), Mirroring(*gm)(void));
 
 typedef struct {
     uint8_t reload;
@@ -197,6 +206,19 @@ static RamBlock *mmc5_ram_location(uint16_t a, size_t *offset);
 static Sunsoft5B sunsoft5b_audio;
 static Namco163Audio namco163_audio;
 static bool namco163_audio_dirty = false;
+
+static struct {
+    NsfMetadata metadata;
+    uint8_t bios[0x20];
+    uint8_t banks[10];
+    bool lower_program[2];
+    bool explicit_banking;
+    uint8_t song;
+    uint32_t play_counter;
+    uint64_t track_start_cycle;
+    uint8_t mmc5_multiplier[2];
+} nsf_player;
+static Vrc7Fm nsf_vrc7;
 
 typedef enum {
     NAMCO_VARIANT_163,
@@ -573,6 +595,8 @@ void mapper_shutdown(void) {
     board_destroy(active_board);
     active_board = NULL;
     if (cart == &mapper_vrc7) vrc7_shutdown();
+    if (cart == &mapper_nsf && (nsf_player.metadata.sound_chips & NSF_SOUND_VRC7))
+        vrc7_fm_destroy(&nsf_vrc7);
     if (cart == &mapper_fds) fds_shutdown();
     free(prg_work_ram.data);
     free(prg_save_ram.data);
@@ -798,8 +822,14 @@ void cart_irq_ack(void) {
     mapper_irq_line = false;
     board_irq_ack(active_board);
 }
-void cart_console_reset(bool soft_reset) { board_reset(active_board, soft_reset); }
-void cart_after_console_reset(void) { board_after_reset(active_board); }
+void cart_console_reset(bool soft_reset) {
+    if (cart == &mapper_nsf) nsf_reset(soft_reset);
+    else board_reset(active_board, soft_reset);
+}
+void cart_after_console_reset(void) {
+    if (cart == &mapper_nsf) nsf_after_reset();
+    else board_after_reset(active_board);
+}
 void cart_notify_scanline(void) {
     // MMC3 clocks from qualified PPU A12 edges, not scanline completion.
 }
@@ -3375,6 +3405,25 @@ static uint8_t mmc5_pulse_volume(const Mmc5Pulse *pulse) {
 
 float cart_expansion_audio(void) {
     if (active_board) return board_audio(active_board);
+    if (cart == &mapper_nsf) {
+        float output = 0.0f;
+        uint8_t chips = nsf_player.metadata.sound_chips;
+        if (chips & NSF_SOUND_MMC5) {
+            unsigned pulse = (unsigned)mmc5.pulse[0].output + (unsigned)mmc5.pulse[1].output;
+            output -= (float)(pulse * 3u + mmc5.pcm_output) * (14.0f / 5000.0f);
+        }
+        if (chips & NSF_SOUND_VRC6) {
+            unsigned raw = (unsigned)vrc6_pulse_volume(&vrc6.pulse[0])
+                         + (unsigned)vrc6_pulse_volume(&vrc6.pulse[1])
+                         + (unsigned)vrc6_saw_volume();
+            output -= (float)raw * (75.0f / 5000.0f);
+        }
+        if (chips & NSF_SOUND_VRC7) output += vrc7_fm_output(&nsf_vrc7);
+        if (chips & NSF_SOUND_NAMCO163) output += namco163_audio_output(&namco163_audio);
+        if (chips & NSF_SOUND_SUNSOFT5B) output += sunsoft5b_output(&sunsoft5b_audio);
+        if (chips & NSF_SOUND_FDS) output += fds_nsf_audio_output();
+        return output;
+    }
     if (cart == &mapper_fds) return fds_expansion_audio();
     if (cart == &mapper_vrc7) return vrc7_expansion_output();
     if (cart == &mapper_vrc6) {
@@ -3394,6 +3443,20 @@ float cart_expansion_audio(void) {
         return namco163_audio_output(&namco163_audio);
     if (cart == &mapper_sunsoft69) return sunsoft5b_output(&sunsoft5b_audio);
     return 0.0f;
+}
+
+float cart_audio_gain(void) {
+    if (cart != &mapper_nsf) return 1.0f;
+    unsigned track = nsf_player.song;
+    if (track >= nsf_player.metadata.total_songs) return 1.0f;
+    int32_t length = nsf_player.metadata.track_length[track];
+    if (length <= 0) return 1.0f;
+    double elapsed_ms = (double)(cpu_total_cycles - nsf_player.track_start_cycle)
+                      * 1000.0 / nes_timing()->cpu_hz;
+    if (elapsed_ms <= length) return 1.0f;
+    int32_t fade = nsf_player.metadata.track_fade[track];
+    if (fade <= 0 || elapsed_ms >= (double)length + fade) return 0.0f;
+    return (float)(1.0 - (elapsed_ms - length) / fade);
 }
 
 static void mmc5_clock_envelope(Mmc5Pulse *pulse) {
@@ -5667,6 +5730,274 @@ static void bandai_init(int mapper, unsigned standard_eeprom, unsigned extra_eep
     for (unsigned i = 0; i < 8; ++i) bandai.chr_banks[i] = (uint8_t)i;
     eeprom24_init(&bandai_eeprom[0], standard_eeprom);
     eeprom24_init(&bandai_eeprom[1], extra_eeprom);
+}
+
+/* NSF/NSFe music execution environment.  The player maps a tiny reset/IRQ
+   trampoline at $4100, eight 4 KiB program windows, and the same expansion
+   audio implementations used by cartridge mappers. */
+static uint32_t nsf_play_reload(void) {
+    uint16_t speed = nes_timing()->region == NES_REGION_NTSC
+                   ? nsf_player.metadata.play_speed_ntsc : nsf_player.metadata.play_speed_pal;
+    double cycles = (double)speed * nes_timing()->cpu_hz / 1000000.0;
+    uint16_t reload = (uint16_t)(uint32_t)cycles;
+    return reload;
+}
+
+static size_t nsf_program_page(uint8_t bank) {
+    size_t pages = C.prg_sz / 0x1000u;
+    return pages ? (size_t)bank % pages : 0;
+}
+
+static uint8_t nsf_program_read(uint16_t address, unsigned slot) {
+    if (!C.prg || C.prg_sz < 0x1000u || slot >= 10) return cart_cpu_bus_input;
+    size_t page = nsf_program_page(nsf_player.banks[slot]);
+    return C.prg[page * 0x1000u + (address & 0x0FFFu)];
+}
+
+static void nsf_program_write(uint16_t address, unsigned slot, uint8_t value) {
+    if (!C.prg || C.prg_sz < 0x1000u || slot >= 8) return;
+    size_t page = nsf_program_page(nsf_player.banks[slot]);
+    C.prg[page * 0x1000u + (address & 0x0FFFu)] = value;
+}
+
+static uint8_t nsf_cpu_read(uint16_t address) {
+    if (address >= 0x4100 && address < 0x4200) {
+        size_t offset = address - 0x4100u;
+        return offset < sizeof(nsf_player.bios) ? nsf_player.bios[offset] : 0;
+    }
+    if ((nsf_player.metadata.sound_chips & NSF_SOUND_FDS)
+        && address >= 0x4040 && address <= 0x4097)
+        return fds_nsf_audio_read(address, cart_cpu_bus_input);
+    if ((nsf_player.metadata.sound_chips & NSF_SOUND_NAMCO163)
+        && address >= 0x4800 && address <= 0x4FFF)
+        return namco163_audio_read_data(&namco163_audio);
+    if ((nsf_player.metadata.sound_chips & NSF_SOUND_MMC5) && address == 0x5205) {
+        uint16_t product = (uint16_t)nsf_player.mmc5_multiplier[0] * nsf_player.mmc5_multiplier[1];
+        return (uint8_t)product;
+    }
+    if ((nsf_player.metadata.sound_chips & NSF_SOUND_MMC5) && address == 0x5206) {
+        uint16_t product = (uint16_t)nsf_player.mmc5_multiplier[0] * nsf_player.mmc5_multiplier[1];
+        return (uint8_t)(product >> 8);
+    }
+    if ((nsf_player.metadata.sound_chips & NSF_SOUND_MMC5)
+        && address >= 0x5C00 && address <= 0x5FFF)
+        return prg_work_ram.data ? prg_work_ram.data[0x3000u + (address - 0x5C00u)] : cart_cpu_bus_input;
+    if (address >= 0x6000 && address < 0x8000) {
+        unsigned slot = (address - 0x6000u) >> 12;
+        if (nsf_player.lower_program[slot]) return nsf_program_read(address, slot);
+        return prg_work_ram.data ? prg_work_ram.data[address - 0x6000u] : cart_cpu_bus_input;
+    }
+    if (address >= 0x8000) {
+        if (address >= 0xFFFC) {
+            static const uint8_t vectors[4] = {0x00, 0x41, 0x10, 0x41};
+            return vectors[address - 0xFFFCu];
+        }
+        return nsf_program_read(address, 2u + ((address - 0x8000u) >> 12));
+    }
+    return cart_cpu_bus_input;
+}
+
+static void nsf_cpu_write(uint16_t address, uint8_t value) {
+    uint8_t chips = nsf_player.metadata.sound_chips;
+    if ((chips & NSF_SOUND_FDS) && address >= 0x4040 && address <= 0x408A) {
+        fds_nsf_audio_write(address, value);
+        return;
+    }
+    if ((chips & NSF_SOUND_MMC5) && address >= 0x5000 && address <= 0x5015) {
+        mmc5_cpu_write(address, value);
+        return;
+    }
+    if ((chips & NSF_SOUND_NAMCO163)
+        && ((address >= 0x4800 && address <= 0x4FFF) || address >= 0xF800)) {
+        if (address >= 0xF800) namco163_audio_write_address(&namco163_audio, value);
+        else (void)namco163_audio_write_data(&namco163_audio, value);
+        return;
+    }
+    if ((chips & NSF_SOUND_SUNSOFT5B) && address >= 0xC000) {
+        sunsoft5b_write(&sunsoft5b_audio, address, value);
+        return;
+    }
+    if ((chips & NSF_SOUND_VRC7) && address == 0x9010) {
+        vrc7_fm_write_address(&nsf_vrc7, value);
+        return;
+    }
+    if ((chips & NSF_SOUND_VRC7) && address == 0x9030) {
+        vrc7_fm_write_data(&nsf_vrc7, value);
+        return;
+    }
+    if ((chips & NSF_SOUND_VRC6)
+        && ((address >= 0x9000 && address <= 0x9003)
+            || (address >= 0xA000 && address <= 0xA002)
+            || (address >= 0xB000 && address <= 0xB002))) {
+        vrc6_audio_write(address, value);
+        return;
+    }
+    if (address == 0x4100) {
+        nsf_player.play_counter = nsf_play_reload();
+        mapper_irq_line = false;
+        return;
+    }
+    if ((chips & NSF_SOUND_MMC5) && address == 0x5205) {
+        nsf_player.mmc5_multiplier[0] = value;
+        return;
+    }
+    if ((chips & NSF_SOUND_MMC5) && address == 0x5206) {
+        nsf_player.mmc5_multiplier[1] = value;
+        return;
+    }
+    if (address >= 0x5FF6 && address <= 0x5FFF) {
+        unsigned slot = address - 0x5FF6u;
+        nsf_player.banks[slot] = value;
+        if (slot < 2) nsf_player.lower_program[slot] = true;
+        return;
+    }
+    if ((chips & NSF_SOUND_MMC5) && address >= 0x5C00 && address <= 0x5FFF) {
+        if (prg_work_ram.data) prg_work_ram.data[0x3000u + (address - 0x5C00u)] = value;
+        return;
+    }
+    if (address >= 0x6000 && address < 0x8000) {
+        unsigned slot = (address - 0x6000u) >> 12;
+        if (nsf_player.lower_program[slot]) nsf_program_write(address, slot, value);
+        else if (prg_work_ram.data) prg_work_ram.data[address - 0x6000u] = value;
+        return;
+    }
+    if ((chips & NSF_SOUND_FDS) && address >= 0x8000 && address <= 0xDFFF)
+        nsf_program_write(address, 2u + ((address - 0x8000u) >> 12), value);
+}
+
+static void nsf_clock(int cpu_cycles) {
+    uint8_t chips = nsf_player.metadata.sound_chips;
+    for (int cycle = 0; cycle < cpu_cycles; ++cycle) {
+        if (nsf_player.play_counter && --nsf_player.play_counter == 0) {
+            nsf_player.play_counter = nsf_play_reload();
+            mapper_irq_line = true;
+        }
+        if (chips & NSF_SOUND_MMC5) {
+            mmc5_clock_pulse(&mmc5.pulse[0]);
+            mmc5_clock_pulse(&mmc5.pulse[1]);
+            if (mmc5.audio_frame_counter) mmc5.audio_frame_counter--;
+            if (!mmc5.audio_frame_counter) {
+                mmc5.audio_frame_counter = (unsigned)(nes_timing()->cpu_hz / 240.0);
+                if (!mmc5.audio_frame_counter) mmc5.audio_frame_counter = 1;
+                mmc5_audio_frame_clock();
+            }
+            mmc5_reload_length(&mmc5.pulse[0]);
+            mmc5_reload_length(&mmc5.pulse[1]);
+        }
+        if (chips & NSF_SOUND_VRC6) {
+            if (!vrc6.halt_audio) {
+                vrc6_clock_pulse(&vrc6.pulse[0]);
+                vrc6_clock_pulse(&vrc6.pulse[1]);
+                vrc6_clock_saw();
+            }
+        }
+    }
+    if (chips & NSF_SOUND_VRC7) vrc7_fm_clock(&nsf_vrc7, cpu_cycles, nes_timing()->cpu_hz);
+    if (chips & NSF_SOUND_NAMCO163) (void)namco163_audio_clock(&namco163_audio, cpu_cycles);
+    if (chips & NSF_SOUND_SUNSOFT5B) sunsoft5b_clock(&sunsoft5b_audio, cpu_cycles);
+    if (chips & NSF_SOUND_FDS) fds_nsf_audio_clock(cpu_cycles);
+}
+
+static void nsf_reset(bool soft_reset) {
+    if (!soft_reset) nsf_player.song = nsf_player.metadata.starting_song;
+    nsf_player.play_counter = 0;
+    nsf_player.mmc5_multiplier[0] = nsf_player.mmc5_multiplier[1] = 0;
+    mapper_irq_line = false;
+    if (nsf_player.metadata.sound_chips & NSF_SOUND_MMC5) mmc5_reset();
+    if (nsf_player.metadata.sound_chips & NSF_SOUND_VRC6) { vrc6.variant_b = false; vrc6_reset(); }
+    if (nsf_player.metadata.sound_chips & NSF_SOUND_VRC7) vrc7_fm_reset(&nsf_vrc7);
+    if (nsf_player.metadata.sound_chips & NSF_SOUND_NAMCO163) namco163_audio_reset(&namco163_audio);
+    if (nsf_player.metadata.sound_chips & NSF_SOUND_SUNSOFT5B) sunsoft5b_reset(&sunsoft5b_audio);
+    if (nsf_player.metadata.sound_chips & NSF_SOUND_FDS) fds_nsf_audio_reset();
+}
+
+static void nsf_after_reset(void) {
+    cpu_clear_internal_ram();
+    if (prg_work_ram.data) memset(prg_work_ram.data, 0, prg_work_ram.size);
+    for (uint16_t address = 0x4000; address < 0x4013; ++address) apu_write(address, 0);
+    apu_write(0x4015, 0);
+    apu_write(0x4015, 0x0F);
+    apu_write(0x4017, 0x40);
+    ppu_reg_write(0x2000, 0);
+    ppu_reg_write(0x2001, 0);
+
+    memset(nsf_player.banks, 0, sizeof(nsf_player.banks));
+    memset(nsf_player.lower_program, 0, sizeof(nsf_player.lower_program));
+    uint8_t setup[8];
+    memcpy(setup, nsf_player.metadata.bank_setup, sizeof(setup));
+    if (!nsf_player.explicit_banking) {
+        memset(setup, 0, sizeof(setup));
+        int start_bank = nsf_player.metadata.load_address / 0x1000;
+        size_t pages = C.prg_sz / 0x1000u;
+        for (size_t i = 0; i < pages && start_bank + (int)i <= 0x0F; ++i) {
+            int slot = start_bank + (int)i - 8;
+            if (slot >= 0 && slot < 8) setup[slot] = (uint8_t)i;
+        }
+    }
+    for (unsigned i = 0; i < 8; ++i) nsf_player.banks[i + 2] = setup[i];
+    if (nsf_player.metadata.sound_chips & NSF_SOUND_FDS) {
+        nsf_player.banks[0] = setup[6];
+        nsf_player.banks[1] = setup[7];
+        nsf_player.lower_program[0] = true;
+        nsf_player.lower_program[1] = true;
+    }
+    cpu.a = nsf_player.song;
+    cpu.x = nes_timing()->region == NES_REGION_NTSC ? 0 : 1;
+    cpu.y = 0;
+    cpu.sp = 0xFD;
+    nsf_player.track_start_cycle = cpu_total_cycles;
+}
+
+static uint8_t nsf_ppu_read(uint16_t address) { return C.chr[address & 0x1FFFu]; }
+static void nsf_ppu_write(uint16_t address, uint8_t value) { C.chr[address & 0x1FFFu] = value; }
+static Mirroring nsf_mirroring(void) { return MIRROR_HORIZONTAL; }
+
+int mapper_init_nsf(const NsfImage *image, uint8_t *program, size_t program_size,
+                    uint8_t *chr, size_t chr_size) {
+    if (!image || !program || program_size < 0x1000 || (program_size & 0x0FFFu)
+        || !chr || chr_size < 0x2000) return -1;
+    RamBlock new_work = { (uint8_t *)calloc(1, 0x4000), 0x4000 };
+    if (!new_work.data) return -1;
+    Vrc7Fm new_fm = {0};
+    bool need_vrc7 = (image->metadata.sound_chips & NSF_SOUND_VRC7) != 0;
+    if (need_vrc7 && !vrc7_fm_init(&new_fm)) { free(new_work.data); return -1; }
+
+    mapper_shutdown();
+    C.prg = program; C.prg_sz = program_size;
+    C.chr = chr; C.chr_sz = chr_size; C.chr_is_ram = true;
+    C.mapper_no = 65531; C.mirr_base = MIRROR_HORIZONTAL;
+    prg_work_ram = new_work;
+    memset(&nsf_player, 0, sizeof(nsf_player));
+    nsf_player.metadata = image->metadata;
+    for (unsigned i = 0; i < 8; ++i)
+        if (image->metadata.bank_setup[i]) nsf_player.explicit_banking = true;
+    static const uint8_t bios[0x20] = {
+        0x58,0x20,0x00,0x00,0x8D,0x00,0x41,0x58,0x4C,0x08,0x41,0,0,0,0,0,
+        0x8D,0x00,0x41,0x20,0x00,0x00,0x58,0x40,0,0,0,0,0,0,0,0
+    };
+    memcpy(nsf_player.bios, bios, sizeof(bios));
+    nsf_player.bios[2] = (uint8_t)image->metadata.init_address;
+    nsf_player.bios[3] = (uint8_t)(image->metadata.init_address >> 8);
+    nsf_player.bios[0x14] = (uint8_t)image->metadata.play_address;
+    nsf_player.bios[0x15] = (uint8_t)(image->metadata.play_address >> 8);
+    if (need_vrc7) nsf_vrc7 = new_fm;
+    build_mapper(&mapper_nsf, nsf_cpu_read, nsf_cpu_write,
+                 nsf_ppu_read, nsf_ppu_write, NULL, nsf_mirroring);
+    mapper_nsf.clock = nsf_clock;
+    cart = &mapper_nsf;
+    nsf_reset(false);
+    return 65531;
+}
+
+bool cart_nsf_active(void) { return cart == &mapper_nsf; }
+unsigned cart_nsf_current_track(void) { return cart == &mapper_nsf ? nsf_player.song : 0; }
+bool cart_nsf_select_track(unsigned track) {
+    if (cart != &mapper_nsf || track >= nsf_player.metadata.total_songs) return false;
+    nsf_player.song = (uint8_t)track;
+    ppu_soft_reset(&ppu);
+    apu_soft_reset(&apu);
+    cpu_soft_reset(&cpu);
+    return true;
 }
 
 static void barcode_pattern(uint8_t *bits, unsigned *length, unsigned pattern, unsigned width) {

@@ -33,6 +33,7 @@
 #include "board.h"
 #include "fds.h"
 #include "game_db.h"
+#include "nsf.h"
 #include "unif.h"
 #include "../system/timing.h"
 #include "../system/hardware.h"
@@ -54,6 +55,8 @@ size_t chr_size = 0;
 int mirroring_mode = 0;
 static int fds_loaded = 0;
 static int studybox_loaded = 0;
+static int nsf_loaded = 0;
+static NsfMetadata loaded_nsf_metadata;
 static bool database_overrides = true;
 static RomMetadataSource metadata_source = ROM_METADATA_NONE;
 static uint32_t loaded_file_crc32 = 0;
@@ -87,6 +90,7 @@ const char *rom_metadata_source_name(void) {
         case ROM_METADATA_FDS: return "FDS";
         case ROM_METADATA_STUDYBOX: return "StudyBox";
         case ROM_METADATA_UNIF: return "UNIF";
+        case ROM_METADATA_NSF: return loaded_nsf_metadata.nsfe ? "NSFe" : "NSF";
         case ROM_METADATA_NONE:
         default: return "none";
     }
@@ -402,7 +406,8 @@ static int load_unif_data(const uint8_t *data, size_t size, const char *filename
     cart_battery_configure(filename, battery);
     mirroring_mode = (int)cart_get_mirroring();
     nes_set_region(region);
-    fds_loaded = 0; studybox_loaded = 0;
+    fds_loaded = 0; studybox_loaded = 0; nsf_loaded = 0;
+    memset(&loaded_nsf_metadata, 0, sizeof(loaded_nsf_metadata));
     metadata_source = source;
     loaded_file_crc32 = file_crc;
     loaded_prg_crc32 = prg_crc;
@@ -410,6 +415,73 @@ static int load_unif_data(const uint8_t *data, size_t size, const char *filename
     if (apply_input_config) (void)joypad_apply_configuration(&input_config);
     printf("UNIF board: %s\n", board_name);
     printf("Mapper: %d  (CHR %s)\n", mapper_no, chr_bytes ? "ROM" : "RAM");
+    return 0;
+}
+
+static int load_nsf_data(const uint8_t *data, size_t size, const char *filename) {
+    NsfImage image;
+    if (!nsf_parse_image(data, size, &image)) {
+        fprintf(stderr, "Invalid NSF/NSFe image\n");
+        return -1;
+    }
+
+    NesRegion region = image.metadata.region_flags == 1 ? NES_REGION_PAL : NES_REGION_NTSC;
+    if (!cpu_startup_alignment_valid(region)) {
+        fprintf(stderr, "Startup alignment is outside this music image's regional dividers\n");
+        nsf_image_free(&image);
+        return -1;
+    }
+    uint8_t *new_chr = (uint8_t *)calloc(1, 0x2000);
+    if (!new_chr) {
+        nsf_image_free(&image);
+        return -1;
+    }
+    if (fds_active() && fds_disk_dirty() && !fds_flush()) {
+        fprintf(stderr, "Cannot replace the active FDS disk while modified media is unsaved\n");
+        free(new_chr);
+        nsf_image_free(&image);
+        return -1;
+    }
+
+    uint8_t *program = image.program;
+    size_t program_size = image.program_size;
+    size_t payload_offset = image.metadata.load_address & 0x0FFFu;
+    uint32_t file_crc = game_db_crc32(data, size);
+    uint32_t payload_crc = game_db_crc32(program + payload_offset, image.payload_size);
+    if (mapper_init_nsf(&image, program, program_size, new_chr, 0x2000) < 0) {
+        free(new_chr);
+        nsf_image_free(&image);
+        return -1;
+    }
+    image.program = NULL;
+
+    free(prg_rom);
+    free(chr_rom);
+    prg_rom = program;
+    chr_rom = new_chr;
+    prg_size = program_size;
+    chr_size = 0x2000;
+    memset(&ines_header, 0, sizeof(ines_header));
+    mirroring_mode = MIRROR_HORIZONTAL;
+    vs_clear_config();
+    epsm_activate(NULL);
+    cart_battery_configure(filename, false);
+    nes_set_region(region);
+    fds_loaded = 0;
+    studybox_loaded = 0;
+    nsf_loaded = 0;
+    memset(&loaded_nsf_metadata, 0, sizeof(loaded_nsf_metadata));
+    nsf_loaded = 1;
+    loaded_nsf_metadata = image.metadata;
+    metadata_source = ROM_METADATA_NSF;
+    loaded_file_crc32 = file_crc;
+    loaded_prg_crc32 = payload_crc;
+    loaded_prg_chr_crc32 = payload_crc;
+    printf("%s: %u track%s, starting at %u\n",
+           image.metadata.nsfe ? "NSFe" : "NSF", (unsigned)image.metadata.total_songs,
+           image.metadata.total_songs == 1 ? "" : "s",
+           (unsigned)image.metadata.starting_song + 1u);
+    nsf_image_free(&image);
     return 0;
 }
 
@@ -521,6 +593,9 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
 
     if (size >= 4 && memcmp(data, "UNIF", 4) == 0)
         return load_unif_data(data, size, filename);
+    if ((size >= 5 && memcmp(data, "NESM\x1A", 5) == 0)
+        || (size >= 4 && memcmp(data, "NSFE", 4) == 0))
+        return load_nsf_data(data, size, filename);
 
     uint32_t file_crc = game_db_crc32(data, size);
     iNESHeader original_header = {0};
@@ -723,6 +798,8 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
     nes_set_region(rom_region(&header));
     fds_loaded = 0;
     studybox_loaded = 0;
+    nsf_loaded = 0;
+    memset(&loaded_nsf_metadata, 0, sizeof(loaded_nsf_metadata));
     metadata_source = source;
     loaded_file_crc32 = file_crc;
     loaded_prg_crc32 = prg_crc;
@@ -778,6 +855,8 @@ int load_fds_memory(const uint8_t *disk, size_t disk_size,
     nes_set_region(NES_REGION_NTSC);
     fds_loaded = 1;
     studybox_loaded = 0;
+    nsf_loaded = 0;
+    memset(&loaded_nsf_metadata, 0, sizeof(loaded_nsf_metadata));
     metadata_source = ROM_METADATA_FDS;
     loaded_file_crc32 = game_db_crc32(disk, disk_size);
     loaded_prg_crc32 = 0;
@@ -934,6 +1013,12 @@ static bool database_header(const iNESHeader *original, const GameDbEntry *entry
 
 bool rom_is_fds(void) { return fds_loaded != 0; }
 bool rom_is_studybox(void) { return studybox_loaded != 0; }
+bool rom_is_nsf(void) { return nsf_loaded != 0; }
+bool rom_nsf_select_track(unsigned track) {
+    return nsf_loaded && cart_nsf_select_track(track);
+}
+unsigned rom_nsf_current_track(void) { return nsf_loaded ? cart_nsf_current_track() : 0; }
+const NsfMetadata *rom_nsf_metadata(void) { return nsf_loaded ? &loaded_nsf_metadata : NULL; }
 
 int load_studybox_memory(const uint8_t *media, size_t media_size,
                          const uint8_t *bios, size_t bios_size) {
@@ -967,6 +1052,8 @@ int load_studybox_memory(const uint8_t *media, size_t media_size,
     nes_set_region(NES_REGION_NTSC);
     fds_loaded = 0;
     studybox_loaded = 1;
+    nsf_loaded = 0;
+    memset(&loaded_nsf_metadata, 0, sizeof(loaded_nsf_metadata));
     metadata_source = ROM_METADATA_STUDYBOX;
     loaded_file_crc32 = game_db_crc32(media, media_size);
     loaded_prg_crc32 = 0;
@@ -989,6 +1076,8 @@ bool unload_rom(void) {
     mirroring_mode = 0;
     fds_loaded = 0;
     studybox_loaded = 0;
+    nsf_loaded = 0;
+    memset(&loaded_nsf_metadata, 0, sizeof(loaded_nsf_metadata));
     metadata_source = ROM_METADATA_NONE;
     loaded_file_crc32 = 0;
     loaded_prg_crc32 = 0;

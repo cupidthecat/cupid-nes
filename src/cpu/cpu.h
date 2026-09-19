@@ -105,6 +105,7 @@ bool cpu_test_mode_enabled(void);
 bool cpu_power_on(CPU* cpu);
 void cpu_soft_reset(CPU* cpu);
 void cpu_reset(CPU* cpu);
+void cpu_clear_internal_ram(void);
 // Select an independent CPU bus/RAM context. NULL selects the ordinary console.
 void cpu_select_machine(CpuMachineContext *context);
 uint8_t read_mem(uint16_t addr);

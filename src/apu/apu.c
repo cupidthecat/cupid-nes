@@ -742,6 +742,7 @@ void apu_audio_refresh(APU *a) {
                               triangle_out(&a->tri), noise_out(&a->noise),
                               dmc_out(&a->dmc));
     sample += cart_expansion_audio();
+    sample *= cart_audio_gain();
     int level = apu_quantize_mix(sample);
     int delta = level - a->reconstructed_level;
     if (delta && a->reconstruction) {

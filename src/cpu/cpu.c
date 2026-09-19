@@ -26,6 +26,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdbool.h>
+#include <string.h>
 #include "cpu.h"
 #include "../ppu/ppu.h"
 #include "../apu/apu.h"
@@ -192,7 +193,7 @@ static void end_cpu_cycle(bool read) {
     if (cpu_nmi_line && !cpu_nmi_previous_line) cpu_nmi_pending = true;
     cpu_nmi_previous_line = cpu_nmi_line;
     cpu_irq_ready = cpu_irq_polled;
-    cpu_irq_polled = (apu_irq_pending(apu_active_state()) || cart_irq_pending()
+    cpu_irq_polled = ((!cart_nsf_active() && apu_irq_pending(apu_active_state())) || cart_irq_pending()
                       || epsm_irq_pending()
                       || vs_external_irq_pending()) &&
                      !(running_cpu->status & INTERRUPT_FLAG);
@@ -332,6 +333,8 @@ void cpu_soft_reset(CPU* cpu) {
 void cpu_reset(CPU* cpu) {
     cpu_power_on(cpu);
 }
+
+void cpu_clear_internal_ram(void) { memset(cpu_ram, 0, 0x0800); }
 
 static inline void bus_latch(BusLatchTarget target, uint8_t value) {
     if (target != BUS_LATCH_EXTERNAL) bus_set_internal(value);

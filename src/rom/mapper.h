@@ -29,6 +29,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include "rom.h"
+#include "nsf.h"
 
 typedef struct CartridgeBoard CartridgeBoard;
 
@@ -77,6 +78,7 @@ void    cart_set_ppu_fetch_source(CartPpuFetchSource src);
 void    cart_notify_ppu_ctrl_write(uint8_t value);
 // Current cartridge expansion-audio contribution, zero when the board has none.
 float   cart_expansion_audio(void);
+float   cart_audio_gain(void);
 // Scan an EAN-8 or EAN-13 code through the connected Datach reader.
 bool    cart_set_barcode(const char *digits);
 
@@ -106,6 +108,11 @@ void cart_irq_ack(void);
 // Console reset signals are separate from cartridge insertion and RAM allocation.
 void cart_console_reset(bool soft_reset);
 void cart_after_console_reset(void);
+int mapper_init_nsf(const NsfImage *image, uint8_t *program, size_t program_size,
+                    uint8_t *chr, size_t chr_size);
+bool cart_nsf_select_track(unsigned track);
+bool cart_nsf_active(void);
+unsigned cart_nsf_current_track(void);
 
 // Notify physical PPU bus address changes using monotonic NTSC PPU cycles.
 // MMC3 qualifies A12 after three CPU clocks low; palette RAM is internal.
