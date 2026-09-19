@@ -682,8 +682,9 @@ static bool configuration_valid(const NesInputConfiguration *config) {
         || config->expansion == NES_EXPANSION_NONE;
 }
 
-bool joypad_resolve_default_input(uint8_t input_type, NesInputConfiguration *config,
-                                  bool *supported) {
+bool joypad_resolve_default_input_for_family(uint8_t input_type, bool famicom,
+                                             NesInputConfiguration *config,
+                                             bool *supported) {
     if (!config || !supported) return false;
     *supported = true;
     NesInputConfiguration automatic = {
@@ -691,8 +692,6 @@ bool joypad_resolve_default_input(uint8_t input_type, NesInputConfiguration *con
         .ports = {NES_PORT_GAMEPAD, NES_PORT_GAMEPAD},
         .expansion = NES_EXPANSION_NONE
     };
-    bool famicom = nes_console_model() == NES_CONSOLE_HVC001
-                || nes_console_model() == NES_CONSOLE_HVC101;
 
     switch (input_type) {
         case 0x01: break;
@@ -746,6 +745,13 @@ bool joypad_resolve_default_input(uint8_t input_type, NesInputConfiguration *con
     if (configuration_overrides & NES_INPUT_OVERRIDE_PORT2) config->ports[1] = port_devices[1];
     if (configuration_overrides & NES_INPUT_OVERRIDE_EXPANSION) config->expansion = expansion_device;
     return configuration_valid(config);
+}
+
+bool joypad_resolve_default_input(uint8_t input_type, NesInputConfiguration *config,
+                                  bool *supported) {
+    bool famicom = nes_console_model() == NES_CONSOLE_HVC001
+                || nes_console_model() == NES_CONSOLE_HVC101;
+    return joypad_resolve_default_input_for_family(input_type, famicom, config, supported);
 }
 
 bool joypad_apply_configuration(const NesInputConfiguration *config) {

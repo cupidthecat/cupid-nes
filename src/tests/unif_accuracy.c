@@ -395,12 +395,42 @@ static int test_named_database_and_file_loader(void) {
     return 0;
 }
 
+static int test_database_zapper_family(void) {
+    BoardImage image;
+    uint32_t crc;
+    BOARD_CHECK(make_unif(&image, "NROM", 0x8000, 0x2000, &crc));
+    NesConsoleModel saved_model = nes_console_model();
+    const char *systems[] = {"Famicom", "NesNtsc", "Dendy", "NesPal", "NesUnknown"};
+    joypad_set_configuration_overrides(0);
+    for (unsigned i = 0; i < sizeof(systems) / sizeof(systems[0]); ++i) {
+        bool expansion = i == 0 || i == 2;
+        BOARD_CHECK(nes_set_console_model(expansion ? NES_CONSOLE_NES001 : NES_CONSOLE_HVC001));
+        char row[256];
+        int length = snprintf(row, sizeof(row),
+            "%08X,%s,NROM,,,0,32,8,0,0,0,0,h,8,N,,0,0\n", (unsigned)crc, systems[i]);
+        BOARD_CHECK(length > 0 && (size_t)length < sizeof(row));
+        BOARD_CHECK(rom_database_load_memory(row, (size_t)length));
+        BOARD_CHECK(board_image_load(&image) == 0);
+        BOARD_CHECK(rom_metadata_source() == ROM_METADATA_DATABASE);
+        BOARD_CHECK(joypad_port_device(1) == (expansion ? NES_PORT_GAMEPAD : NES_PORT_ZAPPER));
+        BOARD_CHECK(joypad_expansion_device() == (expansion ? NES_EXPANSION_ZAPPER : NES_EXPANSION_NONE));
+        unsigned slot = expansion ? 2 : 1;
+        BOARD_CHECK(joypad_set_zapper(slot, -1, -1, true));
+        BOARD_CHECK(read_absolute(0x4017) && (cpu.a & 0x18) == 0x18);
+        BOARD_CHECK(joypad_set_zapper(slot, -1, -1, false));
+        BOARD_CHECK(read_absolute(0x4017) && (cpu.a & 0x18) == 0x08);
+    }
+    BOARD_CHECK(nes_set_console_model(saved_model));
+    board_image_free(&image);
+    return 0;
+}
+
 int test_unif_accuracy(void) {
     int (*tests[])(void) = {
         test_discrete_named_boards, test_ghostbusters_open_bus,
         test_8237a_banks_and_irq, test_famicombox_cpu_ram,
         test_database_resolution_before_allocation, test_database_input_and_vs,
-        test_named_database_and_file_loader
+        test_named_database_and_file_loader, test_database_zapper_family
     };
     NesInputConfiguration saved_input = {joypad_adapter(),
         {joypad_port_device(0), joypad_port_device(1)}, joypad_expansion_device()};

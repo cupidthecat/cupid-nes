@@ -71,6 +71,21 @@ static bool database_header(const iNESHeader *original, const GameDbEntry *entry
 static void database_metadata(const GameDbEntry *entry, bool headerless,
                               RomDatabaseInfo *metadata);
 
+static bool database_default_input_is_famicom(const GameDbEntry *entry) {
+    return entry && (strcmp(entry->system, "Famicom") == 0
+                  || strcmp(entry->system, "Dendy") == 0);
+}
+
+static bool resolve_default_input(uint8_t input_type, const GameDbEntry *database_entry,
+                                  bool database_applied, NesInputConfiguration *config,
+                                  bool *supported) {
+    if (database_applied) {
+        return joypad_resolve_default_input_for_family(
+            input_type, database_default_input_is_famicom(database_entry), config, supported);
+    }
+    return joypad_resolve_default_input(input_type, config, supported);
+}
+
 bool rom_database_load_file(const char *path) { return game_db_load_file(path); }
 bool rom_database_load_memory(const char *text, size_t size) { return game_db_load_memory(text, size); }
 void rom_database_clear(void) { game_db_clear(); }
@@ -366,7 +381,9 @@ static int load_unif_data(const uint8_t *data, size_t size, const char *filename
     bool input_supported = false;
     bool apply_input_config = is_nes20(&header) && !vs_config.enabled && header.zero[4] != 0;
     if (apply_input_config) {
-        if (!joypad_resolve_default_input(header.zero[4], &input_config, &input_supported)) {
+        if (!resolve_default_input(header.zero[4], &database_entry,
+                                   source == ROM_METADATA_DATABASE,
+                                   &input_config, &input_supported)) {
             fprintf(stderr, "Default input conflicts with explicit input configuration\n");
             free(new_prg); free(new_chr);
             return -1;
@@ -720,7 +737,8 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
     bool input_supported = false;
     bool apply_input_config = is_nes20(&header) && !vs_config.enabled && header.zero[4] != 0;
     if (apply_input_config) {
-        if (!joypad_resolve_default_input(header.zero[4], &input_config, &input_supported)) {
+        if (!resolve_default_input(header.zero[4], &database_entry, database_applied,
+                                   &input_config, &input_supported)) {
             fprintf(stderr, "Default input conflicts with explicit input configuration\n");
             return -1;
         }

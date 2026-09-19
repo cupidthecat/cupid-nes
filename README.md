@@ -34,7 +34,10 @@ does not exercise.
 | VS System | Header-selected RGB PPU and controller behavior, cabinet controls and protection, and dual machines with shared RAM, two screens, and mixed audio |
 
 Cartridge loading supports iNES, NES 2.0, named UNIF boards, and an optional CRC
-database for legacy corrections and recognized headerless images. Small and
+database for legacy corrections and recognized headerless images. Database
+records also select the Zapper connector: Famicom and Dendy games use the
+expansion port, and NES games use controller port two. Explicit controller
+options take precedence. Small and
 irregular images use the board's implemented page mapping, including open bus
 where a complete page cannot be mapped. CHR ROM and RAM follow each board's
 source selectors, startup mappings, and write permissions. Declared memory can

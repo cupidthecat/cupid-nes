@@ -214,6 +214,9 @@ void    joypad_set_configuration_overrides(uint8_t mask);
 uint8_t joypad_configuration_overrides(void);
 bool    joypad_resolve_default_input(uint8_t input_type, NesInputConfiguration *config,
                                      bool *supported);
+bool    joypad_resolve_default_input_for_family(uint8_t input_type, bool famicom,
+                                                NesInputConfiguration *config,
+                                                bool *supported);
 bool    joypad_apply_configuration(const NesInputConfiguration *config);
 // Slots zero and one are NES ports; slot two is the Famicom expansion connector.
 bool    joypad_set_paddle(unsigned slot, int position, bool fire);

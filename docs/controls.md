@@ -93,6 +93,8 @@ Move the mouse over the game window to aim. Left click fires on screen. Right cl
 
 The default light-sampling radius is zero. `--zapper-radius N` expands the sampled area up to 255 pixels. The Famicom expansion version uses `--console famicom --expansion zapper`. VS images whose NES 2.0 metadata selects the VS Zapper use the same mouse aiming and trigger controls.
 
+When a database record selects a Zapper, its system field chooses the connector: Famicom and Dendy use the expansion port; NES uses controller port two. This works for legacy cartridges, headerless payloads, and UNIF images. Explicit port and expansion options override automatic selection.
+
 ## Power Pad and Family Trainer
 
 Use `--port1 power-pad-a`, `--port2 power-pad-a`, or the corresponding `power-pad-b` setting for an NES mat. Family Trainer uses `--console famicom --expansion family-trainer-a` or `family-trainer-b`.
