@@ -28,12 +28,15 @@ typedef struct {
     VsRomConfig config;
     unsigned active_side;
     uint16_t dips;
-    bool coins[4];
+    uint8_t coin_frames[4];
+    bool coin_pressed[4];
+    uint64_t coin_frame_mark[4];
     bool service[2];
     uint8_t shift[2][2];
     bool strobe[2];
     uint8_t select_bit[2];
     unsigned ram_owner;
+    bool main_sub_bit[2];
     bool external_irq[2];
     uint8_t protection_counter[2];
     CpuMachineContext sub_cpu;
@@ -45,10 +48,32 @@ typedef struct {
 
 static VsState vs;
 
+static void advance_coin_pulse(unsigned slot) {
+    if (slot >= 4 || !vs.coin_frames[slot]) return;
+    unsigned side = slot / 2;
+    uint64_t frame = side == 0 ? ppu.frame_count : vs.sub_ppu.state.frame_count;
+    if (frame < vs.coin_frame_mark[slot]) {
+        vs.coin_frame_mark[slot] = frame;
+        return;
+    }
+    uint64_t elapsed = frame - vs.coin_frame_mark[slot];
+    if (!elapsed) return;
+    if (elapsed >= vs.coin_frames[slot]) vs.coin_frames[slot] = 0;
+    else vs.coin_frames[slot] = (uint8_t)(vs.coin_frames[slot] - elapsed);
+    vs.coin_frame_mark[slot] = frame;
+}
+
+static bool coin_pulse_active(unsigned slot) {
+    advance_coin_pulse(slot);
+    return slot < 4 && vs.coin_frames[slot] != 0;
+}
+
 static void reset_control_state(void) {
     memset(vs.protection_counter, 0, sizeof(vs.protection_counter));
     if (vs.config.dual) {
         vs.ram_owner = 1;
+        vs.main_sub_bit[0] = false;
+        vs.main_sub_bit[1] = true;
         vs.external_irq[0] = false;
         vs.external_irq[1] = true;
     } else {
@@ -68,21 +93,11 @@ static bool mapper_supported(int mapper) {
         || mapper == 99 || mapper == 151;
 }
 
-static bool mapper99_layout_supported(const iNESHeader *header, const VsRomConfig *config,
-                                      size_t prg_bytes, size_t chr_bytes) {
-    if (!header->chr_rom_chunks) return false;
-    if (config->dual)
-        return (prg_bytes == 0xC000 || prg_bytes == 0x10000) && chr_bytes == 0x8000;
-    if (config->type == VS_TYPE_RAID_ON_BUNGELING_BAY)
-        return prg_bytes == 0xC000 && (chr_bytes == 0x2000 || chr_bytes == 0x4000);
-    return (prg_bytes == 0x8000 || prg_bytes == 0xA000 || prg_bytes == 0xC000)
-        && (chr_bytes == 0x2000 || chr_bytes == 0x4000);
-}
-
 bool vs_decode_header(const iNESHeader *header, int mapper, size_t prg_bytes,
                       size_t chr_bytes, VsRomConfig *config,
                       char *reason, size_t reason_size) {
     if (!header || !config) return false;
+    (void)chr_bytes;
     memset(config, 0, sizeof(*config));
     config->type = VS_TYPE_DEFAULT;
     config->ppu_model = VS_PPU_2C03;
@@ -92,7 +107,9 @@ bool vs_decode_header(const iNESHeader *header, int mapper, size_t prg_bytes,
     unsigned console = header->flags7 & 3u;
     if (nes2) {
         unsigned subtype = header->zero[2] & 0x0Fu;
-        if (console == 0 || (console == 3 && (subtype == 0 || subtype == 4))) return true;
+        if (console == 0 || console == 2
+            || (console == 3 && (subtype == 0 || subtype == 2
+                                || subtype == 4 || subtype == 0x0C))) return true;
         bool extended_vs = console == 3 && (header->zero[2] & 0x0Fu) == 1;
         if (console != 1 && !extended_vs) {
             set_reason(reason, reason_size, "unsupported NES 2.0 console type");
@@ -138,6 +155,7 @@ bool vs_decode_header(const iNESHeader *header, int mapper, size_t prg_bytes,
         config->input_type = (VsInputType)input;
     } else {
         bool clean_header = (header->flags7 & 0x0Cu) == 0;
+        if (clean_header && console == 2) return true;
         if (clean_header && console && console != 1) {
             set_reason(reason, reason_size, "unsupported iNES console type");
             return false;
@@ -165,10 +183,6 @@ bool vs_decode_header(const iNESHeader *header, int mapper, size_t prg_bytes,
         set_reason(reason, reason_size, "dual VS System requires mapper 99");
         return false;
     }
-    if (mapper == 99 && !mapper99_layout_supported(header, config, prg_bytes, chr_bytes)) {
-        set_reason(reason, reason_size, "unsupported mapper 99 PRG/CHR layout");
-        return false;
-    }
     return true;
 }
 
@@ -188,6 +202,7 @@ static void select_side(unsigned side) {
 
 void vs_commit_config(const VsRomConfig *config) {
     select_side(0);
+    apu_audio_shutdown_state(&vs.sub_apu);
     memset(&vs, 0, sizeof(vs));
     if (config) vs.config = *config;
     reset_control_state();
@@ -195,6 +210,7 @@ void vs_commit_config(const VsRomConfig *config) {
 
 void vs_clear_config(void) {
     select_side(0);
+    apu_audio_shutdown_state(&vs.sub_apu);
     memset(&vs, 0, sizeof(vs));
 }
 
@@ -206,6 +222,7 @@ unsigned vs_active_side(void) { return vs.active_side; }
 
 void vs_power_on_secondary(void) {
     if (!vs_dual_system()) return;
+    apu_audio_shutdown_state(&vs.sub_apu);
     memset(&vs.sub_cpu, 0, sizeof(vs.sub_cpu));
     memset(&vs.sub_ppu, 0, sizeof(vs.sub_ppu));
     memset(&vs.sub_apu, 0, sizeof(vs.sub_apu));
@@ -219,6 +236,8 @@ void vs_power_on_secondary(void) {
     printf("VS secondary startup alignment: CPU %u, PPU %u\n",
            (unsigned)alignment.cpu_offset, (unsigned)alignment.ppu_phase);
     select_side(0);
+    // The main controller initializes after the secondary CPU at power-on.
+    reset_control_state();
 }
 
 void vs_soft_reset(void) {
@@ -248,6 +267,8 @@ int vs_cpu_step(void) {
 }
 
 void vs_start_frame(void) {
+    for (unsigned slot = 0; slot < (vs_dual_system() ? 4u : 2u); ++slot)
+        advance_coin_pulse(slot);
     start_frame();
     if (vs_dual_system()) vs.sub_ppu.state.frame_complete = false;
 }
@@ -270,6 +291,11 @@ const uint32_t *vs_video_framebuffer(void) {
 APU *vs_side_apu(unsigned side) {
     if (side == 0) return &apu;
     return side == 1 && vs_dual_system() ? &vs.sub_apu : NULL;
+}
+
+PPU *vs_side_ppu(unsigned side) {
+    if (side == 0) return &ppu;
+    return side == 1 && vs_dual_system() ? &vs.sub_ppu.state : NULL;
 }
 
 void vs_audio_init(int sample_rate) {
@@ -354,10 +380,12 @@ void vs_write_4016(uint8_t value) {
     vs.strobe[side] = strobe;
     vs.select_bit[side] = (value >> 2) & 1u;
     if (vs_dual_system()) {
-        bool main_has_ram = (value & 0x02) != 0;
-        if (side == 0) vs.ram_owner = main_has_ram ? 0u : 1u;
-        unsigned peer = side ^ 1u;
-        vs.external_irq[peer] = !main_has_ram;
+        bool main_sub_bit = (value & 0x02) != 0;
+        if (main_sub_bit != vs.main_sub_bit[side]) {
+            vs.main_sub_bit[side] = main_sub_bit;
+            if (side == 0) vs.ram_owner = main_sub_bit ? 0u : 1u;
+            vs.external_irq[side ^ 1u] = !main_sub_bit;
+        }
     }
 }
 
@@ -386,8 +414,8 @@ uint8_t vs_read_controller_port(unsigned port) {
         if (vs.service[side]) value |= 0x04;
         uint8_t local_dips = (uint8_t)(vs.dips >> (side * 8));
         value |= (uint8_t)((local_dips & 0x03) << 3);
-        if (vs.coins[coin]) value |= 0x20;
-        if (vs.coins[coin + 1]) value |= 0x40;
+        if (coin_pulse_active(coin)) value |= 0x20;
+        if (coin_pulse_active(coin + 1)) value |= 0x40;
         if (side) value |= 0x80;
         return value;
     }
@@ -405,7 +433,12 @@ uint16_t vs_dip_switches(void) { return vs.dips; }
 
 bool vs_set_coin(unsigned slot, bool pressed) {
     if (!vs_enabled() || slot >= (vs_dual_system() ? 4u : 2u)) return false;
-    vs.coins[slot] = pressed;
+    if (pressed && !vs.coin_pressed[slot]) {
+        unsigned side = slot / 2;
+        vs.coin_frames[slot] = 4;
+        vs.coin_frame_mark[slot] = side == 0 ? ppu.frame_count : vs.sub_ppu.state.frame_count;
+    }
+    vs.coin_pressed[slot] = pressed;
     return true;
 }
 
@@ -425,6 +458,10 @@ bool vs_shared_ram_access_allowed(void) {
 
 bool vs_external_irq_pending(void) {
     return vs_dual_system() && vs.external_irq[vs.active_side];
+}
+
+void vs_clear_external_irq(void) {
+    if (vs_dual_system()) vs.external_irq[vs.active_side] = false;
 }
 
 static const uint8_t tko_table[32] = {

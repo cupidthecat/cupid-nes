@@ -2,7 +2,7 @@
 
 [Documentation index](README.md) | [Hardware reference](hardware.md)
 
-Cupid has a C11 core, an SDL frontend, and a C++17 EPSM sound implementation. The application and hardware test executable link the same device implementations. The production core has global cartridge and timing state; the explicit machine contexts currently support the two VS sides, not arbitrary concurrent emulator instances.
+Cupid has a C11 CPU/PPU core, an SDL frontend, and C++17 cartridge and EPSM sound modules. The application and hardware test executable link the same device implementations. The production core has global cartridge and timing state; the explicit machine contexts currently support the two VS sides, not arbitrary concurrent emulator instances.
 
 ## Source layout
 
@@ -15,7 +15,10 @@ Cupid has a C11 core, an SDL frontend, and a C++17 EPSM sound implementation. Th
 | [src/apu/epsm.cpp](../src/apu/epsm.cpp), [src/third_party/ymfm](../src/third_party/ymfm) | EPSM bus, clock, firmware ownership, and YMF288 sound engine |
 | [src/rom/rom.c](../src/rom/rom.c) | Image parsing, allocation, validation, and cartridge replacement |
 | [src/rom/mapper.c](../src/rom/mapper.c) | Board selection, banking, cartridge RAM, nametables, interrupts, and persistence |
+| [src/rom/boards](../src/rom/boards), [board.h](../src/rom/board.h) | Cartridge board modules with owned RAM, 256-byte bus mappings, register decoding, and console reset hooks |
 | [src/rom/fds.c](../src/rom/fds.c) | Disk image ownership, transport, registers, media writes, and disk audio |
+| [src/rom/nsf.c](../src/rom/nsf.c) | NSF/NSFe parsing, banked program data, track metadata, and regional playback parameters |
+| [src/ui/nsf_frontend.c](../src/ui/nsf_frontend.c) | Application track-key handling, reset sequencing, and audio-device locking |
 | [src/rom/eeprom.c](../src/rom/eeprom.c) | Serial EEPROM state and transactions |
 | [src/rom/namco163.c](../src/rom/namco163.c), [sunsoft5b.c](../src/rom/sunsoft5b.c), [vrc7_audio.c](../src/rom/vrc7_audio.c) | Expansion sound implementations and the FM wrapper |
 | [src/joypad](../src/joypad) | Controller protocols, adapters, peripheral state, and Family BASIC keyboard/tape |
@@ -56,7 +59,7 @@ The [accuracy notes](accuracy.md) describe the exact register-delay and collisio
 
 ## CPU and PPU memory
 
-The CPU has 2 KiB internal RAM with mirrors through `$1FFF`. CPU `$2000-$3FFF` accesses reach mirrored PPU registers. APU, controller, and DMA registers occupy the CPU I/O range, while the cartridge layer handles board-specific registers and memory.
+An ordinary cartridge uses 2 KiB internal CPU RAM with mirrors through `$1FFF`. The FamicomBox menu board supplies 8 KiB of distinct RAM over that range; loading an ordinary cartridge restores the 2 KiB mirrors. CPU `$2000-$3FFF` accesses reach mirrored PPU registers. APU, controller, and DMA registers occupy the CPU I/O range, while the cartridge layer handles board-specific registers and memory.
 
 PPU pattern-table accesses reach CHR through the mapper. Nametable accesses go through `cart_nt_read()` and `cart_nt_write()` so boards can select CIRAM, cartridge memory, or generated data. Palette memory is internal to the PPU.
 
@@ -73,6 +76,7 @@ JY boards can clock IRQs from CPU cycles, CPU writes, PPU A12 edges, or physical
 | Loaded cartridge PRG/CHR buffers | Loader; mapper initialization borrows their storage |
 | Mapper registers and work/save RAM | Cartridge layer; selected through global `cart` |
 | FDS media, BIOS, RAM, and audio | Active `FdsImage` and disk-device state |
+| NSF/NSFe metadata, playback program, bank registers, and expansion audio | Music parser and cartridge playback state in `nsf.c` and `mapper.c` |
 | Ordinary CPU, PPU, and APU | Main machine globals and their runtime state |
 | Secondary VS CPU/PPU/APU and framebuffer | Static secondary machine storage in `vs_system.c` |
 | Host player button state | Controller layer, updated by frontend events |
@@ -80,9 +84,9 @@ JY boards can clock IRQs from CPU cycles, CPU writes, PPU A12 edges, or physical
 | Audio producer/consumer positions | Atomic indices inside each APU ring buffer |
 | EPSM chip, protocol, and copied ADPCM ROM | Active `EpsmDevice`, prepared before cartridge activation |
 
-The loader validates sizes and supported combinations before replacing the active cartridge. `load_rom_memory()` copies the supplied image bytes but has no filename from which to derive save paths. `load_rom()` configures cartridge persistence from the image path and applies a trainer after loading save memory. Lower-level mapper initialization leaves the caller responsible for the PRG/CHR buffers it was given. A prepared disk image transfers ownership when activation succeeds.
+The loader validates sizes and supported combinations before replacing the active cartridge. `load_rom_memory()` copies the supplied image bytes but has no filename from which to derive save paths. `load_rom()` installs trainer bytes before loading persistent data from the image's save paths. Lower-level mapper initialization leaves the caller responsible for the PRG/CHR buffers it was given. The C++ board modules own their volatile RAM, nonvolatile RAM, and nametables separately from those ROM buffers. A prepared disk image transfers ownership when activation succeeds.
 
-The frontend configures expansion-device storage separately through `joypad_persistent_configure()` after image loading. It supplies input-device choices explicitly; ordinary NES 2.0 input metadata does not automatically select an expansion controller. VS input metadata has its own decoder. EPSM console metadata prepares a new device, including a copy of the configured percussion ROM, before cartridge activation.
+The frontend configures expansion-device storage separately through `joypad_persistent_configure()` after image loading. The cartridge loader resolves supported ordinary NES 2.0 default-input metadata before activation and applies the resulting controller configuration only after the new cartridge succeeds. Explicit adapter, port, and expansion choices override their corresponding automatic fields. VS input metadata has its own decoder. EPSM console metadata prepares a new device, including a copy of the configured percussion ROM, before cartridge activation.
 
 `unload_rom()` returns a boolean. Dirty FDS media that cannot be saved leaves the device loaded and returns false. Callers must handle that result before destroying the only in-memory copy. [Saves and media](saves.md) distinguishes this from ordinary cartridge persistence.
 
@@ -90,11 +94,13 @@ The frontend configures expansion-device storage separately through `joypad_pers
 
 Power-on and soft reset have separate APIs. The CPU reset sequence performs its bus reads, stack-pointer decrements, and vector reads. The PPU and APU each have state that resets and state that survives a soft reset; the tests and [accuracy notes](accuracy.md) define those choices.
 
-The frontend's R handler resets the main PPU, APU, and CPU, then calls `vs_soft_reset()`. That entry point resets VS protection/control state for single systems and also resets the secondary machine for dual systems. Cartridge latches, flash command state, and expansion-device protocols are not reinitialized by this handler. CPU power-on resets the active EPSM chip; CPU soft reset preserves it.
+The frontend's R handler resets the main PPU, APU, and CPU, then calls `vs_soft_reset()`. That entry point resets VS protection/control state for single systems and also resets the secondary machine for dual systems. PPU reset suppression preserves the running video state when selected. CPU reset sends separate reset and completion signals to the C++ cartridge board modules, which apply their board's latch behavior while retaining cartridge RAM. The C mapper initialization callbacks are still cartridge-insertion entry points. CPU power-on resets the active EPSM chip; CPU soft reset preserves it.
 
-`cpu_soft_reset()` retains A, X, Y and CPU RAM, updates the status flags, decrements SP through the reset bus sequence, and reloads PC from the reset vector. Callers reset the PPU and APU separately when they need a console reset. The APU clears its DAC latches and audio buffers on reset; its explicit soft-reset exceptions are in `apu_reset_state()`.
+`cpu_soft_reset()` retains A, X, Y and CPU RAM, updates the status flags, decrements SP through the reset bus sequence, and reloads PC from the reset vector. It clears the latched mapper IRQ before those bus accesses. Retained cartridge counters continue clocking and can raise a new interrupt during reset. Callers reset the PPU and APU separately when they need a console reset. The APU clears its DAC latches and audio buffers on reset; its explicit soft-reset exceptions are in `apu_reset_state()`.
 
 Hardware-profile choices live outside the state cleared by power/reset operations. Do not replace a soft reset with a full structure clear merely to make a test fixture easier to initialize.
+
+NSF and NSFe use the production CPU and sound chips with a small playback program and a CPU-cycle timer. Their PPU advances frame timing without rendering or VBL NMIs, and their base-APU frame/DMC IRQs are masked. Music resets always reset that timing state, including when cartridge PPU reset suppression is enabled. Application track keys hold the audio-device lock while clearing and restarting the music state. Loading a cartridge restores ordinary PPU and APU interrupt behavior.
 
 ## Dual VS execution
 
@@ -108,13 +114,13 @@ Video composition copies the two completed 256-by-240 images into a 512-by-240 i
 
 The emulation thread generates samples into each APU's ring. Pulse and noise channels store the last value driven to their DACs. Timer edges update these latches; pulse-register writes also refresh pulse output. Clearing a channel's length counter through `$4015` leaves its preceding output until the next channel edge. Optional CPU test reads at `$4018-$401A` and the mixer use the same channel outputs.
 
-Mapper expansion sound enters the APU sample path through `cart_expansion_audio()` before post-filtering. EPSM stereo samples are added after that filter, then the result is clipped and stored as middle and side values. The SDL callback consumes samples using atomic read/write indices. In dual mode, the callback averages samples from stable main and secondary APU storage; it never selects a CPU machine context.
+Each CPU-cycle output change is evaluated through the nonlinear APU mixer and recorded as a delta in the band-limited reconstruction buffer. Register writes can add transitions at the current timestamp between clocks. Mapper expansion sound enters this path through `cart_expansion_audio()`. The reconstructed host-rate samples then pass through the existing analog output filters. EPSM stereo samples are added after those filters, then the result is clipped and stored as middle and side values. The SDL callback consumes samples using atomic read/write indices. In dual mode, the callback averages samples from stable main and secondary APU storage; it never selects a CPU machine context.
 
 Both APUs are initialized to the opened audio device's sample rate. Underruns use the last sample consumed by that callback, held in consumer-owned state. This avoids reading the producer's changing filter output as a fallback.
 
 EPSM runs on the emulation thread from CPU master-clock advances. It generates YMF288 samples every 144 chip clocks and interpolates them into the APU's sample cadence. Middle and side values are published together through the same atomic write index. The stereo callback reconstructs each pair without accessing chip state. Ordinary NES and dual VS output remain mono. The frontend requests 44,100 Hz float audio, with two channels for EPSM and one for other configurations.
 
-The frontend locks the audio device while resetting APU state and closes it before unloading the machine. Any future frontend that replaces a running machine must likewise stop callback access before changing its storage or configuration. Source links: [APU output](../src/apu/apu.c), [VS audio coordination](../src/system/vs_system.c), and [frontend lifecycle](../src/main.c).
+The frontend locks the audio device while resetting APU state and closes it before unloading the machine. Each APU owns its reconstruction allocation: reset clears its history, while `apu_audio_shutdown_state()` releases it before machine storage is discarded or reused. Any frontend that replaces a running machine must stop callback access before changing its storage or configuration. Source links: [APU output](../src/apu/apu.c), [VS audio coordination](../src/system/vs_system.c), and [frontend lifecycle](../src/main.c).
 
 ## Adding coverage
 

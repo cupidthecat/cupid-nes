@@ -6,6 +6,13 @@ Project files with an author header credit
 and license notices with the files they describe. Imported components retain
 their own notices.
 
+## Cartridge board code
+
+The [cartridge board modules](../src/rom/boards) include page-mapping and board
+logic adapted from work by Sour and contributors, under GPL-3.0-or-later.
+Those files retain their copyright and license notices. Cupid supplies the
+loader, CPU/PPU bus integration, storage ownership, and regression fixtures.
+
 ## Bundled FM synthesis
 
 The VRC7 implementation uses the bundled
@@ -17,6 +24,14 @@ history.
 
 The component's [MIT license](../src/rom/emu2413.LICENSE) is retained alongside
 the source. Its notice is separate from Cupid's project license.
+
+## Audio reconstruction
+
+The APU uses Shay Green's [blip_buf](../src/third_party/blip_buf.c) to reconstruct
+CPU-cycle output changes at the host sample rate. The source retains its
+copyright notice and [LGPL-2.1-or-later license](../src/third_party/blip_buf.LICENSE).
+The local adaptation supplies the C interface and avoids shifting negative
+signed samples when updating the reconstruction integrator.
 
 ## EPSM sound engine
 

@@ -14,12 +14,19 @@ Select emulated input hardware with the options in [configuration](configuration
 | Enter | Player 1 Start |
 | Arrow keys | Player 1 D-pad |
 | R | Soft reset the emulated CPU, PPU, APU, and VS control state |
-| M, held | Original Famicom controller 2 microphone signal |
+| M, held | Original Famicom controller 2 microphone signal; Bandai Karaoke microphone when mapper 188 is loaded |
 | F6 | Restore the built-in palette |
 | F7 | Toggle the palette editor |
+| Page Up / Page Down | Next / previous NSF or NSFe track |
 | Ctrl+V | Paste palette text |
 
 Close the window for normal shutdown. The M key supplies the emulated microphone line only; Cupid does not capture a host microphone. Soft reset keeps the selected console, CPU/APU and PPU profiles, current CPU/PPU clock alignment, controller configuration, and persistent peripheral contents. It does not rerun command-line setup or reconnect host controllers.
+
+For NSF and NSFe files, Page Up selects the next track and Page Down selects the previous track, wrapping at either end. Changing tracks clears the player's RAM and audio state, then runs the file's initialization routine for the selected song. NSFe track names are printed when present.
+
+Mapper 188 Bandai Karaoke cartridges also use player-one A/B as their cartridge-owned A and B buttons. Z/X and the first SDL controller's A/B buttons update those inputs while mapper 188 is active. M drives the cartridge microphone as well as the original Famicom microphone line; mapper 188 reports the held microphone on alternating emulation frames.
+
+With `--ppu-reset-suppression`, R preserves PPU registers, scroll latches, raster position, and rendering state while the other reset paths still run. The setting also applies to the second PPU in a dual VS system. NSF and NSFe playback always reset their clock-only PPU state. The setting does not change hard power-on behavior.
 
 Keyboard peripherals are handled before the normal application shortcuts. Family BASIC consumes every keyboard event while selected. Subor, Party Tap, Exciting Boxing, Jissen Mahjong, and mat handlers consume the keys they map, so an overlapping key acts on the selected peripheral instead of the later shortcut. For example, R is a mat key and a Subor letter key, and the number keys used by Party Tap or Boxing take priority over VS coin shortcuts.
 
@@ -29,17 +36,20 @@ Cupid opens devices that SDL recognizes through its GameController interface. At
 
 The first controller is player 1, the second is player 2, the third is player 3, and the fourth is player 4. The input layer has six player slots so the Famicom four-player adapter can expose players 5 and 6 as well.
 
-| Host controller button | Emulated button |
+| Host controller input | Emulated input |
 | --- | --- |
 | A | A |
 | B | B |
 | Back | Select |
 | Start | Start |
 | D-pad | Up, Down, Left, Right |
+| X / Y | SNES X / Y when an SNES controller or NTT Data keypad is selected |
+| Left / right shoulder | SNES L / R, or Virtual Boy L / R, for those device types |
+| Right analog stick | Virtual Boy second D-pad |
 
-Analog sticks are not mapped by the frontend. The keyboard writes player 1's button state, so player 1 can be driven by both the keyboard and the first controller. They update the same button state; avoid using both devices for the same button at once.
+The keyboard writes player 1's button state, so player 1 can be driven by both the keyboard and the first controller. They update the same button state; avoid using both devices for the same button at once.
 
-Which player slots reach the game depends on the emulated wiring. Ordinary NES 2.0 input metadata does not automatically choose these frontend devices; use the command-line input options for ordinary NES and Famicom images. Supported VS metadata is decoded separately inside the VS cabinet model.
+Which player slots reach the game depends on the emulated wiring. Supported NES 2.0 default-input metadata can select ordinary devices automatically, and explicit command-line input options override the corresponding automatic fields. Supported VS metadata is decoded separately inside the VS cabinet model.
 
 | Configuration | Player routing |
 | --- | --- |
@@ -50,6 +60,20 @@ Which player slots reach the game depends on the emulated wiring. Ordinary NES 2
 | Dual VS System | Players 1/2 on the main side and players 3/4 on the secondary side |
 
 Each cartridge still decides which reports it reads. More detail about the emulated adapters is in [hardware](hardware.md).
+
+## SNES, NTT Data, and Virtual Boy port devices
+
+Use `snes-pad`, `snes-mouse`, `ntt-keypad`, or `virtual-boy` with `--port1` or `--port2`. The SNES controller reports B, Y, Select, Start, D-pad, A, X, L, and R followed by four zero bits. Reads after those 16 bits return one. The NTT Data keypad extends that serial report with its keypad signature and numeric/function keys. The Virtual Boy controller reports both D-pads, Select, Start, L/R, B/A, and its signature bit.
+
+For player 1 on the keyboard, A/S drive SNES Y/X and Q/W drive SNES L/R. With a Virtual Boy controller selected, I/K/J/L drive its second D-pad and Q/E drive L/R. The common Z/X, Right Shift, Enter, and arrow-key mappings still drive the device's A/B, Select/Start, and first D-pad where those controls exist.
+
+The NTT Data keypad uses the numeric keypad digits for 0 through 9, keypad `*` for Star, keypad `/` for Pound, keypad decimal for Period, C for C, and E for End Communication. Those keys are handled before normal application shortcuts while the keypad is selected.
+
+The SNES mouse uses relative host-mouse movement and the left/right mouse buttons. The emulated mouse keeps the packet's direction flags, clamps each latched axis magnitude to seven bits, and cycles through its three sensitivity levels when software reads while strobe is high.
+
+## Famicom Network System controller
+
+`--expansion fcns` connects the FCNS controller. NES 2.0 default-input value `0x3B` selects the same device automatically unless the expansion setting was overridden. Player-one A/B, Select/Start, and the D-pad form the first eight serial bits. The numeric keypad digits, keypad `*`, keypad `/`, keypad decimal, C, and E supply the FCNS number/function keys and End Communication bit. The 24-bit report is read on `$4016 D1`; reads after the report return one.
 
 ## Arkanoid paddle
 
@@ -68,6 +92,8 @@ For a standard NES light gun configuration:
 Move the mouse over the game window to aim. Left click fires on screen. Right click holds the trigger while treating the aim position as off screen, which supports games that use off-screen shots for reload behavior.
 
 The default light-sampling radius is zero. `--zapper-radius N` expands the sampled area up to 255 pixels. The Famicom expansion version uses `--console famicom --expansion zapper`. VS images whose NES 2.0 metadata selects the VS Zapper use the same mouse aiming and trigger controls.
+
+When a database record selects a Zapper, its system field chooses the connector: Famicom and Dendy use the expansion port; NES uses controller port two. This works for legacy cartridges, headerless payloads, and UNIF images. Explicit port and expansion options override automatic selection.
 
 ## Power Pad and Family Trainer
 

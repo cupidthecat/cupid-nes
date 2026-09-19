@@ -25,7 +25,9 @@
 #include "../cpu/cpu.h"
 #include "../rom/mapper.h"
 #include "../system/timing.h"
+#include <math.h>
 #include <stdio.h>
+#include <string.h>
 
 static int checks;
 static int failures;
@@ -79,6 +81,26 @@ static void step_sample_reader(int cycles) {
         if (apu_dmc_dma_pending(&apu))
             apu_dmc_dma_complete(&apu, sample_read(apu_dmc_dma_address(&apu)));
     }
+}
+
+enum { RECONSTRUCTION_TEST_FRAMES = 24 };
+
+static void capture_dmc_transient(int rise_cycle, int fall_cycle, float *samples) {
+    reset_audio();
+    apu_audio_init_state(&apu, 44100);
+    apu_write(0x4011, 0);
+    apu_step(&apu, rise_cycle);
+    apu_write(0x4011, 96);
+    apu_step(&apu, fall_cycle - rise_cycle);
+    apu_write(0x4011, 0);
+    apu_step(&apu, 1200 - fall_cycle);
+    apu_audio_pull(&apu, samples, RECONSTRUCTION_TEST_FRAMES);
+}
+
+static float sample_difference(const float *left, const float *right, int count) {
+    float difference = 0.0f;
+    for (int i = 0; i < count; ++i) difference += fabsf(left[i] - right[i]);
+    return difference;
 }
 
 int test_apu_accuracy(void) {
@@ -162,6 +184,40 @@ int test_apu_accuracy(void) {
     start_pulse();
     apu_step(&apu, 7457);
     CHECK("Dendy frame counter uses NTSC sequencer timing", apu.pulse1.env.decay == 15);
+
+    float transient_early[RECONSTRUCTION_TEST_FRAMES];
+    float transient_late[RECONSTRUCTION_TEST_FRAMES];
+    capture_dmc_transient(4, 20, transient_early);
+    capture_dmc_transient(12, 28, transient_late);
+    float transient_energy = 0.0f;
+    for (int i = 0; i < RECONSTRUCTION_TEST_FRAMES; ++i)
+        transient_energy += fabsf(transient_early[i]);
+    CHECK("sub-sample DMC pulse survives band-limited reconstruction", transient_energy > 0.0001f);
+    CHECK("cycle position changes the reconstructed transient waveform",
+          sample_difference(transient_early, transient_late, RECONSTRUCTION_TEST_FRAMES) > 0.0001f);
+
+    float staged[RECONSTRUCTION_TEST_FRAMES];
+    float direct[RECONSTRUCTION_TEST_FRAMES];
+    reset_audio();
+    apu_audio_init_state(&apu, 44100);
+    apu_write(0x4011, 32);
+    apu_write(0x4011, 96);
+    uint64_t staged_transitions = apu.audio_transition_count;
+    apu_step(&apu, 1200);
+    apu_audio_pull(&apu, staged, RECONSTRUCTION_TEST_FRAMES);
+    reset_audio();
+    apu_audio_init_state(&apu, 44100);
+    apu_write(0x4011, 96);
+    uint64_t direct_transitions = apu.audio_transition_count;
+    apu_step(&apu, 1200);
+    apu_audio_pull(&apu, direct, RECONSTRUCTION_TEST_FRAMES);
+    CHECK("same-timestamp channel changes are retained as separate transitions",
+          staged_transitions == 2 && direct_transitions == 1);
+    CHECK("same-timestamp nonlinear deltas reconstruct to the combined final level",
+          memcmp(staged, direct, sizeof(staged)) == 0);
+    apu_soft_reset(&apu);
+    CHECK("APU reset clears reconstruction history and transition timestamps",
+          apu.audio_transition_count == 0 && atomic_load(&apu.ring_w) == 0 && atomic_load(&apu.ring_r) == 0);
 
     reset_audio();
     CHECK("noise starts with a nonzero shift register", apu.noise.lfsr == 1);

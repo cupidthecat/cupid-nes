@@ -105,10 +105,12 @@ bool cpu_test_mode_enabled(void);
 bool cpu_power_on(CPU* cpu);
 void cpu_soft_reset(CPU* cpu);
 void cpu_reset(CPU* cpu);
+void cpu_clear_internal_ram(void);
 // Select an independent CPU bus/RAM context. NULL selects the ordinary console.
 void cpu_select_machine(CpuMachineContext *context);
 uint8_t read_mem(uint16_t addr);
 void write_mem(uint16_t addr, uint8_t value);
+uint8_t cpu_peek_internal_ram(uint16_t addr);
 // Timestamp of the current CPU bus cycle.
 uint64_t cpu_get_bus_cycle(void);
 void execute(CPU* cpu, uint8_t opcode);

@@ -155,6 +155,7 @@ void epsm_activate(EpsmDevice *device) { active_epsm.reset(device); }
 bool epsm_enabled(void) { return active_epsm != nullptr; }
 bool epsm_has_adpcm_rom(void) { return active_epsm && active_epsm->rom_present; }
 void epsm_power_on(void) { if (active_epsm) active_epsm->power_on(); }
+void epsm_clear_irq_source(void) { if (active_epsm) active_epsm->irq = false; }
 void epsm_clock_master(unsigned clocks, uint32_t master_hz) {
     if (active_epsm) active_epsm->clock(clocks, master_hz);
 }

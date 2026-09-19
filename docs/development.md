@@ -20,7 +20,7 @@ make clean
 make -j2 CC=gcc CXX=g++ CFLAGS='-std=c11 -Wall -Wextra -Werror -O2' all test
 ```
 
-The application is `./cupid-nes` and the runner is `build/accuracy-tests`. Running the test executable without arguments executes CPU/controller, APU, PPU, mapper, Bandai, disk, input, VS, and EPSM groups and returns failure if any group fails. The C core uses C11; the EPSM wrapper and ymfm engine use C++17.
+The application is `./cupid-nes` and the runner is `build/accuracy-tests`. Running the test executable without arguments executes CPU, APU, PPU, cartridge, media, input, VS, and EPSM groups and returns failure if any group fails. Media tests include disk transport, StudyBox, and NSF/NSFe execution and sound. The C core uses C11; cartridge board modules, the metadata database, the EPSM wrapper, and ymfm use C++17.
 
 The Makefile defaults to `CC=gcc` and `CFLAGS='-std=c11 -Wall -Wextra -O2'`. When `CXX` still has GNU Make's built-in default, the Makefile selects `g++` for GCC and `clang++` when `CC` contains `clang`. An explicitly supplied `CXX` is kept. Unless `CXXFLAGS` is supplied separately, the Makefile derives it from `CFLAGS`, removes any C language-standard flag, and appends `-std=c++17`. `LDLIBS` defaults to `-lSDL2 -lm`. Use `make clean` before changing compiler families or flag sets because those settings are not tracked as object-file dependencies.
 

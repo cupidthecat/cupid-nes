@@ -143,11 +143,15 @@ static int test_epsm_metadata_and_failure_preservation(void) {
     uint64_t before = epsm_clock_count();
     CHECK(load_rom_memory(image, IMAGE_BYTES - 1) == -1);
     CHECK(epsm_enabled() && epsm_clock_count() == before && prg_rom == previous_prg);
-    image[6] = 0x60; // Mapper 6 remains unsupported.
+    image[6] = 0xF0;
+    image[7] |= 0xF0;
+    image[8] = 0x0F; // Synthetic unsupported mapper 4095.
     CHECK(load_rom_memory(image, IMAGE_BYTES) == -1);
     CHECK(cart == previous && prg_rom == previous_prg && epsm_enabled());
     CHECK(epsm_clock_count() == before && nes_timing()->region == NES_REGION_DENDY);
     image[6] = 0;
+    image[7] &= 0x0F;
+    image[8] = 0;
     image[13] = 5;
     CHECK(load_rom_memory(image, IMAGE_BYTES) == -1);
     CHECK(cart == previous && epsm_enabled() && epsm_clock_count() == before);
@@ -310,6 +314,59 @@ static int test_epsm_power_and_soft_reset(void) {
     CHECK(capture_audio(after, AUDIO_FRAMES) == 0);
     CHECK(channel_energy(after, 0, AUDIO_FRAMES) == 0);
     CHECK(channel_energy(after, 1, AUDIO_FRAMES) == 0);
+
+    CHECK(load_epsm(NES_REGION_NTSC) == 0);
+    ssg_tone(reg_write, 0x0F);
+    write_mem(0x4016, 0x02); // Begin selecting SSG register $08 and leave OUT1 high.
+    cpu_soft_reset(&cpu);
+    write_mem(0x4016, 0x80); // Finish the address write after reset.
+    protocol_write(1, 0);     // The preserved protocol latch now writes volume zero.
+    CHECK(capture_audio(after, AUDIO_FRAMES) == 0);
+    CHECK(channel_energy(after, 0, AUDIO_FRAMES) == 0);
+    CHECK(unload_rom());
+    return 0;
+}
+
+static int test_epsm_soft_reset_irq_source(void) {
+    CHECK(load_epsm(NES_REGION_NTSC) == 0);
+
+    reg_write(0, 0x24, 0xFF);
+    reg_write(0, 0x25, 3);
+    reg_write(0, 0x27, 5);
+    epsm_clock_master(144, EPSM_CLOCK_RATE);
+    CHECK(epsm_irq_pending());
+
+    cpu_soft_reset(&cpu);
+    CHECK(!epsm_irq_pending() && cpu.pc == 0x8000);
+    cpu.status &= (uint8_t)~INTERRUPT_FLAG;
+    CHECK(cpu_step(&cpu) == 3 && cpu.pc == 0x8000);
+    CHECK(cpu_step(&cpu) == 3 && cpu.pc == 0x8000);
+
+    // The chip's timer status and reload registers survive. Clearing the old
+    // status and rearming the same timer produces a new CPU IRQ source edge.
+    reg_write(0, 0x27, 0x15);
+    CHECK(!epsm_irq_pending());
+    unsigned timer_clocks = 0;
+    while (!epsm_irq_pending() && timer_clocks < 144) {
+        epsm_clock_master(1, EPSM_CLOCK_RATE);
+        timer_clocks++;
+    }
+    CHECK(epsm_irq_pending() && timer_clocks > 0 && timer_clocks <= 144);
+    CHECK(cpu_step(&cpu) == 10 && cpu.pc == 0x0300);
+
+    // A fresh source edge during reset is newer than the reset clear and must
+    // remain visible after the seven reset bus cycles finish.
+    CHECK(load_epsm(NES_REGION_NTSC) == 0);
+    reg_write(0, 0x24, 0xFF);
+    reg_write(0, 0x25, 3);
+    reg_write(0, 0x27, 5);
+    epsm_clock_master(143, EPSM_CLOCK_RATE);
+    CHECK(!epsm_irq_pending());
+    cpu_soft_reset(&cpu);
+    CHECK(epsm_irq_pending() && cpu.pc == 0x8000);
+
+    reg_write(0, 0x27, 0x30);
+    CHECK(!epsm_irq_pending());
     CHECK(unload_rom());
     return 0;
 }
@@ -353,13 +410,13 @@ static int test_epsm_clocks_and_irq(void) {
     CHECK(cpu_step(&cpu) == 10 && cpu.pc == 0x0300);
     CHECK(epsm_clock_count() > before && epsm_irq_pending());
     cpu_soft_reset(&cpu);
-    CHECK(epsm_irq_pending() && cpu.pc == 0x8000);
+    CHECK(!epsm_irq_pending() && cpu.pc == 0x8000);
     before = epsm_clock_count();
     nes_set_region(NES_REGION_PAL);
     CHECK(cpu_step(&cpu) == 3);
     uint64_t advanced = epsm_clock_count() - before;
     CHECK(advanced >= 14 && advanced <= 15);
-    CHECK(epsm_irq_pending());
+    CHECK(!epsm_irq_pending());
     CHECK(cpu_power_on(&cpu));
     CHECK(!epsm_irq_pending());
     CHECK(unload_rom());
@@ -433,6 +490,7 @@ int test_epsm_accuracy(void) {
         test_epsm_delayed_out_uses_live_bus,
         test_epsm_controller_and_open_bus,
         test_epsm_power_and_soft_reset,
+        test_epsm_soft_reset_irq_source,
         test_epsm_clocks_and_irq,
         test_epsm_firmware_and_rhythm
     };

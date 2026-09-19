@@ -11,7 +11,10 @@ Cupid models the CPU, picture processing unit (PPU), audio processing unit (APU)
 | NES and Famicom cartridges | iNES or NES 2.0 header | NTSC, PAL, and Dendy timing are implemented |
 | Famicom Disk System | NTSC | Requires a supplied BIOS and a supported disk image |
 | VS System | NTSC | Requires supported console, PPU, input, and cartridge metadata |
+| PlayChoice cartridge payload | NTSC | iNES and NES 2.0 PlayChoice headers load the game cartridge; trailing cabinet data is ignored |
 | NES with EPSM | NES 2.0 header | Extended subtype 4 adds an 8 MHz YMF288 with stereo output |
+| Famicom Network System | NES 2.0 header | Extended subtype `0x0C`; optional 256 KiB character ROM supplied by the user |
+| StudyBox | STBX media | NTSC hardware with a user-supplied 256 KiB BIOS and tape PAGE/AUDI data |
 
 NTSC uses 262 scanlines with vblank beginning at line 241. PAL uses 312 scanlines with vblank beginning at line 241, and Dendy uses 312 with vblank beginning at line 291. PAL advances the PPU at 3.2 clocks per CPU clock; NTSC and Dendy use 3. The NTSC 2C02 skips one clock on rendered odd frames. VS RGB PPUs retain all 89,342 clocks on both frame parities, including both sides of a dual cabinet.
 
@@ -25,7 +28,9 @@ The PPU renders 256 by 240 pixels. Scheduled pattern fetches feed background and
 
 The APU has two pulse channels, triangle, noise, and DMC. It implements envelopes, length and linear counters, sweep units, frame sequences and interrupts, and nonlinear channel mixing. DMC reads use the CPU DMA engine. Pulse and noise DACs latch their values between channel updates; pulse-register writes also refresh the output. The triangle DAC retains its value when the sequencer stops. PAL selects its own APU periods and frame events; Dendy uses NTSC APU periods at its CPU clock rate.
 
-Power-on and soft reset are separate operations. See [architecture](architecture.md) for state ownership and [accuracy](accuracy.md) for bus phases and reset details.
+Audio reconstruction records CPU-cycle output changes before producing host-rate samples. This preserves short channel transitions that occur between sample boundaries. Cartridge expansion audio participates in the same reconstruction path; EPSM retains its separate stereo contribution.
+
+Power-on and soft reset are separate operations. CPU reset clears the latched mapper IRQ before its seven bus cycles. Each board retains or resets its bank and counter registers according to its own wiring; an IRQ raised during those cycles remains pending. See [architecture](architecture.md) for state ownership and [accuracy](accuracy.md) for bus phases and reset details.
 
 ## Cartridge mappers
 
@@ -39,6 +44,14 @@ PRG is the cartridge memory read by the CPU; CHR holds graphics patterns read by
 | 3 | CNROM | CHR bank selection |
 | 4 | MMC3 / MMC6 | PRG/CHR banking, filtered PPU A12 IRQ clocks, selectable MMC3 revision-A IRQ qualification, and RAM protection; submapper 1 selects MMC6 |
 | 4, submapper 3 | MC-ACC | Falling-edge A12 filtering and IRQ timing |
+| 12, 14, 37, 44, 45, 47, 49, 52, 114, 115, 121, 123 | MMC3 variants | Board-specific outer banking, protection registers, alternate register wiring, RAM permissions, mirroring, reset state, and MMC3 IRQ behavior |
+| 126, 134, 165, 182, 187, 196, 197, 198, 199, 205, 208, 215 | MMC3 variants | Outer-bank and register permutations, protection reads, MMC2-style CHR latches, mixed CHR RAM/ROM, alternate mirroring, and board-specific PRG modes |
+| 217, 219, 224, 238, 245, 249, 250, 254, 258, 259, 260, 262 | MMC3 variants | Multicart outer banking, address/data register permutations, protection and open-bus reads, CHR-RAM modes, DIP switches, reset latches, and alternate PRG/CHR wiring |
+| 263, 268, 287, 292, 313, 325, 333, 348, 366 | MMC3 variants | Data and address register permutations, multicart outer banking, CPU RAM driven CHR latches, reset-selected outer banks, cartridge RAM controls, DIP switches, and MMC3 IRQ wiring |
+| 36, 61, 132, 172, 173, 189, 299 | TXC boards | TXC/JV001 accumulator and inverter registers, open-bus protection reads, PRG/CHR banking, mirroring, reset banking, and MMC3 IRQs on mapper 189 |
+| 60, 62, 83, 103, 106, 107, 108, 116, 117, 120, 156, 163 | Unlicensed boards | Reset-selected and address-selected banks, multicart/DIP registers, CPU and A12 IRQs, VRC2/MMC3/MMC1 mode switching, ROM/RAM overlays, protection reads, and scanline-driven CHR switching |
+| 162, 164, 176, 178, 242, 252, 253, 286 | Waixing boards | Multicart outer banking, MMC3 and CNROM modes, banked work/CHR RAM, address-selected banks, VRC-style and scanline IRQs, DIP-selected writes, and mirroring control |
+| 40, 125, 304, 309, 522 | Whirlwind boards | Fixed and switchable PRG windows, low-address ROM overlays, work RAM windows, address-decoded bank control, mirroring, and CPU-cycle IRQ counters |
 | 5 | MMC5, partial | PRG/CHR banking, banked RAM, ExRAM/fill nametables, extended attributes, vertical split, multiplication, PPU-read-driven scanline IRQs, and pulse/PCM audio |
 | 7 | AxROM | 32 KiB PRG banking and single-screen mirroring |
 | 9 | MMC2 | PRG banking and pattern-fetch CHR latches |
@@ -51,62 +64,241 @@ PRG is the cartridge memory read by the CPU; CHR holds graphics patterns read by
 | 19, 210 | Namco 163 / 175 / 340 | PRG/CHR banks, cartridge-backed nametables, RAM permissions, IRQs, and N163 wavetable audio |
 | 21, 22, 23, 25, 27, 183 | VRC2 / VRC4 | Board-specific register wiring, bank selection, mirroring, and VRC4 IRQs |
 | 24, 26 | VRC6 | PRG/CHR and nametable banking, IRQs, two pulse channels, and sawtooth audio |
-| 28 | Action 53 | Outer and inner PRG selection, CHR RAM, mirroring, and startup mapping |
+| 28 | Action 53 | Outer and inner PRG selection, CHR banking, mirroring, and startup mapping |
 | 30 | UNROM 512 | PRG/CHR banking, cartridge nametable memory, and flash programming and erase commands |
 | 32, 65 | Irem G-101 / H-3001 | PRG/CHR banking, board mirroring, and H-3001 IRQ timing |
 | 33, 48 | Taito | PRG/CHR banking, mirroring, and mapper 48 IRQ timing |
 | 34 | BNROM / NINA-001 | 32 KiB PRG banks, board-specific CHR/RAM access, and BNROM bus conflicts |
+| 38, 39, 46, 54, 57, 58 | Discrete unlicensed boards | Address/data bank selection, board-specific reset behavior, split or mirrored PRG windows, and nametable mirroring |
+| 42, 43, 50 | Unlicensed IRQ boards | Fixed and switchable ROM windows, register aliases, CPU-clocked interrupt counters, and board-specific CHR/mirroring controls |
+| 51, 53, 59 | Multicart boards | Outer/inner PRG selection, menu EPROM layouts, CHR RAM or banking, and mapper 59 DIP-switch reads |
+| 166, 167, 170, 177, 179, 190 | Subor and discrete boards | XOR-combined PRG registers, protection-register access, independent bank/mirroring writes, and 2 KiB CHR banking |
+| 200, 201, 202, 203, 204, 212 | Address/data-selected multicarts | Mirrored or consecutive PRG windows, CHR bank selection, nametable wiring, and mapper 212 RAM read masks |
+| 213, 214, 216, 225, 227, 228, 229 | Address-latched multicarts | Separate address/data bank bits, outer PRG and CHR selection, chip-select aliases, and board-specific nametable wiring |
+| 222 | Filtered PPU interrupt board | Two programmable and two fixed PRG banks, eight CHR banks, and an IRQ counter clocked by qualified A12 rises |
+| 226, 230, 231, 233 | Reset-sensitive multicarts | Bank-register reset, reset-selected game modes, mirrored or consecutive PRG windows, and retained mirroring where required |
+| 234, 235, 236, 240, 241, 244, 246, 255, 261, 265 | Multicart bank and read latches | Read-triggered bank changes, bus conflicts, DIP-switch reads, chip-select open bus, register overlays, and board-specific reset behavior |
+| 264, 266 | Yoko and City Fighter | PRG/CHR banking, CPU-clocked IRQ counters, nametable wiring, and City Fighter writes to the DMC DAC |
+| 274, 283, 285, 288, 289, 300, 301, 314, 319, 320 | Multicart address decoders | Paired or mirrored PRG windows, fixed low ROM, separate outer-bank latches, DIP-selected open bus, and CHR bank masks |
+| 328, 329 | RT-01 and EDU2000 | Protected read ranges with varying data bits, repeated CHR windows, and separately banked work RAM |
+| 331, 332, 336, 349, 487, 519, 521, 530 | Multicart and conversion boards | Outer-bank latches, irreversible register locks until reload, DIP-address reads, scrambled bank lines, and board-specific startup mappings |
+| 518, 529 | Dance 2000 and T230 | Nametable-driven CHR selection, PRG protection reads, CHR-RAM outer-bank control, and CPU or prescaled scanline IRQs |
 | 64, 158 | RAMBO-1 | PRG/CHR banks, CPU- or PPU-clocked IRQs, and mapper 158 nametable wiring |
 | 66 | GxROM | Combined PRG/CHR bank selection and bus conflicts |
 | 67 | Sunsoft 3 | 2 KiB CHR banks, switchable 16 KiB PRG, mirroring, and a one-shot CPU IRQ counter |
 | 68 | Sunsoft 4 | 2 KiB CHR banks, CHR-backed nametables, protected cartridge RAM, and licensed external PRG selection |
 | 69 | FME-7 / Sunsoft 5B | ROM/RAM bank selection, IRQ counter, and three-channel tone/noise/envelope audio |
+| 70, 152 | Bandai 74161/7432 | Shared 16 KiB PRG and 8 KiB CHR bank register, fixed upper PRG bank, cartridge RAM, and single-screen mirroring control |
 | 71 | Codemasters | PRG banking and the single-screen board variant |
 | 72, 78, 87, 92, 101, 140 | Jaleco discrete boards | Board-specific PRG/CHR banking, latch edges, mapper 78 mirroring, and applicable ROM bus conflicts |
 | 73 | VRC3 | Switchable 16 KiB PRG, fixed CHR, and 8- or 16-bit CPU-clocked IRQ counter |
 | 74 | MMC3 mixed CHR | MMC3 banking and IRQs with CHR pages $08-$09 routed to 2 KiB RAM |
 | 75, 151 | VRC1 | Three switchable 8 KiB PRG windows, two 4 KiB CHR banks, and board mirroring |
 | 76, 88, 95, 154, 206 | Namco 108 family | Variant-specific PRG/CHR banking, hardwired or register-controlled nametables, and no mapper IRQ source |
-| 77 | Irem LROG017 | 32 KiB PRG banking with bus conflicts, cartridge RAM, banked 2 KiB CHR ROM, fixed 6 KiB CHR RAM, and four-screen nametables |
+| 77 | Irem LROG017 | 32 KiB PRG banking with bus conflicts, cartridge RAM, banked CHR ROM/RAM, three additional CHR-RAM slots, and four-screen nametables |
 | 79, 113, 146 | NINA-03/06 variants | 32 KiB PRG and 8 KiB CHR banks, partially decoded expansion registers, cartridge RAM, and mapper 113's extra bank bits and mirroring control |
-| 80, 82, 207 | Taito X1-005 / X1-017 | PRG/CHR banking, protected fixed-size cartridge RAM, CHR mode selection, and mapper 207 nametable routing |
+| 80, 82, 207 | Taito X1-005 / X1-017 | PRG/CHR banking, cartridge RAM permissions and source selection, CHR mode selection, and mapper 207 nametable routing |
 | 85 | VRC7 | PRG/CHR banking, IRQs, RAM control, and six-channel FM audio |
 | 89, 93, 184 | Sunsoft discrete boards | Board-specific PRG/CHR selection, single-screen wiring, CHR access control, and paired 4 KiB CHR banks |
 | 90, 209, 211 | JY Company | PRG/CHR modes, register arithmetic, mapper-specific nametable routing, latches, and selectable IRQ clock sources |
 | 94, 180 | UxROM variants | Mapper 94 uses D2-D4 to select the lower 16 KiB PRG bank; mapper 180 switches the upper bank and fixes the lower bank at zero |
-| 96 | Oeka Kids | 32 KiB PRG selection, cartridge RAM, banked CHR RAM, PPU-address-driven inner CHR selection, and ROM bus conflicts |
+| 96 | Oeka Kids | 32 KiB PRG selection, cartridge RAM, CHR banking, PPU-address-driven inner CHR selection, and ROM bus conflicts |
 | 97 | Irem TAM-S1 | Fixed lower 16 KiB PRG, switchable upper 16 KiB PRG, cartridge RAM, fixed CHR, and four mirroring modes |
 | 99 | VS System | Cabinet PRG/CHR selection, shared RAM permissions, and single/dual layouts |
+| 104 | Golden Five | Outer PRG block and inner 16 KiB bank selection, fixed bank within the selected block, and CHR RAM |
+| 31 | NSF cartridge | Eight independent 4 KiB PRG windows selected through `$5000-$5FFF`, with fixed CHR mapping |
+| 29 | Sealie Computing | Switchable lower 16 KiB PRG bank, fixed last bank, four 8 KiB CHR RAM banks, and a work-RAM window |
+| 6, 8, 17 | Front Fareast | Board-specific PRG/CHR banking, 32 KiB legacy CHR RAM, mirroring registers, and a CPU-clocked 16-bit IRQ counter |
+| 86 | Jaleco JF-13 | 32 KiB PRG and 8 KiB CHR selection through `$6000-$6FFF`; speech is not emulated |
+| 218 | Magic Floor | Fixed PRG and shared pattern-table/nametable CIRAM with four header-selected address wirings |
+| 323, 324 | Farid multicarts | Serial MMC1 or UNROM inner banks, outer-bank locking, board-specific reset latches, and mapper 324 ROM bus conflicts |
+| 168 | Racermate | PRG and CHR RAM banking, periodic CPU-clocked IRQ, and partial CHR persistence; exercise-bike input is not emulated |
+| 552 | Taito X1-017 variant | Reversed PRG register bits, paired and independent CHR banks, and three save-RAM permission registers |
+| 41, 63, 112, 174, 193, 221, 290, 298 | NTDEC | Address and data bank registers, board-specific open-bus windows and resets, and TF1201 CPU-clocked IRQs |
+| 133, 143, 145, 148, 149 | Sachen discrete boards | Partially decoded bank registers, address-derived protection reads, and mapper 148 ROM bus conflicts |
+| 136, 147 | Sachen JV001 | Accumulator, inversion and output latches, board-specific data-bit wiring, and protection reads |
+| 137, 138, 139, 141 | Sachen 8259 | Four CHR wiring variants, normal and simple bank modes, PRG selection, and nametable routing |
+| 150 | Sachen 74LS374 | PRG/CHR registers, nametable routing, register readback, and DIP-controlled D2 wiring |
+| 243 | Sachen 74LS374 variant | Separate CHR address wiring across registers 2, 4, and 6; register readback and nametable routing |
+| 35, 91 | JY Company | Separate PRG/CHR registers, partially decoded register aliases, and board-specific A12 interrupt counters |
+| 284 | Drip Game | Two PCM FIFOs, CPU-clocked IRQ timer, per-tile extended attributes, PRG/CHR banks, and work-RAM protection |
+| 682 | Rainbow | PRG/CHR flash, selectable ROM/RAM/CIRAM banks, per-tile attributes and patterns, window splits, extended sprites, generated OAM routines, CPU and PPU-read IRQ counters, and two pulse channels plus sawtooth audio |
+| 513 | Sachen 9602 | MMC3 bank and IRQ registers, outer PRG bits written through CHR registers, fixed first-block banks, and battery-backed CHR RAM |
+| 56, 142, 171, 175, 302, 303, 305, 306, 307, 312, 346 | Kaiser | Board-specific address decoding, small PRG windows, delayed bank latches, RAM/ROM selection, mirroring, and CPU-clocked one-shot IRQs |
 | 105 | NES-EVENT | MMC1 serial control, competition PRG modes, fixed CHR RAM, cartridge RAM, and DIP-selected timer IRQ |
-| 111 | GTROM | 32 KiB PRG flash banking, two CHR-RAM banks, banked cartridge nametable RAM, register-read latching, and flash persistence |
+| 111 | GTROM | 32 KiB PRG flash banking, CHR banking, cartridge nametable RAM, register-read latching, and independent RAM/flash persistence |
 | 118 | TKSROM / TLSROM | MMC3 banking and IRQs with CHR-register-controlled nametable routing |
 | 119 | TQROM | MMC3 banking and IRQs with mixed CHR ROM and RAM |
 | 155 | MMC1A | MMC1 banking with the earlier revision's RAM-enable behavior |
-| 185 | Protected CNROM | CHR protection latch, ROM bus conflicts, and D0 pull-up behavior while pattern-table ROM is disabled |
+| 185 | Protected CNROM | CHR protection latch, enabled CHR-RAM writes, ROM bus conflicts, and D0 pull-up behavior while CHR is disabled |
+| 188 | Bandai Karaoke | Internal/expansion 16 KiB PRG banking, fixed upper bank, mirroring, bus conflicts, cartridge RAM, and mapper-owned A/B/microphone input |
 | 191, 192, 194, 195 | MMC3 mixed CHR | MMC3 banking and IRQs with board-specific CHR ROM/RAM selection ranges |
 | 232 | BF9096 | Outer PRG block and inner bank selection with the submapper-1 outer-bit wiring |
 
 NES 2.0 submappers select supported wiring and revisions. Examples include MMC1 submapper 5, MMC6 submapper 1, MC-ACC submapper 3, and VRC register-wiring variants. UxROM, CNROM, and AxROM submapper 2 enable ROM bus conflicts. The loader rejects unsupported submappers and memory geometries even when the mapper family appears above. The complete checks are in [`mapper_init_from_header`](../src/rom/mapper.c).
 
+PRG mapping uses each board's native bank size. Larger images expose complete banks, and a PRG image smaller than a bank repeats as a whole image where it fits in the CPU window; a remaining partial copy stays on open bus. CHR slots shrink to the selected source's available page size where that board supports it. Register masks, source selection, and startup mapping still determine which bytes are visible. This permits small and irregular NES 2.0 payloads without adding bank bits or substituting RAM for ROM. Rejected layouts leave the current cartridge intact.
+
+The mixed-CHR MMC3 variants select RAM through these CHR bank values:
+
+| Mapper | RAM bank range | Default CHR RAM |
+| --- | --- | --- |
+| 74 | `$08-$09` | 2 KiB |
+| 119 | `$40-$7F` | 8 KiB |
+| 191 | `$80-$FF` | 2 KiB |
+| 192 | `$08-$0B` | 4 KiB |
+| 194 | `$00-$01` | 2 KiB |
+| 195 | `$00-$03` | 4 KiB |
+
+These sizes are defaults. Explicit NES 2.0 declarations control the actual allocation, including zero, smaller chips, larger chips, and persistent CHR storage. Outside the listed range, the default source selects ROM when present and RAM otherwise. ROM remains read-only. Complete pages wrap within the selected source; a missing source does not become writable ROM. The board's MMC3 bank, RAM-permission, and IRQ registers remain active.
+
+Action 53, UNROM 512, and Oeka Kids leave CHR ROM unmapped at startup until their bank controls select it. CHR RAM retains its initial mapping. Small ROM cases keep the selected slots and uncovered addresses distinct; Oeka Kids also updates the lower CHR slot when the PPU address enters a nametable. CPU soft reset retains these bank latches.
+
+NINA-001 leaves CHR ROM unmapped until its `$7FFE/$7FFF` registers select the two slots. Writes at `$7FFD-$7FFF` update bank selection and the writable RAM beneath those registers. BNROM retains its separate bank-write decoding and ROM bus conflicts. Both retain bank state on CPU soft reset.
+
+FME-7 selects work RAM or save RAM according to the battery flag when command 8 chooses RAM. Selecting an absent chip, or one smaller than the 256-byte mapping granularity, leaves the previous low-window mapping intact. A mapped RAM window can instead be disconnected with its permission bit without losing the stored bytes. Banks, counter state, and 5B audio state survive CPU soft reset.
+
+Bandai 70/152 start with vertical mirroring and accept their shared bank register throughout `$8000-$FFFF`, without ROM bus conflicts. Mapper 152 selects either single-screen page on every write. Mapper 70 retains vertical mirroring until a write sets D7; later writes then select either single-screen page. The register state survives CPU soft reset. Both IDs ignore the NES 2.0 submapper field. Their [board implementation](../src/rom/boards/bandai.hpp) uses complete memory pages, including small and irregular ROM images.
+
+Bandai Karaoke mapper 188 starts with PRG page 0 at `$8000-$BFFF`, internal page 7 at `$C000-$FFFF`, and CHR page 0. D4 selects internal pages 0-7 for the lower window; when D4 is clear and at least 256 KiB of PRG is present, the board selects expansion pages 8-15. Without that expansion area, the lower window is disconnected. D5 selects horizontal or vertical mirroring. Register writes have ROM bus conflicts. PRG and CHR mapping uses the shared board page rules, so complete pages wrap normally, small images use their smaller physical page size, and trailing partial pages do not become additional selectable pages. Mapper 188 does not impose its own ROM-size, CHR-type, or submapper restrictions.
+
+Reads at `$6000-$7FFF` expose the cartridge's A/B/microphone input while writes still reach the normal backing PRG RAM selected by the header and battery flag. A and B are active low on D0-D1. A held microphone drives D2 on even emulation frames and is low on odd frames; D3-D7 retain CPU open bus. Because host input is polled between frames, that microphone level stays stable for the full frame. Battery-backed RAM continues to use the ordinary `.sav` path even though CPU reads in this range see the input register.
+
+Golden Five starts with PRG bank 15 at `$C000-$FFFF`; the lower 16 KiB window remains on open bus until a bank write. Writes at `$8000-$9FFF` change the outer block when D3 is set. Writes at `$C000-$FFFF` select the inner bank, and writes at `$A000-$BFFF` have no effect. The registers survive CPU soft reset, and mirroring follows the header. The board uses the default CHR RAM window and does not select CHR ROM. Small PRG images use the shared page-mapping rules.
+
+Magic Floor connects pattern-table addresses to the same two CIRAM pages used by the nametables. Horizontal and vertical header settings select the address wiring. With the four-screen header bit set, the low mirroring bit instead selects single-screen A or B wiring. Changes through either pattern or nametable addresses are visible through their aliases, including CPU accesses through PPUDATA. A CHR ROM declaration does not replace this routing. PRG uses a fixed 32 KiB window, with complete smaller images repeated where they fit.
+
+Jaleco JF-13 starts at PRG bank zero. Writes throughout `$6000-$6FFF` select the 32 KiB PRG bank with D4-D5 and the 8 KiB CHR bank with D0-D1 and D6. CHR ROM remains unmapped until the first bank write. Mirroring follows the header, and bank state survives CPU soft reset. Register writes do not modify underlying PRG RAM. The speech device at `$7000-$7FFF` is not emulated; those writes currently have no effect.
+
+Mapper 31 selects eight 4 KiB PRG windows with the low three address bits of writes at `$5000-$5FFF`. Startup maps bank 255 into `$F000-$FFFF`; the other windows remain on open bus until written. The bank number wraps over complete ROM pages, and CPU soft reset preserves the selected windows. CHR starts at bank zero, and nametable mirroring follows the header. This mapper loads as a cartridge image; NSF and NSFe file execution is a separate media path.
+
+NSF and NSFe files use a dedicated music execution environment. The loader checks the header, load address, track count, and chunk lengths, pads program data to 4 KiB pages, and honors bank registers at `$5FF6-$5FFF`. Reset and track changes call the initialization routine with the selected song; a CPU-cycle timer schedules the playback routine at the file's NTSC or PAL rate. NSFe `auth`, `tlbl`, `time`, `fade`, and `BANK` metadata are supported. `plst` and `text` are accepted without changing track order or displaying their text, and unknown required chunks are rejected. Page Up and Page Down select tracks through the normal application.
+
+Music files can combine VRC6, VRC7, FDS, MMC5, Namco 163, and Sunsoft 5B sound. Register writes and clocks use the production expansion-chip models, and their output joins the ordinary APU mix. Namco register writes take precedence over overlapping Sunsoft 5B addresses. NSFe fades scale the complete mix after the requested track length. FDS music uses writable banked program windows without disk transport; MMC5 provides its audio registers, multiplier, and 1 KiB ExRAM window. Track changes clear music-owned RAM and audio state while the application holds the audio-device lock.
+
+The music PPU advances regional frame timing without rendering or generating VBL NMIs. Its reset path remains active when PPU reset suppression is selected. Base-APU frame and DMC IRQs are masked during music playback. Loading a cartridge restores rendering, PPU NMI behavior, and ordinary APU IRQ delivery; these transitions are exercised by the hardware tests.
+
+Front Fareast mappers 6 and 8 use a combined PRG/CHR register in the upper CPU address range. Mapper 6 fixes the upper PRG window to banks 14 and 15; mapper 8 retains its initial upper banks 2 and 3. Mapper 17 instead exposes four independent 8 KiB PRG registers and eight 1 KiB CHR registers. All three provide horizontal, vertical, and single-screen mirroring controls. Their 16-bit counter advances on every CPU cycle, including writes and DMA, raises an IRQ when it wraps, and stops until rearmed. Bank and counter state survive CPU soft reset. Legacy images receive 32 KiB of CHR RAM; NES 2.0 declarations determine the actual RAM allocation. On mapper 6, a CHR-only register mode is available when the board has no CHR RAM.
+
+Farid mapper 323 adds an outer latch at `$6000-$7FFF` to serial MMC1 banking. That latch can be locked and follows the MMC1 RAM-disable control. Soft reset clears the outer latch and lock while retaining the MMC1 registers and partially written serial word. Its 32 KiB paired-page PRG mode and fixed-PRG submapper bypass the outer PRG transform. Mapper 324 latches outer-bank and lock bits on a rising D7 write edge, after ROM bus conflicts are applied. Its soft reset clears the outer and lock bits without immediately remapping PRG; the next bank write applies the resulting state. Mapper 324 takes mirroring from the header.
+
+Mapper 29 starts with the last PRG bank at `$C000-$FFFF` and open bus below it until the first bank write. Writes throughout `$8000-$FFFF` select the lower 16 KiB PRG bank with D2-D4 and an 8 KiB CHR bank with D0-D1. The board retains these mappings on CPU soft reset. Legacy images receive 32 KiB of CHR RAM; NES 2.0 declarations control the actual allocation. The `$6000-$7FFF` window selects work RAM when present, so writes there do not modify a separate save chip. Mirroring follows the header.
+
+The NTDEC boards keep their separate register layouts. Caltron 41 permits inner CHR selection only while PRG bank 4 through 7 is selected, and resets to bank zero. Mapper 63 can disconnect its lower PRG window; resetting its latch leaves that window disconnected until the next bank write. Mapper 112 combines paired CHR pages with four independent outer CHR bits. TC112 (193) leaves the lower PRG window and CHR ROM unmapped until their registers are written. Mapper 221 selects mirrored 16 KiB, paired 32 KiB, or fixed-upper-bank modes from address bits. NTD03 (290) resets its PRG, CHR, and mirroring selection.
+
+Mapper 174 follows documented address wiring, but that wiring has not been verified against hardware. TF1201 (298) uses a CPU-driven prescaler and an incrementing IRQ counter; the implementation retains the known uncertainty in that timing model. Its IRQ acknowledgement clears the line without stopping or reloading the counter, while the enable register reloads both counter and prescaler. These two boards should not be treated as hardware-verified solely because the regression suite passes.
+
+Racermate (168) banks the lower 16 KiB PRG window and upper 4 KiB CHR window through writes at `$8000-$BFFF`. The last PRG bank and first CHR bank stay fixed. Its interrupt counter runs on every CPU cycle, including writes, DMA, and soft reset. It begins at zero, first wraps after 65,536 cycles, and then reloads to 1,024 cycles. Writes at `$C000-$FFFF` acknowledge the interrupt and restart that interval. Legacy images use 64 KiB of CHR RAM and save only its upper 32 KiB to `.chr.sav`; NES 2.0 CHR persistence follows the declared nonvolatile tail. Explicit PRG NVRAM uses the normal `.sav` path. The exercise-bike peripheral is not emulated.
+
+Taito mapper 552 reverses the six low bits of each PRG register value before selecting an 8 KiB bank. The upper bank stays fixed. Six CHR registers select two even-aligned 2 KiB pairs and four 1 KiB banks, with a mode bit exchanging their pattern-table halves. The exact unlock values `$CA`, `$69`, and `$84` independently enable the first 2 KiB, next 2 KiB, and next 1 KiB of mapped save RAM. Other values block both reads and writes to that mapped region. A missing or unmappable save chip leaves any previous mapping intact. Additional RAM declared outside those 5 KiB retains its initial mapping. The control and bank registers survive CPU soft reset. A fresh load locks the mapped save regions and leaves the lower PRG windows and CHR ROM unmapped until their bank registers are written.
+
+Sachen mapper 133 decodes writes at addresses matching `$4100` under mask `$6100`, including aliases above `$8000`. Mapper 143 returns an address-derived protection byte throughout `$4100-$5FFF` and keeps fixed PRG/CHR mapping. Mapper 145 selects CHR through partially decoded writes below `$8000`; mapper 149 selects it through upper CPU writes. Mapper 148 combines PRG and CHR selection after resolving ROM bus conflicts. CHR ROM on mappers 145, 148, and 149 remains unmapped until the first bank write.
+
+JV001 mappers 136 and 147 retain separate staging, accumulator, inversion, increment, and output latches. Writes above `$8000` latch the bank output. Mapper 136 keeps PRG fixed and preserves the open-bus upper two bits on protection reads; mapper 147 rotates the data lines and uses the output for both PRG and CHR banks. Their registers and selected banks survive CPU soft reset.
+
+Sachen 8259 variants use the same indexed register interface with different CHR address wiring. Mapper 137 has four variable 1 KiB CHR slots and four fixed trailing slots. Mappers 138, 139, and 141 use 2 KiB slots with different outer address bits and leave CHR RAM in its default mapping. Their CHR ROM starts unmapped. Declaring separate CHR RAM alongside CHR ROM on those three variants suppresses CHR ROM selection. The simple mode reuses the first CHR register and fixes the mirroring selection. Normal mode also permits one CIRAM page in the first nametable and the other page in all remaining nametables.
+
+Mapper 150 starts with three nametables on CIRAM page zero and the fourth on page one. Indexed registers control PRG, CHR, and mirroring; reads return the selected register's low three bits while retaining the upper open-bus bits. Setting cartridge DIP bit zero through `--cart-dip 1` forces D2 high on register writes and leaves D2 on open bus during reads. These boards retain register state on CPU soft reset and accept the NES 2.0 submapper field without changing their wiring.
+
+Kaiser 56 and 142 use indexed 8 KiB PRG registers, a fixed last bank, and a nibble-programmed 16-bit timer. The timer raises an IRQ on reaching `$FFFF`, reloads, and disables itself until rearmed. Mapper 56 also supplies outer PRG bits, eight CHR registers, and mirroring control. Its mapper 142 counterpart leaves CHR ROM unmapped. Mapper 303 instead counts down to zero, acknowledges its interrupt through `$4030`, and stages its bank and mirroring changes until a write at `$5100-$51FF`. These timers count CPU writes, DMA, and soft-reset bus cycles.
+
+Kaiser 175 applies pending PRG and CHR banks when the CPU reads `$FFFC`; that read returns data from the newly selected bank. Soft reset clears the pending bank and selects bank zero. The other Kaiser boards retain their bank registers on CPU soft reset. Mapper 171 independently selects two 4 KiB CHR windows. Mapper 346 changes its 32 KiB PRG bank only at the exact write addresses `$E0A0` and `$EE36`, while mapper 312 selects a lower 16 KiB bank through writes at `$6000-$7FFF` and controls mirroring with upper writes.
+
+Kaiser 302 and 305 expose four independent 2 KiB ROM windows at `$6000-$7FFF`. Mapper 302 uses nibble registers and fixed upper PRG banks; mapper 305 maps its upper ROM in reverse 2 KiB order. Mapper 306 decodes write-address bits to select an 8 KiB ROM window below its fixed upper banks. Mapper 307 splits work RAM between `$6000-$6FFF` and `$B000-$BFFF`, selects two PRG pairs, and routes all four nametables independently. Its trainer bytes appear in the second work-RAM window. RAM and ROM access permissions remain distinct from register-write interception on all of these boards.
+
+Mapper 243 shares the indexed register interface and nametable controls of mapper 150, but its CHR address uses register 2 bit zero, register 4 bit zero, and register 6 bits zero and one. Cartridge DIP settings do not affect mapper 243. Its registers survive CPU soft reset.
+
+Sachen 9602, mapper 513, uses MMC3 banking and qualified A12 IRQs. Writing a CHR register also selects an outer PRG block with the data's upper two bits; CHR selection uses the low five bits. The two fixed PRG banks remain banks 62 and 63 of the first ROM block even when the switchable banks move to another block. PRG mode changes move fixed bank 62 between `$8000` and `$C000`. The CHR RAM chip is battery-backed in full, including when a NES 2.0 header declares both volatile and nonvolatile CHR memory. Its `.chr.sav` contains the full allocated chip, and its bank registers survive CPU soft reset.
+
+JY mapper 35 starts with only the final 8 KiB PRG bank mapped. Its four PRG and eight CHR registers decode the low address bits within `$8000-$8FFF` and `$9000-$9FFF`. It counts A12 rises after a sufficiently long low interval measured with the PPU frame counter. Its 8-bit IRQ counter decrements, including wrapping from zero, and disables itself when it reaches zero. `$C002` acknowledges and disables the IRQ, `$C003` enables it, and `$C005` writes the counter. `$D001` controls mirroring.
+
+JY mapper 91 starts with the last two PRG banks mapped and preserves header mirroring. Writes at `$6000-$6FFF` select four 2 KiB CHR banks; `$7000` and `$7001` select the two lower PRG banks using four data bits. `$7003` arms an MMC3 counter with reload value seven, so an IRQ occurs on the eighth qualified A12 rise. `$7002` acknowledges and disables it. Those low cartridge writes control registers while reads still access declared RAM; they do not overwrite that RAM. Both JY boards preserve bank and IRQ registers on CPU soft reset, and their CHR ROM starts unmapped until a bank write.
+
+Drip Game, mapper 284, starts with its final 16 KiB PRG bank mapped. Writes below `$C000` select the lower PRG bank, four 2 KiB CHR banks, mirroring, and work-RAM protection through aliases of `$8000-$800F`. Its identification register at `$4800-$4FFF` returns `$64`, with DIP bit zero supplying the top bit. The 15-bit IRQ counter counts every CPU bus cycle, including writes, DMA, and reset cycles. Writing its high byte arms or disables it and acknowledges the interrupt; writing its low-byte latch does not disturb a running counter.
+
+The board's two 256-byte PCM FIFOs have separate period, volume, reset, and status registers. Filling, draining, and overwriting a full FIFO preserve the circular pointer behavior. Period changes affect the next reload, volume changes affect a playing sample immediately, and an empty FIFO holds its output until another sample or reset changes it. The outputs feed the timestamped audio reconstruction path. The FIFO timers and registers survive CPU soft reset.
+
+Drip Game also has two volatile 1 KiB extended-attribute planes. CPU writes at `$C000-$FFFF` select a plane and byte through address aliases while reads still access PRG ROM. During rendering, a nametable fetch selects the attribute byte for the following attribute fetch. Mirroring selects the plane, and its low two bits supply the tile's palette. CPU VRAM reads bypass this substitution. The attribute planes use the configured power-on RAM state and are separate from both cartridge work RAM and battery saves.
+
+Rainbow, mapper 682, starts with PRG and CHR bank zero. Its upper CPU windows select PRG ROM or the cartridge RAM chip in 32, 16, 8, or 4 KiB banks. The lower windows can also select the board's 8 KiB FPGA RAM. CHR windows range from 8 KiB to 512 bytes and can address CHR ROM, CHR RAM, FPGA RAM, or CIRAM. Each nametable has an independent chip and bank selector. Extended attributes and pattern banks apply per tile, while the programmable window has its own nametable, scroll offsets, and fill control. Extended sprite banks follow the OAM Y data observed on the CPU bus, including DMA. Reads at `$4280` and `$4282` generate executable OAM and sprite-bank update routines from FPGA RAM.
+
+The CPU counter supports automatic reload and separate acknowledgement, including acknowledgement by reading `$4011`. The scanline counter detects repeated nametable reads, and its IRQ offset counts PPU reads within the scanline. Three CPU clocks without a PPU read end the detected frame. The two interrupt sources remain pending independently. Programmable NMI and IRQ vectors, parity, and interrupt-jitter registers are also available.
+
+Rainbow audio uses two 16-step pulse generators and a 14-step sawtooth generator. The output-control register selects cartridge expansion pins, and the master-volume register controls their contribution to the audio mixer. Reading `$4011` returns twice the most recently clocked generator sum, allowing a CPU read-modify-write instruction to feed the native DMC DAC. Soft reset restores the documented control registers without clearing the audio generators, RAM, or flash command state. The PRG and CHR flash chips independently support identification, byte programming, bypass programming, sector erase, and chip erase; programming only clears bits. Their persisted images use separate files described in [saves and media](saves.md).
+
+The Rainbow Wi-Fi control bits and buffer-page registers are stored, but receive/transmit status reads return zero. Wi-Fi communication, SD-card access, and external network services are not emulated.
+
+Mapper 38 selects its PRG and CHR banks only on writes at `$7000-$7FFF`. Mapper 39 switches the entire 32 KiB PRG window and returns to bank zero on soft reset. Mapper 46 combines the registers at `$6000-$7FFF` and `$8000-$FFFF` for outer and inner PRG/CHR selection; soft reset clears both. Mappers 54 and 58 derive their banks from the write address, ignoring the written value. Mapper 57 combines two data registers and can mirror one 16 KiB PRG bank or select a consecutive pair. These boards retain their registers on soft reset except for mappers 39 and 46.
+
+Mapper 42 keeps the final 32 KiB of PRG fixed and banks ROM at `$6000-$7FFF`. Its counter repeats every 32,768 CPU clocks and asserts IRQ during the final 8,192 clocks while enabled. Only a value of `$02` enables it. Mapper 43 uses separate register aliases, a fixed ROM window at `$5000-$5FFF`, and a 4,096-clock one-shot IRQ. Mapper 50 also has a 4,096-clock one-shot IRQ, but enabling it again preserves its counter; disabling it clears both counter and IRQ. Its `$C000-$DFFF` ROM window stays open bus until a bank write. All three counters advance through actual CPU bus cycles.
+
+Mapper 51 combines mode and bank bits to switch between a 32 KiB PRG block and split 16 KiB windows. Mapper 53 recognizes both menu-EPROM image orders and applies the corresponding bank offsets. Both use the initial CHR RAM mapping and do not select CHR ROM. Mapper 59 can return its two DIP-switch bits throughout `$8000-$FFFF` instead of ROM data. Those reads drive the complete byte. Bank selection, RAM contents, and nametable routing follow each board's reset and write decoding.
+
+Subor mappers 166 and 167 combine four masked registers through XOR to select their outer and inner PRG banks. Their 32 KiB mode reverses the two 16 KiB halves on mapper 167, and their fixed-bank modes differ. Mapper 170 captures data bit 6 on writes at `$6502` or `$7000` and returns it as bit 7 when reading `$7001` or `$7777`; the lower bits come from the address. Read and write decoding is independent, so RAM writes at `$7001` and `$7777` still reach the cartridge chip. Soft reset clears only this protection latch.
+
+Mapper 177 selects its 32 KiB PRG bank and mirroring from the same write value. Mapper 179 changes the PRG bank at `$5000-$5FFF` and mirroring at `$8000-$FFFF`, while retaining normal cartridge RAM access between them. Mapper 190 selects the lower 16 KiB PRG window through two register ranges and leaves the upper window at bank zero. Its four 2 KiB CHR banks also accept the decoded aliases at `$E000-$FFFF`.
+
+Mappers 200 through 204 use their board-specific address or data bits for PRG and CHR selection. Mapper 201 shares the mapper 54 circuit. Mapper 202 can select a consecutive pair of 16 KiB PRG banks; mapper 204 uses a consecutive pair only for banks 6 and 7. Mapper 212 independently selects a mirrored 16 KiB bank or a 32 KiB pair. Reads in its `$6000-$7FFF` window OR bit 7 into the stored byte when address bit 4 is clear, without changing the RAM byte. These boards retain their bank state through CPU soft reset. Small physical CHR chips use the same shortened slots and startup RAM aliases as other cartridge boards.
+
+Mappers 213, 214, and 216 select PRG and CHR from partially decoded write addresses. Mapper 216 also decodes `$5000`: reads return zero, and writes select the banks described by that address. Addresses beside `$5000` retain their ordinary bus behavior. No additional communication protocol is emulated for this board.
+
+Mapper 222 fixes the final two 8 KiB PRG banks at `$C000-$FFFF`. The lower PRG banks and CHR ROM remain unmapped until their bank registers are written; CHR RAM keeps its initial mapping. A12 must remain low for at least ten PPU dots before a rising edge increments the IRQ counter. Writing `$F000` loads the counter and acknowledges IRQ. A loaded value of 239 triggers on the next qualified rise; zero disables counting. The interrupt stays asserted after the counter stops, until acknowledged or cleared by CPU reset. CPU writes through PPUADDR and rendered PPU fetches both drive this circuit. CPU soft reset preserves the bank registers and counter.
+
+Mapper 225 combines an outer address bit with independent PRG and CHR bank fields. Mapper 227 selects mirrored, consecutive, or fixed-upper PRG windows; it uses the initial CHR RAM mapping and does not select CHR ROM. Mapper 228 combines address and data bits for CHR selection and aliases its fourth PRG chip selection to the third chip. Reset returns it to its initial PRG/CHR banks and vertical mirroring. Mapper 229 selects its first PRG pair when the bank field is zero, including addresses whose low bit is set, and otherwise mirrors a 16 KiB bank.
+
+Mapper 226 resets its two bank registers on CPU soft reset while retaining the current mirroring. Mapper 233 adds a reset-selected outer PRG bit, alternating between game groups on each soft reset. Mapper 230 alternates between its fixed-upper Contra layout and the multicart layout; each mode has distinct bank and mirroring rules. Mapper 231 resets both PRG windows to bank zero without resetting mirroring. RAM contents survive these bank-control resets, and battery data is restored after trainer initialization.
+
+Mapper 234 latches the byte visible in ROM when the CPU reads its bank-register ranges. The read returns the old byte even when it changes the bank. Writes combine the CPU value with the ROM byte through bus conflicts. Its outer latch locks after a nonzero bank selection, while the inner CHR and PRG bits remain writable. Mapper 235 decodes its PRG chip selections according to the image size; selections for missing chips leave the CPU bus undriven until another write or reset restores a bank.
+
+Mapper 236 uses the low address bits for either CHR selection or an outer PRG bank, depending on whether the cartridge has CHR ROM. Its DIP mode substitutes four switch bits for the low address nibble during ROM reads. Reset clears the mode and outer latch without immediately changing the mapped banks. Mappers 240 and 241 use separate low-address and high-address register ranges. Mapper 244 implements the PRG and CHR bank-bit permutations selected by its write value. Mapper 246 reads RAM beneath its bank registers at `$6000-$67FF`; writes there select banks, while writes at `$6800-$7FFF` change RAM. Reset restores only its final PRG window.
+
+Mapper 255 selects an outer PRG/CHR group and mirrored or consecutive PRG banks from the write address. Mapper 261 resets to its initial banks and mirroring. Mapper 265 can lock its outer bank, PRG mode, and mirroring until the cartridge is reloaded; subsequent writes still change the inner bank. These boards retain their ordinary declared RAM and battery storage.
+
+Yoko mapper 264 has a 16-bit CPU counter that stops when it asserts IRQ. Its DIP reads preserve the undriven upper six CPU data bits, and its four extra registers have mirrored addresses. Soft reset clears the bank and mode latches while retaining the mapped windows and counter state until the next applicable register write. The CPU clears a previously latched IRQ. City Fighter mapper 266 keeps counting after IRQ, including 16-bit wraparound. Its decoded audio writes reach `$4011` on the production CPU bus, set the seven-bit DMC DAC value, and do not add another CPU cycle. Both boards implement their PRG and CHR register aliases and interrupt acknowledgement paths.
+
+Mapper 274 selects its bank mode through the CPU write-address window and resets both PRG windows to bank zero. Mapper 283 maps a fixed ROM bank at `$6000-$7FFF`, keeps that window read-only, and restores its initial upper PRG banks on reset. Mapper 285 supports consecutive or separately selected PRG banks and all four horizontal, vertical, and single-screen nametable modes. Mappers 288 and 300 couple PRG and CHR selection through address and data latches respectively; their bank selections survive CPU soft reset.
+
+Mapper 289 exposes outer-bank and mode writes over readable RAM at `$6000-$7FFF`. Its three defined PRG modes select mirrored banks, consecutive banks, or a fixed upper bank. Mode 3 retains the existing PRG windows while mirroring can still change. Mapper 301 can leave PRG reads on open bus when its DIP setting selects a missing chip. Such a selection retains the previous mirroring, and changing the switch takes effect on the next bank-register write. Larger PRG images retain access to the selected chip regardless of that switch.
+
+Mapper 314 has four write registers at `$5000-$5003`. Clearing its full-window mode leaves the lower PRG mapping intact while the upper bank changes. Reset restores both PRG windows, CHR selection, and mirroring. Mapper 319 decodes writes only in `$6000-$7FFF` and `$E000-$FFFF`, with separate PRG and CHR masks. Mapper 320 accepts inner-bank writes throughout the upper CPU range, but its outer bank and bank mode change only on writes to `$F0E0-$F0FF`.
+
+Mapper 328 repeats its first 16 KiB PRG bank and first 2 KiB CHR bank. Reads at `$CE80-$CEFF` and `$FE80-$FEFF` return `$F2` with varying bits 0, 2, and 3; reads outside those ranges return ROM. Mapper 329 selects 32 KiB PRG banks and up to four 8 KiB work-RAM windows. Its unspecified work-RAM size is 32 KiB; explicit NES 2.0 RAM sizes take precedence. When both work RAM and save RAM exist, bank writes select work RAM and leave the separate battery data unchanged. An absent work-RAM source leaves the initial CPU mapping in place. Reloading the cartridge restores battery data while initializing volatile work RAM and applying its trainer again.
+
+Mapper 331 combines a common outer bank with separate 4 KiB CHR registers and either paired PRG banks or a fixed upper bank. Mapper 332 reads RAM beneath its `$6000-$6FFF` bank registers. Odd writes select CHR, while even writes select PRG, mirroring, and the register lock. Setting the lock blocks both kinds of bank writes until cartridge reload; a CPU soft reset leaves it locked. CHR ROM remains unmapped until the first odd register write. Declared CHR RAM is available at startup, and battery-backed PRG and CHR storage retain their separate contents.
+
+Mapper 336 selects an inner PRG bank beneath a fixed upper bank in the same group. Mapper 349 switches among consecutive banks, mirrored banks, and a fixed upper bank using the write address; reset restores its initial pair and vertical mirroring. Mapper 487 has separate inner and outer latches in its lower register range. In its alternate game-group mode, upper CPU writes supply the inner bank bits and lower inner-latch writes are ignored. Reset clears both latches and restores the initial PRG, CHR, and nametable mapping.
+
+Dance 2000 mapper 518 uses nametable address bit 11 to select the lower 4 KiB CHR bank while automatic switching is enabled. Both rendering fetches and CPU PPU accesses reach that latch. Its `$5200` mode write updates PRG and mirroring immediately only when the paired-bank mode is enabled; other mode changes wait for the next `$5000` bank write. Its protection bit leaves upper CPU reads on open bus. Mapper 519 can substitute four DIP bits for the low ROM-address nibble, ignores bank writes with address bit 8 set, and clears its bank and read-address latches on reset. Mapper 521 decodes only `$5020`, keeping its upper PRG bank fixed.
+
+T230 mapper 529 combines paired PRG registers with a swappable fixed bank and a VRC interrupt counter. With CHR RAM present, CHR register writes select an outer PRG bit; without it, the registers supply the low and high CHR bank bits. Its fixed final PRG window and second PRG register do not gain that outer bit. The IRQ counter can count CPU cycles directly or use the repeating 114, 114, and 113 CPU-cycle scanline intervals. Control writes reload the enabled counter, and acknowledgement follows the separate enable-after-acknowledgement bit without reloading it. Mapper 530 permutes the PRG data bits and high CHR nibble; its first two PRG windows stay unmapped until written, while its final two windows and CHR banks are initialized at startup.
+
 The mapper 72 and 92 cartridge banking and latch behavior is implemented. Optional speech hardware on those boards is not currently emulated.
 
 Jaleco 72/78/92, Irem 77/97, and mapper 96 expose their mapped PRG RAM for CPU reads and writes. Jaleco 87/101/140 and Sunsoft 184 read PRG RAM at `$6000-$7FFF`, but writes in that window select banks instead of changing RAM. Explicit NES 2.0 zero-RAM declarations leave those reads on open bus. Trainers and battery saves can supply nonzero data to the readable RAM windows.
 
-Mapper 77 always exposes 6 KiB of fixed CHR RAM at PPU `$0800-$1FFF`; the lower 2 KiB is banked CHR ROM. NES 2.0 images for this mixed layout must declare 8 KiB of volatile CHR RAM, which is the header size accepted by the loader for the board.
+Mapper 77 defaults to 6 KiB of CHR RAM. Its banked slot uses CHR ROM when present and CHR RAM otherwise; three additional slots explicitly select RAM pages 0, 1, and 2. With ordinary 2 KiB pages, those three slots occupy `$0800-$1FFF`. Explicit NES 2.0 sizes, including zero, smaller RAM, and CHR NVRAM, determine the actual storage. Smaller source pages can shrink the slots and create aliases or overlap an earlier mapping. CHR-RAM-only images therefore share the same physical RAM between banked and fixed selections. Four-screen nametables remain separate.
 
 Mapper 185 submapper 0 keeps the legacy compatibility rule: CHR is enabled when the low nibble is nonzero except for latch value `0x13`. NES 2.0 submappers 4 through 7 use bits 0 and 1 as an exact enable value from 0 through 3.
+
+Enabled mapper 185 CHR RAM accepts writes. Disabling CHR blocks writes and returns the address's low byte with D0 set; reenabling it restores the selected source. Small CHR RAM initially repeats through the pattern-table window. After a disable/enable transition, only the explicitly selected page is remapped, leaving uncovered addresses on open bus.
+
+UNROM 512's eight-kilobyte nametable mode uses offsets `$6000-$7FFF` in an allocated CHR-RAM chip of at least 32 KiB. A large CHR ROM cannot supply that writable storage. A ROM image with a separate 32 KiB CHR-RAM or CHR-NVRAM allocation uses that allocation for nametables without changing ROM bytes. Smaller or absent CHR RAM retains the ordinary four-screen nametable mapping. The native path rejects simultaneous volatile and nonvolatile CHR chips when a CHR ROM image uses this nametable mode.
 
 Mappers 79 and 146 accept bank writes at `$4100-$5FFF` only when address bit A8 is high. Mapper 113 uses the same register decoding, with three PRG bank bits, four CHR bank bits, and vertical/horizontal mirroring selected by D7. These registers are write-only; reads retain open bus. All three boards keep ordinary RAM reads and writes at `$6000-$7FFF`. Their bank registers survive CPU soft reset.
 
 Mappers 94 and 180 retain a fixed CHR window and header-selected mirroring. Mapper 94 uses three bits to select the lower PRG bank and fixes the upper window to the last available bank. Mapper 180 uses all eight bank bits for its upper window and starts with bank zero in both CPU windows. Mappers 79, 94, 113, 144, 146, and 180 select their wiring by mapper number and ignore the NES 2.0 submapper field.
 
-Larger ROM images retain the board's implemented bank-selection bits. Bank numbers wrap across complete available pages; trailing partial pages do not add selectable banks. Small ROMs map their available pages, and uncovered addresses retain open bus. The RAM layout checks remain separate: these six variants reject simultaneous volatile and nonvolatile RAM declarations or CHR ROM combined with separate CHR RAM. Failed loads preserve the active cartridge.
+Larger ROM images retain the board's implemented bank-selection bits. Bank numbers wrap across complete available pages; trailing partial pages do not add selectable banks. Small ROMs map their available pages, and uncovered addresses retain open bus. These six variants also accept separate volatile and nonvolatile PRG chips: the battery-backed chip supplies their fixed RAM window when present, while the work chip remains separate. CHR RAM declared beside CHR ROM remains separate storage and does not replace the ROM-backed PPU window. Failed loads preserve the active cartridge.
 
 Color Dreams writes resolve ROM bus conflicts before selecting banks. Both mapper 11 and mapper 144 retain all four PRG selection bits. Mapper 144 then takes D0 from the byte in the previously mapped ROM bank, so a CPU write of zero can still select an odd PRG bank.
 
-## What the cartridge header controls
+The Famicom Network System uses its NES 2.0 extended-console subtype instead of the numeric mapper to select its dedicated board. Its cartridge path builds on MMC1 serial PRG banking and adds the system's mirroring register, two 8 KiB work/save RAM socket controls, two 8 KiB CHR-RAM banks, and a 256 KiB character-ROM interface. Reads from `$5000-$5FFF` step through 32-byte character records; `$40B0` selects the character-ROM half and resets the record position when read, while `$40C0` also controls the second work-RAM enable and CHR-RAM bank. The FCNS controller serializes the ordinary eight controller buttons followed by its keypad state on `$4016 D1`. The implementation covers the local hardware and supplied character ROM; it does not emulate the original online service.
 
-An image begins with an iNES or NES 2.0 header that describes the board and its memory. A mapper number identifies a hardware family. A submapper narrows that choice to a wiring or chip variant, such as an IRQ-counter revision or a different register address layout.
+StudyBox uses a dedicated STBX media path and a 256 KiB BIOS instead of an iNES mapper number. The board provides 64 KiB of banked work RAM, four-screen nametable RAM, a switchable 16 KiB BIOS window at `$8000-$BFFF`, and the fixed first BIOS page at `$C000-$FFFF`. Tape control registers at `$4200-$4203` select RAM and BIOS banks, shift drive commands, report decoder/seek state, deliver page bytes, and assert the CPU IRQ at the lead-in/data boundary and for subsequent bytes when enabled. PAGE lead-in offsets, byte delays, and seek steps advance on the CPU clock. A supported embedded mono 16-bit PCM WAV follows the same tape position and enters the normal cartridge-audio mix. Unknown drive commands have no modeled effect; command meanings and timing that remain uncertain on the original hardware retain the documented timing model rather than inventing additional behavior.
+
+## Cartridge metadata
+
+An iNES or NES 2.0 header describes the board and its memory. A mapper number identifies a hardware family. A submapper narrows that choice to a wiring or chip variant, such as an IRQ-counter revision or a different register address layout. The optional game database can correct legacy iNES metadata or describe a known headerless payload. NES 2.0 headers retain their explicit metadata instead of receiving ordinary database corrections.
 
 | Metadata | How Cupid uses it |
 | --- | --- |
@@ -115,16 +307,38 @@ An image begins with an iNES or NES 2.0 header that describes the board and its 
 | Mapper and submapper | Register decoding, banking, mirroring, and device behavior |
 | Mirroring flags | Initial nametable layout, subject to board-specific wiring |
 | Volatile and nonvolatile RAM | Allocation, addressability, and persistent storage |
-| Timing and console type | Regional timing, supported arcade configuration, or EPSM expansion sound |
+| Timing and console type | Regional timing, supported arcade configuration, EPSM expansion sound, or Famicom Network System hardware |
 | Trainer flag | A 512-byte initialization window applied through cartridge handling |
 
-The loader checks payload sizes and size overflows before activating a cartridge. A truncated or unsupported image returns an error and preserves an already loaded cartridge. The application exits when its initial load fails; preservation also matters to callers of the loader API.
+The loader records separate whole-file, PRG-only, and PRG+CHR CRC32 values. Legacy database lookup uses the PRG+CHR payload after any trainer, while headerless recognition uses the whole file. A database correction can supply mapper and submapper selection, ROM and supported RAM geometry, battery state, mirroring, regional and VS metadata, input type, board/chip hints, and bus-conflict behavior. VS database input values are translated to the cabinet's standard, swapped-controller, swapped-A/B, or Zapper wiring, and database PPU identifiers are translated separately to the VS PPU header codes.
+
+A database record with a submapper field supplies explicit RAM sizes, including zero. Without that validation field, zero or blank RAM fields leave each board's defaults intact; nonzero fields still override them. The corrected board supplies those defaults, including 16 KiB work RAM on mapper 103, 32 KiB on EDU2000 and FME-7, and 16 KiB CHR RAM on CPROM. Headerless loading follows the same rules. A missing or unrecognized database system name selects NTSC NES timing, while PAL, Dendy, and VS records supply their own system metadata. Database mirroring is applied before board initialization, so fixed startup wiring and reset registers can establish the board's actual initial nametable mapping.
+
+Database-selected Zappers use the record's console family. Famicom and Dendy records connect the gun to the expansion port; NES records, including missing or unknown system names, connect it to controller port two. This applies to corrected legacy images, recognized headerless payloads, and database-matched UNIF images. Explicit input options still take precedence. NES 2.0 images retain their own metadata and use the selected console profile to choose the connector.
+
+The loader checks payload sizes and size overflows before activating a cartridge. A truncated or unsupported image, malformed database record, or invalid correction returns an error and preserves an already loaded cartridge. The application exits when its initial load fails; preservation also matters to callers of the loader API.
+
+UNIF cartridges use named board metadata instead of an iNES mapper field. Cupid assembles numbered PRG and CHR chunks in bank order, resolves the board name and common four-character prefixes, and applies the format's timing, battery, and mirroring metadata. The board-name table includes numeric aliases plus the named-only Malee, GS-2013, Ghostbusters 63-in-1, CC-21, AC08, Puzzle, 255-in-1, 8237A, and SSS-NROM-256 paths. An optional database match can correct the board and hardware metadata before validation. An unresolved board leaves the active cartridge in place.
+
+SSS-NROM-256 provides the FamicomBox menu cartridge's PRG, CHR, and register behavior, including 8 KiB of distinct CPU RAM across `$0000–$1FFF`. All eight cartridge DIP switches appear at `$5002` and its aliases; writes and resets retain the configured inputs. Soft reset preserves the CPU RAM, while power-on initializes the full 8 KiB. Loading an ordinary cartridge restores the usual 2 KiB CPU RAM mirrors. Cabinet timers, external cartridge switching, and key/coin hardware remain outside this cartridge-board implementation.
 
 Legacy iNES RAM fields are unreliable. Cupid uses board defaults and ignores byte 8 as a RAM-size override. Most boards default to 8 KiB, MMC5 to 64 KiB, and FME-7 to 32 KiB. Legacy mapper 99 without a battery flag uses 2 KiB of volatile RAM. UNROM 512 has its own CHR RAM and flash layout. A legacy PRG count of zero represents 256 banks of 16 KiB, or 4 MiB. The image must still contain the complete payload, and its mapper must support that size.
 
-NES 2.0 RAM declarations are normally explicit, including zero RAM. Taito X1-005/X1-017 boards are fixed-size exceptions: mappers 80 and 207 use a 256-byte cartridge-RAM allocation, while mapper 82 uses 5 KiB. For those boards, the battery flag chooses volatile or nonvolatile storage even when the NES 2.0 RAM-size fields are zero. Unsupported combinations are rejected. Do not change header bytes simply to make the loader accept an image: the resulting bank layout or save format could be wrong. Use the cartridge's board information when correcting a header, and record that correction in a bug report.
+NES 2.0 RAM declarations are normally explicit, including zero RAM. Taito X1-005, used by mappers 80 and 207, forces its battery-selected work or save chip to 256 bytes; a separately declared opposite chip keeps its own allocation. Writes in the unlocked `$7F00-$7FFF` window update both 128-byte halves. X1-017, used by mappers 82 and 552, honors explicit RAM sizes. Its legacy save-RAM default is 5 KiB, while legacy images without a battery use the ordinary 8 KiB work-RAM default. Its three permission registers explicitly select save-RAM pages; an absent selected chip does not replace an existing work-RAM mapping. Mapper 82 shifts PRG register values right by two, while mapper 552 reverses the six low bits.
 
-Trainer initialization runs after save memory loads and copies the bytes into supported `$7000-$71FF` RAM windows. See [saves and media](saves.md) for save layouts, including MMC5 ExRAM and N163 audio RAM.
+Cartridge RAM keeps separate volatile and persistent allocations. Native families whose RAM mapping follows the battery-selected work/save path keep both declared PRG chips independent; boards with explicit selectors, such as MMC1 and MMC5, can expose both chips according to their register wiring. In the 8 KiB plus 8 KiB MMC5 layout, bank-select bit 2 chooses the work socket when set and the save socket when clear. A single 16 KiB chip mirrors through the eight low bank selectors. Declared CHR RAM and CHR NVRAM may remain allocated beside CHR ROM without replacing the mapped ROM. Separate CHR ROM/RAM selection still requires a board that implements it; accepted storage does not imply that every allocated chip is CPU- or PPU-addressable.
+
+Mappers 0, 2, 3, 7, 11, 13, 66, 79, 94, 113, 144, 146, and 180 accept independent work and save chips without treating their combined size as one power-of-two allocation. The selected chip supplies the fixed `$6000-$7FFF` window. A chip larger than 8 KiB keeps its remaining bytes allocated but unmapped; its complete save allocation is preserved on disk. Smaller chips repeat only complete pages within the window, with uncovered addresses on open bus. For example, a 3 KiB database-declared chip repeats twice through `$77FF`, while `$7800-$7FFF` remains unmapped. The mapping granularity is 256 bytes, so a 128-byte declaration stays unmapped. Banked boards retain their own supported-layout checks and chip-selection rules.
+
+UNROM 512 and GTROM also accept explicitly declared PRG RAM. UNROM 512 exposes ordinary reads and writes at `$6000-$7FFF`. GTROM exposes ordinary RAM at `$6000-$6FFF`; reads at `$7000-$7FFF` first latch the CPU's open-bus value, then return the underlying RAM byte or zero when unmapped. Writes in that upper range remain bank-register writes. Declared PRG NVRAM persists in `.sav` independently of the board's `.flash.sav` image. GTROM's default CHR RAM is volatile, but explicitly declared CHR NVRAM uses `.chr.sav`; its dedicated nametable RAM remains volatile.
+
+The RAM power-on profile initializes ordinary cartridge RAM before trainer and save overlays. Trainer initialization prefers a volatile PRG chip of at least 8 KiB, otherwise a persistent chip of at least 8 KiB, and copies at chip offset `$1000`. This placement does not depend on the board's initial bank selection. Existing save bytes take precedence where they overlap the trainer. See [saves and media](saves.md) for save layouts, including MMC5 ExRAM and N163 audio RAM.
+
+Separate PRG chips do not imply general support for independent CHR-RAM and CHR-NVRAM chips. Several native layouts still reject simultaneous declarations, and supported shared CHR storage follows the selected board's address and save rules. A combined allocation cannot describe arbitrary independent chip-select signals. The loader retains explicit layout checks for those cases instead of assuming that every declared chip is reachable or persistent.
+
+Mappers 116 and 117 qualify A12 rises after at least ten PPU dots with A12 low. The filter retains elapsed low time across repeated low addresses and the end of a frame. Mapper 116 applies it in MMC3 mode; mapper 117 uses its separate reload, enable, and acknowledgement registers. Rendering fetches and CPU PPU accesses use the same address hook. These boards keep their PPU-dot filter separate from the CPU-cycle filter used by the ordinary MMC3 boards.
+
+Mapper 103 writes its physical work-RAM offsets even while ROM is selected for CPU reads. Writes within a smaller declared chip remain valid; addresses beyond that chip do not overwrite a mirrored byte. With separate work and save RAM, those writes and the trainer use the work chip, while battery data keeps its own allocation. Mapper 156 starts with its lower PRG window and CHR ROM unmapped; CHR register writes establish all eight CHR windows, and CPU soft reset retains them. Mapper 163 changes CHR banks during its scanline transitions and recognizes the pre-render line as preceding the visible scanlines when automatic CHR switching is disabled.
 
 ## Cartridge behavior
 
@@ -151,6 +365,7 @@ Device selection changes the signals that CPU reads and writes see at `$4016` an
 | Connection | Devices | Implemented behavior |
 | --- | --- | --- |
 | Controller ports | Gamepads, Four Score, Arkanoid, Power Pad, Zapper | Serial reports, adapter signatures, paddle positions, mat wiring and beam-aware light sensing |
+| Controller ports | SNES controller and mouse, NTT Data keypad, Virtual Boy controller | Device-specific serial packets, latch/strobe behavior, mouse sensitivity and both Virtual Boy D-pads |
 | VS controller wiring | VS Zapper | Metadata-selected serial gun report, trigger state and beam timing |
 | Famicom expansion | Two- and four-player adapters, Arkanoid, Family Trainer, Zapper | Expansion-line routing with separate ordinary controller bits |
 | Famicom expansion | Family BASIC and Subor keyboards | Scanned key matrices; Family BASIC also supplies the data-recorder signal |
@@ -178,7 +393,7 @@ Writable images are updated at the loaded path. See [saves and media](saves.md) 
 
 ## VS System
 
-The supported VS configurations use mappers 0, 1, 2, 75, 99, or 151 with NTSC timing. Dual cabinets require mapper 99. NES 2.0 metadata selects the hardware type, PPU, and controller wiring. Legacy mapper 99 images use the implemented ROM-size convention to select single or dual operation. Cupid has no database that identifies a game's hardware from its hash.
+The supported VS configurations use mappers 0, 1, 2, 75, 99, or 151 with NTSC timing. Dual cabinets require mapper 99. NES 2.0 metadata selects the hardware type, PPU, and controller wiring. Legacy mapper 99 images use the implemented ROM-size convention to select single or dual operation. The optional game database can identify supported VS hardware from a legacy image's PRG+CHR hash.
 
 The PPU choices include the 2C03 RGB palette, four 2C04 palettes, and the implemented 2C05 register/status variants. Cabinet handling includes DIP switches, coin and service inputs, controller routing, and the implemented protection-read sequences.
 
@@ -190,7 +405,7 @@ There is no distinct RP2C03G palette or hardware model. The 2C03 fallback allows
 
 ## Reading accuracy results
 
-The [checkpoint record](accuracy-checkpoints.md) identifies commits that passed all 144 AccuracyCoin tests without skipped or unfinished results. The [accuracy notes](accuracy.md) describe the separate CPU trace, diagnostic collection, focused hardware tests, and setup conditions for older ROMs.
+The [cartridge and media checkpoints](cartridge-checkpoints.md) and [earlier accuracy checkpoints](accuracy-checkpoints.md) identify commits that passed all 144 AccuracyCoin tests without skipped or unfinished results. The [accuracy notes](accuracy.md) describe the separate CPU trace, diagnostic collection, focused hardware tests, and setup conditions for older ROMs.
 
 These results are regression evidence. They do not prove compatibility with every game, physical console revision, or register interleaving. Optional OAM corruption and decay profiles are deterministic approximations. Analog output, MMC5 auxiliary I/O and `$5209/$520A` timers, and unlisted hardware remain outside the implemented or tested scope.
 

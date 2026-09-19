@@ -26,12 +26,14 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdbool.h>
+#include <string.h>
 #include "cpu.h"
 #include "../ppu/ppu.h"
 #include "../apu/apu.h"
 #include "../apu/epsm.h"
 #include "../rom/mapper.h"
 #include "../joypad/joypad.h"
+#include "../system/hardware.h"
 #include "../system/timing.h"
 #include "../system/vs_system.h"
 
@@ -141,6 +143,11 @@ uint64_t cpu_get_bus_cycle(void) {
     return active_cpu_cycles;
 }
 
+uint8_t cpu_peek_internal_ram(uint16_t addr) {
+    uint8_t *expanded = cart_cpu_ram_8k();
+    return expanded ? expanded[addr & 0x1FFF] : cpu_ram[addr & 0x07FF];
+}
+
 void cpu_select_machine(CpuMachineContext *context) {
     running_cpu = NULL;
     in_bus_cycle = false;
@@ -186,7 +193,7 @@ static void end_cpu_cycle(bool read) {
     if (cpu_nmi_line && !cpu_nmi_previous_line) cpu_nmi_pending = true;
     cpu_nmi_previous_line = cpu_nmi_line;
     cpu_irq_ready = cpu_irq_polled;
-    cpu_irq_polled = (apu_irq_pending(apu_active_state()) || cart_irq_pending()
+    cpu_irq_polled = ((!cart_nsf_active() && apu_irq_pending(apu_active_state())) || cart_irq_pending()
                       || epsm_irq_pending()
                       || vs_external_irq_pending()) &&
                      !(running_cpu->status & INTERRUPT_FLAG);
@@ -281,6 +288,11 @@ static void cpu_reset_sequence(CPU* cpu) {
 
 bool cpu_power_on(CPU* cpu) {
     if (!cpu || !cpu_startup_alignment_valid(nes_timing()->region)) return false;
+    cart_console_reset(false);
+    cart_irq_ack();
+    vs_clear_external_irq();
+    uint8_t *expanded = cart_cpu_ram_8k();
+    nes_initialize_power_on_ram(expanded ? expanded : cpu_ram, expanded ? 0x2000 : 0x0800, 0x00);
     CpuStartupAlignment alignment = {0, (uint8_t)(nes_timing()->ppu_divider - 1)};
     if (alignment_mode == ALIGNMENT_EXPLICIT) {
         alignment = configured_alignment;
@@ -309,17 +321,25 @@ bool cpu_power_on(CPU* cpu) {
     // adds master clocks before the same seven bus accesses; no CPU cycle is skipped.
     clock_ppu_master(nes_timing()->ppu_divider + alignment.cpu_offset);
     cpu_reset_sequence(cpu);
+    cart_after_console_reset();
     return true;
 }
 
 void cpu_soft_reset(CPU* cpu) {
+    cart_console_reset(true);
+    cart_irq_ack();
+    vs_clear_external_irq();
+    epsm_clear_irq_source();
     cpu->status = (cpu->status | INTERRUPT_FLAG | UNUSED_FLAG) & ~BREAK_FLAG;
     cpu_reset_sequence(cpu);
+    cart_after_console_reset();
 }
 
 void cpu_reset(CPU* cpu) {
     cpu_power_on(cpu);
 }
+
+void cpu_clear_internal_ram(void) { memset(cpu_ram, 0, 0x0800); }
 
 static inline void bus_latch(BusLatchTarget target, uint8_t value) {
     if (target != BUS_LATCH_EXTERNAL) bus_set_internal(value);
@@ -328,7 +348,7 @@ static inline void bus_latch(BusLatchTarget target, uint8_t value) {
 
 static uint8_t read_bus_target(uint16_t addr, BusLatchTarget target) {
     if (addr <= 0x1FFF) {
-        uint8_t v = cpu_ram[addr & 0x07FF];
+        uint8_t v = cpu_peek_internal_ram(addr);
         bus_latch(target, v);
         return v;
     }
@@ -341,6 +361,11 @@ static uint8_t read_bus_target(uint16_t addr, BusLatchTarget target) {
 
     // APU + I/O $4000-$4017
     if (addr >= 0x4000 && addr <= 0x4017) {
+        uint8_t cartridge_value;
+        if (addr == 0x4011 && cart_read_cpu_register(addr, &cartridge_value)) {
+            bus_latch(target, cartridge_value);
+            return cartridge_value;
+        }
         if (addr == 0x4016) {
             if (vs_enabled()) {
                 uint8_t v = vs_read_controller_port(0);
@@ -414,10 +439,16 @@ static void write_bus(uint16_t addr, uint8_t value) {
     uint8_t previous_bus = bus_get();
     bus_set(value); // writes still put value on the CPU bus latch
 
-    if (addr <= 0x1FFF) { cpu_ram[addr & 0x07FF] = value; return; }
+    if (addr <= 0x1FFF) {
+        uint8_t *expanded = cart_cpu_ram_8k();
+        if (expanded) expanded[addr] = value;
+        else cpu_ram[addr & 0x07FF] = value;
+        return;
+    }
 
     if (addr >= 0x2000 && addr <= 0x3FFF) {
         // Cartridge address decoding sees the CPU address before PPU mirroring.
+        cart_observe_cpu_write(addr, value);
         if (addr == 0x2000 && !vs_ppu_is_2c05()) cart_notify_ppu_ctrl_write(value);
         ppu_reg_write_cpu(0x2000 | (addr & 7), value, previous_bus);
         return;
@@ -451,7 +482,10 @@ static void write_bus(uint16_t addr, uint8_t value) {
     }
 
     if (addr >= 0x401C && addr <= 0x401F) epsm_write_port(addr, value);
-    if (addr >= 0x4020) cart_cpu_write(addr, value);
+    if (addr >= 0x4020) {
+        cart_cpu_write(addr, value);
+        apu_audio_refresh(apu_active_state());
+    }
 }
 
 static uint8_t read_mem_cycle(uint16_t addr, bool opcode_fetch) {

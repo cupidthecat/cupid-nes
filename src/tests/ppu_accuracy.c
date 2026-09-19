@@ -25,19 +25,25 @@
 #include "../cpu/cpu.h"
 #include "../apu/apu.h"
 #include "../rom/mapper.h"
+#include "../system/hardware.h"
 #include "../system/timing.h"
+#include "../video/ntsc_composite.h"
 #include "../../include/globals.h"
 #include <stdio.h>
 #include <string.h>
 
 static int checks;
 static int failures;
+extern uint8_t ram[0x0800];
 static uint8_t test_prg[0x8000];
 static uint8_t test_chr[0x2000];
 static uint16_t pattern_addresses[128];
 static uint64_t pattern_clocks[128];
 static unsigned pattern_reads;
 static uint8_t (*pattern_reader)(uint16_t);
+static uint16_t composite_fixture[SCREEN_WIDTH * SCREEN_HEIGHT];
+static uint32_t composite_phase0[NTSC_COMPOSITE_WIDTH * NTSC_COMPOSITE_HEIGHT];
+static uint32_t composite_phase1[NTSC_COMPOSITE_WIDTH * NTSC_COMPOSITE_HEIGHT];
 
 #define CHECK(name, condition) do { \
     checks++; \
@@ -77,6 +83,96 @@ static void reset_video_region(unsigned mapper, NesRegion region) {
 
 static void reset_video(unsigned mapper) {
     reset_video_region(mapper, NES_REGION_NTSC);
+}
+
+static uint64_t composite_hash(const uint32_t *pixels) {
+    uint64_t hash = UINT64_C(1469598103934665603);
+    for (size_t i = 0; i < (size_t)NTSC_COMPOSITE_WIDTH * NTSC_COMPOSITE_HEIGHT; ++i) {
+        uint32_t pixel = pixels[i];
+        for (unsigned byte = 0; byte < 4; ++byte) {
+            hash ^= (uint8_t)(pixel >> (byte * 8));
+            hash *= UINT64_C(1099511628211);
+        }
+    }
+    return hash;
+}
+
+static void test_ntsc_composite_video(void) {
+    CHECK("NTSC composite filter is available for ordinary NTSC output",
+          ntsc_composite_supported(NES_REGION_NTSC, false));
+    CHECK("PAL keeps the direct renderer when NTSC composite is requested",
+          !ntsc_composite_supported(NES_REGION_PAL, false));
+    CHECK("Dendy keeps the direct renderer when NTSC composite is requested",
+          !ntsc_composite_supported(NES_REGION_DENDY, false));
+    CHECK("VS RGB hardware keeps its native direct renderer",
+          !ntsc_composite_supported(NES_REGION_NTSC, true));
+
+    static const uint8_t colors[4] = {0x16, 0x27, 0x30, 0x0D};
+    for (unsigned y = 0; y < SCREEN_HEIGHT; ++y) {
+        for (unsigned x = 0; x < SCREEN_WIDTH; ++x) {
+            unsigned band = (x / 32u + y / 40u) & 7u;
+            uint16_t color = colors[(x / 64u + y / 60u) & 3u];
+            composite_fixture[y * SCREEN_WIDTH + x] = color | (uint16_t)(band << 6);
+        }
+    }
+    ntsc_composite_filter_frame(composite_fixture, 0, composite_phase0);
+    ntsc_composite_filter_frame(composite_fixture, 1, composite_phase1);
+    uint64_t phase0_hash = composite_hash(composite_phase0);
+    uint64_t phase1_hash = composite_hash(composite_phase1);
+    CHECK("phase-zero composite fixture has stable decoded output",
+          phase0_hash == UINT64_C(0x1294327F4F883767));
+    CHECK("phase-one composite fixture has stable decoded output",
+          phase1_hash == UINT64_C(0x13C66FEFCD8EA1EB));
+    CHECK("two-times composite output duplicates each decoded source row",
+          memcmp(composite_phase0, composite_phase0 + NTSC_COMPOSITE_WIDTH,
+                 NTSC_COMPOSITE_WIDTH * sizeof(uint32_t)) == 0);
+
+    // This frame covers all palette/emphasis values, starting with hue 12.
+    // Its hashes come from the independently compiled signal decoder.
+    for (unsigned y = 0; y < SCREEN_HEIGHT; ++y)
+        for (unsigned x = 0; x < SCREEN_WIDTH; ++x)
+            composite_fixture[y * SCREEN_WIDTH + x] = (uint16_t)((x * 29u + y * 67u + 12u) & 511u);
+    static const uint64_t signal_hashes[3] = {
+        UINT64_C(0xA645DCD5E139059F), UINT64_C(0xCA5E00539D7CD747),
+        UINT64_C(0x6CA5D1B39F66106F)
+    };
+    for (uint8_t phase = 0; phase < 3; ++phase) {
+        ntsc_composite_filter_frame(composite_fixture, phase, composite_phase0);
+        CHECK("all signal levels retain the decoder's initial carrier phase",
+              composite_hash(composite_phase0) == signal_hashes[phase]);
+    }
+
+    reset_video(0);
+    ppu.scanline = 0;
+    ppu.dot = 1;
+    ppu.v = 0x3F05;
+    ppu_write(0x3F05, 0x2A);
+    ppu.mask = 0x21;
+    ppu.rendering_enabled = false;
+    ppu.fetches_enabled = false;
+    ppu_step_dots(1);
+    CHECK("PPU captures raw palette index separately from composite metadata",
+          ppu.pixel_indices[0] == 0x2A && ppu.pixel_signal[0] == 0x60);
+    ppu.mask = 0xC0;
+    ppu_step_dots(1);
+    CHECK("PPU captures emphasis independently for the following pixel",
+          ppu.pixel_indices[1] == 0x2A && ppu.pixel_signal[1] == 0x1AA);
+
+    uint8_t saved_status = ppu.status;
+    uint8_t saved_mask = ppu.mask;
+    int saved_scanline = ppu.scanline;
+    int saved_dot = ppu.dot;
+    uint64_t saved_clocks = ppu.total_cycles;
+    uint32_t saved_direct_pixel = framebuffer[0];
+    uint16_t saved_brightness = ppu_pixel_brightness(0, 0);
+    ntsc_composite_filter_frame(ppu.pixel_signal, ppu.completed_video_phase, composite_phase0);
+    CHECK("composite presentation leaves PPU timing and registers unchanged",
+          ppu.status == saved_status && ppu.mask == saved_mask
+          && ppu.scanline == saved_scanline && ppu.dot == saved_dot
+          && ppu.total_cycles == saved_clocks);
+    CHECK("composite presentation leaves direct framebuffer and light-sensor pixels unchanged",
+          framebuffer[0] == saved_direct_pixel && ppu.pixel_indices[0] == 0x2A
+          && ppu_pixel_brightness(0, 0) == saved_brightness);
 }
 
 typedef struct {
@@ -942,6 +1038,175 @@ static void test_video_reset(void) {
     CHECK("power on initializes nametable RAM separately from soft reset", ppu_read(0x2000) == 0);
 }
 
+static void test_reset_suppression(void) {
+    reset_video(0);
+    CHECK("PPU reset suppression defaults off", !ppu_reset_suppression_enabled());
+
+    ppu.ctrl = 0xA4;
+    ppu.mask = 0x1E;
+    ppu.status = 0xE0;
+    ppu.v = 0x27A5;
+    ppu.t = 0x1357;
+    ppu.x = 5;
+    ppu.w = 1;
+    ppu.scanline = 123;
+    ppu.dot = 211;
+    ppu.odd_frame = true;
+    ppu.rendering_enabled = true;
+    ppu.fetches_enabled = true;
+    ppu.total_cycles = 654321;
+    ppu.cpu_clock_phase = 2;
+    ppu.oam_decay_cycles[0] = 111;
+    ppu.oam_decay_cycles[31] = 222;
+    ppu.oam[7] = 0x6D;
+
+    ppu_set_reset_suppression(true);
+    CHECK("PPU reset suppression can be enabled", ppu_reset_suppression_enabled());
+    ppu_soft_reset(&ppu);
+    CHECK("suppressed soft reset preserves PPU registers and scroll latches",
+          ppu.ctrl == 0xA4 && ppu.mask == 0x1E && ppu.status == 0xE0
+          && ppu.v == 0x27A5 && ppu.t == 0x1357 && ppu.x == 5 && ppu.w == 1);
+    CHECK("suppressed soft reset preserves raster and rendering state",
+          ppu.scanline == 123 && ppu.dot == 211 && ppu.odd_frame
+          && ppu.rendering_enabled && ppu.fetches_enabled && ppu.total_cycles == 654321);
+    CHECK("suppressed soft reset still resets PPU clock and OAM-decay bookkeeping",
+          ppu.cpu_clock_phase == 0 && ppu.oam_decay_cycles[0] == 0
+          && ppu.oam_decay_cycles[31] == 0 && ppu.oam[7] == 0x6D);
+
+    ppu_set_reset_suppression(false);
+    ppu.ctrl = 0x80;
+    ppu.mask = 0x18;
+    ppu.w = 1;
+    ppu_soft_reset(&ppu);
+    CHECK("ordinary soft reset still clears control and render state when suppression is disabled",
+          !ppu.ctrl && !ppu.mask && !ppu.w && !ppu.rendering_enabled && !ppu.fetches_enabled);
+}
+
+static bool all_bytes_equal(const uint8_t *bytes, size_t size, uint8_t value) {
+    for (size_t i = 0; i < size; ++i) {
+        if (bytes[i] != value) return false;
+    }
+    return true;
+}
+
+static void test_power_on_ram_profiles(void) {
+    static const uint8_t boot_palette[PPU_PALETTE_SIZE] = {
+        0x09,0x01,0x00,0x01,0x00,0x02,0x02,0x0D,
+        0x08,0x10,0x08,0x24,0x00,0x00,0x04,0x2C,
+        0x09,0x01,0x34,0x03,0x00,0x04,0x00,0x14,
+        0x08,0x3A,0x00,0x02,0x00,0x20,0x2C,0x08
+    };
+    uint8_t first_ram[sizeof(ram)];
+    uint8_t first_vram[sizeof(ppu_vram)];
+    uint8_t first_oam[sizeof(ppu.oam)];
+    uint8_t first_secondary[sizeof(ppu.secondary_oam)];
+    uint8_t first_palette[sizeof(ppu_palette)];
+
+    CHECK("power-on RAM state names reject unknown profiles",
+          !nes_set_ram_power_on_state_name("unknown"));
+
+    CHECK("default power-on RAM profile selects compatibility state",
+          nes_set_ram_power_on_state(NES_RAM_POWER_DEFAULT));
+    nes_set_randomize_vblank(false);
+    memset(ram, 0xA5, sizeof(ram));
+    memset(ppu_vram, 0xA5, sizeof(ppu_vram));
+    memset(ppu.oam, 0xA5, sizeof(ppu.oam));
+    ppu_power_on(&ppu);
+    CHECK("default power-on profile keeps zeroed CPU and nametable RAM",
+          cpu_power_on(&cpu) && all_bytes_equal(ram, sizeof(ram), 0)
+          && all_bytes_equal(ppu_vram, sizeof(ppu_vram), 0));
+    CHECK("default power-on profile keeps all-ones primary and secondary OAM",
+          all_bytes_equal(ppu.oam, sizeof(ppu.oam), 0xFF)
+          && all_bytes_equal(ppu.secondary_oam, sizeof(ppu.secondary_oam), 0xFF));
+    CHECK("nonrandom power-on profiles keep the fixed boot palette",
+          memcmp(ppu_palette, boot_palette, sizeof(boot_palette)) == 0);
+    CHECK("power-on VBL randomization stays disabled independently", !(ppu.status & 0x80));
+
+    CHECK("zero power-on RAM profile is selectable",
+          nes_set_ram_power_on_state_name("zero"));
+    ppu_power_on(&ppu);
+    CHECK("zero profile clears CPU internal RAM on hard power-on",
+          cpu_power_on(&cpu) && all_bytes_equal(ram, sizeof(ram), 0));
+    CHECK("zero profile clears PPU nametable and OAM storage",
+          all_bytes_equal(ppu_vram, sizeof(ppu_vram), 0)
+          && all_bytes_equal(ppu.oam, sizeof(ppu.oam), 0)
+          && all_bytes_equal(ppu.secondary_oam, sizeof(ppu.secondary_oam), 0));
+    CHECK("zero profile still uses the fixed nonrandom palette",
+          memcmp(ppu_palette, boot_palette, sizeof(boot_palette)) == 0);
+
+    CHECK("ones power-on RAM profile is selectable",
+          nes_set_ram_power_on_state_name("ones"));
+    ppu_power_on(&ppu);
+    CHECK("ones profile fills CPU internal RAM on hard power-on",
+          cpu_power_on(&cpu) && all_bytes_equal(ram, sizeof(ram), 0xFF));
+    CHECK("ones profile fills PPU nametable and OAM storage",
+          all_bytes_equal(ppu_vram, sizeof(ppu_vram), 0xFF)
+          && all_bytes_equal(ppu.oam, sizeof(ppu.oam), 0xFF)
+          && all_bytes_equal(ppu.secondary_oam, sizeof(ppu.secondary_oam), 0xFF));
+    CHECK("ones profile still uses the fixed nonrandom palette",
+          memcmp(ppu_palette, boot_palette, sizeof(boot_palette)) == 0);
+
+    CHECK("random power-on RAM profile is selectable",
+          nes_set_ram_power_on_state_name("random"));
+    nes_seed_power_on_random(0x12345678u);
+    ppu_power_on(&ppu);
+    CHECK("random profile initializes CPU internal RAM", cpu_power_on(&cpu));
+    memcpy(first_ram, ram, sizeof(first_ram));
+    memcpy(first_vram, ppu_vram, sizeof(first_vram));
+    memcpy(first_oam, ppu.oam, sizeof(first_oam));
+    memcpy(first_secondary, ppu.secondary_oam, sizeof(first_secondary));
+    memcpy(first_palette, ppu_palette, sizeof(first_palette));
+    CHECK("random profile does not collapse CPU or PPU RAM to a constant fill",
+          !all_bytes_equal(ram, sizeof(ram), ram[0])
+          && !all_bytes_equal(ppu_vram, sizeof(ppu_vram), ppu_vram[0])
+          && !all_bytes_equal(ppu.oam, sizeof(ppu.oam), ppu.oam[0]));
+    bool palette_range = true;
+    for (unsigned i = 0; i < PPU_PALETTE_SIZE; ++i) {
+        if (ppu_palette[i] > 0x3F) palette_range = false;
+    }
+    CHECK("random palette RAM is limited to six-bit PPU values", palette_range);
+
+    nes_seed_power_on_random(0x12345678u);
+    ppu_power_on(&ppu);
+    CHECK("reseeded random profile initializes CPU internal RAM", cpu_power_on(&cpu));
+    CHECK("same power-on seed reproduces CPU internal RAM",
+          memcmp(ram, first_ram, sizeof(first_ram)) == 0);
+    CHECK("same power-on seed reproduces PPU RAM areas",
+          memcmp(ppu_vram, first_vram, sizeof(first_vram)) == 0
+          && memcmp(ppu.oam, first_oam, sizeof(first_oam)) == 0
+          && memcmp(ppu.secondary_oam, first_secondary, sizeof(first_secondary)) == 0
+          && memcmp(ppu_palette, first_palette, sizeof(first_palette)) == 0);
+
+    ram[0x21] = 0x6A;
+    ppu_vram[0x123] = 0x5C;
+    ppu_palette[7] = 0x2D;
+    ppu.oam[9] = 0xA6;
+    ppu_soft_reset(&ppu);
+    cpu_soft_reset(&cpu);
+    CHECK("soft reset does not rerun CPU or PPU power-on RAM initialization",
+          ram[0x21] == 0x6A && ppu_vram[0x123] == 0x5C
+          && ppu_palette[7] == 0x2D && ppu.oam[9] == 0xA6);
+
+    CHECK("default RAM profile can randomize only the power-on VBL flag",
+          nes_set_ram_power_on_state(NES_RAM_POWER_DEFAULT));
+    nes_set_randomize_vblank(true);
+    nes_seed_power_on_random(0xCAFEBABEu);
+    bool expected_vblank = nes_power_on_random_bool();
+    nes_seed_power_on_random(0xCAFEBABEu);
+    ppu_power_on(&ppu);
+    CHECK("power-on VBL uses the controlled random source independently of RAM",
+          ((ppu.status & 0x80) != 0) == expected_vblank
+          && all_bytes_equal(ppu_vram, sizeof(ppu_vram), 0));
+    nes_set_randomize_vblank(false);
+    nes_seed_power_on_random(0xCAFEBABEu);
+    ppu_power_on(&ppu);
+    CHECK("disabled power-on VBL randomization always clears the startup flag",
+          !(ppu.status & 0x80));
+
+    nes_set_ram_power_on_state(NES_RAM_POWER_DEFAULT);
+    nes_set_randomize_vblank(false);
+}
+
 static void test_sprite_shifters(void) {
     reset_video(0);
     ppu.scanline = 0;
@@ -1285,6 +1550,8 @@ int test_ppu_accuracy(void) {
     CHECK("even rendered frame has not ended after 89341 clocks", !ppu.frame_complete);
     ppu_step_dots(1);
     CHECK("even rendered frame lasts 89342 clocks", ppu.frame_complete && ppu.scanline == 0 && ppu.dot == 0);
+    CHECK("completed even frame retains its starting NTSC carrier phase",
+          ppu.completed_video_phase == 0 && ppu.frame_video_phase == 2);
     start_frame();
     CHECK("host frame start does not toggle hardware parity", ppu.odd_frame);
     ppu_step_dots(89340);
@@ -1292,6 +1559,8 @@ int test_ppu_accuracy(void) {
     ppu_step_dots(1);
     CHECK("odd rendered frame skips pre-render clock 340", ppu.frame_complete && ppu.scanline == 0 && ppu.dot == 0);
     CHECK("PPU clock counter remains monotonic across frame skip", ppu.total_cycles == 89342u + 89341u);
+    CHECK("odd-frame skipped clock advances the next carrier phase from executed clocks",
+          ppu.completed_video_phase == 2 && ppu.frame_video_phase == 0);
     reset_video(0);
     ppu.scanline = 0;
     ppu.odd_frame = true;
@@ -1361,8 +1630,11 @@ int test_ppu_accuracy(void) {
     test_oam_decay_refresh();
     test_regional_video();
     test_video_reset();
+    test_reset_suppression();
+    test_power_on_ram_profiles();
     test_sprite_shifters();
     test_late_register_reads();
+    test_ntsc_composite_video();
     printf("PPU: %d checks, %d failures\n", checks, failures);
     return failures;
 }

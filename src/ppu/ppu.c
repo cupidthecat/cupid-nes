@@ -28,6 +28,7 @@
 #include "../../include/globals.h"
 #include "../rom/mapper.h"
 #include "../cpu/cpu.h"
+#include "../system/hardware.h"
 #include "../system/timing.h"
 #include "../system/vs_system.h"
 #include "../ui/palette_tool.h"
@@ -77,6 +78,7 @@ static PpuRevision active_ppu_revision = PPU_REVISION_2C02_E_PLUS;
 static bool oam_row_corruption_worst_case = false;
 static bool startup_write_restriction = false;
 static bool oam_decay = false;
+static bool reset_suppression = false;
 static const char *const ppu_revision_names[] = {"2c02-pre-e", "2c02e-plus"};
 
 PpuRevision ppu_revision(void) {
@@ -129,6 +131,14 @@ bool ppu_oam_decay_enabled(void) {
 
 void ppu_set_oam_decay(bool enabled) {
     oam_decay = enabled;
+}
+
+bool ppu_reset_suppression_enabled(void) {
+    return reset_suppression;
+}
+
+void ppu_set_reset_suppression(bool enabled) {
+    reset_suppression = enabled;
 }
 
 static bool rendering_line(void) {
@@ -593,15 +603,17 @@ void start_frame(void) {
 void ppu_power_on(PPU *state) {
     memset(state, 0, sizeof(*state));
     memset(state->pixel_indices, 0x0F, sizeof(state->pixel_indices));
+    for (unsigned pixel = 0; pixel < 256u * 240u; ++pixel) state->pixel_signal[pixel] = 0x0F;
     memset(active_ppu_ob_expire, 0, sizeof(main_ppu_ob_expire));
-    memset(state->oam, 0xFF, sizeof(state->oam));
-    memset(state->secondary_oam, 0xFF, sizeof(state->secondary_oam));
+    nes_initialize_power_on_ram(state->oam, sizeof(state->oam), 0xFF);
+    nes_initialize_power_on_ram(state->secondary_oam, sizeof(state->secondary_oam), 0xFF);
     memset(state->oam_decay_cycles, 0, sizeof(state->oam_decay_cycles));
     state->oam_bus = 0xFF;
     state->oam_read_latch = 0xFF;
     state->scanline = (int)nes_timing()->scanlines - 1;
+    if (cart_nsf_active()) state->dot = 340;
     state->startup_writes_restricted = startup_write_restriction;
-    memset(active_ppu_vram, 0, NT_RAM_SIZE);
+    nes_initialize_power_on_ram(active_ppu_vram, NT_RAM_SIZE, 0x00);
     cpu_set_nmi_line(false);
     static const uint8_t power_up_palette[PPU_PALETTE_SIZE] = {
         0x09,0x01,0x00,0x01,0x00,0x02,0x02,0x0D,
@@ -609,7 +621,13 @@ void ppu_power_on(PPU *state) {
         0x09,0x01,0x34,0x03,0x00,0x04,0x00,0x14,
         0x08,0x3A,0x00,0x02,0x00,0x20,0x2C,0x08
     };
-    memcpy(active_ppu_palette, power_up_palette, PPU_PALETTE_SIZE);
+    if (nes_ram_power_on_state() == NES_RAM_POWER_RANDOM) {
+        nes_initialize_power_on_ram(active_ppu_palette, PPU_PALETTE_SIZE, 0x00);
+        for (unsigned i = 0; i < PPU_PALETTE_SIZE; ++i) active_ppu_palette[i] &= 0x3F;
+    } else {
+        memcpy(active_ppu_palette, power_up_palette, PPU_PALETTE_SIZE);
+    }
+    if (nes_randomize_vblank_enabled() && nes_power_on_random_bool()) state->status |= 0x80;
     ppu_palette_reset_default();
 }
 
@@ -618,27 +636,60 @@ void ppu_reset(PPU *state) {
 }
 
 void ppu_soft_reset(PPU *state) {
+    bool nsf_full_reset = cart_nsf_active();
+    state->cpu_clock_phase = 0;
+    memset(state->oam_decay_cycles, 0, sizeof(state->oam_decay_cycles));
+    if (reset_suppression && !nsf_full_reset) return;
+
     uint8_t oam[PPU_OAM_SIZE];
     uint8_t secondary_oam[32];
     memcpy(oam, state->oam, sizeof(oam));
     memcpy(secondary_oam, state->secondary_oam, sizeof(secondary_oam));
     uint16_t v = state->v;
-    uint8_t status = state->status;
-    uint64_t clocks = state->total_cycles;
+    uint8_t status = nsf_full_reset ? 0 : state->status;
+    uint64_t clocks = nsf_full_reset ? 0 : state->total_cycles;
     memset(state, 0, sizeof(*state));
     memset(state->pixel_indices, 0x0F, sizeof(state->pixel_indices));
+    for (unsigned pixel = 0; pixel < 256u * 240u; ++pixel) state->pixel_signal[pixel] = 0x0F;
     memcpy(state->oam, oam, sizeof(oam));
     memcpy(state->secondary_oam, secondary_oam, sizeof(secondary_oam));
     state->v = v;
     state->status = status;
     state->total_cycles = clocks;
     state->scanline = (int)nes_timing()->scanlines - 1;
+    if (nsf_full_reset) state->dot = 340;
     state->oam_bus = 0xFF;
     state->oam_read_latch = 0xFF;
     state->startup_writes_restricted = startup_write_restriction;
-    memset(state->oam_decay_cycles, 0, sizeof(state->oam_decay_cycles));
     memset(active_ppu_ob_expire, 0, sizeof(main_ppu_ob_expire));
     cpu_set_nmi_line(false);
+}
+
+static void ppu_step_nsf_dots(int ppu_cycles) {
+    const NesTiming *timing = nes_timing();
+    for (int i = 0; i < ppu_cycles; ++i) {
+        ppu.bus_ale_this_dot = false;
+        ppu.bus_read_this_dot = false;
+        ppu_complete_register_accesses(ppu.dot);
+        ppu.rendering_enabled = (ppu.mask & 0x18) != 0;
+        ppu.fetches_enabled = false;
+        ppu.total_cycles++;
+        ppu.dot++;
+        if (ppu.dot != 341) continue;
+
+        ppu.dot = 0;
+        if (++ppu.scanline == (int)timing->scanlines) ppu.scanline = 0;
+        if (ppu.scanline == 240) {
+            ppu.completed_video_phase = ppu.frame_video_phase;
+            ppu.frame_video_phase = (uint8_t)(ppu.total_cycles % 3u);
+            ppu.odd_frame = !ppu.odd_frame;
+            ppu.frame_complete = true;
+            ppu.frame_count++;
+        }
+        if (ppu.startup_writes_restricted
+            && ppu.scanline == (int)timing->scanlines - 1)
+            ppu.startup_writes_restricted = false;
+    }
 }
 
 // Secondary OAM is cleared on clocks 1-64. Each following pair of clocks
@@ -891,10 +942,19 @@ static void ppu_render_dot(int x, int y) {
     else if (background) color = active_ppu_palette[background_palette * 4 + background];
     active_bg_opaque[y * 256 + x] = background != 0;
     ppu.pixel_indices[y * 256 + x] = color & 0x3F;
+    uint16_t signal = color & ((ppu.mask & 1u) ? 0x30u : 0x3Fu);
+    if (ppu.mask & 0x20u) signal |= 0x40u;
+    if (ppu.mask & 0x40u) signal |= 0x80u;
+    if (ppu.mask & 0x80u) signal |= 0x100u;
+    ppu.pixel_signal[y * 256 + x] = signal;
     active_framebuffer[y * 256 + x] = get_color(color);
 }
 
 void ppu_step_dots(int ppu_cycles) {
+    if (cart_nsf_active()) {
+        ppu_step_nsf_dots(ppu_cycles);
+        return;
+    }
     for (int i = 0; i < ppu_cycles; ++i) {
         int line = ppu.scanline;
         int dot = ppu.dot;
@@ -1042,6 +1102,8 @@ void ppu_step_dots(int ppu_cycles) {
             ppu.dot = 0;
             if (++ppu.scanline == (int)nes_timing()->scanlines) {
                 ppu.scanline = 0;
+                ppu.completed_video_phase = ppu.frame_video_phase;
+                ppu.frame_video_phase = (uint8_t)(ppu.total_cycles % 3u);
                 ppu.odd_frame = !ppu.odd_frame;
                 ppu.frame_complete = true;
                 ppu.frame_count++;

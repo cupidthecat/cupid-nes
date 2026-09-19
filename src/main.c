@@ -42,20 +42,32 @@
 #include "rom/mapper.h"
 #include <math.h>
 #include "ui/palette_tool.h"
+#include "ui/nsf_frontend.h"
 #include "system/timing.h"
 #include "system/hardware.h"
 #include "system/vs_system.h"
+#include "video/ntsc_composite.h"
 
 #define AUDIO_SAMPLE_RATE 44100
 #define AUDIO_BUFFER_SAMPLES 1024
 
 // SDL presents the framebuffer that the PPU fills.
 uint32_t framebuffer[SCREEN_WIDTH * SCREEN_HEIGHT];
+static uint32_t composite_framebuffer[NTSC_COMPOSITE_WIDTH * NTSC_COMPOSITE_HEIGHT];
 
 Joypad pad1 = {0}, pad2 = {0};
 
-static SDL_GameController *controllers[NES_INPUT_PLAYERS];
+static void nsf_audio_lock(void *context) {
+    SDL_AudioDeviceID device = *(SDL_AudioDeviceID *)context;
+    if (device) SDL_LockAudioDevice(device);
+}
 
+static void nsf_audio_unlock(void *context) {
+    SDL_AudioDeviceID device = *(SDL_AudioDeviceID *)context;
+    if (device) SDL_UnlockAudioDevice(device);
+}
+
+static SDL_GameController *controllers[NES_INPUT_PLAYERS];
 static void open_controller(int device) {
     if (!SDL_IsGameController(device)) return;
     SDL_JoystickID id = SDL_JoystickGetDeviceInstanceID(device);
@@ -84,9 +96,30 @@ static void controller_event(const SDL_Event *event) {
             SDL_GameControllerClose(controllers[player]);
             controllers[player] = NULL;
             joypad_player(player)->buttons = 0;
+            if (player == 0) {
+                (void)cart_set_karaoke_input(CART_KARAOKE_A, false);
+                (void)cart_set_karaoke_input(CART_KARAOKE_B, false);
+            }
+            if (player < 2) {
+                NesPortDevice device = joypad_port_device(player);
+                if (device == NES_PORT_SNES_CONTROLLER || device == NES_PORT_NTT_KEYPAD) {
+                    joypad_set_snes_button(player, SNES_BUTTON_X, false);
+                    joypad_set_snes_button(player, SNES_BUTTON_Y, false);
+                    joypad_set_snes_button(player, SNES_BUTTON_L, false);
+                    joypad_set_snes_button(player, SNES_BUTTON_R, false);
+                } else if (device == NES_PORT_VIRTUAL_BOY) {
+                    joypad_set_virtual_boy_button(player, VB_BUTTON_DOWN1, false);
+                    joypad_set_virtual_boy_button(player, VB_BUTTON_LEFT1, false);
+                    joypad_set_virtual_boy_button(player, VB_BUTTON_RIGHT1, false);
+                    joypad_set_virtual_boy_button(player, VB_BUTTON_UP1, false);
+                    joypad_set_virtual_boy_button(player, VB_BUTTON_L, false);
+                    joypad_set_virtual_boy_button(player, VB_BUTTON_R, false);
+                }
+            }
         } else if ((event->type == SDL_CONTROLLERBUTTONDOWN || event->type == SDL_CONTROLLERBUTTONUP)
                    && event->cbutton.which == id) {
-            int button;
+            bool down = event->type == SDL_CONTROLLERBUTTONDOWN;
+            int button = -1;
             switch (event->cbutton.button) {
                 case SDL_CONTROLLER_BUTTON_A: button = BTN_A; break;
                 case SDL_CONTROLLER_BUTTON_B: button = BTN_B; break;
@@ -96,11 +129,108 @@ static void controller_event(const SDL_Event *event) {
                 case SDL_CONTROLLER_BUTTON_DPAD_DOWN: button = BTN_DOWN; break;
                 case SDL_CONTROLLER_BUTTON_DPAD_LEFT: button = BTN_LEFT; break;
                 case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: button = BTN_RIGHT; break;
-                default: continue;
+                default: break;
             }
-            joypad_set_player(player, button, event->type == SDL_CONTROLLERBUTTONDOWN);
+            if (button >= 0) {
+                joypad_set_player(player, button, down);
+                if (player == 0 && button == BTN_A)
+                    (void)cart_set_karaoke_input(CART_KARAOKE_A, down);
+                else if (player == 0 && button == BTN_B)
+                    (void)cart_set_karaoke_input(CART_KARAOKE_B, down);
+            }
+            if (player < 2) {
+                NesPortDevice device = joypad_port_device(player);
+                if (device == NES_PORT_SNES_CONTROLLER || device == NES_PORT_NTT_KEYPAD) {
+                    if (event->cbutton.button == SDL_CONTROLLER_BUTTON_X)
+                        joypad_set_snes_button(player, SNES_BUTTON_X, down);
+                    else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_Y)
+                        joypad_set_snes_button(player, SNES_BUTTON_Y, down);
+                    else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER)
+                        joypad_set_snes_button(player, SNES_BUTTON_L, down);
+                    else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)
+                        joypad_set_snes_button(player, SNES_BUTTON_R, down);
+                } else if (device == NES_PORT_VIRTUAL_BOY) {
+                    if (event->cbutton.button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER)
+                        joypad_set_virtual_boy_button(player, VB_BUTTON_L, down);
+                    else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)
+                        joypad_set_virtual_boy_button(player, VB_BUTTON_R, down);
+                }
+            }
+        } else if (event->type == SDL_CONTROLLERAXISMOTION && event->caxis.which == id
+                   && player < 2 && joypad_port_device(player) == NES_PORT_VIRTUAL_BOY) {
+            const int deadzone = 16000;
+            if (event->caxis.axis == SDL_CONTROLLER_AXIS_RIGHTX) {
+                joypad_set_virtual_boy_button(player, VB_BUTTON_LEFT1, event->caxis.value < -deadzone);
+                joypad_set_virtual_boy_button(player, VB_BUTTON_RIGHT1, event->caxis.value > deadzone);
+            } else if (event->caxis.axis == SDL_CONTROLLER_AXIS_RIGHTY) {
+                joypad_set_virtual_boy_button(player, VB_BUTTON_UP1, event->caxis.value < -deadzone);
+                joypad_set_virtual_boy_button(player, VB_BUTTON_DOWN1, event->caxis.value > deadzone);
+            }
         }
     }
+}
+
+static bool extended_port_key_event(const SDL_KeyboardEvent *event) {
+    if (!event) return false;
+    bool down = event->type == SDL_KEYDOWN;
+    NesPortDevice device = joypad_port_device(0);
+    NttKey keypad_key;
+    bool keypad_event = true;
+    switch (event->keysym.scancode) {
+        case SDL_SCANCODE_KP_0: keypad_key = NTT_KEY_0; break;
+        case SDL_SCANCODE_KP_1: keypad_key = NTT_KEY_1; break;
+        case SDL_SCANCODE_KP_2: keypad_key = NTT_KEY_2; break;
+        case SDL_SCANCODE_KP_3: keypad_key = NTT_KEY_3; break;
+        case SDL_SCANCODE_KP_4: keypad_key = NTT_KEY_4; break;
+        case SDL_SCANCODE_KP_5: keypad_key = NTT_KEY_5; break;
+        case SDL_SCANCODE_KP_6: keypad_key = NTT_KEY_6; break;
+        case SDL_SCANCODE_KP_7: keypad_key = NTT_KEY_7; break;
+        case SDL_SCANCODE_KP_8: keypad_key = NTT_KEY_8; break;
+        case SDL_SCANCODE_KP_9: keypad_key = NTT_KEY_9; break;
+        case SDL_SCANCODE_KP_MULTIPLY: keypad_key = NTT_KEY_STAR; break;
+        case SDL_SCANCODE_KP_DIVIDE: keypad_key = NTT_KEY_POUND; break;
+        case SDL_SCANCODE_KP_PERIOD: keypad_key = NTT_KEY_PERIOD; break;
+        case SDL_SCANCODE_C: keypad_key = NTT_KEY_C; break;
+        case SDL_SCANCODE_E: keypad_key = NTT_KEY_END; break;
+        default: keypad_event = false; break;
+    }
+    if (keypad_event) {
+        bool handled = false;
+        if (joypad_expansion_device() == NES_EXPANSION_FCNS_CONTROLLER)
+            handled |= joypad_set_fcns_key((FcnsKey)keypad_key, down);
+        for (unsigned port = 0; port < 2; ++port) {
+            if (joypad_port_device(port) == NES_PORT_NTT_KEYPAD) {
+                handled |= joypad_set_ntt_key(port, keypad_key, down);
+            }
+        }
+        if (handled) return true;
+    }
+
+    if (device == NES_PORT_SNES_CONTROLLER || device == NES_PORT_NTT_KEYPAD) {
+        SnesButton button;
+        switch (event->keysym.scancode) {
+            case SDL_SCANCODE_A: button = SNES_BUTTON_Y; break;
+            case SDL_SCANCODE_S: button = SNES_BUTTON_X; break;
+            case SDL_SCANCODE_Q: button = SNES_BUTTON_L; break;
+            case SDL_SCANCODE_W: button = SNES_BUTTON_R; break;
+            default: return false;
+        }
+        return joypad_set_snes_button(0, button, down);
+    }
+    if (device == NES_PORT_VIRTUAL_BOY) {
+        VirtualBoyButton button;
+        switch (event->keysym.scancode) {
+            case SDL_SCANCODE_I: button = VB_BUTTON_UP1; break;
+            case SDL_SCANCODE_K: button = VB_BUTTON_DOWN1; break;
+            case SDL_SCANCODE_J: button = VB_BUTTON_LEFT1; break;
+            case SDL_SCANCODE_L: button = VB_BUTTON_RIGHT1; break;
+            case SDL_SCANCODE_Q: button = VB_BUTTON_L; break;
+            case SDL_SCANCODE_E: button = VB_BUTTON_R; break;
+            default: return false;
+        }
+        return joypad_set_virtual_boy_button(0, button, down);
+    }
+    return false;
 }
 
 static bool mat_key_event(const SDL_KeyboardEvent *event) {
@@ -342,17 +472,25 @@ int main(int argc, char *argv[]) {
     const char *tape_play_path = NULL;
     const char *tape_record_path = NULL;
     const char *fds_bios_path = NULL;
+    const char *studybox_bios_path = NULL;
     size_t fds_frontend_side = 0;
     bool fds_side_set = false;
     bool fds_start_ejected = false;
     bool fds_start_write_protected = false;
     bool vs_dip_set = false;
     uint16_t vs_dips = 0;
+    uint8_t input_overrides = 0;
     bool startup_phase_set = false;
     bool startup_seed_set = false;
     unsigned startup_cpu_offset = 0, startup_ppu_phase = 0;
     uint32_t startup_seed = 0;
+    bool power_on_seed_set = false;
+    uint32_t power_on_seed = 0;
     const char *epsm_adpcm_path = NULL;
+    const char *fcns_kanji_path = NULL;
+    const char *game_db_path = NULL;
+    bool disable_game_db_overrides = false;
+    bool ntsc_composite_requested = false;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--console") == 0) {
             if (++i == argc || !nes_set_console_model_name(argv[i])) {
@@ -380,6 +518,20 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             epsm_adpcm_path = argv[i];
+        } else if (strcmp(argv[i], "--fcns-kanji") == 0) {
+            if (++i == argc) {
+                fprintf(stderr, "--fcns-kanji requires a 256 KiB Kanji ROM file\n");
+                return 1;
+            }
+            fcns_kanji_path = argv[i];
+        } else if (strcmp(argv[i], "--game-db") == 0) {
+            if (++i == argc) {
+                fprintf(stderr, "--game-db requires a database file\n");
+                return 1;
+            }
+            game_db_path = argv[i];
+        } else if (strcmp(argv[i], "--no-game-db-overrides") == 0) {
+            disable_game_db_overrides = true;
         } else if (strcmp(argv[i], "--startup-phase") == 0) {
             if (++i == argc || startup_phase_set || startup_seed_set) {
                 fprintf(stderr, "Choose one startup phase CPU:PPU or startup seed\n");
@@ -416,6 +568,27 @@ int main(int argc, char *argv[]) {
             }
             startup_seed = (uint32_t)seed;
             startup_seed_set = true;
+        } else if (strcmp(argv[i], "--ram-power-on") == 0) {
+            if (++i == argc || !nes_set_ram_power_on_state_name(argv[i])) {
+                fprintf(stderr, "RAM power-on state must be default, zero, ones, or random\n");
+                return 1;
+            }
+        } else if (strcmp(argv[i], "--power-on-seed") == 0) {
+            if (++i == argc || power_on_seed_set) {
+                fprintf(stderr, "Power-on seed must be an integer from 0 to 4294967295\n");
+                return 1;
+            }
+            char *end;
+            errno = 0;
+            unsigned long long seed = strtoull(argv[i], &end, 10);
+            if (errno || argv[i][0] < '0' || argv[i][0] > '9' || *end || seed > UINT32_MAX) {
+                fprintf(stderr, "Power-on seed must be an integer from 0 to 4294967295\n");
+                return 1;
+            }
+            power_on_seed = (uint32_t)seed;
+            power_on_seed_set = true;
+        } else if (strcmp(argv[i], "--random-vblank") == 0) {
+            nes_set_randomize_vblank(true);
         } else if (strcmp(argv[i], "--ppu-revision") == 0) {
             if (++i == argc || !ppu_set_revision_name(argv[i])) {
                 fprintf(stderr, "PPU revision must be 2c02-pre-e or 2c02e-plus\n");
@@ -427,6 +600,21 @@ int main(int argc, char *argv[]) {
             ppu_set_startup_write_restriction(true);
         } else if (strcmp(argv[i], "--ppu-oam-decay") == 0) {
             ppu_set_oam_decay(true);
+        } else if (strcmp(argv[i], "--ppu-reset-suppression") == 0) {
+            ppu_set_reset_suppression(true);
+        } else if (strcmp(argv[i], "--video-filter") == 0) {
+            if (++i == argc) {
+                fprintf(stderr, "Video filter must be direct or ntsc-composite\n");
+                return 1;
+            }
+            if (strcmp(argv[i], "direct") == 0) {
+                ntsc_composite_requested = false;
+            } else if (strcmp(argv[i], "ntsc-composite") == 0) {
+                ntsc_composite_requested = true;
+            } else {
+                fprintf(stderr, "Video filter must be direct or ntsc-composite\n");
+                return 1;
+            }
         } else if (strcmp(argv[i], "--mmc3-revision") == 0) {
             if (++i == argc || !cart_set_mmc3_revision_name(argv[i])) {
                 fprintf(stderr, "MMC3 revision must be standard or a\n");
@@ -450,17 +638,20 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "Adapter must be none, four-score, famicom-2, or famicom-4\n");
                 return 1;
             }
+            input_overrides |= NES_INPUT_OVERRIDE_ADAPTER;
         } else if (strcmp(argv[i], "--port1") == 0 || strcmp(argv[i], "--port2") == 0) {
             unsigned port = argv[i][6] == '2' ? 1 : 0;
             if (++i == argc || !joypad_set_port_device_name(port, argv[i])) {
-                fprintf(stderr, "Port device must be pad, none, arkanoid, power-pad-a, power-pad-b, zapper, or subor-mouse (port 2 only)\n");
+                fprintf(stderr, "Port device must be pad, none, arkanoid, power-pad-a, power-pad-b, zapper, subor-mouse (port 2 only), snes-pad, snes-mouse, ntt-keypad, or virtual-boy\n");
                 return 1;
             }
+            input_overrides |= port ? NES_INPUT_OVERRIDE_PORT2 : NES_INPUT_OVERRIDE_PORT1;
         } else if (strcmp(argv[i], "--expansion") == 0) {
             if (++i == argc || !joypad_set_expansion_device_name(argv[i])) {
-                fprintf(stderr, "Expansion device must be none, arkanoid, family-trainer-a, family-trainer-b, zapper, family-basic, turbo-file, battle-box, subor-keyboard, hori-track, konami-hyper-shot, bandai-hyper-shot, party-tap, pachinko, exciting-boxing, jissen-mahjong, barcode-battler, or oeka-kids-tablet\n");
+                fprintf(stderr, "Expansion device must be none, arkanoid, family-trainer-a, family-trainer-b, zapper, family-basic, turbo-file, battle-box, subor-keyboard, hori-track, konami-hyper-shot, bandai-hyper-shot, party-tap, pachinko, exciting-boxing, jissen-mahjong, barcode-battler, oeka-kids-tablet, or fcns\n");
                 return 1;
             }
+            input_overrides |= NES_INPUT_OVERRIDE_EXPANSION;
         } else if (strcmp(argv[i], "--zapper-radius") == 0) {
             if (++i == argc) {
                 fprintf(stderr, "Zapper radius must be an integer from 0 to 255\n");
@@ -512,6 +703,12 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             fds_bios_path = argv[i];
+        } else if (strcmp(argv[i], "--studybox-bios") == 0) {
+            if (++i == argc) {
+                fprintf(stderr, "--studybox-bios requires a 256 KiB BIOS file\n");
+                return 1;
+            }
+            studybox_bios_path = argv[i];
         } else if (strcmp(argv[i], "--fds-side") == 0) {
             if (++i == argc) {
                 fprintf(stderr, "--fds-side requires a side number starting at 1\n");
@@ -540,19 +737,27 @@ int main(int argc, char *argv[]) {
         printf("Usage: %s [--console MODEL] [--cpu-revision REVISION] "
                "[--cpu-test-mode] "
                "[--epsm-adpcm FILE] "
+               "[--fcns-kanji FILE] "
+               "[--game-db FILE] [--no-game-db-overrides] "
                "[--startup-phase CPU:PPU | --startup-seed SEED] "
+               "[--ram-power-on STATE] [--power-on-seed SEED] [--random-vblank] "
                "[--ppu-revision REVISION] [--ppu-oam-row-corruption] "
-               "[--ppu-startup-restriction] [--ppu-oam-decay] "
+               "[--ppu-startup-restriction] [--ppu-oam-decay] [--ppu-reset-suppression] "
+               "[--video-filter direct|ntsc-composite] "
                "[--mmc3-revision REVISION] [--cart-dip VALUE] "
                "[--adapter TYPE] [--port1 DEVICE] [--port2 DEVICE] "
                "[--expansion DEVICE] [--barcode DIGITS] [--barcode-battler DIGITS] "
                "[--zapper-radius PIXELS] [--vs-dip VALUE] [--tape-play FILE | --tape-record FILE] "
-               "[--fds-bios BIOS] [--fds-side N] "
+               "[--fds-bios BIOS] [--studybox-bios BIOS] [--fds-side N] "
                "[--fds-eject] [--fds-write-protect] <rom-file>\n", argv[0]);
         return 1;
     }
     if (!fds_bios_path && (fds_side_set || fds_start_ejected || fds_start_write_protected)) {
         fprintf(stderr, "FDS media options require --fds-bios\n");
+        return 1;
+    }
+    if (fds_bios_path && studybox_bios_path) {
+        fprintf(stderr, "Choose either FDS or StudyBox firmware for the image\n");
         return 1;
     }
     if (!joypad_configuration_valid()) {
@@ -563,10 +768,14 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Tape input requires --expansion family-basic\n");
         return 1;
     }
+    joypad_set_configuration_overrides(input_overrides);
     
     printf("Console: %s\n", nes_console_model_name());
     printf("CPU revision: %s\n", apu_get_cpu_revision() == APU_CPU_REVISION_EARLY_2A03
            ? "early-2a03" : "late-2a03");
+    printf("RAM power-on state: %s\n", nes_ram_power_on_state_name());
+    printf("Random power-on VBL flag: %s\n", nes_randomize_vblank_enabled() ? "enabled" : "disabled");
+    if (power_on_seed_set) printf("Power-on seed: %llu\n", (unsigned long long)power_on_seed);
     printf("PPU revision: %s\n", ppu_revision_name());
     printf("CPU test-register reads: %s\n", cpu_test_mode_enabled() ? "enabled" : "disabled");
     printf("PPU OAM row corruption: %s\n",
@@ -574,6 +783,8 @@ int main(int argc, char *argv[]) {
     printf("PPU startup write restriction: %s\n",
            ppu_startup_write_restriction_enabled() ? "enabled" : "compatibility");
     printf("PPU OAM decay: %s\n", ppu_oam_decay_enabled() ? "enabled" : "compatibility");
+    printf("PPU soft-reset suppression: %s\n",
+           ppu_reset_suppression_enabled() ? "enabled" : "disabled");
     printf("MMC3 revision: %s\n", cart_mmc3_revision_name());
     printf("Input adapter: %s\n", joypad_adapter_name());
     printf("Loading ROM: %s\n", rom_path);
@@ -581,18 +792,41 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Could not load the 8 KiB YMF288 ADPCM ROM: %s\n", epsm_adpcm_path);
         return 1;
     }
+    if (fcns_kanji_path && !rom_set_fcns_kanji_firmware(fcns_kanji_path)) {
+        fprintf(stderr, "Could not load the 256 KiB FCNS Kanji ROM: %s\n", fcns_kanji_path);
+        return 1;
+    }
+    rom_database_set_overrides(!disable_game_db_overrides);
+    if (game_db_path && !rom_database_load_file(game_db_path)) {
+        fprintf(stderr, "Could not load the game database: %s\n", game_db_path);
+        return 1;
+    }
+    if (power_on_seed_set) nes_seed_power_on_random(power_on_seed);
     int load_result = fds_bios_path
         ? load_fds(rom_path, fds_bios_path, fds_start_write_protected)
+        : studybox_bios_path ? load_studybox(rom_path, studybox_bios_path)
         : load_rom(rom_path);
     if(load_result != 0) {
         fprintf(stderr, "Failed to load ROM\n");
         return 1;
+    }
+    printf("Metadata source: %s\n", rom_metadata_source_name());
+    if (!rom_is_fds() && !rom_is_studybox()) {
+        printf("File CRC32: %08X\n", (unsigned)rom_file_crc32());
+        printf("PRG CRC32: %08X\n", (unsigned)rom_prg_crc32());
+        printf("PRG+CHR CRC32: %08X\n", (unsigned)rom_prg_chr_crc32());
     }
     if (epsm_enabled()) {
         printf("EPSM: 8 MHz YMF288, stereo output\n");
         if (!epsm_has_adpcm_rom())
             fprintf(stderr, "EPSM percussion uses zero-filled data without --epsm-adpcm FILE\n");
     }
+    bool ntsc_composite_active = ntsc_composite_requested
+        && ntsc_composite_supported(nes_timing()->region, vs_enabled());
+    if (ntsc_composite_requested && !ntsc_composite_active)
+        printf("Video filter: direct (NTSC composite is unavailable for this hardware)\n");
+    else
+        printf("Video filter: %s\n", ntsc_composite_active ? "ntsc-composite" : "direct");
     if (startup_phase_set && !cpu_set_startup_alignment(startup_cpu_offset, startup_ppu_phase)) {
         fprintf(stderr, "Startup phase must be CPU 0..%u and PPU 0..%u for this image\n",
                 (unsigned)nes_timing()->cpu_divider - 1, (unsigned)nes_timing()->ppu_divider - 1);
@@ -634,7 +868,7 @@ int main(int argc, char *argv[]) {
     ppu_power_on(&ppu);
     apu_power_on(&apu);
     // Print ROM metadata at startup so mapper selection can be checked from the log.
-    if (!rom_is_fds()) {
+    if (!rom_is_fds() && !rom_is_studybox() && !rom_is_nsf()) {
         printf("=== ROM Header Info ===\n");
         printf("Signature: %c%c%c 0x%02X\n",
                ines_header.signature[0],
@@ -649,13 +883,22 @@ int main(int argc, char *argv[]) {
         printf("=======================\n");
     }
     
-    if (!rom_is_fds() && (ines_header.prg_rom_chunks > 1 || (ines_header.flags6 & 0xF0))) {
+    if (!rom_is_fds() && !rom_is_studybox() && !rom_is_nsf()
+        && (ines_header.prg_rom_chunks > 1 || (ines_header.flags6 & 0xF0))) {
         printf("WARNING: This ROM likely uses a mapper (mapper number: %d).\n",
             (ines_header.flags7 & 0xF0) | ((ines_header.flags6 & 0xF0) >> 4));
     }
     
-    if (!rom_is_fds())
+    if (!rom_is_fds() && !rom_is_studybox() && !rom_is_nsf())
         printf("Mapper detected: %d\n", ((ines_header.flags7 & 0xF0) | ((ines_header.flags6 & 0xF0) >> 4)));
+    if (rom_is_nsf()) {
+        const NsfMetadata *music = rom_nsf_metadata();
+        printf("Music track: %u/%u", rom_nsf_current_track() + 1u,
+               music ? (unsigned)music->total_songs : 0u);
+        if (music && music->track_names[rom_nsf_current_track()][0])
+            printf(" - %s", music->track_names[rom_nsf_current_track()]);
+        printf("\nPage Up/Page Down changes tracks.\n");
+    }
 
 
     printf("Resetting CPU...\n");
@@ -718,9 +961,12 @@ int main(int argc, char *argv[]) {
         SDL_PauseAudioDevice(audio_dev, 0);
     }
 
-    int video_width = (int)vs_video_width();
+    int video_width = ntsc_composite_active ? NTSC_COMPOSITE_WIDTH : (int)vs_video_width();
+    int video_height = ntsc_composite_active ? NTSC_COMPOSITE_HEIGHT : SCREEN_HEIGHT;
+    int window_width = (int)vs_video_width() * 2;
+    int window_height = SCREEN_HEIGHT * 2;
     SDL_Window *window = SDL_CreateWindow("Cupid NES Emulator",
-        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, video_width * 2, SCREEN_HEIGHT * 2, SDL_WINDOW_SHOWN);
+        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, window_width, window_height, SDL_WINDOW_SHOWN);
     if(!window) {
         fprintf(stderr, "SDL_CreateWindow Error: %s\n", SDL_GetError());
         return 1;
@@ -731,7 +977,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     SDL_Texture *texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
-        SDL_TEXTUREACCESS_STREAMING, video_width, SCREEN_HEIGHT);
+        SDL_TEXTUREACCESS_STREAMING, video_width, video_height);
     if(!texture) {
         fprintf(stderr, "SDL_CreateTexture Error: %s\n", SDL_GetError());
         return 1;
@@ -777,6 +1023,13 @@ int main(int argc, char *argv[]) {
                     joypad_set_subor_mouse_buttons((buttons & SDL_BUTTON_LMASK) != 0,
                                                    (buttons & SDL_BUTTON_RMASK) != 0);
                 }
+                for (unsigned port = 0; port < 2; ++port) {
+                    if (joypad_port_device(port) != NES_PORT_SNES_MOUSE) continue;
+                    if (e.type == SDL_MOUSEMOTION)
+                        joypad_add_snes_mouse_motion(port, e.motion.xrel, e.motion.yrel);
+                    joypad_set_snes_mouse_buttons(port, (buttons & SDL_BUTTON_LMASK) != 0,
+                                                  (buttons & SDL_BUTTON_RMASK) != 0);
+                }
                 if (e.type == SDL_MOUSEMOTION
                     && joypad_expansion_device() == NES_EXPANSION_HORI_TRACK)
                     joypad_add_hori_track_motion(e.motion.xrel, e.motion.yrel);
@@ -813,6 +1066,9 @@ int main(int argc, char *argv[]) {
             if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
                 && e.key.windowID == SDL_GetWindowID(window)
                 && jissen_key_event(&e.key)) continue;
+            if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
+                && e.key.windowID == SDL_GetWindowID(window)
+                && extended_port_key_event(&e.key)) continue;
             palette_tool_handle_event(&e, renderer);
             
             if (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP) {
@@ -820,6 +1076,24 @@ int main(int argc, char *argv[]) {
                 int down = (e.type == SDL_KEYDOWN);
     
                 switch (e.key.keysym.sym) {
+                    case SDLK_PAGEUP:
+                    case SDLK_PAGEDOWN:
+                        if (down && !e.key.repeat && rom_is_nsf()) {
+                            const NsfMetadata *music = rom_nsf_metadata();
+                            unsigned track = 0;
+                            if (music && music->total_songs) {
+                                int direction = e.key.keysym.sym == SDLK_PAGEUP ? 1 : -1;
+                                bool changed = nsf_frontend_step_track(direction,
+                                    nsf_audio_lock, nsf_audio_unlock, &audio_dev, &track);
+                                if (changed) {
+                                    printf("Music track: %u/%u", track + 1u,
+                                           (unsigned)music->total_songs);
+                                    if (music->track_names[track][0]) printf(" - %s", music->track_names[track]);
+                                    printf("\n");
+                                }
+                            }
+                        }
+                        break;
                     case SDLK_F10:
                         if (down && rom_is_fds()) fds_set_write_protected(!fds_write_protected());
                         break;
@@ -860,15 +1134,24 @@ int main(int argc, char *argv[]) {
                     case SDLK_8: if (vs_dual_system()) vs_set_coin(3, down != 0); break;
                     case SDLK_F1: if (vs_enabled()) vs_set_service(0, down != 0); break;
                     case SDLK_F2: if (vs_dual_system()) vs_set_service(1, down != 0); break;
-                    case SDLK_z:        joypad_set(&pad1, BTN_A,      down); break;
-                    case SDLK_x:        joypad_set(&pad1, BTN_B,      down); break;
-                    case SDLK_RSHIFT:   joypad_set(&pad1, BTN_SELECT, down); break;
-                    case SDLK_RETURN:   joypad_set(&pad1, BTN_START,  down); break;
-                    case SDLK_UP:       joypad_set(&pad1, BTN_UP,     down); break;
-                    case SDLK_DOWN:     joypad_set(&pad1, BTN_DOWN,   down); break;
-                    case SDLK_LEFT:     joypad_set(&pad1, BTN_LEFT,   down); break;
-                    case SDLK_RIGHT:    joypad_set(&pad1, BTN_RIGHT,  down); break;
-                    case SDLK_m:        joypad_set_microphone(down != 0); break;
+                    case SDLK_z:
+                        joypad_set_player(0, BTN_A, down);
+                        (void)cart_set_karaoke_input(CART_KARAOKE_A, down);
+                        break;
+                    case SDLK_x:
+                        joypad_set_player(0, BTN_B, down);
+                        (void)cart_set_karaoke_input(CART_KARAOKE_B, down);
+                        break;
+                    case SDLK_RSHIFT:   joypad_set_player(0, BTN_SELECT, down); break;
+                    case SDLK_RETURN:   joypad_set_player(0, BTN_START,  down); break;
+                    case SDLK_UP:       joypad_set_player(0, BTN_UP,     down); break;
+                    case SDLK_DOWN:     joypad_set_player(0, BTN_DOWN,   down); break;
+                    case SDLK_LEFT:     joypad_set_player(0, BTN_LEFT,   down); break;
+                    case SDLK_RIGHT:    joypad_set_player(0, BTN_RIGHT,  down); break;
+                    case SDLK_m:
+                        joypad_set_microphone(down != 0);
+                        (void)cart_set_karaoke_input(CART_KARAOKE_MICROPHONE, down);
+                        break;
                     default: break;
                 }
 
@@ -917,8 +1200,15 @@ int main(int argc, char *argv[]) {
             vs_cpu_step();
         }
 
-        // Present the frame, then draw the palette UI on top.
-        SDL_UpdateTexture(texture, NULL, vs_video_framebuffer(), video_width * sizeof(uint32_t));
+        // Presentation filters consume captured PPU signal data after emulation has
+        // finished the frame, so they cannot change beam timing or light-sensor input.
+        const uint32_t *presented_frame = vs_video_framebuffer();
+        if (ntsc_composite_active) {
+            ntsc_composite_filter_frame(ppu.pixel_signal, ppu.completed_video_phase,
+                                        composite_framebuffer);
+            presented_frame = composite_framebuffer;
+        }
+        SDL_UpdateTexture(texture, NULL, presented_frame, video_width * sizeof(uint32_t));
         SDL_RenderClear(renderer);
         SDL_RenderCopy(renderer, texture, NULL, NULL);
         int ww = 0, hh = 0; SDL_GetRendererOutputSize(renderer, &ww, &hh);
@@ -943,6 +1233,7 @@ int main(int argc, char *argv[]) {
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     if (audio_dev) SDL_CloseAudioDevice(audio_dev);
+    apu_audio_shutdown_state(&apu);
     for (unsigned player = 0; player < NES_INPUT_PLAYERS; ++player)
         if (controllers[player]) SDL_GameControllerClose(controllers[player]);
     bool tape_saved = finish_tape_capture(tape_record_path);

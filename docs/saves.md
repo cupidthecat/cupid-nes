@@ -13,6 +13,8 @@ The cartridge loader derives save paths from the image path. It removes the fina
 | PRG NVRAM | `games/game.nes` | `games/game.sav` |
 | CHR NVRAM | `games/game.nes` | `games/game.chr.sav` |
 | Battery-backed UNROM 512 flash or GTROM flash | `games/game.nes` | `games/game.flash.sav` |
+| Rainbow PRG flash | `games/game.nes` | `games/game.flash.sav` |
+| Rainbow CHR flash | `games/game.nes` | `games/game.chr.flash.sav` |
 | 128-byte serial EEPROM | `games/game.nes` | `games/game.eeprom128` |
 | 256-byte serial EEPROM | `games/game.nes` | `games/game.eeprom256` |
 
@@ -20,9 +22,15 @@ Only devices present in the loaded board configuration get persistence paths. Vo
 
 Existing save data overlays initialized cartridge memory when the image is loaded. Trainer bytes are installed first, so save bytes take precedence wherever the two overlap. A missing or short save leaves the remaining initialization intact, including trainer bytes beyond the portion read. The save size follows the board and NES 2.0 metadata, so `.sav` is not always an 8 KiB file.
 
-Taito X1-005/X1-017 boards use fixed cartridge-RAM allocations instead of taking a zero NES 2.0 RAM declaration literally. Mappers 80 and 207 allocate a 256-byte mirrored RAM image, and mapper 82 allocates 5 KiB. With the battery flag set, those bytes use the ordinary `.sav` path; without it, the same RAM is volatile.
+Work RAM and save RAM retain separate chip ownership. For example, a trainer on an MMC5 image with 8 KiB of each goes into the work chip, while the `.sav` data loads into the save chip. Bank selection determines which chip the CPU sees. CHR NVRAM declared beside CHR ROM also has separate storage: loading its `.chr.sav` never overwrites the ROM image. A board may allocate that storage without mapping it to the PPU.
 
-A short persistent flash save behaves differently: it replaces only the bytes read from the file, leaving the remaining PRG flash bytes from the loaded image. An incomplete file should not be treated as a verified backup. UNROM 512 gets a flash save path only when the cartridge header has the battery bit set. GTROM exposes persistent PRG flash even when that bit is clear; its CHR and nametable RAM remain volatile.
+Taito X1-005 boards, mappers 80 and 207, force the battery-selected work or save chip to a 256-byte allocation. A separately declared opposite chip keeps its own storage. X1-017 boards, mappers 82 and 552, honor explicit NES 2.0 sizes, including zero; their legacy save-RAM default is 5 KiB. The ordinary `.sav` contains the complete save-chip allocation, including bytes outside the board's visible windows. RAM permissions control CPU access without discarding those saved bytes.
+
+A short persistent flash save replaces only the bytes read from the file, leaving the remaining PRG flash bytes from the loaded image. UNROM 512 gets a flash save path only when the cartridge header has the battery bit set. GTROM exposes persistent PRG flash even when that bit is clear. Its default CHR RAM is volatile, but explicitly declared CHR NVRAM uses `.chr.sav`. Its dedicated nametable RAM remains volatile.
+
+Both flash boards can also have declared PRG NVRAM. Their `.sav` and `.flash.sav` files load and flush independently. A short PRG save leaves initialization or trainer bytes beyond the saved portion intact and does not change programmed flash bytes. In UNROM 512's eight-kilobyte nametable mode, writes backed by CHR NVRAM persist at offsets `$6000-$7FFF` in `.chr.sav`; they do not modify a separate CHR ROM.
+
+Rainbow saves the complete writable PRG and CHR flash images independently, regardless of the battery flag. It loads those overlays after the original cartridge image and never changes the `.nes` file. Its ordinary PRG and CHR NVRAM use the normal `.sav` and `.chr.sav` paths; FPGA RAM remains volatile. Flash files are replaced through temporary files only after a complete write.
 
 Persistent cartridge data is flushed when the cartridge is shut down, including normal application exit. The main loop has no timed autosave. Close the emulator normally after making progress you want to retain.
 
@@ -39,9 +47,11 @@ Some mapper save files contain more than one memory area:
 
 Do not assume another emulator uses the same composite layout. Keep a backup before moving saves between emulator versions or board configurations.
 
-Ordinary PRG/CHR battery memory and EEPROM files are written directly to their destination. Flash uses a temporary file and replacement. Failed cartridge saves print an error; they do not keep the application open for recovery as a failed FDS save does.
+The C mapper implementations write ordinary PRG/CHR battery memory and EEPROM files directly to their destination. Flash and the C++ board modules use a temporary file and replacement. Failed cartridge saves print an error; they do not keep the application open for recovery as a failed FDS save does.
 
 ## Expansion storage
+
+NSF and NSFe playback does not create cartridge save files. Track changes clear the music program's RAM and sound-chip state, and unloading the file discards that playback state.
 
 The ASCII Turbo File uses an 8 KiB `.turbofile.sav` file derived from the ROM stem. For example, `games/game.nes` uses `games/game.turbofile.sav`. The file must be exactly 8 KiB when it already exists.
 
@@ -82,6 +92,12 @@ The raw tape format stores one digital sample per 88 emulated CPU cycles. Sample
 Recording saves use a sibling `.cupid-tape.tmp` file and then replace the requested destination. If an F11 save fails, the completed capture remains in memory and another F11 can retry after the path problem is fixed. A tape save failure during application shutdown is reported and the process exits with failure, so use F11 to confirm an important recording before closing the window.
 
 If the recording buffer cannot grow, recording stops and shutdown reports `Tape recording stopped because the capture buffer could not grow`.
+
+## StudyBox tape images
+
+StudyBox STBX media is read-only in the current implementation. PAGE chunks contain the decoded tape bytes and tape-position offsets; a supported type-0 AUDI chunk contains the optional WAV stream that follows the emulated motor position. The user-supplied 256 KiB StudyBox BIOS is separate from the tape image. Work RAM is volatile and no sidecar save file is created for StudyBox media.
+
+Malformed chunks, an unsupported audio type, an out-of-order page, or a BIOS with the wrong size is rejected before the running machine is replaced. `load_studybox_memory()` follows the same transactional rule for in-memory fixtures.
 
 ## Backups and compatibility
 

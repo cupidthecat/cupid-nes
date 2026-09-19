@@ -17,6 +17,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "../apu/apu.h"
+#include "../ppu/ppu.h"
 #include "../rom/rom.h"
 
 typedef enum {
@@ -78,6 +79,7 @@ uint64_t vs_side_frame_count(unsigned side);
 unsigned vs_video_width(void);
 const uint32_t *vs_video_framebuffer(void);
 APU *vs_side_apu(unsigned side);
+PPU *vs_side_ppu(unsigned side);
 void vs_audio_init(int sample_rate);
 void vs_audio_callback(void *userdata, uint8_t *stream, int len);
 
@@ -87,6 +89,8 @@ bool vs_protection_read(uint16_t address, uint8_t *value);
 uint8_t vs_prg_chr_select_bit(void);
 bool vs_shared_ram_access_allowed(void);
 bool vs_external_irq_pending(void);
+// CPU reset clears its IRQ source without changing the peer's control output.
+void vs_clear_external_irq(void);
 
 bool vs_set_dip_switches(uint16_t value);
 uint16_t vs_dip_switches(void);

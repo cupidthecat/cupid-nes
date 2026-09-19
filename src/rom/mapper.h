@@ -29,6 +29,9 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include "rom.h"
+#include "nsf.h"
+
+typedef struct CartridgeBoard CartridgeBoard;
 
 typedef struct Mapper {
     // CPU-visible cartridge space, usually $6000-$FFFF.
@@ -57,10 +60,14 @@ typedef enum {
 } CartPpuFetchSource;
 
 // Front door used by CPU/PPU
+// A non-null buffer replaces mirrored 2 KiB CPU RAM with 8 KiB of distinct RAM.
+uint8_t *cart_cpu_ram_8k(void);
 uint8_t cart_cpu_read (uint16_t addr);
 // Resolve floating data lines against the CPU latch, without a data-byte sentinel.
 uint8_t cart_cpu_read_bus(uint16_t addr, uint8_t open_bus);
 void    cart_cpu_write(uint16_t addr, uint8_t v);
+bool cart_read_cpu_register(uint16_t address, uint8_t *value);
+void cart_observe_cpu_write(uint16_t address, uint8_t value);
 // Clock one real CPU bus cycle while exposing whether it is a write to boards
 // whose counters can select CPU-write cycles as their clock source.
 void    cart_clock_cpu_cycle(bool write_cycle);
@@ -71,6 +78,7 @@ void    cart_set_ppu_fetch_source(CartPpuFetchSource src);
 void    cart_notify_ppu_ctrl_write(uint8_t value);
 // Current cartridge expansion-audio contribution, zero when the board has none.
 float   cart_expansion_audio(void);
+float   cart_audio_gain(void);
 // Scan an EAN-8 or EAN-13 code through the connected Datach reader.
 bool    cart_set_barcode(const char *digits);
 
@@ -81,6 +89,15 @@ const char *cart_mmc3_revision_name(void);
 bool        cart_set_dip_switches(unsigned value);
 unsigned    cart_dip_switches(void);
 
+typedef enum {
+    CART_KARAOKE_A,
+    CART_KARAOKE_B,
+    CART_KARAOKE_MICROPHONE,
+    CART_KARAOKE_INPUT_COUNT
+} CartKaraokeInput;
+
+bool cart_set_karaoke_input(CartKaraokeInput input, bool pressed);
+
 // Mapper-aware nametable access ($2000-$2FFF decoded by PPU)
 uint8_t cart_nt_read (uint16_t addr, uint8_t *nt_ram);
 void    cart_nt_write(uint16_t addr, uint8_t v, uint8_t *nt_ram);
@@ -88,6 +105,14 @@ void    cart_nt_write(uint16_t addr, uint8_t v, uint8_t *nt_ram);
 // Mapper IRQ line helpers (for IRQ-capable mappers such as MMC3)
 bool cart_irq_pending(void);
 void cart_irq_ack(void);
+// Console reset signals are separate from cartridge insertion and RAM allocation.
+void cart_console_reset(bool soft_reset);
+void cart_after_console_reset(void);
+int mapper_init_nsf(const NsfImage *image, uint8_t *program, size_t program_size,
+                    uint8_t *chr, size_t chr_size);
+bool cart_nsf_select_track(unsigned track);
+bool cart_nsf_active(void);
+unsigned cart_nsf_current_track(void);
 
 // Notify physical PPU bus address changes using monotonic NTSC PPU cycles.
 // MMC3 qualifies A12 after three CPU clocks low; palette RAM is internal.
@@ -111,8 +136,14 @@ void cart_apply_trainer(const uint8_t trainer[512]);
 int mapper_init_from_header(const iNESHeader *h,
                             uint8_t *prg, size_t prg_sz,
                             uint8_t *chr, size_t chr_sz);
+int mapper_init_from_header_metadata(const iNESHeader *h,
+                                     uint8_t *prg, size_t prg_sz,
+                                     uint8_t *chr, size_t chr_sz,
+                                     const RomDatabaseInfo *database);
 // Activate a fully validated disk-system image. Takes ownership on success.
 int mapper_init_fds(FdsImage *image);
+// Activate a prepared StudyBox board. Takes ownership on success.
+int mapper_init_studybox(CartridgeBoard *board);
 // Flush saves, eject the mapper, and release mapper-owned RAM.
 // The caller retains ownership of the PRG/CHR buffers passed to initialization.
 void mapper_shutdown(void);

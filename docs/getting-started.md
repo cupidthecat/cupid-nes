@@ -70,7 +70,7 @@ build/windows/SDL2.dll
 ./cupid-nes "games/game.nes"
 ```
 
-On Windows, use `.\build\windows\cupid-nes.exe` in place of `./cupid-nes`. Cupid reads unpacked iNES and NES 2.0 images. Extract ZIP or other archive formats before launching the emulator.
+On Windows, use `.\build\windows\cupid-nes.exe` in place of `./cupid-nes`. Cupid reads unpacked iNES, NES 2.0, and supported UNIF cartridge images, as well as NSF and NSFe music files. Extract ZIP or other archive formats before launching the emulator.
 
 The application accepts one image path per launch. Paths with spaces need quotes. Starting `cupid-nes` without an image prints its usage and exits with status 1; there is no `--help` switch. Command-line hardware selection is covered in [configuration](configuration.md).
 
@@ -87,6 +87,18 @@ The file must be exactly 8,192 bytes. Cupid does not provide it. An EPSM image s
 Player 1 can use the keyboard immediately: Z/X are A/B, Right Shift and Enter are Select/Start, and the arrow keys are the D-pad. [Controls](controls.md) covers game controllers and special peripherals.
 
 Close the game window for the normal shutdown path. This matters for persistent cartridge memory and writable disk media; see [saves and media](saves.md).
+
+## Play an NSF or NSFe file
+
+Music files use the same image argument and do not need a BIOS:
+
+```sh
+./cupid-nes "music/album.nsfe"
+```
+
+Playback begins at the file's initial track and regional rate. Page Up selects the next track and Page Down selects the previous one, wrapping at the ends. A track change resets the music program and its sound chips. The playback window has no game rendering; track numbers and available names appear in the terminal.
+
+StudyBox tape media uses a separate firmware option: `--studybox-bios "StudyBox.bin" "lesson.stbx"`. The BIOS must be exactly 256 KiB. See [StudyBox configuration](configuration.md#studybox-media) for the supported tape container and audio format.
 
 ## Open an FDS or QD image
 

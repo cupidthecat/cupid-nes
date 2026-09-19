@@ -27,6 +27,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
+#include "nsf.h"
 
 typedef struct __attribute__((packed)) {
     uint8_t signature[4];      // "NES\x1A"
@@ -48,6 +49,39 @@ typedef enum {
     MIRROR_FOUR       = 4
 } Mirroring;
 
+typedef struct {
+    bool present;
+    bool headerless;
+    uint16_t mapper;
+    bool submapper_present;
+    uint8_t submapper;
+    size_t prg_rom_size;
+    size_t chr_rom_size;
+    char board[64];
+    char chip[64];
+    int8_t bus_conflicts; /* -1 = board default, 0 = disabled, 1 = enabled */
+    bool work_ram_override;
+    bool save_ram_override;
+    bool chr_ram_override;
+    size_t work_ram;
+    size_t save_ram;
+    size_t chr_ram;
+    bool mirroring_override;
+    Mirroring mirroring;
+} RomDatabaseInfo;
+
+typedef enum {
+    ROM_METADATA_NONE,
+    ROM_METADATA_INES,
+    ROM_METADATA_NES20,
+    ROM_METADATA_DATABASE,
+    ROM_METADATA_DATABASE_HEADERLESS,
+    ROM_METADATA_FDS,
+    ROM_METADATA_STUDYBOX,
+    ROM_METADATA_UNIF,
+    ROM_METADATA_NSF
+} RomMetadataSource;
+
 // expose sizes so CPU/PPU can reason about mirroring
 extern iNESHeader ines_header;
 extern size_t     prg_size;
@@ -56,7 +90,9 @@ extern uint8_t   *prg_rom;
 extern uint8_t   *chr_rom;
 
 int load_rom(const char *filename);
+bool rom_set_fcns_kanji_firmware(const char *path);
 int load_fds(const char *disk_path, const char *bios_path, bool write_protected);
+int load_studybox(const char *media_path, const char *bios_path);
 // Eject the cartridge and release loader-owned buffers; false preserves dirty FDS media
 // when its pending disk image cannot be flushed.
 bool unload_rom(void);
@@ -67,8 +103,25 @@ int load_rom_memory(const uint8_t *data, size_t size);
 int load_fds_memory(const uint8_t *disk, size_t disk_size,
                     const uint8_t *bios, size_t bios_size,
                     const char *disk_path, bool write_protected);
+int load_studybox_memory(const uint8_t *media, size_t media_size,
+                         const uint8_t *bios, size_t bios_size);
 bool rom_is_fds(void);
+bool rom_is_studybox(void);
+bool rom_is_nsf(void);
+bool rom_nsf_select_track(unsigned track);
+unsigned rom_nsf_current_track(void);
+const NsfMetadata *rom_nsf_metadata(void);
 int rom_mapper_number(const iNESHeader *header);
+bool rom_database_load_file(const char *path);
+bool rom_database_load_memory(const char *text, size_t size);
+void rom_database_clear(void);
+void rom_database_set_overrides(bool enabled);
+bool rom_database_overrides_enabled(void);
+RomMetadataSource rom_metadata_source(void);
+const char *rom_metadata_source_name(void);
+uint32_t rom_file_crc32(void);
+uint32_t rom_prg_crc32(void);
+uint32_t rom_prg_chr_crc32(void);
 
 typedef struct {
     size_t prg_ram, prg_nvram;
@@ -77,6 +130,8 @@ typedef struct {
 
 // Decode declared RAM capacities, including the iNES 8KB PRG-RAM default.
 int rom_ram_sizes(const iNESHeader *header, RomRamSizes *sizes);
+int rom_ram_sizes_with_metadata(const iNESHeader *header, const RomDatabaseInfo *database,
+                               RomRamSizes *sizes);
 
 // mirroring for PPU
 extern int mirroring_mode;

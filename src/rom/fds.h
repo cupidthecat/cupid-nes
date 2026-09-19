@@ -50,7 +50,13 @@ void fds_clock_cpu(int cpu_cycles);
 void fds_reset(void);
 Mirroring fds_mirroring(void);
 bool fds_irq_pending(void);
+void fds_irq_ack(void);
 float fds_expansion_audio(void);
+void fds_nsf_audio_reset(void);
+void fds_nsf_audio_clock(int cpu_cycles);
+uint8_t fds_nsf_audio_read(uint16_t addr, uint8_t open_bus);
+void fds_nsf_audio_write(uint16_t addr, uint8_t value);
+float fds_nsf_audio_output(void);
 
 // Disk persistence leaves the in-memory image dirty if writing or replacement fails.
 bool fds_flush(void);

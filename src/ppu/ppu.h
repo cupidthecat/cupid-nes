@@ -132,6 +132,8 @@ typedef struct {
     uint64_t frame_count;    // Monotonic completed-frame count for synchronized consoles
     uint64_t total_cycles;   // Monotonic PPU clock for cartridge bus events
     unsigned cpu_clock_phase; // Remainder for standalone CPU-clock stepping
+    uint8_t  frame_video_phase; // NTSC carrier phase at the start of the active frame.
+    uint8_t  completed_video_phase; // Carrier phase belonging to the last completed frame.
     
     // Background tile fetch pipeline (for per-dot rendering)
     uint8_t  nt_byte;        // Nametable byte latch
@@ -148,6 +150,7 @@ typedef struct {
     uint8_t  at_latch_lo;    // Attribute latch for next tile
     uint8_t  at_latch_hi;    // Attribute latch for next tile
     uint8_t  pixel_indices[256 * 240]; // Beam output before the frontend's RGB palette.
+    uint16_t pixel_signal[256 * 240]; // Per-pixel palette, grayscale, and emphasis output.
 } PPU;
 
 typedef struct {
@@ -204,6 +207,8 @@ void ppu_set_startup_write_restriction(bool enabled);
 bool ppu_startup_writes_restricted(void);
 bool ppu_oam_decay_enabled(void);
 void ppu_set_oam_decay(bool enabled);
+bool ppu_reset_suppression_enabled(void);
+void ppu_set_reset_suppression(bool enabled);
 void ppu_oam_dma(uint8_t page);
 void ppu_begin_vblank(void);
 void ppu_end_vblank(void);

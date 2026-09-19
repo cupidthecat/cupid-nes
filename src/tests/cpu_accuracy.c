@@ -1443,6 +1443,7 @@ static int cpu_diagnostic_output_reads(void) {
     write_mem(0x4011, 0x2B);
     CHECK(read_test_mode_register(0x401A, 0x2B) == 0);
     apu_select_machine(NULL);
+    apu_audio_shutdown_state(&secondary);
     CHECK(read_mem(0x401A) == 0x67);
     apu_soft_reset(&apu);
     cpu_soft_reset(&cpu);

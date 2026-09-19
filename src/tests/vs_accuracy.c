@@ -163,15 +163,21 @@ static int test_vs_extended_console_header(void) {
     CHECK(vs_system_type() == VS_TYPE_TKO_BOXING && vs_ppu_model() == VS_PPU_2C03);
     (void)read_mem(0x5E00);
     CHECK(read_mem(0x5E01) == 0xFF && read_mem(0x5E01) == 0xBF);
+
+    h.zero[2] = 2; // Extended PlayChoice metadata is outside the VS cabinet path.
+    memcpy(image, &h, sizeof(h));
+    CHECK(load_rom_memory(image, image_size) == 0);
+    CHECK(!vs_enabled() && cart_cpu_read(0x8000) == 0x5A);
+
     Mapper *previous = cart;
     uint8_t *previous_prg = prg_rom;
-    static const uint8_t unsupported[] = {2, 3, 5, 15};
+    static const uint8_t unsupported[] = {3, 5, 15};
     for (size_t i = 0; i < sizeof(unsupported); ++i) {
         h.zero[2] = unsupported[i];
         memcpy(image, &h, sizeof(h));
         CHECK(load_rom_memory(image, image_size) == -1);
         CHECK(cart == previous && prg_rom == previous_prg);
-        CHECK(vs_system_type() == VS_TYPE_TKO_BOXING && cart_cpu_read(0x8000) == 0x5A);
+        CHECK(!vs_enabled() && cart_cpu_read(0x8000) == 0x5A);
     }
     h.zero[2] = 1;
     for (unsigned region = 1; region <= 3; region += 2) {
@@ -571,6 +577,49 @@ static int test_mapper99_banks(void) {
     write_mem(0x4016, 0x04);
     CHECK(cart_cpu_read(0x8000) == 4 && cart_ppu_read(0) == 0x21);
     unload_rom();
+
+    // The reference page mapper accepts reduced and irregular mapper 99 images.
+    // Two complete 8 KiB PRG pages wrap across the four CPU slots while a
+    // smaller CHR page occupies only the covered portion of PPU space.
+    h = nes20_vs_header(99, 1, 1, VS_TYPE_DEFAULT, 0, VS_INPUT_STANDARD);
+    h.prg_rom_chunks = 0x38; // 16 KiB PRG.
+    h.chr_rom_chunks = 0x30; // 4 KiB CHR.
+    h.flags9 = 0xFF;
+    image = build_image(&h, 0x4000, 0x1000, &image_size);
+    CHECK(image != NULL);
+    prg = image + sizeof(h);
+    chr = prg + 0x4000;
+    memset(prg, 0x31, 0x2000);
+    memset(prg + 0x2000, 0x52, 0x2000);
+    memset(chr, 0xA3, 0x1000);
+    CHECK(load_rom_memory(image, image_size) == 0);
+    CHECK(cart_cpu_read(0x8100) == 0x31 && cart_cpu_read(0xA100) == 0x52);
+    CHECK(cart_cpu_read(0xC100) == 0x31 && cart_cpu_read(0xE100) == 0x52);
+    CHECK(cart_ppu_read(0x0123) == 0xA3 && cart_ppu_read(0x1123) == 0x23);
+    write_mem(0x4016, 0x04);
+    CHECK(cart_cpu_read(0x8100) == 0x31 && cart_ppu_read(0x0123) == 0xA3);
+    Mapper *previous = cart;
+    uint8_t *previous_prg = prg_rom;
+    CHECK(load_rom_memory(image, image_size - 1) == -1);
+    CHECK(cart == previous && prg_rom == previous_prg);
+    CHECK(cart_cpu_read(0xA100) == 0x52 && cart_ppu_read(0x1123) == 0x23);
+    free(image);
+    unload_rom();
+
+    // Explicit 4 KiB CHR RAM shrinks mapper 99's CHR page and aliases through
+    // the pattern-table window. OUT0 cannot select a nonexistent second page.
+    h = nes20_vs_header(99, 2, 0, VS_TYPE_DEFAULT, 0, VS_INPUT_STANDARD);
+    h.zero[0] = 6; // 4 KiB CHR RAM.
+    image = build_image(&h, 0x8000, 0, &image_size);
+    CHECK(image != NULL && load_rom_memory(image, image_size) == 0);
+    free(image);
+    cart_ppu_write(0x0123, 0xA5);
+    CHECK(cart_ppu_read(0x0123) == 0xA5 && cart_ppu_read(0x1123) == 0xA5);
+    write_mem(0x4016, 0x04);
+    CHECK(cart_ppu_read(0x0123) == 0xA5 && cart_ppu_read(0x1123) == 0xA5);
+    cart_ppu_write(0x1123, 0x5A);
+    CHECK(cart_ppu_read(0x0123) == 0x5A);
+    unload_rom();
     return 0;
 }
 
@@ -649,15 +698,97 @@ static int test_vs_dual_execution(void) {
     CHECK(vs_side_frame_count(1) >= vs_side_frame_count(0));
 
     write_mem(0x6000, 0x00);
+    CHECK(vs_shared_ram_access_allowed() && cart_cpu_read(0x6000) == 0);
+    ppu_soft_reset(&ppu);
+    apu_soft_reset(&apu);
+    cpu_soft_reset(&cpu);
     vs_soft_reset();
     CHECK(!vs_shared_ram_access_allowed());
     CHECK(!vs_external_irq_pending());
     for (unsigned i = 0; i < 8; ++i) vs_cpu_step();
     write_mem(0x4016, 0x02);
     CHECK(vs_shared_ram_access_allowed());
-    CHECK(cart_cpu_read(0x6000) == 0x5A); // Reset restored the sub IRQ and its initial RAM ownership.
+    CHECK(cart_cpu_read(0x6000) == 0x00); // The secondary CPU cleared the old IRQ during reset.
+    write_mem(0x4016, 0x00); // A new falling control edge raises a fresh peer IRQ.
+    for (unsigned i = 0; i < 800; ++i) vs_cpu_step();
+    write_mem(0x4016, 0x02);
+    CHECK(cart_cpu_read(0x6000) == 0x5A);
     joypad_set_player(2, BTN_A, false);
     unload_rom();
+    return 0;
+}
+
+static int test_vs_irq_reset_and_control_edges(void) {
+    iNESHeader h = nes20_vs_header(99, 4, 4, VS_TYPE_DUAL, 0, VS_INPUT_STANDARD);
+    h.flags10 = 7;
+    size_t image_size;
+    uint8_t *image = build_image(&h, 0x10000, 0x8000, &image_size);
+    CHECK(image != NULL);
+    uint8_t *prg = image + sizeof(h);
+    memset(prg, 0xEA, 0x10000);
+    static const uint8_t main_program[] = {0x4C,0x00,0x80};
+    static const uint8_t sub_program[] = {
+        0x78,                         // $8000: SEI; peer IRQs do not interrupt this driver.
+        0xA9,0x00, 0x8D,0x16,0x40,   // D1 high to low asserts the main CPU's IRQ.
+        0xA9,0x01, 0x8D,0x00,0x60,   // Report phase one in shared RAM.
+        0xAD,0x01,0x60, 0xF0,0xFB,   // $800B: wait for the first command.
+        0x8D,0x16,0x40,               // Write one: strobe changes, but D1 stays low.
+        0xA9,0x02, 0x8D,0x00,0x60,
+        0xAD,0x01,0x60, 0xC9,0x02,
+        0xD0,0xF9,                    // $8018: wait for command two.
+        0x8D,0x16,0x40,               // D1 high clears the peer IRQ source.
+        0xA9,0x00, 0x8D,0x16,0x40,   // Another falling edge asserts a new IRQ.
+        0xA9,0x03, 0x8D,0x00,0x60,
+        0x4C,0x2C,0x80
+    };
+    static const uint8_t irq_handler[] = {0xE6,0x04,0x40};
+    memcpy(prg, main_program, sizeof(main_program));
+    memcpy(prg + 0x100, irq_handler, sizeof(irq_handler));
+    memcpy(prg + 0x8000, sub_program, sizeof(sub_program));
+    for (size_t side = 0; side < 2; ++side) {
+        size_t base = side * 0x8000;
+        set_vector(prg, base + 0x7FFA, 0x8000);
+        set_vector(prg, base + 0x7FFC, 0x8000);
+        set_vector(prg, base + 0x7FFE, side ? 0x8000 : 0x8100);
+    }
+    int loaded = load_rom_memory(image, image_size);
+    free(image);
+    CHECK(loaded == 0);
+    power_main();
+    vs_power_on_secondary();
+    for (unsigned i = 0; i < 40; ++i) vs_cpu_step();
+    CHECK(vs_external_irq_pending());
+
+    write_mem(0x4016, 2);
+    CHECK(vs_shared_ram_access_allowed() && cart_cpu_read(0x6000) == 1);
+    write_mem(0x6001, 1);
+    write_mem(0x6002, 0xA6);
+    cpu_soft_reset(&cpu);
+    CHECK(!vs_external_irq_pending());
+    CHECK(vs_shared_ram_access_allowed() && cart_cpu_read(0x6002) == 0xA6);
+
+    write_mem(0x4016, 0);
+    for (unsigned i = 0; i < 40; ++i) vs_cpu_step();
+    CHECK(!vs_external_irq_pending()); // Repeating low D1 cannot undo CPU reset.
+    write_mem(0x4016, 2);
+    CHECK(cart_cpu_read(0x6000) == 2 && cart_cpu_read(0x6002) == 0xA6);
+    write_mem(0x6001, 2);
+    write_mem(0x4016, 0);
+    for (unsigned i = 0; i < 40; ++i) vs_cpu_step();
+    CHECK(vs_external_irq_pending());
+    write_mem(0x4016, 2);
+    CHECK(cart_cpu_read(0x6000) == 3 && cart_cpu_read(0x6002) == 0xA6);
+
+    // Execute CLI and the actual IRQ vector to prove the new source reaches the CPU.
+    write_mem(0x0200, 0x58);
+    write_mem(0x0201, 0xEA);
+    write_mem(0x0202, 0x4C);
+    write_mem(0x0203, 0x01);
+    write_mem(0x0204, 0x02);
+    cpu.pc = 0x0200;
+    for (unsigned i = 0; i < 8 && !ram[4]; ++i) cpu_step(&cpu);
+    CHECK(ram[4] == 1);
+    CHECK(unload_rom());
     return 0;
 }
 
@@ -702,6 +833,141 @@ static int test_vs_reset_and_declared_ram(void) {
     CHECK(load_rom_memory(image, image_size) == -1);
     CHECK(cart == previous && prg_rom == previous_prg);
     free(image);
+    CHECK(unload_rom());
+    return 0;
+}
+
+static void run_vs_frame(void) {
+    vs_start_frame();
+    for (unsigned i = 0; i < 40000 && !ppu.frame_complete; ++i) vs_cpu_step();
+}
+
+static int test_vs_coin_pulses(void) {
+    static const uint8_t loop[] = {0x4C,0x00,0x80};
+    CHECK(load_vs_program(VS_TYPE_DEFAULT, 0, VS_INPUT_STANDARD, loop, sizeof(loop)) == 0);
+    power_main();
+
+    CHECK(vs_set_coin(0, true));
+    CHECK(vs_set_coin(0, false));
+    CHECK(vs_set_service(0, true));
+    CHECK((vs_read_controller_port(0) & 0x24) == 0x24);
+    for (unsigned frame = 0; frame < 4; ++frame) {
+        run_vs_frame();
+        uint8_t value = vs_read_controller_port(0);
+        CHECK((value & 0x04) != 0);
+        CHECK(((value & 0x20) != 0) == (frame < 3));
+    }
+    CHECK(vs_set_service(0, false));
+    CHECK((vs_read_controller_port(0) & 0x24) == 0);
+
+    CHECK(vs_set_coin(1, true));
+    CHECK((vs_read_controller_port(0) & 0x40) != 0);
+    for (unsigned frame = 0; frame < 4; ++frame) {
+        CHECK(vs_set_coin(1, true));
+        run_vs_frame();
+    }
+    CHECK((vs_read_controller_port(0) & 0x40) == 0);
+    CHECK(vs_set_coin(1, false));
+    CHECK(vs_set_coin(1, true));
+    CHECK((vs_read_controller_port(0) & 0x40) != 0);
+    CHECK(vs_set_coin(1, false));
+    CHECK(unload_rom());
+
+    iNESHeader h = nes20_vs_header(99, 4, 4, VS_TYPE_DUAL, 1, VS_INPUT_STANDARD);
+    h.flags10 = 7; // 8 KiB shared PRG RAM for the sub-CPU observation program.
+    size_t image_size;
+    uint8_t *image = build_image(&h, 0x10000, 0x8000, &image_size);
+    CHECK(image != NULL);
+    uint8_t *prg = image + sizeof(h);
+    memset(prg, 0xEA, 0x10000);
+    memcpy(prg, loop, sizeof(loop));
+    static const uint8_t sub_reader[] = {
+        0xAD,0x16,0x40,
+        0x8D,0x00,0x60,
+        0x4C,0x00,0x80
+    };
+    memcpy(prg + 0x8000, sub_reader, sizeof(sub_reader));
+    set_vector(prg, 0x7FFA, 0x8000);
+    set_vector(prg, 0x7FFC, 0x8000);
+    set_vector(prg, 0x7FFE, 0x8000);
+    set_vector(prg, 0xFFFA, 0x8000);
+    set_vector(prg, 0xFFFC, 0x8000);
+    set_vector(prg, 0xFFFE, 0x8000);
+    CHECK(load_rom_memory(image, image_size) == 0);
+    free(image);
+    power_main();
+    vs_power_on_secondary();
+    CHECK(vs_set_coin(2, true) && vs_set_coin(2, false));
+    CHECK(vs_set_coin(3, true));
+    for (unsigned i = 0; i < 40; ++i) vs_cpu_step();
+    write_mem(0x4016, 0x02);
+    CHECK((cart_cpu_read(0x6000) & 0x60) == 0x60);
+    write_mem(0x4016, 0x00);
+    for (unsigned frame = 0; frame < 4; ++frame) {
+        CHECK(vs_set_coin(3, true));
+        run_vs_frame();
+        for (unsigned i = 0; i < 40; ++i) vs_cpu_step();
+    }
+    write_mem(0x4016, 0x02);
+    CHECK((cart_cpu_read(0x6000) & 0x60) == 0);
+    write_mem(0x4016, 0x00);
+    CHECK(vs_set_coin(3, false));
+    CHECK(unload_rom());
+    return 0;
+}
+
+static int test_vs_dual_reset_suppression(void) {
+    iNESHeader h = nes20_vs_header(99, 4, 4, VS_TYPE_DUAL, 1, VS_INPUT_STANDARD);
+    size_t image_size;
+    uint8_t *image = build_image(&h, 0x10000, 0x8000, &image_size);
+    CHECK(image != NULL);
+    uint8_t *prg = image + sizeof(h);
+    static const uint8_t loop[] = {0x4C, 0x00, 0x80};
+    for (size_t side = 0; side < 2; ++side) {
+        size_t base = side * 0x8000;
+        memcpy(prg + base, loop, sizeof(loop));
+        set_vector(prg, base + 0x7FFA, 0x8000);
+        set_vector(prg, base + 0x7FFC, 0x8000);
+        set_vector(prg, base + 0x7FFE, 0x8000);
+    }
+    CHECK(load_rom_memory(image, image_size) == 0);
+    free(image);
+    CHECK(vs_dual_system());
+    power_main();
+    vs_power_on_secondary();
+
+    PPU *sub = vs_side_ppu(1);
+    CHECK(sub != NULL && vs_side_ppu(0) == &ppu);
+    ppu.ctrl = 0x84;
+    ppu.mask = 0x18;
+    ppu.scanline = 101;
+    ppu.dot = 202;
+    ppu.cpu_clock_phase = 2;
+    ppu.oam_decay_cycles[3] = 99;
+    sub->ctrl = 0x88;
+    sub->mask = 0x1A;
+    sub->scanline = 77;
+    sub->dot = 166;
+    sub->cpu_clock_phase = 1;
+    sub->oam_decay_cycles[4] = 88;
+    apu.pulse1.lc.length = 19;
+    vs_side_apu(1)->pulse1.lc.length = 17;
+    uint8_t main_sp = cpu.sp;
+
+    ppu_set_reset_suppression(true);
+    ppu_soft_reset(&ppu);
+    apu_soft_reset(&apu);
+    cpu_soft_reset(&cpu);
+    vs_soft_reset();
+    CHECK(ppu.ctrl == 0x84 && ppu.mask == 0x18);
+    CHECK(sub->ctrl == 0x88 && sub->mask == 0x1A);
+    CHECK(ppu.scanline == 101 && sub->scanline == 77);
+    CHECK(ppu.cpu_clock_phase == 0 && sub->cpu_clock_phase == 0);
+    CHECK(ppu.oam_decay_cycles[3] == 0 && sub->oam_decay_cycles[4] == 0);
+    CHECK(cpu.sp == (uint8_t)(main_sp - 3));
+    CHECK(apu.pulse1.lc.length == 0 && vs_side_apu(1)->pulse1.lc.length == 0);
+
+    ppu_set_reset_suppression(false);
     CHECK(unload_rom());
     return 0;
 }
@@ -783,11 +1049,14 @@ int test_vs_accuracy(void) {
         test_vs_rgb_frame_timing,
         test_vs_dual_rendered_frame_timing,
         test_vs_inputs_and_protection,
+        test_vs_coin_pulses,
         test_vs_zapper_serial,
         test_vs_zapper_cpu_port,
         test_mapper99_banks,
         test_vs_dual_execution,
+        test_vs_irq_reset_and_control_edges,
         test_vs_reset_and_declared_ram,
+        test_vs_dual_reset_suppression,
         test_vs_dual_video_and_audio
     };
     int failures = 0;

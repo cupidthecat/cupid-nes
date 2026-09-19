@@ -51,8 +51,65 @@ typedef enum {
     NES_PORT_POWER_PAD_A,
     NES_PORT_POWER_PAD_B,
     NES_PORT_ZAPPER,
-    NES_PORT_SUBOR_MOUSE
+    NES_PORT_SUBOR_MOUSE,
+    NES_PORT_SNES_CONTROLLER,
+    NES_PORT_SNES_MOUSE,
+    NES_PORT_NTT_KEYPAD,
+    NES_PORT_VIRTUAL_BOY
 } NesPortDevice;
+
+typedef enum {
+    SNES_BUTTON_A,
+    SNES_BUTTON_B,
+    SNES_BUTTON_X,
+    SNES_BUTTON_Y,
+    SNES_BUTTON_L,
+    SNES_BUTTON_R,
+    SNES_BUTTON_SELECT,
+    SNES_BUTTON_START,
+    SNES_BUTTON_UP,
+    SNES_BUTTON_DOWN,
+    SNES_BUTTON_LEFT,
+    SNES_BUTTON_RIGHT,
+    SNES_BUTTON_COUNT
+} SnesButton;
+
+typedef enum {
+    NTT_KEY_0,
+    NTT_KEY_1,
+    NTT_KEY_2,
+    NTT_KEY_3,
+    NTT_KEY_4,
+    NTT_KEY_5,
+    NTT_KEY_6,
+    NTT_KEY_7,
+    NTT_KEY_8,
+    NTT_KEY_9,
+    NTT_KEY_STAR,
+    NTT_KEY_POUND,
+    NTT_KEY_PERIOD,
+    NTT_KEY_C,
+    NTT_KEY_END,
+    NTT_KEY_COUNT
+} NttKey;
+
+typedef enum {
+    VB_BUTTON_DOWN1,
+    VB_BUTTON_LEFT1,
+    VB_BUTTON_SELECT,
+    VB_BUTTON_START,
+    VB_BUTTON_UP0,
+    VB_BUTTON_DOWN0,
+    VB_BUTTON_LEFT0,
+    VB_BUTTON_RIGHT0,
+    VB_BUTTON_RIGHT1,
+    VB_BUTTON_UP1,
+    VB_BUTTON_L,
+    VB_BUTTON_R,
+    VB_BUTTON_B,
+    VB_BUTTON_A,
+    VB_BUTTON_COUNT
+} VirtualBoyButton;
 
 typedef enum {
     NES_EXPANSION_NONE,
@@ -72,8 +129,29 @@ typedef enum {
     NES_EXPANSION_EXCITING_BOXING,
     NES_EXPANSION_JISSEN_MAHJONG,
     NES_EXPANSION_BARCODE_BATTLER,
-    NES_EXPANSION_OEKA_KIDS_TABLET
+    NES_EXPANSION_OEKA_KIDS_TABLET,
+    NES_EXPANSION_FCNS_CONTROLLER
 } NesExpansionDevice;
+
+typedef enum {
+    FCNS_KEY_0, FCNS_KEY_1, FCNS_KEY_2, FCNS_KEY_3, FCNS_KEY_4,
+    FCNS_KEY_5, FCNS_KEY_6, FCNS_KEY_7, FCNS_KEY_8, FCNS_KEY_9,
+    FCNS_KEY_STAR, FCNS_KEY_POUND, FCNS_KEY_PERIOD, FCNS_KEY_C, FCNS_KEY_END,
+    FCNS_KEY_COUNT
+} FcnsKey;
+
+typedef struct {
+    NesInputAdapter adapter;
+    NesPortDevice ports[2];
+    NesExpansionDevice expansion;
+} NesInputConfiguration;
+
+enum {
+    NES_INPUT_OVERRIDE_ADAPTER = 1u << 0,
+    NES_INPUT_OVERRIDE_PORT1 = 1u << 1,
+    NES_INPUT_OVERRIDE_PORT2 = 1u << 2,
+    NES_INPUT_OVERRIDE_EXPANSION = 1u << 3
+};
 
 typedef enum {
     JISSEN_KEY_A, JISSEN_KEY_B, JISSEN_KEY_C, JISSEN_KEY_D, JISSEN_KEY_E,
@@ -132,6 +210,14 @@ bool    joypad_set_expansion_device(NesExpansionDevice device);
 bool    joypad_set_expansion_device_name(const char *name);
 const char *joypad_expansion_device_name(void);
 bool    joypad_configuration_valid(void);
+void    joypad_set_configuration_overrides(uint8_t mask);
+uint8_t joypad_configuration_overrides(void);
+bool    joypad_resolve_default_input(uint8_t input_type, NesInputConfiguration *config,
+                                     bool *supported);
+bool    joypad_resolve_default_input_for_family(uint8_t input_type, bool famicom,
+                                                NesInputConfiguration *config,
+                                                bool *supported);
+bool    joypad_apply_configuration(const NesInputConfiguration *config);
 // Slots zero and one are NES ports; slot two is the Famicom expansion connector.
 bool    joypad_set_paddle(unsigned slot, int position, bool fire);
 // Mat positions are three rows of four, viewed from left to right on side A.
@@ -144,6 +230,12 @@ bool    joypad_set_zapper_radius(unsigned radius);
 bool    joypad_set_subor_key(SuborKey key, bool pressed);
 bool    joypad_add_subor_mouse_motion(int dx, int dy);
 bool    joypad_set_subor_mouse_buttons(bool left, bool right);
+bool    joypad_set_snes_button(unsigned port, SnesButton button, bool pressed);
+bool    joypad_add_snes_mouse_motion(unsigned port, int dx, int dy);
+bool    joypad_set_snes_mouse_buttons(unsigned port, bool left, bool right);
+bool    joypad_set_ntt_key(unsigned port, NttKey key, bool pressed);
+bool    joypad_set_fcns_key(FcnsKey key, bool pressed);
+bool    joypad_set_virtual_boy_button(unsigned port, VirtualBoyButton button, bool pressed);
 bool    joypad_add_hori_track_motion(int dx, int dy);
 bool    joypad_set_party_tap_button(unsigned button, bool pressed);
 bool    joypad_set_pachinko_controls(bool press, bool release);

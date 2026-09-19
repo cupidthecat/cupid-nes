@@ -24,7 +24,9 @@
 #ifndef NES_HARDWARE_H
 #define NES_HARDWARE_H
 
+#include <stddef.h>
 #include <stdbool.h>
+#include <stdint.h>
 
 typedef enum {
     NES_CONSOLE_NES001,
@@ -33,9 +35,26 @@ typedef enum {
     NES_CONSOLE_HVC101
 } NesConsoleModel;
 
+typedef enum {
+    NES_RAM_POWER_DEFAULT,
+    NES_RAM_POWER_ZERO,
+    NES_RAM_POWER_ONES,
+    NES_RAM_POWER_RANDOM
+} NesRamPowerOnState;
+
 NesConsoleModel nes_console_model(void);
 bool nes_set_console_model(NesConsoleModel model);
 bool nes_set_console_model_name(const char *name);
 const char *nes_console_model_name(void);
+
+NesRamPowerOnState nes_ram_power_on_state(void);
+bool nes_set_ram_power_on_state(NesRamPowerOnState state);
+bool nes_set_ram_power_on_state_name(const char *name);
+const char *nes_ram_power_on_state_name(void);
+void nes_seed_power_on_random(uint32_t seed);
+void nes_initialize_power_on_ram(void *data, size_t size, uint8_t default_value);
+bool nes_power_on_random_bool(void);
+void nes_set_randomize_vblank(bool enabled);
+bool nes_randomize_vblank_enabled(void);
 
 #endif

@@ -28,6 +28,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdatomic.h>
+typedef struct blip_t blip_t;
 // NTSC APU frame-sequencer constants (CPU cycles)
 #define APU_4STEP_PERIOD 29830u
 #define APU_5STEP_PERIOD 37282u
@@ -167,6 +168,9 @@ typedef struct {
     double   sample_rate;    // e.g., 44100
     double   cycles_per_sample; // CPU cycles per audio sample
     double   sample_accum;   // accum CPU cycles towards next sample
+    blip_t  *reconstruction;
+    int32_t  reconstructed_level;
+    uint64_t audio_transition_count;
 
     // Output filter state/coefs (NES-like analog chain approximation)
     float hp90_alpha;
@@ -200,6 +204,8 @@ void apu_select_machine(APU *state);
 APU *apu_active_state(void);
 void apu_audio_init(int sample_rate);
 void apu_audio_init_state(APU *state, int sample_rate);
+void apu_audio_shutdown_state(APU *state);
+void apu_audio_refresh(APU *state);
 void apu_audio_pull(APU *state, float *samples, int count);
 void apu_audio_pull_stereo(APU *state, float *samples, int frames);
 // Select the DMC CPU timing model. The selection persists across APU resets.

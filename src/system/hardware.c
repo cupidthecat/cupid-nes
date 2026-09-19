@@ -25,8 +25,14 @@
 #include <string.h>
 
 static NesConsoleModel console_model = NES_CONSOLE_NES001;
+static NesRamPowerOnState ram_power_on_state = NES_RAM_POWER_DEFAULT;
+static uint32_t power_on_random_state = 0x4E455300u;
+static bool randomize_vblank = false;
 static const char *const console_names[] = {
     "nes-001", "nes-101", "famicom", "av-famicom"
+};
+static const char *const ram_power_names[] = {
+    "default", "zero", "ones", "random"
 };
 
 NesConsoleModel nes_console_model(void) {
@@ -50,4 +56,76 @@ bool nes_set_console_model_name(const char *name) {
 
 const char *nes_console_model_name(void) {
     return console_names[console_model];
+}
+
+NesRamPowerOnState nes_ram_power_on_state(void) {
+    return ram_power_on_state;
+}
+
+bool nes_set_ram_power_on_state(NesRamPowerOnState state) {
+    if ((unsigned)state > NES_RAM_POWER_RANDOM) return false;
+    ram_power_on_state = state;
+    return true;
+}
+
+bool nes_set_ram_power_on_state_name(const char *name) {
+    if (!name) return false;
+    for (unsigned i = 0; i < sizeof(ram_power_names) / sizeof(ram_power_names[0]); ++i) {
+        if (strcmp(name, ram_power_names[i]) == 0)
+            return nes_set_ram_power_on_state((NesRamPowerOnState)i);
+    }
+    return false;
+}
+
+const char *nes_ram_power_on_state_name(void) {
+    return ram_power_names[ram_power_on_state];
+}
+
+void nes_seed_power_on_random(uint32_t seed) {
+    power_on_random_state = seed;
+}
+
+static uint32_t next_power_on_random(void) {
+    power_on_random_state = power_on_random_state * 1664525u + 1013904223u;
+    uint32_t value = power_on_random_state;
+    value ^= value >> 16;
+    value *= 0x7FEB352Du;
+    value ^= value >> 15;
+    return value;
+}
+
+void nes_initialize_power_on_ram(void *data, size_t size, uint8_t default_value) {
+    if (!data || !size) return;
+    if (ram_power_on_state == NES_RAM_POWER_DEFAULT) {
+        memset(data, default_value, size);
+        return;
+    }
+    if (ram_power_on_state == NES_RAM_POWER_ZERO) {
+        memset(data, 0, size);
+        return;
+    }
+    if (ram_power_on_state == NES_RAM_POWER_ONES) {
+        memset(data, 0xFF, size);
+        return;
+    }
+
+    uint8_t *bytes = data;
+    size_t offset = 0;
+    while (offset < size) {
+        uint32_t value = next_power_on_random();
+        for (unsigned byte = 0; byte < 4 && offset < size; ++byte)
+            bytes[offset++] = (uint8_t)(value >> (byte * 8));
+    }
+}
+
+bool nes_power_on_random_bool(void) {
+    return (next_power_on_random() & 1u) != 0;
+}
+
+void nes_set_randomize_vblank(bool enabled) {
+    randomize_vblank = enabled;
+}
+
+bool nes_randomize_vblank_enabled(void) {
+    return randomize_vblank;
 }

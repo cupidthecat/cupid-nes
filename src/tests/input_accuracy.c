@@ -36,6 +36,7 @@
 #include "../cpu/cpu.h"
 #include "../apu/apu.h"
 #include "../ppu/ppu.h"
+#include "../rom/rom.h"
 #include "../rom/mapper.h"
 #include "../system/hardware.h"
 #include "../system/timing.h"
@@ -97,6 +98,7 @@ static void input_fixture(NesConsoleModel model, NesRegion region) {
     joypad_set_port_device(0, NES_PORT_GAMEPAD);
     joypad_set_port_device(1, NES_PORT_GAMEPAD);
     joypad_set_expansion_device(NES_EXPANSION_NONE);
+    joypad_set_configuration_overrides(0);
     joypad_set_zapper_radius(0);
     for (unsigned slot = 0; slot < 3; ++slot) joypad_set_zapper(slot, -1, -1, false);
     for (unsigned slot = 0; slot < 3; ++slot)
@@ -304,6 +306,135 @@ static int console_selection_lifetime(void) {
     return 0;
 }
 
+static int load_input_metadata_image_region(uint8_t input_type, uint8_t timing) {
+    uint8_t image[16 + 0x4000] = {0};
+    memcpy(image, "NES\x1A", 4);
+    image[4] = 1;
+    image[7] = 0x08;
+    image[11] = 7; // 8 KiB CHR RAM.
+    image[12] = timing;
+    image[15] = input_type;
+    image[16 + 0x3FFC] = 0x00;
+    image[16 + 0x3FFD] = 0x80;
+    return load_rom_memory(image, sizeof(image));
+}
+
+static int load_input_metadata_image(uint8_t input_type) {
+    return load_input_metadata_image_region(input_type, 0);
+}
+
+static int default_input_metadata(void) {
+    input_fixture(NES_CONSOLE_NES001, NES_REGION_NTSC);
+    CHECK(load_input_metadata_image(0x02) == 0);
+    CHECK(joypad_adapter() == NES_ADAPTER_FOUR_SCORE);
+    CHECK(joypad_port_device(0) == NES_PORT_GAMEPAD && joypad_port_device(1) == NES_PORT_GAMEPAD);
+    joypad_player(0)->buttons = 0x01;
+    joypad_player(2)->buttons = 0x02;
+    latch_controllers();
+    CHECK((read_mem(0x4016) & 1u) == 1u);
+    for (unsigned bit = 1; bit < 8; ++bit) (void)read_mem(0x4016);
+    CHECK((read_mem(0x4016) & 1u) == 0u);
+    CHECK((read_mem(0x4016) & 1u) == 1u);
+
+    input_fixture(NES_CONSOLE_NES001, NES_REGION_NTSC);
+    CHECK(load_input_metadata_image(0x08) == 0);
+    CHECK(joypad_port_device(1) == NES_PORT_ZAPPER && joypad_expansion_device() == NES_EXPANSION_NONE);
+    CHECK(joypad_set_zapper(1, -1, -1, true));
+    write_mem(0x4018, 0);
+    CHECK((read_mem(0x4017) & 0x10) != 0);
+
+    input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+    CHECK(load_input_metadata_image(0x08) == 0);
+    CHECK(joypad_port_device(1) == NES_PORT_GAMEPAD && joypad_expansion_device() == NES_EXPANSION_ZAPPER);
+    CHECK(joypad_set_zapper(2, -1, -1, true));
+    write_mem(0x4018, 0);
+    CHECK((read_mem(0x4017) & 0x10) != 0);
+
+    // Dendy timing does not replace the selected console wiring. A user-selected
+    // NES keeps the second-port gun, while a Famicom keeps its expansion gun.
+    input_fixture(NES_CONSOLE_NES001, NES_REGION_NTSC);
+    CHECK(load_input_metadata_image_region(0x08, 3) == 0);
+    CHECK(nes_timing()->region == NES_REGION_DENDY);
+    CHECK(joypad_port_device(1) == NES_PORT_ZAPPER && joypad_expansion_device() == NES_EXPANSION_NONE);
+    input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+    CHECK(load_input_metadata_image_region(0x08, 3) == 0);
+    CHECK(nes_timing()->region == NES_REGION_DENDY);
+    CHECK(joypad_port_device(1) == NES_PORT_GAMEPAD && joypad_expansion_device() == NES_EXPANSION_ZAPPER);
+
+    static const struct {
+        uint8_t input;
+        NesExpansionDevice expansion;
+    } expansion_cases[] = {
+        {0x17, NES_EXPANSION_OEKA_KIDS_TABLET},
+        {0x21, NES_EXPANSION_TURBO_FILE},
+        {0x22, NES_EXPANSION_BATTLE_BOX},
+        {0x23, NES_EXPANSION_FAMILY_BASIC},
+        {0x3B, NES_EXPANSION_FCNS_CONTROLLER}
+    };
+    for (size_t i = 0; i < sizeof(expansion_cases) / sizeof(expansion_cases[0]); ++i) {
+        input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+        CHECK(load_input_metadata_image(expansion_cases[i].input) == 0);
+        CHECK(joypad_expansion_device() == expansion_cases[i].expansion);
+    }
+
+    input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+    CHECK(load_input_metadata_image(0x27) == 0);
+    CHECK(joypad_expansion_device() == NES_EXPANSION_SUBOR_KEYBOARD);
+    CHECK(joypad_port_device(1) == NES_PORT_SUBOR_MOUSE);
+    CHECK(joypad_set_subor_key(SUBOR_KEY_A, true));
+    write_mem(0x4016, 5);
+    write_mem(0x4016, 4);
+    for (unsigned row = 0; row < 5; ++row) {
+        write_mem(0x4016, 6);
+        write_mem(0x4016, 4);
+    }
+    write_mem(0x4016, 6);
+    CHECK((read_mem(0x4017) & 0x1E) == 0x1A);
+    CHECK(joypad_set_subor_key(SUBOR_KEY_A, false));
+
+    input_fixture(NES_CONSOLE_NES001, NES_REGION_NTSC);
+    CHECK(load_input_metadata_image(0x2B) == 0);
+    CHECK(joypad_port_device(0) == NES_PORT_SNES_CONTROLLER);
+    CHECK(joypad_port_device(1) == NES_PORT_SNES_CONTROLLER);
+    CHECK(joypad_set_snes_button(0, SNES_BUTTON_Y, true));
+    latch_controllers();
+    CHECK((read_mem(0x4016) & 1u) == 0u);
+    CHECK((read_mem(0x4016) & 1u) == 1u);
+
+    // 0x29 exists in NES 2.0 metadata, but the console setup does not
+    // auto-connect an SNES mouse for it. Explicit port selection remains intact.
+    input_fixture(NES_CONSOLE_NES001, NES_REGION_NTSC);
+    CHECK(joypad_set_port_device(1, NES_PORT_ARKANOID));
+    CHECK(load_input_metadata_image(0x29) == 0);
+    CHECK(joypad_port_device(1) == NES_PORT_ARKANOID);
+
+    input_fixture(NES_CONSOLE_NES001, NES_REGION_NTSC);
+    CHECK(joypad_set_port_device(1, NES_PORT_ARKANOID));
+    joypad_set_configuration_overrides(NES_INPUT_OVERRIDE_PORT2);
+    CHECK(load_input_metadata_image(0x08) == 0);
+    CHECK(joypad_port_device(1) == NES_PORT_ARKANOID);
+    CHECK(joypad_port_device(0) == NES_PORT_GAMEPAD && joypad_adapter() == NES_ADAPTER_NONE);
+
+    input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+    CHECK(joypad_set_adapter(NES_ADAPTER_FAMICOM_TWO));
+    joypad_set_configuration_overrides(NES_INPUT_OVERRIDE_ADAPTER);
+    Mapper *previous_cart = cart;
+    CHECK(load_input_metadata_image(0x17) == -1);
+    CHECK(cart == previous_cart && joypad_adapter() == NES_ADAPTER_FAMICOM_TWO);
+    CHECK(joypad_expansion_device() == NES_EXPANSION_NONE);
+
+    input_fixture(NES_CONSOLE_NES001, NES_REGION_NTSC);
+    CHECK(joypad_set_port_device(1, NES_PORT_POWER_PAD_A));
+    CHECK(load_input_metadata_image(0x19) == 0);
+    CHECK(joypad_port_device(1) == NES_PORT_POWER_PAD_A);
+    CHECK(load_input_metadata_image(0x00) == 0);
+    CHECK(joypad_port_device(1) == NES_PORT_POWER_PAD_A);
+
+    joypad_set_configuration_overrides(0);
+    CHECK(unload_rom());
+    return 0;
+}
+
 static int adapter_reports(void) {
     static const uint8_t buttons[] = {0xA5, 0x5A, 0x3C, 0xC3, 0x96, 0x69};
     static const uint32_t nes_reports[] = {0x083CA5, 0x04C35A};
@@ -428,6 +559,201 @@ static int adapter_selection_lifetime(void) {
         unload_rom();
         CHECK(joypad_adapter() == (NesInputAdapter)adapter);
     }
+    return 0;
+}
+
+static uint32_t read_port_bits(unsigned port, unsigned count) {
+    uint32_t value = 0;
+    for (unsigned bit = 0; bit < count; ++bit)
+        value |= (uint32_t)(read_mem((uint16_t)(0x4016 + port)) & 1u) << bit;
+    return value;
+}
+
+static uint32_t read_port_bits_msb(unsigned port, unsigned count) {
+    uint32_t value = 0;
+    for (unsigned bit = 0; bit < count; ++bit)
+        value = (value << 1) | (read_mem((uint16_t)(0x4016 + port)) & 1u);
+    return value;
+}
+
+static int extended_port_protocols(void) {
+    input_fixture(NES_CONSOLE_NES001, NES_REGION_NTSC);
+    CHECK(joypad_set_port_device_name(0, "snes-pad"));
+    CHECK(joypad_port_device(0) == NES_PORT_SNES_CONTROLLER);
+    CHECK(joypad_set_snes_button(0, SNES_BUTTON_B, true));
+    CHECK(joypad_set_snes_button(0, SNES_BUTTON_Y, true));
+    CHECK(joypad_set_snes_button(0, SNES_BUTTON_SELECT, true));
+    CHECK(joypad_set_snes_button(0, SNES_BUTTON_UP, true));
+    CHECK(joypad_set_snes_button(0, SNES_BUTTON_A, true));
+    CHECK(joypad_set_snes_button(0, SNES_BUTTON_X, true));
+    CHECK(joypad_set_snes_button(0, SNES_BUTTON_L, true));
+    CHECK(joypad_set_snes_button(0, SNES_BUTTON_R, true));
+    latch_controllers();
+    CHECK(read_port_bits(0, 16) == 0x0F17u);
+    CHECK((read_mem(0x4016) & 1u) == 1u);
+
+    write_mem(0x4016, 1);
+    CHECK(joypad_set_snes_button(0, SNES_BUTTON_B, false));
+    CHECK((read_mem(0x4016) & 1u) == 0u);
+    CHECK(joypad_set_snes_button(0, SNES_BUTTON_B, true));
+    CHECK((read_mem(0x4016) & 1u) == 1u);
+    write_mem(0x4016, 0);
+    CHECK(joypad_set_snes_button(0, SNES_BUTTON_B, false));
+    CHECK((read_mem(0x4016) & 1u) == 1u); // Falling edge retained the latched B state.
+
+    CHECK(joypad_set_snes_button(0, SNES_BUTTON_UP, true));
+    CHECK(joypad_set_snes_button(0, SNES_BUTTON_DOWN, true));
+    latch_controllers();
+    uint32_t opposing = read_port_bits(0, 16);
+    CHECK((opposing & 0x30u) == 0); // Invalid U+D is filtered like the physical profile.
+
+    CHECK(joypad_set_port_device_name(1, "ntt-keypad"));
+    CHECK(joypad_set_snes_button(1, SNES_BUTTON_B, true));
+    CHECK(joypad_set_snes_button(1, SNES_BUTTON_A, true));
+    CHECK(joypad_set_ntt_key(1, NTT_KEY_0, true));
+    CHECK(joypad_set_ntt_key(1, NTT_KEY_9, true));
+    CHECK(joypad_set_ntt_key(1, NTT_KEY_STAR, true));
+    CHECK(joypad_set_ntt_key(1, NTT_KEY_POUND, true));
+    CHECK(joypad_set_ntt_key(1, NTT_KEY_PERIOD, true));
+    CHECK(joypad_set_ntt_key(1, NTT_KEY_C, true));
+    CHECK(joypad_set_ntt_key(1, NTT_KEY_END, true));
+    latch_controllers();
+    uint32_t ntt = read_port_bits(1, 32);
+    CHECK(ntt == 0xBE012101u);
+    CHECK((read_mem(0x4017) & 1u) == 1u);
+
+    CHECK(joypad_set_port_device_name(0, "virtual-boy"));
+    CHECK(joypad_set_virtual_boy_button(0, VB_BUTTON_DOWN1, true));
+    CHECK(joypad_set_virtual_boy_button(0, VB_BUTTON_LEFT1, true));
+    CHECK(joypad_set_virtual_boy_button(0, VB_BUTTON_SELECT, true));
+    CHECK(joypad_set_virtual_boy_button(0, VB_BUTTON_START, true));
+    CHECK(joypad_set_virtual_boy_button(0, VB_BUTTON_UP0, true));
+    CHECK(joypad_set_virtual_boy_button(0, VB_BUTTON_RIGHT0, true));
+    CHECK(joypad_set_virtual_boy_button(0, VB_BUTTON_L, true));
+    CHECK(joypad_set_virtual_boy_button(0, VB_BUTTON_R, true));
+    CHECK(joypad_set_virtual_boy_button(0, VB_BUTTON_B, true));
+    CHECK(joypad_set_virtual_boy_button(0, VB_BUTTON_A, true));
+    latch_controllers();
+    CHECK(read_port_bits(0, 16) == 0x7C9Fu);
+    CHECK((read_mem(0x4016) & 1u) == 1u);
+    CHECK(joypad_set_virtual_boy_button(0, VB_BUTTON_RIGHT1, true));
+    CHECK(joypad_set_virtual_boy_button(0, VB_BUTTON_UP1, true));
+    latch_controllers();
+    CHECK(read_port_bits(0, 16) == 0x7C9Cu);
+
+    CHECK(joypad_set_port_device_name(1, "snes-mouse"));
+    CHECK(joypad_set_snes_mouse_buttons(1, true, false));
+    CHECK(joypad_add_snes_mouse_motion(1, -5, 6));
+    latch_controllers();
+    CHECK(read_port_bits_msb(1, 32) == 0x00410685u);
+    CHECK((read_mem(0x4017) & 1u) == 1u);
+    latch_controllers();
+    CHECK(read_port_bits_msb(1, 32) == 0x00410080u);
+
+    // A read while strobe is high advances the hardware sensitivity selector.
+    write_mem(0x4016, 1);
+    (void)read_mem(0x4017);
+    write_mem(0x4016, 0);
+    CHECK(joypad_set_snes_mouse_buttons(1, false, false));
+    CHECK(joypad_add_snes_mouse_motion(1, 7, -7));
+    latch_controllers();
+    CHECK(read_port_bits_msb(1, 32) == 0x00119515u);
+
+    write_mem(0x4016, 1);
+    (void)read_mem(0x4017); // 1 -> 2
+    write_mem(0x4016, 0);
+    CHECK(joypad_add_snes_mouse_motion(1, -4, 5));
+    latch_controllers();
+    CHECK(read_port_bits_msb(1, 32) == 0x0021148Cu);
+
+    // Sensitivity zero keeps full 7-bit magnitudes and direction flags.
+    write_mem(0x4016, 1);
+    (void)read_mem(0x4017); // 2 -> 0
+    write_mem(0x4016, 0);
+    CHECK(joypad_add_snes_mouse_motion(1, 500, -500));
+    latch_controllers();
+    CHECK(read_port_bits_msb(1, 32) == 0x0001FF7Fu);
+
+    CHECK(joypad_set_port_device(1, NES_PORT_GAMEPAD));
+    CHECK(!joypad_add_snes_mouse_motion(1, 1, 1));
+    CHECK(!joypad_set_snes_mouse_buttons(1, true, true));
+    CHECK(!joypad_set_ntt_key(1, NTT_KEY_0, true));
+    CHECK(!joypad_set_snes_button(1, SNES_BUTTON_X, true));
+    CHECK(joypad_set_port_device(1, NES_PORT_SUBOR_MOUSE));
+    CHECK(joypad_add_subor_mouse_motion(1, -1));
+    CHECK(joypad_set_subor_mouse_buttons(true, false));
+    write_mem(0x4016, 1);
+    write_mem(0x4016, 0);
+    CHECK((read_mem(0x4017) & 1u) == 1u);
+    CHECK(joypad_set_subor_mouse_buttons(false, false));
+
+    NesInputConfiguration valid = {
+        .adapter = NES_ADAPTER_NONE,
+        .ports = {NES_PORT_SNES_CONTROLLER, NES_PORT_NTT_KEYPAD},
+        .expansion = NES_EXPANSION_NONE
+    };
+    CHECK(joypad_apply_configuration(&valid));
+    NesInputConfiguration invalid = valid;
+    invalid.ports[0] = NES_PORT_SUBOR_MOUSE;
+    CHECK(!joypad_apply_configuration(&invalid));
+    CHECK(joypad_adapter() == valid.adapter);
+    CHECK(joypad_port_device(0) == valid.ports[0]);
+    CHECK(joypad_port_device(1) == valid.ports[1]);
+    CHECK(joypad_expansion_device() == valid.expansion);
+    invalid = valid;
+    invalid.ports[1] = (NesPortDevice)999;
+    CHECK(!joypad_apply_configuration(&invalid));
+    CHECK(joypad_port_device(0) == valid.ports[0]);
+    CHECK(joypad_port_device(1) == valid.ports[1]);
+
+    CHECK(!joypad_set_port_device_name(0, "unknown-extended"));
+    return 0;
+}
+
+static int fcns_controller_protocol(void) {
+    input_fixture(NES_CONSOLE_HVC001, NES_REGION_NTSC);
+    CHECK(joypad_set_expansion_device_name("fcns"));
+    CHECK(joypad_expansion_device() == NES_EXPANSION_FCNS_CONTROLLER);
+    CHECK(joypad_set_player(0, BTN_A, true));
+    CHECK(joypad_set_player(0, BTN_START, true));
+    CHECK(joypad_set_player(0, BTN_UP, true));
+    CHECK(joypad_set_fcns_key(FCNS_KEY_0, true));
+    CHECK(joypad_set_fcns_key(FCNS_KEY_9, true));
+    CHECK(joypad_set_fcns_key(FCNS_KEY_STAR, true));
+    CHECK(joypad_set_fcns_key(FCNS_KEY_POUND, true));
+    CHECK(joypad_set_fcns_key(FCNS_KEY_PERIOD, true));
+    CHECK(joypad_set_fcns_key(FCNS_KEY_C, true));
+    CHECK(joypad_set_fcns_key(FCNS_KEY_END, true));
+
+    uint32_t expected = pad1.buttons
+        | (1u << (8 + FCNS_KEY_0)) | (1u << (8 + FCNS_KEY_9))
+        | (1u << (8 + FCNS_KEY_STAR)) | (1u << (8 + FCNS_KEY_POUND))
+        | (1u << (8 + FCNS_KEY_PERIOD)) | (1u << (8 + FCNS_KEY_C))
+        | (1u << 23);
+    latch_controllers();
+    for (unsigned bit = 0; bit < 24; ++bit)
+        CHECK(((read_mem(0x4016) >> 1) & 1u) == ((expected >> bit) & 1u));
+    CHECK((read_mem(0x4016) & 2u) == 2u);
+    CHECK((read_mem(0x4017) & 2u) == 0);
+
+    write_mem(0x4016, 1);
+    CHECK((read_mem(0x4016) & 2u) == 2u);
+    CHECK(joypad_set_player(0, BTN_A, false));
+    CHECK((read_mem(0x4016) & 2u) == 0);
+    write_mem(0x4016, 0);
+    CHECK(joypad_set_player(0, BTN_A, true));
+    CHECK((read_mem(0x4016) & 2u) == 0); // Falling edge retained released A.
+
+    CHECK(joypad_set_player(0, BTN_A, false));
+    CHECK(joypad_set_player(0, BTN_START, false));
+    CHECK(joypad_set_player(0, BTN_UP, false));
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_NONE));
+    CHECK(!joypad_set_fcns_key(FCNS_KEY_0, true));
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_FCNS_CONTROLLER));
+    latch_controllers();
+    for (unsigned bit = 0; bit < 24; ++bit)
+        CHECK((read_mem(0x4016) & 2u) == 0);
+    CHECK((read_mem(0x4016) & 2u) == 2u);
     return 0;
 }
 
@@ -2100,11 +2426,13 @@ static int oeka_kids_cartridge_and_tablet(void) {
         CHECK(read_mem(0x8100) == 0x51 && ppu_read(0x0123) == 0xA2);
     }
 
-    Mapper *previous = cart;
     image[11] = 8;
-    CHECK(load_rom_memory(image, sizeof(image)) == -1 && cart == previous);
+    CHECK(load_rom_memory(image, sizeof(image)) == 0);
+    CHECK(rom_mapper_number(&ines_header) == 96 && chr_size == 0x4000);
     CHECK(joypad_expansion_device() == NES_EXPANSION_OEKA_KIDS_TABLET);
-    CHECK(read_mem(0x8100) == 0x51 && ppu_read(0x1123) == 0xA3);
+    ppu_write(0x0123, 0xB4);
+    CHECK(ppu_read(0x0123) == 0xB4);
+    CHECK(read_mem(0x8100) == 0x50);
     CHECK(joypad_set_adapter(NES_ADAPTER_FAMICOM_TWO));
     CHECK(!joypad_configuration_valid());
     CHECK(joypad_set_adapter(NES_ADAPTER_NONE) && joypad_configuration_valid());
@@ -2116,9 +2444,10 @@ static int oeka_kids_cartridge_and_tablet(void) {
 int test_input_accuracy(void) {
     static int (*const tests[])(void) = {
         console_open_bus, console_read_clocks, console_strobe_timing,
-        famicom_microphone, console_dma_reads, console_selection_lifetime,
+        famicom_microphone, console_dma_reads, console_selection_lifetime, default_input_metadata,
         adapter_reports, adapter_strobes_and_disconnect, adapter_cpu_and_dma_clocks,
-        adapter_selection_lifetime, arkanoid_reports, arkanoid_latching,
+        adapter_selection_lifetime, extended_port_protocols, fcns_controller_protocol,
+        arkanoid_reports, arkanoid_latching,
         arkanoid_cpu_clocks, device_selection, power_pad_button_order,
         power_pad_latching, family_trainer_rows, family_trainer_cpu_writes,
         mat_selection_and_disconnect, zapper_port_signals, zapper_beam_and_persistence,
@@ -2137,6 +2466,7 @@ int test_input_accuracy(void) {
     NesInputAdapter saved_adapter = joypad_adapter();
     NesPortDevice saved_ports[] = {joypad_port_device(0), joypad_port_device(1)};
     NesExpansionDevice saved_expansion = joypad_expansion_device();
+    uint8_t saved_overrides = joypad_configuration_overrides();
     unsigned saved_zapper_radius = joypad_zapper_radius();
     int failures = 0;
     input_checks = 0;
@@ -2150,6 +2480,7 @@ int test_input_accuracy(void) {
     joypad_set_port_device(0, saved_ports[0]);
     joypad_set_port_device(1, saved_ports[1]);
     joypad_set_expansion_device(saved_expansion);
+    joypad_set_configuration_overrides(saved_overrides);
     joypad_set_zapper_radius(saved_zapper_radius);
     printf("Input: %u checks, %d failures\n", input_checks, failures);
     return failures;
