@@ -10,6 +10,7 @@
  * Public License for details. See <https://www.gnu.org/licenses/>.
  */
 #include "board_tests.h"
+#include "../system/timing.h"
 
 static bool prg8_is(uint16_t address, unsigned bank) {
     return read_mem(address) == (uint8_t)(bank * 2)
@@ -52,8 +53,9 @@ static bool cpu_nop(void) {
     return cpu_step(&cpu) == 2;
 }
 
-static void ppu_bus_address(uint16_t address, uint64_t total_cycle) {
-    ppu.total_cycles = total_cycle;
+static void ppu_bus_address(uint16_t address, int scanline, int dot) {
+    ppu.scanline = scanline;
+    ppu.dot = dot;
     (void)ppu_read(address);
 }
 
@@ -115,17 +117,32 @@ static int test_176_fk23c(void) {
     BOARD_CHECK(cpu_write_abs(0xC000, 1));
     BOARD_CHECK(cpu_write_abs(0xC001, 0));
     BOARD_CHECK(cpu_write_abs(0xE001, 0));
-    ppu_bus_address(0x0000, 100);
-    ppu_bus_address(0x1000, 109);
-    ppu_bus_address(0x0000, 200);
-    ppu_bus_address(0x1000, 210);
+    nes_set_region(NES_REGION_NTSC);
+    ppu.total_cycles = 0x12345678u;
+    ppu_bus_address(0x0000, 0, 100);
+    ppu_bus_address(0x1000, 0, 109);
+    ppu_bus_address(0x0000, 0, 200);
+    ppu_bus_address(0x1000, 0, 210);
     BOARD_CHECK(!cart_irq_pending());
-    ppu_bus_address(0x0000, 89335);
-    ppu_bus_address(0x1000, 89345);
+    ppu.odd_frame = true;
+    ppu_bus_address(0x0000, 260, 335);
+    ppu_bus_address(0x1000, 261, 4);
     BOARD_CHECK(!cart_irq_pending());
     BOARD_CHECK(cpu_nop() && cart_irq_pending());
     BOARD_CHECK(cpu_write_abs(0xE000, 0));
     BOARD_CHECK(!cart_irq_pending());
+
+    BOARD_CHECK(cpu_write_abs(0xC000, 0));
+    BOARD_CHECK(cpu_write_abs(0xC001, 0));
+    BOARD_CHECK(cpu_write_abs(0xE001, 0));
+    nes_set_region(NES_REGION_PAL);
+    ppu.total_cycles = 0x23456789u;
+    ppu_bus_address(0x0000, 310, 335);
+    ppu_bus_address(0x1000, 311, 4);
+    BOARD_CHECK(!cart_irq_pending());
+    BOARD_CHECK(cpu_nop() && cart_irq_pending());
+    BOARD_CHECK(cpu_write_abs(0xE000, 0));
+    nes_set_region(NES_REGION_NTSC);
 
     board_image_free(&image);
     return 0;

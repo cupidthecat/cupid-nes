@@ -360,7 +360,7 @@ public:
     }
 
     void NotifyVramAddressChange(uint16_t address) override {
-        if (!_a12.Rising(address, static_cast<uint32_t>(PpuClock() % 89342u))) return;
+        if (!_a12.Rising(address, PpuFrameCycle())) return;
         if (_irqCounter == 0 || _irqReload) _irqCounter = _irqReloadValue;
         else --_irqCounter;
         if (_irqCounter == 0 && _irqEnabled) _irqDelay = 2;
