@@ -289,6 +289,7 @@ static void cpu_reset_sequence(CPU* cpu) {
 bool cpu_power_on(CPU* cpu) {
     if (!cpu || !cpu_startup_alignment_valid(nes_timing()->region)) return false;
     cart_console_reset(false);
+    cart_irq_ack();
     uint8_t *expanded = cart_cpu_ram_8k();
     nes_initialize_power_on_ram(expanded ? expanded : cpu_ram, expanded ? 0x2000 : 0x0800, 0x00);
     CpuStartupAlignment alignment = {0, (uint8_t)(nes_timing()->ppu_divider - 1)};
@@ -325,6 +326,7 @@ bool cpu_power_on(CPU* cpu) {
 
 void cpu_soft_reset(CPU* cpu) {
     cart_console_reset(true);
+    cart_irq_ack();
     cpu->status = (cpu->status | INTERRUPT_FLAG | UNUSED_FLAG) & ~BREAK_FLAG;
     cpu_reset_sequence(cpu);
     cart_after_console_reset();

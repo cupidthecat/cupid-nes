@@ -268,7 +268,7 @@ static int test_yoko_registers_and_cpu_timer(void) {
     BOARD_CHECK(nops113(32767) == 0 && !cart_irq_pending());
     BOARD_CHECK(nops113(1) == 0 && cart_irq_pending());
     cpu_soft_reset(&cpu);
-    BOARD_CHECK(cart_irq_pending() && read_mem(0x8000) == 38 && read_mem(0x5FFF) == 0xD7);
+    BOARD_CHECK(!cart_irq_pending() && read_mem(0x8000) == 38 && read_mem(0x5FFF) == 0xD7);
     BOARD_CHECK(store113(0x8C10, 9) == 0 && read_mem(0x8000) == 0 && read_mem(0xC000) == 60);
     write_mem(0x8800, 0);
     write_mem(0x8801, 0);
@@ -305,7 +305,7 @@ static int test_city_fighter_banks_dac_and_irq(void) {
     BOARD_CHECK(!cart_irq_pending() && nops113(32767) == 0 && !cart_irq_pending());
     BOARD_CHECK(nops113(1) == 0 && cart_irq_pending());
     cpu_soft_reset(&cpu);
-    BOARD_CHECK(cart_irq_pending() && read_mem(0x8000) == 8 && read_mem(0xC000) == 12 && ppu_read(0) == 49);
+    BOARD_CHECK(!cart_irq_pending() && read_mem(0x8000) == 8 && read_mem(0xC000) == 12 && ppu_read(0) == 49);
     write_mem(0xF008, 0);
     BOARD_CHECK(nops113(10) == 0 && !cart_irq_pending());
     board_image_free(&image);

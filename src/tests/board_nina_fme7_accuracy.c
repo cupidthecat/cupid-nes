@@ -156,14 +156,44 @@ static int test_fme_reset_keeps_banks_irq_and_audio(void) {
     write_mem(0x0200, 0xEA);
     cpu.pc = 0x0200;
     BOARD_CHECK(cpu_step(&cpu) == 2 && cart_irq_pending());
+
+    /* CPU reset clears the external IRQ source without resetting FME-7 state.
+       Leave the enabled counter at eight so the seven reset cycles take it to
+       one; the next two-cycle NOP must wrap it and assert again. */
+    cart_cpu_write(0x8000, 14);
+    cart_cpu_write(0xA000, 8);
+    cart_cpu_write(0x8000, 15);
+    cart_cpu_write(0xA000, 0);
+    BOARD_CHECK(cart_irq_pending());
     cpu_soft_reset(&cpu);
-    BOARD_CHECK(cart_irq_pending() && cart_expansion_audio() == audio);
+    BOARD_CHECK(!cart_irq_pending() && cart_expansion_audio() == audio);
+    write_mem(0x0200, 0xEA);
+    cpu.pc = 0x0200;
+    BOARD_CHECK(cpu_step(&cpu) == 2 && cart_irq_pending());
+    cart_cpu_write(0x8000, 13);
+    cart_cpu_write(0xA000, 0);
+    BOARD_CHECK(!cart_irq_pending());
     BOARD_CHECK(cpu_load_is(0x8000, 10) && cpu_load_is(0x6123, 0x53));
     BOARD_CHECK(ppu_read(0x0123) == 0xA6);
+
+    /* If the retained enabled counter wraps during the reset bus cycles, that
+       is a new IRQ after the CPU cleared the old source and must remain set. */
+    cart_cpu_write(0x8000, 14);
+    cart_cpu_write(0xA000, 6);
+    cart_cpu_write(0x8000, 15);
+    cart_cpu_write(0xA000, 0);
+    cart_cpu_write(0x8000, 13);
+    cart_cpu_write(0xA000, 0x81);
+    BOARD_CHECK(!cart_irq_pending());
+    cpu_soft_reset(&cpu);
+    BOARD_CHECK(cart_irq_pending() && cart_expansion_audio() == audio);
+    cart_cpu_write(0x8000, 13);
+    cart_cpu_write(0xA000, 0);
+    BOARD_CHECK(!cart_irq_pending());
+
     uint8_t *old_prg = prg_rom;
     BOARD_CHECK(load_rom_memory(image.data, image.size - 1) == -1);
-    BOARD_CHECK(prg_rom == old_prg && cart_irq_pending());
-    BOARD_CHECK(fme_command(13, 0) && !cart_irq_pending());
+    BOARD_CHECK(prg_rom == old_prg && !cart_irq_pending());
     BOARD_CHECK(unload_rom());
     BOARD_CHECK(cart_expansion_audio() == 0.0f && !cart_irq_pending());
     board_image_free(&image);

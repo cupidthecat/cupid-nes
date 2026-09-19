@@ -142,7 +142,7 @@ static int test_222_banks_and_irq(void) {
     address222(0x1000, 5);
     BOARD_CHECK(cart_irq_pending());
     cpu_soft_reset(&cpu);
-    BOARD_CHECK(cart_irq_pending() && read_mem(0x8000) == 10 && ppu_read(0) == 3);
+    BOARD_CHECK(!cart_irq_pending() && read_mem(0x8000) == 10 && ppu_read(0) == 3);
     write_mem(0xF000, 0);
     board_image_free(&image);
     return 0;

@@ -440,6 +440,10 @@ static void a12_pulse(uint64_t cycle) {
 
 static int test_mmc3_irq_edges(void) {
     CHECK(fixture(4, 0x20000, 0x2000, false) == 4);
+    nes_set_region(NES_REGION_NTSC);
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    CHECK(cpu_power_on(&cpu));
     cart_cpu_write(0xC000, 2);
     cart_cpu_write(0xC001, 0);
     cart_cpu_write(0xE001, 0);
@@ -466,6 +470,8 @@ static int test_mmc3_irq_edges(void) {
     CHECK(!cart_irq_pending());
     a12_pulse(72);
     CHECK(cart_irq_pending());
+    cpu_soft_reset(&cpu);
+    CHECK(!cart_irq_pending());
     return 0;
 }
 
