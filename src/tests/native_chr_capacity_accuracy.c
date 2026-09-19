@@ -32,6 +32,17 @@ static bool power_cart(void) {
     return cpu_power_on(&cpu);
 }
 
+static bool wait_for_ppu_register_writes(void) {
+    write_mem(0x0200, 0x4C);
+    write_mem(0x0201, 0);
+    write_mem(0x0202, 2);
+    cpu.pc = 0x0200;
+    // PPUADDR writes are ignored during the first frame after power-on.
+    for (unsigned instruction = 0; instruction < 10000; ++instruction)
+        if (cpu_step(&cpu) != 3) return false;
+    return true;
+}
+
 static bool capacity_image(BoardImage *image, unsigned mapper,
                            unsigned ram_shift, bool battery) {
     if (!board_image_create(image, mapper, 0x20000, 0, true)) return false;
@@ -114,6 +125,82 @@ static int test_masked_chr_banks(void) {
     return 0;
 }
 
+static int test_latched_short_chr_rom(void) {
+    static const struct {
+        size_t bytes;
+        uint16_t action_end;
+        uint16_t oeka_slot;
+        uint16_t oeka_end;
+        uint8_t action_value;
+        uint8_t oeka_upper;
+        uint8_t oeka_latched;
+    } cases[] = {
+        {0x0100, 0x0100, 0x0100, 0x0200, 0x91, 0x91, 0x91},
+        {0x0400, 0x0400, 0x0400, 0x0800, 0x91, 0x91, 0x91},
+        {0x0800, 0x0800, 0x0800, 0x1000, 0x91, 0x91, 0x91},
+        {0x0C00, 0x0C00, 0x0C00, 0x1800, 0x91, 0x91, 0x91},
+        {0x1000, 0x1000, 0x1000, 0x2000, 0x91, 0x91, 0x91},
+        {0x1800, 0x1800, 0x1000, 0x2000, 0x91, 0x91, 0x91},
+        {0x2000, 0x2000, 0x1000, 0x2000, 0x91, 0x95, 0x95},
+        {0x4000, 0x2000, 0x1000, 0x2000, 0x99, 0x9D, 0x95}
+    };
+    const unsigned mappers[] = {28, 96};
+    for (size_t m = 0; m < sizeof(mappers) / sizeof(mappers[0]); ++m) {
+        unsigned mapper = mappers[m];
+        for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); ++c) {
+            for (unsigned sidecar = 0; sidecar < 2; ++sidecar) {
+                BoardImage image;
+                BOARD_CHECK(board_image_create(&image, mapper, 0x20000, cases[c].bytes, true));
+                iNESHeader *header = (iNESHeader *)image.data;
+                header->zero[0] = sidecar ? 9 : 0;
+                memset(image.data + sizeof(*header), 0xFF, 0x20000);
+                uint8_t *chr = image.data + sizeof(*header) + 0x20000;
+                for (size_t b = 0; b < cases[c].bytes; ++b)
+                    chr[b] = (uint8_t)(0x91 + b / 0x400);
+                BOARD_CHECK(load_rom_memory(image.data, image.size) == 0 && power_cart());
+                BOARD_CHECK(ppu_read(0x007B) == 0x7B);
+                ppu_write(0x007B, 0x5C);
+                BOARD_CHECK(ppu_read(0x007B) == 0x7B);
+                if (mapper == 28) BOARD_CHECK(cpu_store(0x5000, 0));
+                BOARD_CHECK(cpu_store(0x8000, mapper == 28 ? 3 : 4));
+                uint8_t expected = mapper == 28 ? cases[c].action_value : 0x91;
+                BOARD_CHECK(ppu_read(0x007B) == expected);
+                ppu_write(0x007B, 0x5C);
+                BOARD_CHECK(ppu_read(0x007B) == expected);
+                uint16_t mapped_end = mapper == 28 ? cases[c].action_end : cases[c].oeka_end;
+                if (mapped_end < 0x2000) {
+                    BOARD_CHECK(ppu_read((uint16_t)(mapped_end + 0x33)) == 0x33);
+                    ppu_write((uint16_t)(mapped_end + 0x33), 0x5C);
+                    BOARD_CHECK(ppu_read(0x0033) == expected);
+                }
+                if (mapper == 96) {
+                    BOARD_CHECK(ppu_read((uint16_t)(cases[c].oeka_slot + 0x7B)) == cases[c].oeka_upper);
+                    // PPUADDR crossing into a nametable updates the lower bank.
+                    BOARD_CHECK(wait_for_ppu_register_writes());
+                    BOARD_CHECK(cpu_store(0x2006, 0) && cpu_store(0x2006, 0));
+                    BOARD_CHECK(cpu_store(0x2006, 0x21) && cpu_store(0x2006, 0));
+                    write_mem(0x0200, 0xEA);
+                    cpu.pc = 0x0200;
+                    BOARD_CHECK(cpu_step(&cpu) == 2 && ppu.bus_address == 0x2100);
+                    expected = cases[c].oeka_latched;
+                    BOARD_CHECK(ppu_read(0x007B) == expected);
+                    BOARD_CHECK(ppu_read((uint16_t)(cases[c].oeka_slot + 0x7B)) == cases[c].oeka_upper);
+                }
+                Mapper *previous = cart;
+                uint8_t *previous_prg = prg_rom;
+                BOARD_CHECK(load_rom_memory(image.data, image.size - 1) == -1);
+                BOARD_CHECK(cart == previous && prg_rom == previous_prg);
+                BOARD_CHECK(ppu_read(0x007B) == expected);
+                cpu_soft_reset(&cpu);
+                BOARD_CHECK(ppu_read(0x007B) == expected);
+                BOARD_CHECK(unload_rom());
+                board_image_free(&image);
+            }
+        }
+    }
+    return 0;
+}
+
 static bool write_file(const char *path, const uint8_t *data, size_t size) {
     FILE *file = fopen(path, "wb");
     if (!file) return false;
@@ -187,9 +274,10 @@ int test_native_chr_capacity_accuracy(void) {
     if (!nes_set_ram_power_on_state(NES_RAM_POWER_ZERO)) return 1;
     int failures = test_fixed_windows_and_replacement();
     failures += test_masked_chr_banks();
+    failures += test_latched_short_chr_rom();
     failures += test_unreachable_nvram_persistence();
     unload_rom();
     if (!nes_set_ram_power_on_state(NES_RAM_POWER_DEFAULT)) ++failures;
-    printf("Native CHR capacity: 3 groups, %d failures\n", failures);
+    printf("Native CHR capacity: 4 groups, %d failures\n", failures);
     return failures;
 }

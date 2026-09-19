@@ -719,13 +719,13 @@ static bool mapper_has_shrinking_chr_window(uint16_t mapper_no) {
         case 0: case 1: case 2: case 3: case 4: case 7: case 9: case 10: case 11:
         case 13: case 15: case 16: case 18: case 19: case 21: case 22: case 23:
         case 24:
-        case 25: case 26: case 27: case 30:
+        case 25: case 26: case 27: case 28: case 30:
         case 32: case 33: case 34: case 48: case 64: case 65: case 66: case 67:
         case 68: case 69: case 71: case 72: case 73: case 74: case 75: case 76:
         case 78:
         case 79: case 80: case 82: case 85: case 87: case 88: case 89: case 90:
         case 92:
-        case 93: case 94: case 95: case 97: case 99: case 101: case 105: case 111: case 113: case 118: case 119:
+        case 93: case 94: case 95: case 96: case 97: case 99: case 101: case 105: case 111: case 113: case 118: case 119:
         case 140: case 144: case 146: case 151: case 153: case 154: case 155:
         case 157: case 158: case 159: case 180: case 183: case 184: case 185:
         case 191: case 192: case 194: case 195: case 206: case 207: case 209:
@@ -1224,10 +1224,8 @@ static void m96_cpu_write(uint16_t a, uint8_t v) {
     m96.chr_banking_active = true;
 }
 
-static size_t m96_chr_bank(uint16_t a) {
-    a &= 0x1FFFu;
-    if (!m96.chr_banking_active) return (a >> 12) & 1u;
-    return a < 0x1000u
+static size_t m96_chr_bank(unsigned slot) {
+    return slot == 0
         ? (size_t)(m96.outer_chr_bank | m96.inner_chr_bank)
         : (size_t)(m96.outer_chr_bank | 0x03u);
 }
@@ -1235,23 +1233,25 @@ static size_t m96_chr_bank(uint16_t a) {
 static uint8_t m96_ppu_read(uint16_t a) {
     a &= 0x1FFFu;
     if (!C.chr_sz) return (uint8_t)a;
-    if (!C.chr_is_ram && !m96.chr_banking_active) return (uint8_t)a;
-    if (C.chr_sz < CHR_BANK_4K) return C.chr[a % C.chr_sz];
-    size_t banks = C.chr_sz / CHR_BANK_4K;
-    size_t bank = m96_chr_bank(a) % banks;
-    return C.chr[bank * CHR_BANK_4K + (a & 0x0FFFu)];
+    if (!m96.chr_banking_active) return chr_unmapped_read(a);
+    unsigned slot;
+    size_t page_size, page_count;
+    if (!shrunk_chr_slot_geometry(a, CHR_BANK_4K, 2, &slot, &page_size, &page_count))
+        return chr_unmapped_read(a);
+    return C.chr[shrunk_chr_bank_offset(a, page_size, page_count, m96_chr_bank(slot))];
 }
 
 static void m96_ppu_write(uint16_t a, uint8_t v) {
     if (!C.chr_is_ram || !C.chr_sz) return;
     a &= 0x1FFFu;
-    if (C.chr_sz < CHR_BANK_4K) {
+    unsigned slot;
+    size_t page_size, page_count;
+    if (!m96.chr_banking_active
+        || !shrunk_chr_slot_geometry(a, CHR_BANK_4K, 2, &slot, &page_size, &page_count)) {
         chr_ram_write(a % C.chr_sz, v);
         return;
     }
-    size_t banks = C.chr_sz / CHR_BANK_4K;
-    size_t bank = m96_chr_bank(a) % banks;
-    chr_ram_write(bank * CHR_BANK_4K + (a & 0x0FFFu), v);
+    chr_ram_write(shrunk_chr_bank_offset(a, page_size, page_count, m96_chr_bank(slot)), v);
 }
 
 static Mirroring m96_mirr(void) { return C.mirr_base; }
@@ -6200,22 +6200,12 @@ static uint8_t m28_ppu_read(uint16_t a) {
     a &= 0x1FFF;
     if (!C.chr_sz) return (uint8_t)a;
     if (!C.chr_is_ram && !m28.chr_selected) return (uint8_t)a;
-    if (C.chr_sz < CHR_BANK_8K) return C.chr[a % C.chr_sz];
-    size_t banks = C.chr_sz / CHR_BANK_8K;
-    size_t bank = m28.chr_bank % banks;
-    return C.chr[bank * CHR_BANK_8K + a];
+    return discrete_chr8_read(a, m28.chr_bank);
 }
 
 static void m28_ppu_write(uint16_t a, uint8_t v) {
     if (!C.chr_sz) return;
-    a &= 0x1FFF;
-    if (C.chr_sz < CHR_BANK_8K) {
-        chr_ram_write(a % C.chr_sz, v);
-        return;
-    }
-    size_t banks = C.chr_sz / CHR_BANK_8K;
-    size_t bank = m28.chr_bank % banks;
-    chr_ram_write(bank * CHR_BANK_8K + a, v);
+    discrete_chr8_write(a, m28.chr_bank, v);
 }
 
 static Mirroring m28_mirr(void) { return m28.mirr; }
