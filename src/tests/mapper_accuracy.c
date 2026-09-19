@@ -10313,6 +10313,57 @@ static int test_uxrom94_180_sub16_prg_geometry(void) {
     return 0;
 }
 
+static int test_native_8k_prg_page_geometry(void) {
+    // MMC3 has a complete 8 KiB native page here. All four CPU slots therefore
+    // wrap to that page even after a bank-register write.
+    iNESHeader h = header_for(4, 0x4000, false);
+    h.flags7 |= 8;
+    h.prg_rom_chunks = 0x34; // 8 KiB.
+    h.flags9 = 0x0F;
+    size_t size;
+    uint8_t *image = image_for(&h, 0x2000, 0x2000, &size);
+    CHECK(image != NULL);
+    memset(image + sizeof(h), 0x41, 0x2000);
+    CHECK(load_rom_memory(image, size) == 0);
+    free(image);
+    CHECK(cart_cpu_read(0x8100) == 0x41 && cart_cpu_read(0xA100) == 0x41);
+    CHECK(cart_cpu_read(0xC100) == 0x41 && cart_cpu_read(0xE100) == 0x41);
+    cart_cpu_write(0x8000, 6);
+    cart_cpu_write(0x8001, 0x7F);
+    CHECK(cart_cpu_read(0x8100) == 0x41 && cart_cpu_read(0xC100) == 0x41);
+
+    // Jaleco 18 starts with its three switchable slots disconnected. A 12 KiB
+    // image contributes one selectable 8 KiB page; the trailing 4 KiB cannot
+    // form another hardware page and remains unreachable.
+    h = header_for(18, 0x4000, false);
+    h.flags7 |= 8;
+    h.prg_rom_chunks = 0x31; // 3 * 2^12 = 12 KiB.
+    h.flags9 = 0x0F;
+    image = image_for(&h, 0x3000, 0x2000, &size);
+    CHECK(image != NULL);
+    uint8_t *prg = image + sizeof(h);
+    memset(prg, 0x52, 0x2000);
+    memset(prg + 0x2000, 0xA7, 0x1000);
+    CHECK(load_rom_memory(image, size) == 0);
+    CHECK(cart_cpu_read_bus(0x8100, 0xD1) == 0xD1);
+    CHECK(cart_cpu_read_bus(0xA100, 0xD2) == 0xD2);
+    CHECK(cart_cpu_read_bus(0xC100, 0xD3) == 0xD3);
+    CHECK(cart_cpu_read(0xE100) == 0x52);
+    cart_cpu_write(0x8000, 0x0F);
+    cart_cpu_write(0x8001, 0x0F);
+    CHECK(cart_cpu_read(0x8100) == 0x52);
+    CHECK(cart_cpu_read(0xE100) == 0x52);
+
+    Mapper *previous = cart;
+    uint8_t *previous_prg = prg_rom;
+    CHECK(load_rom_memory(image, size - 1) == -1);
+    free(image);
+    CHECK(cart == previous && prg_rom == previous_prg);
+    CHECK(cart_cpu_read(0x8100) == 0x52 && cart_cpu_read(0xE100) == 0x52);
+    CHECK(unload_rom());
+    return 0;
+}
+
 static void small_chr_board_bank_write(unsigned mapper) {
     switch (mapper) {
         case 66:  cart_cpu_write(0x8000, 0x30); break;
@@ -11194,7 +11245,7 @@ int test_mapper_accuracy(void) {
         test_colordreams_high_banks_and_mapper144, test_unrom94_180_cpu_banks,
         test_nina_cpu_decode_and_mirroring, test_nina_chr_ram_banks,
         test_discrete_followup_loader_and_ram, test_mapper180_full_prg_range,
-        test_uxrom94_180_sub16_prg_geometry,
+        test_uxrom94_180_sub16_prg_geometry, test_native_8k_prg_page_geometry,
         test_native_shrunk_chr8_windows, test_discrete_followup_page_geometry,
         test_discrete_followup_ignored_submappers,
         test_discrete_followup_saves,
