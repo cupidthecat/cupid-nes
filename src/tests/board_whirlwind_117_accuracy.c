@@ -21,6 +21,11 @@ static bool prg8_is(uint16_t address, unsigned bank) {
         && read_mem((uint16_t)(address + 1)) == (uint8_t)(bank >> 7);
 }
 
+static bool chr8_is_page_zero(void) {
+    return ppu_read(0x0123) == 0
+        && ppu_read(0x1C34) == 7;
+}
+
 static bool cpu_write_abs(uint16_t address, uint8_t value) {
     write_mem(0x0200, 0xA9);
     write_mem(0x0201, value);
@@ -31,19 +36,34 @@ static bool cpu_write_abs(uint16_t address, uint8_t value) {
     return cpu_step(&cpu) == 2 && cpu_step(&cpu) == 4;
 }
 
+static bool cpu_nop(void) {
+    write_mem(0x0200, 0xEA);
+    cpu.pc = 0x0200;
+    return cpu_step(&cpu) == 2;
+}
+
+static bool cpu_nops(unsigned count) {
+    for (unsigned i = 0; i < count; ++i) {
+        if (!cpu_nop()) return false;
+    }
+    return true;
+}
+
 static int test_mapper40(void) {
     BoardImage image;
     BOARD_CHECK(board_image_create(&image, 40, 0x10000, 0x2000, false));
     BOARD_CHECK(board_image_load(&image) == 0);
     BOARD_CHECK(prg8_is(0x6000, 6));
     BOARD_CHECK(prg8_is(0x8000, 4) && prg8_is(0xA000, 5) && prg8_is(0xE000, 7));
+    BOARD_CHECK(chr8_is_page_zero());
     BOARD_CHECK(cart_cpu_read_bus(0xC000, 0xA5) == 0xA5);
     BOARD_CHECK(cpu_write_abs(0xE000, 2) && prg8_is(0xC000, 2));
+    BOARD_CHECK(chr8_is_page_zero());
 
     write_mem(0xA000, 0);
-    for (unsigned i = 0; i < 4095; ++i) cart_clock_cpu_cycle(false);
+    BOARD_CHECK(cpu_nops(2047));
     BOARD_CHECK(!cart_irq_pending());
-    cart_clock_cpu_cycle(false);
+    BOARD_CHECK(cpu_nop());
     BOARD_CHECK(cart_irq_pending());
     BOARD_CHECK(cpu_write_abs(0x8000, 0) && !cart_irq_pending());
     board_image_free(&image);
@@ -72,13 +92,15 @@ static int test_smb2j_304(void) {
     BOARD_CHECK(board_image_load(&image) == 0);
     BOARD_CHECK(prg4_is(0x5000, 21) && prg4_is(0x6000, 22) && prg4_is(0x7000, 23));
     BOARD_CHECK(prg4_is(0x8000, 0) && prg4_is(0xC000, 4));
+    BOARD_CHECK(chr8_is_page_zero());
     BOARD_CHECK(cpu_write_abs(0x4022, 1));
     BOARD_CHECK(prg4_is(0x8000, 4) && prg4_is(0xC000, 8));
+    BOARD_CHECK(chr8_is_page_zero());
 
     write_mem(0x4122, 1);
-    for (unsigned i = 0; i < 4095; ++i) cart_clock_cpu_cycle(false);
+    BOARD_CHECK(cpu_nops(2047));
     BOARD_CHECK(!cart_irq_pending());
-    cart_clock_cpu_cycle(false);
+    BOARD_CHECK(cpu_nop());
     BOARD_CHECK(cart_irq_pending());
     BOARD_CHECK(cpu_write_abs(0x4122, 0) && !cart_irq_pending());
     board_image_free(&image);
@@ -124,6 +146,7 @@ static int test_lh10_522_and_transactional_load(void) {
     write_mem(0x8001, 4);
     BOARD_CHECK(prg8_is(0x8000, 3) && prg8_is(0xA000, 4));
     BOARD_CHECK(read_mem(0xC000) == 0x5A && read_mem(0xDFFF) == 0xA5);
+    BOARD_CHECK(chr8_is_page_zero());
 
     uint8_t before = read_mem(0x8000);
     BOARD_CHECK(load_rom_memory(image.data, image.size - 1) < 0);
