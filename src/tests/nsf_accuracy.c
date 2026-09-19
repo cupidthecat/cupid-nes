@@ -210,6 +210,116 @@ static int test_nsf_zero_reload_and_irq_mask(void) {
     return 0;
 }
 
+static int test_nsf_ppu_clock_only_and_restore(void) {
+    bool saved_startup_restriction = ppu_startup_write_restriction_enabled();
+    bool saved_reset_suppression = ppu_reset_suppression_enabled();
+    ppu_set_startup_write_restriction(false);
+    ppu_set_reset_suppression(true);
+    cpu_use_default_startup_alignment();
+
+    const uint16_t wrapped_zero_speed = 36617;
+    uint8_t payload[0x1000];
+    uint8_t image[0x1080];
+    make_play_program(payload, sizeof(payload));
+    payload[0x20] = 0xE6; payload[0x21] = 0x04; /* INC $04 */
+    payload[0x22] = 0x40;                         /* RTI */
+    payload[0xFFA] = 0x20; payload[0xFFB] = 0x80; /* NMI -> $8020 */
+    size_t size = make_nsf(image, sizeof(image), 0, 0,
+                           wrapped_zero_speed, 1000, 1, payload, sizeof(payload));
+    CHECK(size != 0 && load_rom_memory(image, size) == 0);
+    CHECK(power_music() == 0 && run_until_init(0) == 0);
+
+    ppu.ctrl = 0x80;
+    ppu.mask = 0x18;
+    ppu.status = 0xE0;
+    ppu.v = 0x2345;
+    ppu.total_cycles = 12345;
+    ppu.frame_count = 9;
+    ppu.scanline = 7;
+    ppu.dot = 17;
+    ppu.oam[0] = 0xA5;
+    ppu_soft_reset(&ppu);
+    CHECK(ppu.ctrl == 0 && ppu.mask == 0 && ppu.status == 0);
+    CHECK(ppu.v == 0x2345 && ppu.total_cycles == 0 && ppu.frame_count == 0);
+    CHECK(ppu.scanline == (int)nes_timing()->scanlines - 1 && ppu.dot == 340);
+    CHECK(ppu.oam[0] == 0xA5 && !ppu.nmi_out);
+
+    ppu.pixel_indices[0] = 0x2A;
+    ppu_reg_write(PPUCTRL, 0x80);
+    ppu_reg_write(PPUMASK, 0x18);
+    start_frame();
+    ppu_step_dots(1);
+    CHECK(ppu.scanline == 0 && ppu.dot == 0 && !ppu.frame_complete);
+    const int first_frame_clocks = 240 * 341;
+    ppu_step_dots(first_frame_clocks - 1);
+    CHECK(!ppu.frame_complete && ppu.scanline == 239 && ppu.dot == 340);
+    ppu_step_dots(1);
+    CHECK(ppu.frame_complete && ppu.scanline == 240 && ppu.dot == 0);
+    CHECK(ppu.frame_count == 1 && !(ppu.status & 0x80) && !ppu.nmi_out);
+    CHECK(ppu.pixel_indices[0] == 0x2A && ppu.rendering_enabled && !ppu.fetches_enabled);
+
+    uint64_t completed_at = ppu.total_cycles;
+    start_frame();
+    int full_frame_clocks = (int)nes_timing()->scanlines * 341;
+    ppu_step_dots(full_frame_clocks - 1);
+    CHECK(!ppu.frame_complete);
+    ppu_step_dots(1);
+    CHECK(ppu.frame_complete && ppu.frame_count == 2);
+    CHECK(ppu.total_cycles - completed_at == (uint64_t)full_frame_clocks);
+    CHECK(!(ppu.status & 0x80) && !ppu.nmi_out && ppu.pixel_indices[0] == 0x2A);
+
+    ppu_soft_reset(&ppu);
+    ppu_reg_write(PPUCTRL, 0x80);
+    ppu_reg_write(PPUMASK, 0x18);
+    write_mem(0x0004, 0);
+    uint64_t target_frame = ppu.frame_count + 2;
+    start_frame();
+    for (unsigned instructions = 0;
+         instructions < 30000 && ppu.frame_count < target_frame;
+         ++instructions) {
+        (void)cpu_step(&cpu);
+        if (ppu.frame_complete && ppu.frame_count < target_frame) start_frame();
+    }
+    CHECK(ppu.frame_count == target_frame);
+    CHECK(read_mem(0x0004) == 0 && !(ppu.status & 0x80) && !ppu.nmi_out);
+    CHECK(ppu.pixel_indices[0] == 0x0F);
+
+    ppu_set_reset_suppression(saved_reset_suppression);
+    ppu_set_startup_write_restriction(saved_startup_restriction);
+
+    uint8_t rom[16 + 0x4000 + 0x2000] = {0};
+    memcpy(rom, "NES\x1A", 4);
+    rom[4] = 1;
+    rom[5] = 1;
+    uint8_t *prg = rom + 16;
+    prg[0x0000] = 0x4C; prg[0x0001] = 0x00; prg[0x0002] = 0x80; /* JMP $8000 */
+    prg[0x0100] = 0xE6; prg[0x0101] = 0x10; prg[0x0102] = 0x40; /* INC $10; RTI */
+    prg[0x3FFA] = 0x00; prg[0x3FFB] = 0x81;
+    prg[0x3FFC] = 0x00; prg[0x3FFD] = 0x80;
+    prg[0x3FFE] = 0x00; prg[0x3FFF] = 0x80;
+    CHECK(load_rom_memory(rom, sizeof(rom)) == 0 && !cart_nsf_active());
+    ppu_set_startup_write_restriction(false);
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    CHECK(cpu_power_on(&cpu));
+    CHECK(read_mem(0xFFFA) == 0x00 && read_mem(0xFFFB) == 0x81);
+    write_mem(0x0010, 0);
+    ppu.pixel_indices[0] = 0x2A;
+    ppu_reg_write(PPUCTRL, 0x80);
+    ppu_reg_write(PPUMASK, 0x18);
+    CHECK(ppu.ctrl == 0x80 && ppu.mask == 0x18);
+    for (unsigned clocks = 0; clocks < 100000 && !ppu.nmi_out; ++clocks)
+        ppu_step_dots(1);
+    CHECK(ppu.nmi_out && (ppu.status & 0x80));
+    CHECK(ppu.pixel_indices[0] != 0x2A && ppu.fetches_enabled);
+    for (unsigned instructions = 0; instructions < 16 && read_mem(0x0010) == 0; ++instructions)
+        (void)cpu_step(&cpu);
+    CHECK(read_mem(0x0010) > 0);
+
+    ppu_set_startup_write_restriction(saved_startup_restriction);
+    return 0;
+}
+
 static size_t append_chunk(uint8_t *out, size_t capacity, size_t offset,
                            const char id[4], const uint8_t *payload, size_t length) {
     if (length > UINT32_MAX || offset > capacity || 8 + length > capacity - offset) return 0;
@@ -413,11 +523,12 @@ int test_nsf_accuracy(void) {
     failures += test_nsf_init_play_and_tracks();
     failures += test_nsf_pal_and_banking();
     failures += test_nsf_zero_reload_and_irq_mask();
+    failures += test_nsf_ppu_clock_only_and_restore();
     failures += test_nsfe_metadata_and_required_chunks();
     failures += test_nsf_expansion_audio();
     failures += test_nsfe_fade_and_replacement();
     failures += test_nsf_invalid_images();
     unload_rom();
-    printf("NSF/NSFe accuracy: 7 groups, %d failures\n", failures);
+    printf("NSF/NSFe accuracy: 8 groups, %d failures\n", failures);
     return failures;
 }

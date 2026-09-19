@@ -611,6 +611,7 @@ void ppu_power_on(PPU *state) {
     state->oam_bus = 0xFF;
     state->oam_read_latch = 0xFF;
     state->scanline = (int)nes_timing()->scanlines - 1;
+    if (cart_nsf_active()) state->dot = 340;
     state->startup_writes_restricted = startup_write_restriction;
     nes_initialize_power_on_ram(active_ppu_vram, NT_RAM_SIZE, 0x00);
     cpu_set_nmi_line(false);
@@ -635,17 +636,18 @@ void ppu_reset(PPU *state) {
 }
 
 void ppu_soft_reset(PPU *state) {
+    bool nsf_full_reset = cart_nsf_active();
     state->cpu_clock_phase = 0;
     memset(state->oam_decay_cycles, 0, sizeof(state->oam_decay_cycles));
-    if (reset_suppression) return;
+    if (reset_suppression && !nsf_full_reset) return;
 
     uint8_t oam[PPU_OAM_SIZE];
     uint8_t secondary_oam[32];
     memcpy(oam, state->oam, sizeof(oam));
     memcpy(secondary_oam, state->secondary_oam, sizeof(secondary_oam));
     uint16_t v = state->v;
-    uint8_t status = state->status;
-    uint64_t clocks = state->total_cycles;
+    uint8_t status = nsf_full_reset ? 0 : state->status;
+    uint64_t clocks = nsf_full_reset ? 0 : state->total_cycles;
     memset(state, 0, sizeof(*state));
     memset(state->pixel_indices, 0x0F, sizeof(state->pixel_indices));
     for (unsigned pixel = 0; pixel < 256u * 240u; ++pixel) state->pixel_signal[pixel] = 0x0F;
@@ -655,11 +657,39 @@ void ppu_soft_reset(PPU *state) {
     state->status = status;
     state->total_cycles = clocks;
     state->scanline = (int)nes_timing()->scanlines - 1;
+    if (nsf_full_reset) state->dot = 340;
     state->oam_bus = 0xFF;
     state->oam_read_latch = 0xFF;
     state->startup_writes_restricted = startup_write_restriction;
     memset(active_ppu_ob_expire, 0, sizeof(main_ppu_ob_expire));
     cpu_set_nmi_line(false);
+}
+
+static void ppu_step_nsf_dots(int ppu_cycles) {
+    const NesTiming *timing = nes_timing();
+    for (int i = 0; i < ppu_cycles; ++i) {
+        ppu.bus_ale_this_dot = false;
+        ppu.bus_read_this_dot = false;
+        ppu_complete_register_accesses(ppu.dot);
+        ppu.rendering_enabled = (ppu.mask & 0x18) != 0;
+        ppu.fetches_enabled = false;
+        ppu.total_cycles++;
+        ppu.dot++;
+        if (ppu.dot != 341) continue;
+
+        ppu.dot = 0;
+        if (++ppu.scanline == (int)timing->scanlines) ppu.scanline = 0;
+        if (ppu.scanline == 240) {
+            ppu.completed_video_phase = ppu.frame_video_phase;
+            ppu.frame_video_phase = (uint8_t)(ppu.total_cycles % 3u);
+            ppu.odd_frame = !ppu.odd_frame;
+            ppu.frame_complete = true;
+            ppu.frame_count++;
+        }
+        if (ppu.startup_writes_restricted
+            && ppu.scanline == (int)timing->scanlines - 1)
+            ppu.startup_writes_restricted = false;
+    }
 }
 
 // Secondary OAM is cleared on clocks 1-64. Each following pair of clocks
@@ -921,6 +951,10 @@ static void ppu_render_dot(int x, int y) {
 }
 
 void ppu_step_dots(int ppu_cycles) {
+    if (cart_nsf_active()) {
+        ppu_step_nsf_dots(ppu_cycles);
+        return;
+    }
     for (int i = 0; i < ppu_cycles; ++i) {
         int line = ppu.scanline;
         int dot = ppu.dot;
