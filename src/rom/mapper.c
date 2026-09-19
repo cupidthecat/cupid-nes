@@ -74,7 +74,7 @@ typedef struct {
 
 static CartCommon C;
 static Mapper mapper_nrom, mapper_mmc1, mapper_m105, mapper_m232, mapper_m96, mapper_uxrom;
-static Mapper mapper_cnrom, mapper_cnrom_protect, mapper_mmc3, mapper_tqrom, mapper_txsrom;
+static Mapper mapper_cnrom, mapper_cnrom_protect, mapper_mmc3, mapper_txsrom;
 static Mapper mapper_mmc5, mapper_aorom, mapper_mmc2, mapper_mmc4, mapper_colordreams;
 static Mapper mapper_cprom, mapper_100in1, mapper_bandai, mapper_action53, mapper_unrom512, mapper_m111, mapper_fds;
 static Mapper mapper_taito33, mapper_taito48, mapper_taito_x1005, mapper_taito_x1017;
@@ -185,12 +185,6 @@ static void mmc4_notify_ppu_address(uint16_t address);
 static bool prg_ram_dirty = false;
 static bool chr_ram_dirty = false;
 static uint8_t mmc5_exram[0x400];
-static uint8_t mmc3_mixed_chr_ram[CHR_BANK_8K];
-static size_t mmc3_mixed_chr_first_bank;
-static size_t mmc3_mixed_chr_last_bank;
-static size_t mmc3_mixed_chr_ram_size;
-static uint8_t mmc3_mixed_chr_source[0x20];
-static size_t mmc3_mixed_chr_offset[0x20];
 static bool mmc5_exram_dirty = false;
 static bool battery_enabled = false;
 static char *battery_save_path = NULL;
@@ -624,10 +618,6 @@ void mapper_shutdown(void) {
     cart_cpu_cycle_is_write = false;
     cart_ppu_fetch_source = CART_PPU_FETCH_CPU;
     memset(mmc5_exram, 0, sizeof(mmc5_exram));
-    memset(mmc3_mixed_chr_ram, 0, sizeof(mmc3_mixed_chr_ram));
-    mmc3_mixed_chr_first_bank = 0;
-    mmc3_mixed_chr_last_bank = 0;
-    mmc3_mixed_chr_ram_size = 0;
     memset(bandai_eeprom, 0, sizeof(bandai_eeprom));
     mmc5_exram_dirty = false;
     unrom512_four_screen_chr = false;
@@ -670,10 +660,10 @@ static size_t mapper_prg_page_size(uint16_t mapper_no) {
     switch (mapper_no) {
         case 4: case 5: case 9: case 15: case 18: case 19:
         case 21: case 22: case 23: case 24: case 25: case 26: case 27:
-        case 32: case 33: case 48: case 64: case 65: case 69: case 74:
+        case 32: case 33: case 48: case 64: case 65: case 69:
         case 75: case 76: case 80: case 82: case 85: case 88: case 90:
-        case 95: case 99: case 118: case 119: case 151: case 154: case 158:
-        case 183: case 191: case 192: case 194: case 195: case 206: case 207:
+        case 95: case 99: case 118: case 151: case 154: case 158:
+        case 183: case 206: case 207:
         case 209: case 210: case 211:
             return PRG_BANK_8K;
         case 0: case 1: case 2: case 10: case 16: case 28: case 30:
@@ -694,9 +684,9 @@ static size_t mapper_chr_page_size(uint16_t mapper_no) {
     switch (mapper_no) {
         case 4: case 5: case 16: case 18: case 19: case 21: case 22: case 23:
         case 24: case 25: case 26: case 27: case 32: case 33: case 48: case 64:
-        case 65: case 69: case 74: case 80: case 82: case 85: case 88: case 90:
-        case 95: case 118: case 119: case 153: case 154: case 157: case 158:
-        case 159: case 183: case 191: case 192: case 194: case 195: case 206:
+        case 65: case 69: case 80: case 82: case 85: case 88: case 90:
+        case 95: case 118: case 153: case 154: case 157: case 158:
+        case 159: case 183: case 206:
         case 207: case 209: case 210: case 211:
             return CHR_BANK_1K;
         case 67: case 68: case 76:
@@ -721,14 +711,15 @@ static bool mapper_has_shrinking_chr_window(uint16_t mapper_no) {
         case 24:
         case 25: case 26: case 27: case 28: case 30:
         case 32: case 33: case 34: case 48: case 64: case 65: case 66: case 67:
-        case 68: case 69: case 71: case 72: case 73: case 74: case 75: case 76:
+        case 68: case 69: case 71: case 72: case 73: case 75: case 76:
         case 78:
         case 79: case 80: case 82: case 85: case 87: case 88: case 89: case 90:
         case 92:
-        case 93: case 94: case 95: case 96: case 97: case 99: case 101: case 105: case 111: case 113: case 118: case 119:
+        case 93: case 94: case 95: case 96: case 97: case 99: case 101: case 105:
+        case 111: case 113: case 118:
         case 140: case 144: case 146: case 151: case 153: case 154: case 155:
         case 157: case 158: case 159: case 180: case 183: case 184: case 185:
-        case 191: case 192: case 194: case 195: case 206: case 207: case 209:
+        case 206: case 207: case 209:
         case 210: case 211: case 232:
             return true;
         default:
@@ -2010,7 +2001,6 @@ static struct {
     bool revision_a;
 } mmc3;
 static uint8_t txsrom_nt[4];
-static void mmc3_mixed_chr_update_mapping(void);
 
 typedef struct {
     uint8_t prg[2];
@@ -2407,7 +2397,7 @@ void cart_notify_ppu_address(uint16_t addr, uint64_t ppu_cycle) {
         }
         return;
     }
-    if (cart != &mapper_mmc3 && cart != &mapper_tqrom && cart != &mapper_txsrom) return;
+    if (cart != &mapper_mmc3 && cart != &mapper_txsrom) return;
     if (C.submapper == 3) {
         bool high = (addr & 0x1000) != 0;
         if (mmc3.mcacc_a12_high && !high) {
@@ -2488,7 +2478,6 @@ static uint8_t mmc3_cpu_read(uint16_t a) {
 }
 
 static void mmc3_cpu_write(uint16_t a, uint8_t v) {
-    bool update_chr = false;
     if (a >= 0x6000 && a <= 0x7FFF) {
         if (C.submapper == 1) {
             uint8_t required = (a & 0x0200) ? 0xC0 : 0x30;
@@ -2510,11 +2499,9 @@ static void mmc3_cpu_write(uint16_t a, uint8_t v) {
             }
             MMC3_LOG("write %04X=%02X select=%u prg_mode=%u chr_mode=%u", a, v,
                      mmc3.bank_select, mmc3.prg_mode, mmc3.chr_mode);
-            update_chr = true;
         } else if ((a & 0xE001) == 0x8001) {
             mmc3.banks[mmc3.bank_select] = v;
             MMC3_LOG("write %04X=%02X bank[%u]=%02X", a, v, mmc3.bank_select, v);
-            update_chr = true;
         } else if ((a & 0xE001) == 0xA000) {
             if (C.mirr_base != MIRROR_FOUR)
                 mmc3.mirr = (v & 1) ? MIRROR_HORIZONTAL : MIRROR_VERTICAL;
@@ -2537,7 +2524,6 @@ static void mmc3_cpu_write(uint16_t a, uint8_t v) {
             mmc3.irq_enabled = true;
             MMC3_LOG("write %04X=%02X irq_enable", a, v);
         }
-        if (update_chr && cart == &mapper_tqrom) mmc3_mixed_chr_update_mapping();
     }
 }
 
@@ -2608,84 +2594,6 @@ static void mmc3_ppu_write(uint16_t a, uint8_t v) {
     chr_ram_write(bank * page_size + (a % page_size), v);
 }
 
-static bool mmc3_mixed_chr_uses_ram(size_t bank) {
-    return mmc3_mixed_chr_ram_size
-        && bank >= mmc3_mixed_chr_first_bank && bank <= mmc3_mixed_chr_last_bank;
-}
-
-enum {
-    MMC3_MIXED_CHR_NONE = 0,
-    MMC3_MIXED_CHR_ROM,
-    MMC3_MIXED_CHR_RAM
-};
-
-static void mmc3_mixed_chr_select_page(unsigned slot, size_t bank) {
-    bool use_ram = mmc3_mixed_chr_uses_ram(bank);
-    size_t source_size = use_ram ? mmc3_mixed_chr_ram_size : C.chr_sz;
-    size_t page_size = source_size < CHR_BANK_1K ? source_size : CHR_BANK_1K;
-    if (!page_size) return;
-    size_t page_count = source_size / page_size;
-    if (!page_count) return;
-
-    size_t source_page = use_ram ? bank - mmc3_mixed_chr_first_bank : bank;
-    source_page %= page_count;
-    size_t start = (size_t)slot * page_size;
-    size_t chunks = page_size / 0x100u;
-    for (size_t i = 0; i < chunks; ++i) {
-        size_t destination = start / 0x100u + i;
-        if (destination >= 0x20u) break;
-        mmc3_mixed_chr_source[destination] = use_ram ? MMC3_MIXED_CHR_RAM : MMC3_MIXED_CHR_ROM;
-        mmc3_mixed_chr_offset[destination] = source_page * page_size + i * 0x100u;
-    }
-}
-
-static void mmc3_mixed_chr_update_mapping(void) {
-    for (unsigned slot = 0; slot < 8; ++slot)
-        mmc3_mixed_chr_select_page(slot, mmc3_chr_bank_for_slot((uint8_t)slot));
-}
-
-static uint8_t mmc3_mixed_chr_ppu_read(uint16_t a) {
-    a &= 0x1FFF;
-    size_t chunk = a >> 8;
-    size_t offset = mmc3_mixed_chr_offset[chunk] + (a & 0xFFu);
-    if (mmc3_mixed_chr_source[chunk] == MMC3_MIXED_CHR_RAM)
-        return offset < mmc3_mixed_chr_ram_size ? mmc3_mixed_chr_ram[offset] : (uint8_t)a;
-    if (mmc3_mixed_chr_source[chunk] == MMC3_MIXED_CHR_ROM)
-        return offset < C.chr_sz ? C.chr[offset] : (uint8_t)a;
-    return (uint8_t)a;
-}
-
-static void mmc3_mixed_chr_ppu_write(uint16_t a, uint8_t v) {
-    a &= 0x1FFF;
-    size_t chunk = a >> 8;
-    if (mmc3_mixed_chr_source[chunk] != MMC3_MIXED_CHR_RAM) return;
-    size_t offset = mmc3_mixed_chr_offset[chunk] + (a & 0xFFu);
-    if (offset < mmc3_mixed_chr_ram_size) mmc3_mixed_chr_ram[offset] = v;
-}
-
-static size_t mmc3_mixed_chr_expected_ram(int mapper_no) {
-    switch (mapper_no) {
-        case 74: case 191: case 194: return 0x0800;
-        case 192: case 195: return 0x1000;
-        case 119: return 0x2000;
-        default: return 0;
-    }
-}
-
-static bool mmc3_mixed_chr_configure(int mapper_no) {
-    mmc3_mixed_chr_ram_size = mmc3_mixed_chr_expected_ram(mapper_no);
-    switch (mapper_no) {
-        case 74:  mmc3_mixed_chr_first_bank = 0x08; mmc3_mixed_chr_last_bank = 0x09; break;
-        case 119: mmc3_mixed_chr_first_bank = 0x40; mmc3_mixed_chr_last_bank = 0x7F; break;
-        case 191: mmc3_mixed_chr_first_bank = 0x80; mmc3_mixed_chr_last_bank = 0xFF; break;
-        case 192: mmc3_mixed_chr_first_bank = 0x08; mmc3_mixed_chr_last_bank = 0x0B; break;
-        case 194: mmc3_mixed_chr_first_bank = 0x00; mmc3_mixed_chr_last_bank = 0x01; break;
-        case 195: mmc3_mixed_chr_first_bank = 0x00; mmc3_mixed_chr_last_bank = 0x03; break;
-        default: return false;
-    }
-    return true;
-}
-
 static Mirroring mmc3_mirr(void) { return mmc3.mirr; }
 static void mmc3_reset(void) {
     memset(&mmc3, 0, sizeof(mmc3));
@@ -2696,11 +2604,6 @@ static void mmc3_reset(void) {
                    && !(C.mapper_no == 4 && (C.submapper == 1 || C.submapper == 3));
     if (C.submapper == 3 && C.mirr_base != MIRROR_FOUR) mmc3.mirr = MIRROR_VERTICAL;
     mapper_irq_line = false;
-    if (cart == &mapper_tqrom || mmc3_mixed_chr_ram_size) {
-        memset(mmc3_mixed_chr_source, 0, sizeof(mmc3_mixed_chr_source));
-        memset(mmc3_mixed_chr_offset, 0, sizeof(mmc3_mixed_chr_offset));
-        mmc3_mixed_chr_update_mapping();
-    }
 }
 
 static void txsrom_reset(void) {
@@ -7458,11 +7361,9 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
     bool split_prg = ram->prg_ram && ram->prg_nvram;
     bool split_prg_supported = default_prg_layout || mapper_no == 1 || mapper_no == 4 || mapper_no == 5
         || mapper_no == 19 || mapper_no == 24 || mapper_no == 26 || mapper_no == 68
-        || mapper_no == 69 || mapper_no == 74 || mapper_no == 76 || mapper_no == 85
+        || mapper_no == 69 || mapper_no == 76 || mapper_no == 85
         || mapper_no == 88 || mapper_no == 95 || mapper_no == 105 || mapper_no == 118
-        || mapper_no == 119 || mapper_no == 154 || mapper_no == 155
-        || mapper_no == 191 || mapper_no == 192 || mapper_no == 194
-        || mapper_no == 195 || mapper_no == 206 || mapper_no == 210;
+        || mapper_no == 154 || mapper_no == 155 || mapper_no == 206 || mapper_no == 210;
     if (split_prg && !split_prg_supported) return false;
     if (mapper_no == 1 || mapper_no == 105 || mapper_no == 155) {
         if (prg_total > 0x8000) return false;
@@ -7493,21 +7394,11 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         return false;
     }
 
-    size_t mixed_chr_ram = mmc3_mixed_chr_expected_ram(mapper_no);
-    bool unmapped_chr_storage = false;
-    if (mixed_chr_ram) {
-        if (chr_is_ram || chr_sz == 0) return false;
-        if (nes2 && (ram->chr_ram != mixed_chr_ram || ram->chr_nvram != 0)) return false;
-    } else if (mapper_no == 77) {
-        if (ram->chr_nvram) return false;
-        if (nes2 && !chr_is_ram && ram->chr_ram != CHR_BANK_8K) return false;
-    } else {
-        // Explicit CHR storage may coexist with CHR ROM even when this board
-        // has no register path that selects it. Keep those chips independent
-        // for persistence without replacing the ROM-backed PPU mapping.
-        unmapped_chr_storage = !chr_is_ram && chr_total;
-        if (chr_is_ram && ram->chr_ram && ram->chr_nvram) return false;
-    }
+    // Explicit CHR storage may coexist with CHR ROM even when this board
+    // has no register path that selects it. Keep those chips independent
+    // for persistence without replacing the ROM-backed PPU mapping.
+    bool unmapped_chr_storage = !chr_is_ram && chr_total;
+    if (chr_is_ram && ram->chr_ram && ram->chr_nvram) return false;
     if (nes2 && chr_is_ram && chr_total != chr_sz) return false;
     if (unmapped_chr_storage) return true;
     size_t chr_limit;
@@ -7540,9 +7431,6 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         case 88: case 154: chr_limit = 0x20000; break;
         case 90: case 209: case 211: chr_limit = 0x200000; break;
         case 85: chr_limit = 0x40000; break;
-        case 74: case 191: case 194: chr_limit = 0x0800; break;
-        case 192: case 195: chr_limit = 0x1000; break;
-        case 119: chr_limit = 0x2000; break;
         default: chr_limit = 0x2000; break;
     }
     return chr_total <= chr_limit;
@@ -7650,14 +7538,14 @@ int mapper_init_from_header_metadata(const iNESHeader *h,
                       ? database->submapper : nes2 ? h->prg_ram_size >> 4 : 0;
     switch (mapper_no) {
         case 0: case 1: case 2: case 3: case 4: case 5:
-        case 7: case 9: case 10: case 11: case 13: case 15: case 28: case 30: case 74: case 111: case 118: case 119: case 155:
+        case 7: case 9: case 10: case 11: case 13: case 15: case 28: case 30: case 111: case 118: case 155:
         case 16: case 153: case 157: case 159:
         case 18: case 32: case 33: case 34: case 48: case 64: case 65: case 158:
         case 21: case 22: case 23: case 24: case 25: case 26: case 27: case 183:
         case 19: case 66: case 67: case 68: case 69: case 71: case 72: case 73: case 75: case 76: case 78:
         case 80: case 82: case 85: case 87: case 88: case 89: case 92: case 93: case 95: case 96: case 97: case 99: case 101:
         case 140: case 151: case 154: case 184: case 185: case 206: case 207: case 210:
-        case 90: case 105: case 191: case 192: case 194: case 195: case 209: case 211: case 232:
+        case 90: case 105: case 209: case 211: case 232:
         case 79: case 94: case 113: case 144: case 146: case 180:
             break;
         default:
@@ -7735,10 +7623,6 @@ int mapper_init_from_header_metadata(const iNESHeader *h,
         fprintf(stderr, "Unsupported cartridge layout for mapper %d\n", mapper_no);
         return -1;
     }
-    if (mmc3_mixed_chr_expected_ram(mapper_no) && chr_is_ram) {
-        fprintf(stderr, "Unsupported ROM size for mapper %d\n", mapper_no);
-        return -1;
-    }
     if (mapper_no == 30 && !chr_is_ram && (h->flags6 & 9u) == 9u
         && ram.chr_ram && ram.chr_nvram) {
         fprintf(stderr, "Unsupported mixed CHR storage for four-screen mapper 30\n");
@@ -7800,7 +7684,7 @@ int mapper_init_from_header_metadata(const iNESHeader *h,
     C.mmc1a = mapper_no == 155;
     C.bus_conflicts = mapper_no == 11 || mapper_no == 144
         || mapper_no == 72 || mapper_no == 78 || mapper_no == 92
-        || mapper_no == 77 || mapper_no == 96 || mapper_no == 185
+        || mapper_no == 96 || mapper_no == 185
         || (mapper_no == 34 && !mapper34_nina)
         || (submapper == 2 && (mapper_no == 2 || mapper_no == 3 || mapper_no == 7 || mapper_no == 30))
         || (mapper_no == 30 && submapper == 0 && !(h->flags6 & 2));
@@ -8111,13 +7995,6 @@ int mapper_init_from_header_metadata(const iNESHeader *h,
             build_mapper(&mapper_m111, m111_cpu_read, m111_cpu_write,
                          m111_ppu_read, m111_ppu_write, m111_reset, m111_mirr);
             cart = &mapper_m111;
-            break;
-        case 74: case 119: case 191: case 192: case 194: case 195:
-            if (!mmc3_mixed_chr_configure(mapper_no)) return -1;
-            build_mapper(&mapper_tqrom, mmc3_cpu_read, mmc3_cpu_write,
-                        mmc3_mixed_chr_ppu_read, mmc3_mixed_chr_ppu_write,
-                        mmc3_reset, mmc3_mirr);
-            cart = &mapper_tqrom;
             break;
         case 16: case 153: case 157: case 159:
             build_mapper(&mapper_bandai, bandai_cpu_read, bandai_cpu_write,

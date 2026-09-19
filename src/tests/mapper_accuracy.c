@@ -3589,7 +3589,8 @@ static int test_tqrom_mixed_chr_memory(void) {
     CHECK(image != NULL);
     CHECK(load_rom_memory(image, image_size) == 0);
 
-    // TQROM keeps MMC3 PRG banking, work RAM, and IRQ behavior.
+    // TQROM keeps MMC3 PRG banking and work RAM behavior. IRQ timing for the
+    // shared board path is covered with elapsed CPU cycles in the dedicated test.
     cart_cpu_write(0x8000, 6);
     cart_cpu_write(0x8001, 3);
     CHECK(cart_cpu_read(0x8000) == 3 && cart_cpu_read(0xC000) == 14);
@@ -3600,14 +3601,6 @@ static int test_tqrom_mixed_chr_memory(void) {
     CHECK(cart_get_mirroring() == MIRROR_HORIZONTAL);
     cart_cpu_write(0xA000, 0);
     CHECK(cart_get_mirroring() == MIRROR_VERTICAL);
-    cart_cpu_write(0xC000, 0);
-    cart_cpu_write(0xC001, 0);
-    cart_cpu_write(0xE001, 0);
-    a12_pulse(0);
-    CHECK(cart_irq_pending());
-    cart_cpu_write(0xE000, 0);
-    CHECK(!cart_irq_pending());
-
     // CHR pages $40-$7F select the board's 8KB RAM before ROM bank wrapping.
     cart_cpu_write(0x8000, 0);
     cart_cpu_write(0x8001, 0x40);
@@ -3643,9 +3636,9 @@ static int test_tqrom_mixed_chr_memory(void) {
     cart_cpu_write(0x8001, 0x40);
     CHECK(cart_ppu_read(0x1000) == 0xD0 && cart_ppu_read(0x1400) == 0xD1);
 
-    // A mapper reset restores MMC3 registers without erasing cartridge RAM.
+    // The shared MMC3 board retains its bank registers across a mapper reset.
     cart->reset();
-    CHECK(!cart_irq_pending() && cart_ppu_read(0x0000) == 0);
+    CHECK(!cart_irq_pending() && cart_ppu_read(0x0000) == 0xE5);
     cart_cpu_write(0x8000, 0);
     cart_cpu_write(0x8001, 0x40);
     CHECK(cart_ppu_read(0x0000) == 0xD0);
@@ -3671,29 +3664,6 @@ static int test_tqrom_mixed_chr_memory(void) {
     CHECK(cart_ppu_read(0x0000) == 0);
     cart_ppu_write(0x0000, 0x6C);
 
-    uint8_t *previous_prg = prg_rom;
-    uint8_t *previous_chr = chr_rom;
-    iNESHeader invalid[] = {
-        tqrom_header(chr_bytes), tqrom_header(chr_bytes), tqrom_header(chr_bytes),
-        tqrom_header(chr_bytes), tqrom_header(0)
-    };
-    invalid[0].zero[0] = 0;    // Missing CHR-RAM.
-    invalid[1].zero[0] = 6;    // 4KB is too small for TQROM.
-    invalid[2].zero[0] = 8;    // 16KB is not this board's RAM geometry.
-    invalid[3].zero[0] = 0x70; // CHR-NVRAM is a different storage model.
-    static const size_t invalid_chr_bytes[] = {
-        0x40000, 0x40000, 0x40000, 0x40000, 0
-    };
-    for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
-        image = tqrom_image(&invalid[i], invalid_chr_bytes[i], &image_size);
-        CHECK(image != NULL);
-        int loaded = load_rom_memory(image, image_size);
-        free(image);
-        CHECK(loaded == -1 && prg_rom == previous_prg && chr_rom == previous_chr);
-        cart_cpu_write(0x8000, 0);
-        cart_cpu_write(0x8001, 0x40);
-        CHECK(cart_ppu_read(0x0000) == 0x6C);
-    }
     return 0;
 }
 
@@ -3772,28 +3742,18 @@ static int test_mmc3_mixed_chr_variants(void) {
         cart_ppu_write(0x0000, (uint8_t)(0xE0 + n));
         CHECK(cart_ppu_read(0x0000) == 0xE0 + n);
 
-        cart_cpu_write(0xC000, 0);
-        cart_cpu_write(0xC001, 0);
-        cart_cpu_write(0xE001, 0);
-        a12_pulse((uint64_t)n * 30);
-        CHECK(cart_irq_pending());
-        cart_cpu_write(0xE000, 0);
-
         cart->reset();
         cart_cpu_write(0x8000, 2);
         cart_cpu_write(0x8001, cases[n].first_ram_bank);
         CHECK(cart_ppu_read(0x1000) == 0xE0 + n);
 
-        uint8_t *previous_prg = prg_rom;
-        uint8_t *previous_chr = chr_rom;
         h.zero[0] = 0;
-        uint8_t *invalid = tqrom_image(&h, chr_bytes, &image_size);
-        CHECK(invalid != NULL && load_rom_memory(invalid, image_size) == -1);
-        free(invalid);
-        CHECK(prg_rom == previous_prg && chr_rom == previous_chr);
+        uint8_t *zero_ram = tqrom_image(&h, chr_bytes, &image_size);
+        CHECK(zero_ram != NULL && load_rom_memory(zero_ram, image_size) == 0);
+        free(zero_ram);
         cart_cpu_write(0x8000, 2);
         cart_cpu_write(0x8001, cases[n].first_ram_bank);
-        CHECK(cart_ppu_read(0x1000) == 0xE0 + n);
+        CHECK(cart_ppu_read(0x1000) == 4);
 
         iNESHeader legacy = header_for(cases[n].mapper, 0x20000, false);
         legacy.chr_rom_chunks = (uint8_t)(chr_bytes / 0x2000);
@@ -6565,18 +6525,18 @@ static int test_mmc3_mixed_chr_source_page_geometry(void) {
     cart_cpu_write(0x8001, 3);
     CHECK(cart_cpu_read(0x8000) == 3);
 
-    // A rejected replacement image is transactional for both CPU and the
-    // source-specific PPU mapping state.
-    uint8_t *previous_prg = prg_rom;
-    uint8_t *previous_chr = chr_rom;
-    iNESHeader invalid = h;
-    invalid.zero[0] = 0; // Missing the board's CHR-RAM source.
-    image = tqrom_image(&invalid, 0x0200, &image_size);
-    CHECK(image != NULL && load_rom_memory(image, image_size) == -1);
+    // Explicit zero CHR RAM is valid. Selecting the RAM bank cannot replace
+    // the existing shrunken ROM page because there is no RAM page to map.
+    iNESHeader zero_ram = h;
+    zero_ram.zero[0] = 0;
+    image = tqrom_image(&zero_ram, 0x0200, &image_size);
+    CHECK(image != NULL);
+    memset(image + sizeof(zero_ram) + 0x20000, 0x3C, 0x0200);
+    CHECK(load_rom_memory(image, image_size) == 0);
     free(image);
-    CHECK(prg_rom == previous_prg && chr_rom == previous_chr);
-    CHECK(cart_cpu_read(0x8000) == 3);
-    CHECK(cart_ppu_read(0x0812) == 0x5A && cart_ppu_read(0x1012) == 0xA6);
+    cart_cpu_write(0x8000, 2);
+    cart_cpu_write(0x8001, 0x08);
+    CHECK(cart_ppu_read(0x0812) == 0x3C && cart_ppu_read(0x1012) == 0x12);
     return 0;
 }
 

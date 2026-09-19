@@ -172,6 +172,12 @@ std::unique_ptr<Board> CreateBoard(unsigned mapper) {
         case 77: return std::make_unique<IremLrog017>();
         case 86: return std::make_unique<JalecoJf13>();
         case 104: return std::make_unique<GoldenFive>();
+        case 74: return std::make_unique<Mmc3ChrRam>(0x08, 0x09, 2);
+        case 119: return std::make_unique<Mmc3ChrRam>(0x40, 0x7F, 8);
+        case 191: return std::make_unique<Mmc3ChrRam>(0x80, 0xFF, 2);
+        case 192: return std::make_unique<Mmc3ChrRam>(0x08, 0x0B, 4);
+        case 194: return std::make_unique<Mmc3ChrRam>(0x00, 0x01, 2);
+        case 195: return std::make_unique<Mmc3ChrRam>(0x00, 0x03, 4);
         case 114: return std::make_unique<Mmc3_114>();
         case 115: return std::make_unique<Mmc3_115>();
         case 121: return std::make_unique<Mmc3_121>();
@@ -276,7 +282,8 @@ bool board_handles_mapper(unsigned mapper) {
         case 41: case 63: case 112: case 174: case 193: case 221: case 290: case 298: return true;
         case 6: case 8: case 17: return true;
         case 323: case 324: return true;
-        case 31: case 70: case 77: case 86: case 104: case 152: case 188: case 218: return true;
+        case 31: case 70: case 74: case 77: case 86: case 104: case 119:
+        case 152: case 188: case 191: case 192: case 194: case 195: case 218: return true;
         case 12: case 14: case 37: case 44: case 45: case 47: case 49: case 52:
         case 114: case 115: case 121: case 123: return true;
         case 126: case 134: case 165: case 182: case 187: case 196:

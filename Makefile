@@ -31,7 +31,8 @@ TEST_SRC = src/tests/accuracy_test.c src/tests/cpu_accuracy.c \
            src/tests/board_sealie_accuracy.c src/tests/board_ntdec_accuracy.c \
            src/tests/board_racermate_accuracy.c src/tests/board_taito_accuracy.c \
            src/tests/board_sachen_accuracy.c src/tests/board_kaiser_accuracy.c \
-           src/tests/board_mmc3_accuracy.c src/tests/board_sachen_late_accuracy.c \
+           src/tests/board_mmc3_accuracy.c src/tests/board_mmc3_mixed_chr_accuracy.c \
+           src/tests/board_sachen_late_accuracy.c \
            src/tests/board_jy_small_accuracy.c src/tests/board_drip_accuracy.c \
            src/tests/board_mmc3_96_accuracy.c src/tests/board_rainbow_accuracy.c \
            src/tests/board_mmc3_97_accuracy.c src/tests/board_mmc3_98_accuracy.c \

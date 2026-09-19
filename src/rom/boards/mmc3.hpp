@@ -217,5 +217,31 @@ public:
     }
 };
 
+class Mmc3ChrRam final : public Mmc3 {
+    uint16_t _firstRamBank;
+    uint16_t _lastRamBank;
+    uint16_t _defaultRamPages;
+
+protected:
+    uint16_t GetChrRamPageSize() override { return 0x0400; }
+    uint32_t GetChrRamSize() override {
+        return static_cast<uint32_t>(_defaultRamPages) * 0x0400;
+    }
+
+    void SelectChrPage(uint16_t slot, uint16_t page,
+                       ChrMemoryType type = ChrMemoryType::Default) override {
+        if (page >= _firstRamBank && page <= _lastRamBank) {
+            type = ChrMemoryType::ChrRam;
+            page = static_cast<uint16_t>(page - _firstRamBank);
+        }
+        Mmc3::SelectChrPage(slot, page, type);
+    }
+
+public:
+    Mmc3ChrRam(uint16_t firstRamBank, uint16_t lastRamBank, uint16_t defaultRamPages)
+        : _firstRamBank(firstRamBank), _lastRamBank(lastRamBank),
+          _defaultRamPages(defaultRamPages) {}
+};
+
 } // namespace cupid::boards
 #endif

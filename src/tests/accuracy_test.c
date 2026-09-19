@@ -51,6 +51,7 @@ int test_board_taito_accuracy(void);
 int test_board_sachen_accuracy(void);
 int test_board_kaiser_accuracy(void);
 int test_board_mmc3_accuracy(void);
+int test_board_mmc3_mixed_chr_accuracy(void);
 int test_board_sachen_late_accuracy(void);
 int test_board_jy_small_accuracy(void);
 int test_board_drip_accuracy(void);
@@ -152,6 +153,7 @@ int main(int argc, char **argv) {
     failures += test_board_sachen_accuracy();
     failures += test_board_kaiser_accuracy();
     failures += test_board_mmc3_accuracy();
+    failures += test_board_mmc3_mixed_chr_accuracy();
     failures += test_board_sachen_late_accuracy();
     failures += test_board_jy_small_accuracy();
     failures += test_board_drip_accuracy();
