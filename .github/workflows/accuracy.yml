@@ -48,6 +48,8 @@ jobs:
           persist-credentials: false
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y build-essential clang libsdl2-dev
+      - name: Check source file sizes
+        run: python3 scripts/check-source-size.py
       - name: Build emulator and run hardware regressions
         run: make -j2 CC='${{ matrix.compiler }}' CXX='${{ matrix.cpp_compiler }}' CFLAGS='${{ matrix.flags }}' all test
       - name: Check CPU trace and diagnostic ROMs

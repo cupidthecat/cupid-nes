@@ -25,6 +25,10 @@ Keep the hardware change and the evidence for it together. A new helper, declara
 
 A new C or C++ source file must be included in both [Makefile](Makefile) and [the Windows build script](scripts/test-windows.ps1). The C core is built as C11, while the EPSM wrapper and bundled ymfm sources are built as C++17. Use the surrounding source/header organization and language style. Run a strict build before treating a code patch as ready for review.
 
+Project-owned source files should stay at or below 1,500 lines. Split a file at subsystem or test-group boundaries before it grows past that limit. Included implementation fragments keep private helpers and state in one translation unit without turning them into public interfaces. Imported components keep their upstream layout and formatting markers. Run `python scripts/check-source-size.py` to check the limit locally; CI runs the same command.
+
+The root `.clang-format` keeps function definitions in separate blocks, expands short functions and control statements, and adds braces to unbraced control statements. Leave one blank line after a completed `if`, loop, or `switch` block when the next statement begins a separate step. ClangFormat does not add that blank line automatically, so check it during review.
+
 ## Regression coverage
 
 Choose a test that would fail for the original defect and exercise the real implementation. Use production loader tests for metadata and replacement behavior, CPU bus operations for timing and DMA, and save/reload tests for persistent memory. Include boundary and rejected-input cases when they are part of the change.
