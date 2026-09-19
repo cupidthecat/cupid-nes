@@ -9,7 +9,8 @@ and the EPSM YMF288 sound engine use C++17.
 The core implements NTSC, PAL, and Dendy timing. The
 [tested implementation](docs/cartridge-checkpoints.md#combined-validation) passes
 all 144 AccuracyCoin tests with zero skipped or unfinished results, the 91-ROM
-diagnostic collection, and the 8,991-state canonical CPU trace. The
+diagnostic collection, and the 8,991-state canonical CPU trace in normal and
+sanitizer builds. The
 [accuracy notes](docs/accuracy.md) describe the test setup and coverage. Mapper,
 input, storage, and expansion-audio regressions cover hardware that AccuracyCoin
 does not exercise.

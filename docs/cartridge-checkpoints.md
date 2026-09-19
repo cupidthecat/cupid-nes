@@ -93,6 +93,7 @@ The geometry work continued after the initial #77 and #78 commits. These later t
 | Taito work/save RAM selection, declared sizes, and permission windows | `8c7d5bf92ec9e60611fda4c2bfbfcfb427d4fc84` | Both |
 | NINA-001/BNROM and FME-7 memory routing, register writes, and retained state | `cc6991c04e1b6137156babbcf308d127ca719906` | Both |
 | UNROM 512/GTROM CPU RAM and independent PRG-RAM/flash save files | `1a19f5817d89bd173bcb81684419ebfd5a022cfe` | Both |
+| CPU reset clears the latched mapper IRQ while retained counters can raise a new interrupt during reset | `e61606ba859a97a5d2669b0c4037e834687763ce` | Both |
 
 Passing AccuracyCoin does not establish the correctness of every cartridge. Focused tests cover bank selection, CPU instructions that access registers and RAM, PPU reads and writes, IRQ timing, open bus, reset, audio output, and storage round trips. NSF tests also check that cartridge rendering and APU IRQ behavior return after music playback ends.
 
@@ -104,8 +105,10 @@ The final combined revision also requires the 8,991-state CPU trace, all 91 pinn
 
 ## Combined validation
 
-Commit `3103dbb4d17eedf7fc62ae1551b41b98fc655f3b` combines the cartridge work with NSF playback, FamicomBox DIP inputs, and independent RAM in fixed CPU windows. Its strict Windows normal and sanitizer builds both pass the production hardware suite and AccuracyCoin 144/144. The local records are `build/checks/native-default-ram-integrated-result.json` and `build/checks/native-default-ram-integrated-sanitized-result.json`, with their associated build and cartridge logs.
+Commit `e61606ba859a97a5d2669b0c4037e834687763ce` includes all issue checkpoints above and the subsequent memory-source, save-ownership, and CPU-reset fixes. Its strict Windows normal and sanitizer builds both pass the production hardware suite and AccuracyCoin 144/144 with zero skipped or unfinished tests and a matching cartridge tally. The local records are `build/checks/irq-reset-integrated-result.json` and `build/checks/irq-reset-integrated-sanitized-result.json`, with their associated build and cartridge logs.
 
-The [push workflow](https://github.com/cupidthecat/cupid-nes/actions/runs/35421123428) and [pull-request workflow](https://github.com/cupidthecat/cupid-nes/actions/runs/35421125279) also pass at that revision. Both the strict GCC job and Clang sanitizer job build the application, run the hardware suite, match all 8,991 canonical CPU states, pass all 91 pinned diagnostic ROMs, and finish AccuracyCoin at 144/144 with no skipped or unfinished tests. The Linux sanitizer job enables leak detection as well as address and undefined-behavior checks.
+Both local builds also match all 8,991 canonical CPU states and pass all 91 diagnostic ROMs. Those results are recorded in `build/checks/final-cartridge-normal-diagnostics-result.json` and `build/checks/final-cartridge-sanitized-diagnostics-result.json`, with their corresponding diagnostic logs.
+
+The [push workflow](https://github.com/cupidthecat/cupid-nes/actions/runs/35441690837) and [pull-request workflow](https://github.com/cupidthecat/cupid-nes/actions/runs/35441692889) also pass at that revision. Both the strict GCC job and Clang sanitizer job build the application, run the hardware suite, match all 8,991 canonical CPU states, pass all 91 pinned diagnostic ROMs, and finish AccuracyCoin at 144/144 with no skipped or unfinished tests. The Linux sanitizer job enables leak detection as well as address and undefined-behavior checks.
 
 These records identify the revision actually tested. Subsequent geometry or documentation changes receive their own PR checks; a historical green result does not establish a later revision's result.

@@ -30,7 +30,7 @@ The APU has two pulse channels, triangle, noise, and DMC. It implements envelope
 
 Audio reconstruction records CPU-cycle output changes before producing host-rate samples. This preserves short channel transitions that occur between sample boundaries. Cartridge expansion audio participates in the same reconstruction path; EPSM retains its separate stereo contribution.
 
-Power-on and soft reset are separate operations. See [architecture](architecture.md) for state ownership and [accuracy](accuracy.md) for bus phases and reset details.
+Power-on and soft reset are separate operations. CPU reset clears the latched mapper IRQ before its seven bus cycles. Each board retains or resets its bank and counter registers according to its own wiring; an IRQ raised during those cycles remains pending. See [architecture](architecture.md) for state ownership and [accuracy](accuracy.md) for bus phases and reset details.
 
 ## Cartridge mappers
 
@@ -242,7 +242,7 @@ Mappers 200 through 204 use their board-specific address or data bits for PRG an
 
 Mappers 213, 214, and 216 select PRG and CHR from partially decoded write addresses. Mapper 216 also decodes `$5000`: reads return zero, and writes select the banks described by that address. Addresses beside `$5000` retain their ordinary bus behavior. No additional communication protocol is emulated for this board.
 
-Mapper 222 fixes the final two 8 KiB PRG banks at `$C000-$FFFF`. The lower PRG banks and CHR ROM remain unmapped until their bank registers are written; CHR RAM keeps its initial mapping. A12 must remain low for at least ten PPU dots before a rising edge increments the IRQ counter. Writing `$F000` loads the counter and acknowledges IRQ. A loaded value of 239 triggers on the next qualified rise; zero disables counting. The interrupt stays asserted after the counter stops, until acknowledged. CPU writes through PPUADDR and rendered PPU fetches both drive this circuit. CPU soft reset preserves the bank and interrupt state.
+Mapper 222 fixes the final two 8 KiB PRG banks at `$C000-$FFFF`. The lower PRG banks and CHR ROM remain unmapped until their bank registers are written; CHR RAM keeps its initial mapping. A12 must remain low for at least ten PPU dots before a rising edge increments the IRQ counter. Writing `$F000` loads the counter and acknowledges IRQ. A loaded value of 239 triggers on the next qualified rise; zero disables counting. The interrupt stays asserted after the counter stops, until acknowledged or cleared by CPU reset. CPU writes through PPUADDR and rendered PPU fetches both drive this circuit. CPU soft reset preserves the bank registers and counter.
 
 Mapper 225 combines an outer address bit with independent PRG and CHR bank fields. Mapper 227 selects mirrored, consecutive, or fixed-upper PRG windows; it uses the initial CHR RAM mapping and does not select CHR ROM. Mapper 228 combines address and data bits for CHR selection and aliases its fourth PRG chip selection to the third chip. Reset returns it to its initial PRG/CHR banks and vertical mirroring. Mapper 229 selects its first PRG pair when the bank field is zero, including addresses whose low bit is set, and otherwise mirrors a 16 KiB bank.
 
@@ -254,7 +254,7 @@ Mapper 236 uses the low address bits for either CHR selection or an outer PRG ba
 
 Mapper 255 selects an outer PRG/CHR group and mirrored or consecutive PRG banks from the write address. Mapper 261 resets to its initial banks and mirroring. Mapper 265 can lock its outer bank, PRG mode, and mirroring until the cartridge is reloaded; subsequent writes still change the inner bank. These boards retain their ordinary declared RAM and battery storage.
 
-Yoko mapper 264 has a 16-bit CPU counter that stops when it asserts IRQ. Its DIP reads preserve the undriven upper six CPU data bits, and its four extra registers have mirrored addresses. Soft reset clears the bank and mode latches while retaining the mapped windows and interrupt state until the next applicable register write. City Fighter mapper 266 keeps counting after IRQ, including 16-bit wraparound. Its decoded audio writes reach `$4011` on the production CPU bus, set the seven-bit DMC DAC value, and do not add another CPU cycle. Both boards implement their PRG and CHR register aliases and interrupt acknowledgement paths.
+Yoko mapper 264 has a 16-bit CPU counter that stops when it asserts IRQ. Its DIP reads preserve the undriven upper six CPU data bits, and its four extra registers have mirrored addresses. Soft reset clears the bank and mode latches while retaining the mapped windows and counter state until the next applicable register write. The CPU clears a previously latched IRQ. City Fighter mapper 266 keeps counting after IRQ, including 16-bit wraparound. Its decoded audio writes reach `$4011` on the production CPU bus, set the seven-bit DMC DAC value, and do not add another CPU cycle. Both boards implement their PRG and CHR register aliases and interrupt acknowledgement paths.
 
 Mapper 274 selects its bank mode through the CPU write-address window and resets both PRG windows to bank zero. Mapper 283 maps a fixed ROM bank at `$6000-$7FFF`, keeps that window read-only, and restores its initial upper PRG banks on reset. Mapper 285 supports consecutive or separately selected PRG banks and all four horizontal, vertical, and single-screen nametable modes. Mappers 288 and 300 couple PRG and CHR selection through address and data latches respectively; their bank selections survive CPU soft reset.
 
@@ -403,7 +403,7 @@ There is no distinct RP2C03G palette or hardware model. The 2C03 fallback allows
 
 ## Reading accuracy results
 
-The [checkpoint record](accuracy-checkpoints.md) identifies commits that passed all 144 AccuracyCoin tests without skipped or unfinished results. The [accuracy notes](accuracy.md) describe the separate CPU trace, diagnostic collection, focused hardware tests, and setup conditions for older ROMs.
+The [cartridge and media checkpoints](cartridge-checkpoints.md) and [earlier accuracy checkpoints](accuracy-checkpoints.md) identify commits that passed all 144 AccuracyCoin tests without skipped or unfinished results. The [accuracy notes](accuracy.md) describe the separate CPU trace, diagnostic collection, focused hardware tests, and setup conditions for older ROMs.
 
 These results are regression evidence. They do not prove compatibility with every game, physical console revision, or register interleaving. Optional OAM corruption and decay profiles are deterministic approximations. Analog output, MMC5 auxiliary I/O and `$5209/$520A` timers, and unlisted hardware remain outside the implemented or tested scope.
 

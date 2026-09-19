@@ -4,7 +4,7 @@
 
 The hardware targets use NTSC, PAL, or Dendy timing with the cartridge and input devices listed in the [hardware reference](hardware.md). Disk and VS systems use NTSC timing. The tests below exercise the production core. They do not establish compatibility with every cartridge or hardware revision.
 
-`make test` and the Windows build script run the synthetic hardware suite without external ROMs. The canonical trace and 91-ROM collection use `scripts/run-diagnostics.py`; AccuracyCoin is a separate runner mode. The [development guide](development.md) covers fixture setup, and [combined validation](accuracy-checkpoints.md#combined-validation) links a tested implementation to its CI results.
+`make test` and the Windows build script run the synthetic hardware suite without external ROMs. The canonical trace and 91-ROM collection use `scripts/run-diagnostics.py`; AccuracyCoin is a separate runner mode. The [development guide](development.md) covers fixture setup, and [combined validation](cartridge-checkpoints.md#combined-validation) links a tested implementation to its CI results.
 
 ## Timing model
 
@@ -42,7 +42,7 @@ Power-on and soft reset are distinct operations. The default startup alignment l
 
 `--ppu-startup-restriction` models the initial interval where writes to `$2000`, `$2001`, `$2005`, and `$2006` charge the PPU I/O latch but do not change their protected state. The restriction begins on both power-on and soft reset and ends when the PPU enters the next pre-render scanline, so the regional frame length determines the interval. The default keeps the established unrestricted startup behavior.
 
-CPU reset reads the current PC twice, reads three stack locations while decrementing SP, and reloads PC from the reset vector. Soft reset preserves A, X, Y, CPU RAM, and the running divider phase; it updates the interrupt, unused, and break status bits. The frontend separately resets the PPU and APU. PPU palette/nametable/OAM memory and mapper state survive that operation, and PPU bus timestamps remain monotonic. [Architecture](architecture.md#power-on-and-reset) describes the reset entry points.
+CPU reset reads the current PC twice, reads three stack locations while decrementing SP, and reloads PC from the reset vector. Soft reset preserves A, X, Y, CPU RAM, and the running divider phase; it updates the interrupt, unused, and break status bits. The frontend separately resets the PPU and APU. PPU palette, nametable, and OAM memory survives, and PPU bus timestamps remain monotonic. Cartridge RAM is retained while each board applies its own bank and counter reset rules. The CPU clears the latched mapper IRQ before its reset bus accesses. A retained counter can raise a new IRQ during those seven cycles, and that new interrupt remains pending. [Architecture](architecture.md#power-on-and-reset) describes the reset entry points.
 
 MMC5 detects scanline boundaries from repeated nametable reads and leaves the frame state after three CPU clocks without a PPU read. Address-only notifications do not count as reads. Extended attributes consume the next three physical reads after a qualifying nametable fetch, including reads that cross between the nametable and CHR ports. The mapper also supplies vertical-split tile data, separate CHR banking for large sprites, ExRAM permissions and persistence, and expansion pulse/PCM output. NMI-vector reads clear its frame IRQ state. PCM status follows the documented MMC5A revision, including its revision bit.
 
@@ -118,7 +118,7 @@ The runner waits for a final result and returns a nonzero exit code for failure,
 
 The separate `--accuracycoin` mode runs the 144-test cartridge at commit `9bc42d1e3acbeeaea215b1011d58f4ce72a8a49e`. Its ROM has SHA-256 `7e25ac08d2e7ed14c9b1f16bd853148fef09a824452164f8e0d69fd2bd96176c`. The runner reads the cartridge's test descriptors, presses Start through the controller, and waits for the complete result screen. It checks every stored result against the cartridge's final pass tally and requires all 144 tests to pass. Success codes for documented hardware variants count as passes; skipped tests do not. The optional PPM output contains the rendered framebuffer.
 
-The recorded baseline passes all 144 AccuracyCoin tests with zero skipped or unfinished results, along with the 91-ROM collection and canonical CPU trace. The internal suite prints its group and assertion counts for each hardware area. These focused checks cover devices that AccuracyCoin does not exercise. [Per-issue checkpoints](accuracy-checkpoints.md) record the tested commits. [The result image](../img/coin.png) is the rendered output from the production core.
+The recorded baseline passes all 144 AccuracyCoin tests with zero skipped or unfinished results, along with the 91-ROM collection and canonical CPU trace. The internal suite prints its group and assertion counts for each hardware area. These focused checks cover devices that AccuracyCoin does not exercise. [Cartridge and media checkpoints](cartridge-checkpoints.md) and the [earlier accuracy checkpoints](accuracy-checkpoints.md) record the tested commits. [The result image](../img/coin.png) is the rendered output from the production core.
 
 ## Reproducing checks
 

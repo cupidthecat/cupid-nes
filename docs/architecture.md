@@ -96,7 +96,7 @@ Power-on and soft reset have separate APIs. The CPU reset sequence performs its 
 
 The frontend's R handler resets the main PPU, APU, and CPU, then calls `vs_soft_reset()`. That entry point resets VS protection/control state for single systems and also resets the secondary machine for dual systems. PPU reset suppression preserves the running video state when selected. CPU reset sends separate reset and completion signals to the C++ cartridge board modules, which apply their board's latch behavior while retaining cartridge RAM. The C mapper initialization callbacks are still cartridge-insertion entry points. CPU power-on resets the active EPSM chip; CPU soft reset preserves it.
 
-`cpu_soft_reset()` retains A, X, Y and CPU RAM, updates the status flags, decrements SP through the reset bus sequence, and reloads PC from the reset vector. Callers reset the PPU and APU separately when they need a console reset. The APU clears its DAC latches and audio buffers on reset; its explicit soft-reset exceptions are in `apu_reset_state()`.
+`cpu_soft_reset()` retains A, X, Y and CPU RAM, updates the status flags, decrements SP through the reset bus sequence, and reloads PC from the reset vector. It clears the latched mapper IRQ before those bus accesses. Retained cartridge counters continue clocking and can raise a new interrupt during reset. Callers reset the PPU and APU separately when they need a console reset. The APU clears its DAC latches and audio buffers on reset; its explicit soft-reset exceptions are in `apu_reset_state()`.
 
 Hardware-profile choices live outside the state cleared by power/reset operations. Do not replace a soft reset with a full structure clear merely to make a test fixture easier to initialize.
 
