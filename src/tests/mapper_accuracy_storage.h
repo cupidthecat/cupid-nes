@@ -1,3 +1,29 @@
+/*
+ * mapper_accuracy_storage.h - Cartridge storage regression tests
+ *
+ * Author: @frankischilling
+ *
+ * This private header contains regression tests for cartridge image loading,
+ * trainers, and storage sizes.
+ *
+ * This file is part of Cupid NES Emulator.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+#ifndef MAPPER_ACCURACY_STORAGE_H
+#define MAPPER_ACCURACY_STORAGE_H
+
 static int test_loader_trainers_and_sizes(void) {
     iNESHeader h = header_for(0, 0x4000, true);
     h.flags6 |= 4;
@@ -1405,4 +1431,6 @@ static int chr_writer_cases(const SaveFixture *paths) {
     }
     return 0;
 }
+
+#endif // MAPPER_ACCURACY_STORAGE_H
 

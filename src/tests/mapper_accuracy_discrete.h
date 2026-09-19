@@ -1,3 +1,29 @@
+/*
+ * mapper_accuracy_discrete.h - Discrete mapper regression tests
+ *
+ * Author: @frankischilling
+ *
+ * This private header contains regression tests for cartridge boards built from
+ * discrete logic.
+ *
+ * This file is part of Cupid NES Emulator.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+#ifndef MAPPER_ACCURACY_DISCRETE_H
+#define MAPPER_ACCURACY_DISCRETE_H
+
 static int test_simple_mapper_registers(void) {
     CHECK(fixture(2, 0x100000, 0x2000, true) == 2);
     cart_cpu_write(0x8000, 32);
@@ -364,4 +390,6 @@ static int test_vrc6_cpu_boot_and_odd_prg_size(void) {
     nes_set_region(NES_REGION_NTSC);
     return 0;
 }
+
+#endif // MAPPER_ACCURACY_DISCRETE_H
 

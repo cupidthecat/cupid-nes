@@ -1,3 +1,29 @@
+/*
+ * mapper_accuracy_loader.h - Cartridge loader regression tests
+ *
+ * Author: @frankischilling
+ *
+ * This private header contains regression tests for cartridge headers, mapper
+ * selection, and invalid images.
+ *
+ * This file is part of Cupid NES Emulator.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+#ifndef MAPPER_ACCURACY_LOADER_H
+#define MAPPER_ACCURACY_LOADER_H
+
 static int test_header_and_mapper_rejection(void) {
     CHECK(fixture(0, 0x4000, 0x2000, true) == 0);
     iNESHeader h = header_for(0, 0x4000, true);
@@ -1097,4 +1123,6 @@ static int test_txsrom_startup_ram_and_loader(void) {
     CHECK(cart_ppu_read(0) == 0x80 && cart_nt_read(0x2000, nt) == 0x11);
     return 0;
 }
+
+#endif // MAPPER_ACCURACY_LOADER_H
 

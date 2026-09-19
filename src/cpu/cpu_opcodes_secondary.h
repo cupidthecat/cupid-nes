@@ -1,3 +1,29 @@
+/*
+ * cpu_opcodes_secondary.h - Secondary CPU opcode handlers
+ *
+ * Author: @frankischilling
+ *
+ * This private header contains the remaining opcode handlers used by the CPU
+ * instruction dispatcher.
+ *
+ * This file is part of Cupid NES Emulator.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+#ifndef CPU_OPCODES_SECONDARY_H
+#define CPU_OPCODES_SECONDARY_H
+
         case 0xE0: // CPX Immediate
             {
                 uint8_t operand = read_mem(cpu->pc++);
@@ -830,4 +856,6 @@
             masked_indexed_store(get_abs_address(cpu), cpu->y, cpu->a & cpu->x);
             cpu->sp = cpu->a & cpu->x;
             break;
+
+#endif // CPU_OPCODES_SECONDARY_H
 

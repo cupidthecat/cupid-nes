@@ -1,3 +1,29 @@
+/*
+ * input_accuracy_ports.h - Controller port regression tests
+ *
+ * Author: @frankischilling
+ *
+ * This private header contains regression tests for controller ports, input latching,
+ * and connected devices.
+ *
+ * This file is part of Cupid NES Emulator.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+#ifndef INPUT_ACCURACY_PORTS_H
+#define INPUT_ACCURACY_PORTS_H
+
 static int console_open_bus(void) {
     static const uint8_t masks[4][2] = {
         {0xE0, 0xE0}, {0xE4, 0xE0}, {0xF8, 0xE0}, {0xF8, 0xE0}
@@ -1263,4 +1289,6 @@ static int family_basic_recording_and_media(void) {
     family_basic_shutdown();
     return 0;
 }
+
+#endif // INPUT_ACCURACY_PORTS_H
 

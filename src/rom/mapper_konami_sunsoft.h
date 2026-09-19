@@ -1,3 +1,29 @@
+/*
+ * mapper_konami_sunsoft.h - Konami and Sunsoft cartridge mapper implementations
+ *
+ * Author: @frankischilling
+ *
+ * This private header contains state and behavior for supported Konami and Sunsoft
+ * cartridge boards.
+ *
+ * This file is part of Cupid NES Emulator.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+#ifndef MAPPER_KONAMI_SUNSOFT_H
+#define MAPPER_KONAMI_SUNSOFT_H
+
 // Mappers 75/151: VRC1.
 static struct {
     uint8_t prg[3];
@@ -582,4 +608,6 @@ static void sunsoft184_ppu_write(uint16_t a, uint8_t value) {
 
 static Mirroring sunsoft184_mirr(void) { return C.mirr_base; }
 static void sunsoft184_reset(void) { memset(&sunsoft184, 0, sizeof(sunsoft184)); }
+
+#endif // MAPPER_KONAMI_SUNSOFT_H
 

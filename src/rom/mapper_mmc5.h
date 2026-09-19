@@ -1,3 +1,29 @@
+/*
+ * mapper_mmc5.h - MMC5 cartridge mapper implementation
+ *
+ * Author: @frankischilling
+ *
+ * This private header contains MMC5 banking, mirroring, IRQ, multiplication, audio,
+ * and ExRAM behavior.
+ *
+ * This file is part of Cupid NES Emulator.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+#ifndef MAPPER_MMC5_H
+#define MAPPER_MMC5_H
+
 // Mapper 5: MMC5/ExROM.
 typedef struct {
     uint8_t duty;
@@ -785,4 +811,6 @@ static void mmc5_reset(void) {
     mmc5.prg_regs[3] = 0xFF; // Reset vectors are in the last ROM bank.
     mmc5_update_irq_line();
 }
+
+#endif // MAPPER_MMC5_H
 

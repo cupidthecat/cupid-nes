@@ -1,3 +1,29 @@
+/*
+ * ppu_accuracy_video.h - PPU video regression tests
+ *
+ * Author: @frankischilling
+ *
+ * This private header contains regression tests for regional video timing, color
+ * output, and rendering behavior.
+ *
+ * This file is part of Cupid NES Emulator.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+#ifndef PPU_ACCURACY_VIDEO_H
+#define PPU_ACCURACY_VIDEO_H
+
 static void test_regional_video(void) {
     reset_video(0);
     ppu.mask = 0x20;
@@ -337,4 +363,6 @@ static void test_late_register_reads(void) {
     ppu_step_dots(1);
     CHECK("OAM output latch follows the internal bus one PPU clock later", ppu.oam_read_latch == 0x12);
 }
+
+#endif // PPU_ACCURACY_VIDEO_H
 

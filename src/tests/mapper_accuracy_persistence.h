@@ -1,3 +1,29 @@
+/*
+ * mapper_accuracy_persistence.h - Cartridge persistence regression tests
+ *
+ * Author: @frankischilling
+ *
+ * This private header contains regression tests for cartridge RAM loading, saving,
+ * and battery backed storage.
+ *
+ * This file is part of Cupid NES Emulator.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+#ifndef MAPPER_ACCURACY_PERSISTENCE_H
+#define MAPPER_ACCURACY_PERSISTENCE_H
+
 static int test_chr_nvram_writers(void) {
     SaveFixture paths;
     CHECK(save_fixture_begin(&paths) == 0);
@@ -950,4 +976,6 @@ static int test_mapper34_image_loading(void) {
     }
     return 0;
 }
+
+#endif // MAPPER_ACCURACY_PERSISTENCE_H
 

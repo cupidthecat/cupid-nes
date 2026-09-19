@@ -1,3 +1,29 @@
+/*
+ * mapper_accuracy_irq.h - Mapper IRQ regression tests
+ *
+ * Author: @frankischilling
+ *
+ * This private header contains regression tests for cartridge IRQ counters, lines,
+ * and timing boundaries.
+ *
+ * This file is part of Cupid NES Emulator.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+#ifndef MAPPER_ACCURACY_IRQ_H
+#define MAPPER_ACCURACY_IRQ_H
+
 static int test_irem_ram_and_irq_boundaries(void) {
     const unsigned mappers[] = {32, 65};
     for (unsigned i = 0; i < 2; ++i) {
@@ -1359,4 +1385,6 @@ static int test_sunsoft4_cpu_licensed_reads(void) {
     CHECK(unload_rom());
     return 0;
 }
+
+#endif // MAPPER_ACCURACY_IRQ_H
 

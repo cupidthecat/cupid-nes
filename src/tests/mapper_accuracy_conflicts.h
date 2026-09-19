@@ -1,3 +1,29 @@
+/*
+ * mapper_accuracy_conflicts.h - Mapper bus conflict regression tests
+ *
+ * Author: @frankischilling
+ *
+ * This private header contains regression tests for cartridge bus conflicts and
+ * related register behavior.
+ *
+ * This file is part of Cupid NES Emulator.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+#ifndef MAPPER_ACCURACY_CONFLICTS_H
+#define MAPPER_ACCURACY_CONFLICTS_H
+
 static int test_colordreams_bus_conflicts(void) {
     const uint16_t write_addr = 0x8123;
     const size_t bank_offset = write_addr - 0x8000;
@@ -1328,4 +1354,6 @@ static int test_mmc5_audio_and_pcm(void) {
     CHECK(cart_cpu_read(0x5010) == 0x81 && !cart_irq_pending());
     return 0;
 }
+
+#endif // MAPPER_ACCURACY_CONFLICTS_H
 

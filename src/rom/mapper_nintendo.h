@@ -1,3 +1,29 @@
+/*
+ * mapper_nintendo.h - Nintendo cartridge mapper implementations
+ *
+ * Author: @frankischilling
+ *
+ * This private header contains state and behavior for supported Nintendo cartridge
+ * boards.
+ *
+ * This file is part of Cupid NES Emulator.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+#ifndef MAPPER_NINTENDO_H
+#define MAPPER_NINTENDO_H
+
 // Mapper 0: NROM.
 static uint8_t *chr_nvram_data(void) {
     return chr_save_ram.size ? chr_save_ram.data : C.chr;
@@ -552,4 +578,6 @@ static void cnrom185_reset(void) {
     cnrom185_chr_enabled = true;
     cnrom185_initial_ram_mapping = C.chr_is_ram;
 }
+
+#endif // MAPPER_NINTENDO_H
 

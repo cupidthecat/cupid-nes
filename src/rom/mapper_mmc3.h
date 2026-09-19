@@ -1,3 +1,29 @@
+/*
+ * mapper_mmc3.h - MMC3 family cartridge mapper implementations
+ *
+ * Author: @frankischilling
+ *
+ * This private header contains MMC3, MMC6, and RAMBO-1 banking, mirroring, RAM,
+ * and IRQ behavior.
+ *
+ * This file is part of Cupid NES Emulator.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+#ifndef MAPPER_MMC3_H
+#define MAPPER_MMC3_H
+
 // Mapper 4: MMC3/TxROM.
 static struct {
     uint8_t bank_select;
@@ -949,4 +975,6 @@ static void rambo1_reset(void) {
     rambo1.nt_map[3] = 1;
     mapper_irq_line = false;
 }
+
+#endif // MAPPER_MMC3_H
 

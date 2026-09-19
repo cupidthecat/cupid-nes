@@ -1,3 +1,29 @@
+/*
+ * mapper_accuracy_sunsoft.h - Sunsoft mapper regression tests
+ *
+ * Author: @frankischilling
+ *
+ * This private header contains regression tests for supported Sunsoft cartridge
+ * boards and audio hardware.
+ *
+ * This file is part of Cupid NES Emulator.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+#ifndef MAPPER_ACCURACY_SUNSOFT_H
+#define MAPPER_ACCURACY_SUNSOFT_H
+
 static int test_sunsoft_discrete_boards(void) {
     CHECK(fixture(89, 0x20000, 0x20000, false) == 89);
     CHECK(cart_cpu_read_bus(0x8000, 0x56) == 0x56 && cart_cpu_read(0xC000) == 14);
@@ -1249,4 +1275,6 @@ static int test_cnrom185_loader_and_cnrom_regression(void) {
 
     return 0;
 }
+
+#endif // MAPPER_ACCURACY_SUNSOFT_H
 

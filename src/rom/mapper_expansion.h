@@ -1,3 +1,29 @@
+/*
+ * mapper_expansion.h - Expansion cartridge mapper implementations
+ *
+ * Author: @frankischilling
+ *
+ * This private header contains cartridge mapper state and behavior for boards with
+ * expansion hardware.
+ *
+ * This file is part of Cupid NES Emulator.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+#ifndef MAPPER_EXPANSION_H
+#define MAPPER_EXPANSION_H
+
 // Mappers 24/26: Konami VRC6.
 static uint16_t vrc6_decode_register(uint16_t addr) {
     if (!vrc6.variant_b) return addr;
@@ -1101,4 +1127,6 @@ static void namco108_reset(void) {
     namco108.mirr = C.mirr_base;
     mapper_irq_line = false;
 }
+
+#endif // MAPPER_EXPANSION_H
 

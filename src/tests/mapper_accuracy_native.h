@@ -1,3 +1,29 @@
+/*
+ * mapper_accuracy_native.h - Native mapper regression tests
+ *
+ * Author: @frankischilling
+ *
+ * This private header contains regression tests for mapper implementations exercised
+ * through the cartridge interface.
+ *
+ * This file is part of Cupid NES Emulator.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+#ifndef MAPPER_ACCURACY_NATIVE_H
+#define MAPPER_ACCURACY_NATIVE_H
+
 static int test_gxrom_banks_reset_and_ram(void) {
     CHECK(fixture(66, 0x20000, 0x8000, false) == 66);
     CHECK(cart_cpu_read(0x8000) == 0 && cart_ppu_read(0x0000) == 0);
@@ -913,4 +939,6 @@ static int test_irem65_irq_and_loader_validation(void) {
     CHECK(cart == previous && cart_cpu_read(0x6000) == 0xA7);
     return 0;
 }
+
+#endif // MAPPER_ACCURACY_NATIVE_H
 

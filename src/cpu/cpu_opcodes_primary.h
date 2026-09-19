@@ -1,3 +1,28 @@
+/*
+ * cpu_opcodes_primary.h - Primary CPU opcode handlers
+ *
+ * Author: @frankischilling
+ *
+ * This private header contains the first group of opcode handlers used by the CPU instruction dispatcher.
+ *
+ * This file is part of Cupid NES Emulator.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+#ifndef CPU_OPCODES_PRIMARY_H
+#define CPU_OPCODES_PRIMARY_H
+
         // Control flow.
         case 0x00: { // BRK
             // 1) Dummy read of the signature byte *and* advance PC (BRK behaves like 2-byte)
@@ -651,6 +676,8 @@
                              (result & 0x80 ? NEGATIVE_FLAG : 0);
             }
             break;
+
+#endif // CPU_OPCODES_PRIMARY_H
         case 0xC5: // CMP Zero Page
             {
                 uint8_t operand = read_mem(get_zpg_address(cpu));
