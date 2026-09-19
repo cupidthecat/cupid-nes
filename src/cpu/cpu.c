@@ -329,6 +329,7 @@ void cpu_soft_reset(CPU* cpu) {
     cart_console_reset(true);
     cart_irq_ack();
     vs_clear_external_irq();
+    epsm_clear_irq_source();
     cpu->status = (cpu->status | INTERRUPT_FLAG | UNUSED_FLAG) & ~BREAK_FLAG;
     cpu_reset_sequence(cpu);
     cart_after_console_reset();

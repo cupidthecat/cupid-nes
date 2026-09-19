@@ -30,6 +30,7 @@ bool epsm_enabled(void);
 bool epsm_has_adpcm_rom(void);
 
 void epsm_power_on(void);
+void epsm_clear_irq_source(void);
 void epsm_clock_master(unsigned clocks, uint32_t master_hz);
 uint64_t epsm_clock_count(void);
 bool epsm_irq_pending(void);
