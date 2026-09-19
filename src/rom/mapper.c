@@ -7312,10 +7312,10 @@ int mapper_init_from_header_metadata(const iNESHeader *h,
     // path that repeats whole physical copies through the CPU window.
     size_t prg_page_size = mapper_prg_page_size((uint16_t)mapper_no);
     bool has_native_prg_page = prg_page_size && prg_sz >= prg_page_size;
-    bool small_prg_supported = mapper_no == 0 || mapper_no == 11 || mapper_no == 69
-        || mapper_no == 79 || mapper_no == 94 || mapper_no == 113 || mapper_no == 144
-        || mapper_no == 146 || mapper_no == 180;
-    if (prg_sz < PRG_BANK_16K && !has_native_prg_page && !small_prg_supported) {
+    bool reduced_prg_supported = prg_page_size
+        && mapper_no != 28 && mapper_no != 30 && mapper_no != 96
+        && mapper_no != 99 && mapper_no != 111;
+    if (prg_sz < PRG_BANK_16K && !has_native_prg_page && !reduced_prg_supported) {
         fprintf(stderr, "Unsupported PRG size for mapper %d\n", mapper_no);
         return -1;
     }

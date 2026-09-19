@@ -10364,6 +10364,88 @@ static int test_native_8k_prg_page_geometry(void) {
     return 0;
 }
 
+static int test_native_reduced_prg_page_geometry(void) {
+    // Native 16 KiB and 32 KiB page mappers shrink their PRG page to a smaller
+    // physical image. Whole copies repeat through $8000-$FFFF; a partial copy
+    // at the end of the CPU window stays open bus.
+    const unsigned boards[] = {1, 3};
+    for (size_t i = 0; i < sizeof(boards) / sizeof(boards[0]); ++i) {
+        iNESHeader h = header_for(boards[i], 0x4000, false);
+        h.flags7 |= 8;
+        h.prg_rom_chunks = 0x31; // 3 * 2^12 = 12 KiB.
+        h.flags9 = 0x0F;
+        size_t size;
+        uint8_t *image = image_for(&h, 0x3000, 0x2000, &size);
+        CHECK(image != NULL);
+        uint8_t *prg = image + sizeof(h);
+        memset(prg, 0x31, 0x1000);
+        memset(prg + 0x1000, 0x52, 0x1000);
+        memset(prg + 0x2000, 0x73, 0x1000);
+        CHECK(load_rom_memory(image, size) == 0);
+        free(image);
+
+        ppu_power_on(&ppu);
+        apu_power_on(&apu);
+        CHECK(cpu_power_on(&cpu));
+        CHECK(discrete_cpu_load(0x8100, 0x31) == 0);
+        CHECK(discrete_cpu_load(0x9100, 0x52) == 0);
+        CHECK(discrete_cpu_load(0xA100, 0x73) == 0);
+        CHECK(discrete_cpu_load(0xB100, 0x31) == 0);
+        CHECK(discrete_cpu_load(0xC100, 0x52) == 0);
+        CHECK(discrete_cpu_load(0xD100, 0x73) == 0);
+        CHECK(discrete_cpu_load(0xE100, 0xE1) == 0);
+
+        if (boards[i] == 1) {
+            serial_write(0xE000, 7);
+        } else {
+            cart_cpu_write(0x8000, 3);
+        }
+        CHECK(discrete_cpu_load(0x8100, 0x31) == 0);
+        CHECK(discrete_cpu_load(0xD100, 0x73) == 0);
+        CHECK(discrete_cpu_load(0xE100, 0xE1) == 0);
+        CHECK(unload_rom());
+    }
+
+    // MMC5 has its own reduced-page read path because PCM read mode observes
+    // cartridge reads. A 6 KiB image repeats five times; the final 2 KiB of
+    // the 32 KiB CPU window remains open bus.
+    iNESHeader h = header_for(5, 0x4000, false);
+    h.flags7 |= 8;
+    h.prg_rom_chunks = 0x2D; // 3 * 2^11 = 6 KiB.
+    h.flags9 = 0x0F;
+    size_t size;
+    uint8_t *image = image_for(&h, 0x1800, 0x2000, &size);
+    CHECK(image != NULL);
+    uint8_t *prg = image + sizeof(h);
+    memset(prg, 0x41, 0x0800);
+    memset(prg + 0x0800, 0x62, 0x0800);
+    memset(prg + 0x1000, 0x83, 0x0800);
+    CHECK(load_rom_memory(image, size) == 0);
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    CHECK(cpu_power_on(&cpu));
+    CHECK(cart_cpu_read_bus(0x8100, 0xD1) == 0xD1);
+    CHECK(discrete_cpu_load(0xF100, 0x83) == 0);
+    CHECK(discrete_cpu_load(0xF900, 0xF9) == 0);
+    cart_cpu_write(0x5114, 0xFF);
+    cart_cpu_write(0x5117, 0x80);
+    CHECK(discrete_cpu_load(0x8100, 0x41) == 0);
+    CHECK(discrete_cpu_load(0x8900, 0x62) == 0);
+    CHECK(discrete_cpu_load(0x9100, 0x83) == 0);
+    CHECK(discrete_cpu_load(0x9900, 0x41) == 0);
+    CHECK(discrete_cpu_load(0xF900, 0xF9) == 0);
+
+    Mapper *previous = cart;
+    uint8_t *previous_prg = prg_rom;
+    CHECK(load_rom_memory(image, size - 1) == -1);
+    free(image);
+    CHECK(cart == previous && prg_rom == previous_prg);
+    CHECK(discrete_cpu_load(0xF100, 0x83) == 0);
+    CHECK(discrete_cpu_load(0xF900, 0xF9) == 0);
+    CHECK(unload_rom());
+    return 0;
+}
+
 static void small_chr_board_bank_write(unsigned mapper) {
     switch (mapper) {
         case 66:  cart_cpu_write(0x8000, 0x30); break;
@@ -11246,6 +11328,7 @@ int test_mapper_accuracy(void) {
         test_nina_cpu_decode_and_mirroring, test_nina_chr_ram_banks,
         test_discrete_followup_loader_and_ram, test_mapper180_full_prg_range,
         test_uxrom94_180_sub16_prg_geometry, test_native_8k_prg_page_geometry,
+        test_native_reduced_prg_page_geometry,
         test_native_shrunk_chr8_windows, test_discrete_followup_page_geometry,
         test_discrete_followup_ignored_submappers,
         test_discrete_followup_saves,
