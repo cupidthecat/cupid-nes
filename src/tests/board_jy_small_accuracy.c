@@ -227,7 +227,7 @@ static int test_jy_geometry(void) {
         BOARD_CHECK(read_mem(0x8000) == 4 && ppu_read(0x0023) == chr);
         BOARD_CHECK(load_rom_memory(image.data, image.size - 1) < 0);
         BOARD_CHECK(read_mem(0x8000) == 4 && ppu_read(0x0023) == chr);
-        image.data[7] |= 2;
+        board_image_set_unsupported_console(&image);
         BOARD_CHECK(load_rom_memory(image.data, image.size) < 0);
         BOARD_CHECK(read_mem(0x8000) == 4 && ppu_read(0x0023) == chr);
         image.data[0] = 0;

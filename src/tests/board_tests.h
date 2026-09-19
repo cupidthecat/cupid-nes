@@ -32,6 +32,12 @@ bool board_image_add_trainer(BoardImage *image, uint8_t fill);
 int board_image_load(const BoardImage *image);
 void board_image_free(BoardImage *image);
 
+static inline void board_image_set_unsupported_console(BoardImage *image) {
+    if (!image || !image->data || image->size < sizeof(iNESHeader)) return;
+    image->data[7] = (uint8_t)((image->data[7] & (uint8_t)~3u) | 3u);
+    image->data[13] = (uint8_t)((image->data[13] & 0xF0u) | 0x0Fu);
+}
+
 #define BOARD_CHECK(condition) do { \
     if (!(condition)) { \
         fprintf(stderr, "%s:%d: %s\n", __func__, __LINE__, #condition); \

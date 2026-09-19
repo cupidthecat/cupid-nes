@@ -4531,9 +4531,42 @@ static int test_loader_region_and_console_type(void) {
     h.flags7 = 2; // PlayChoice-10 in a clean legacy header.
     image = image_for(&h, 0x4000, 0x2000, &size);
     CHECK(image != NULL);
+    uint8_t *playchoice = (uint8_t *)realloc(image, size + 0x2000);
+    CHECK(playchoice != NULL);
+    image = playchoice;
+    memset(image + size, 0xE7, 0x2000); // Cabinet payload follows cartridge PRG/CHR data.
+    loaded = load_rom_memory(image, size + 0x2000);
+    free(image);
+    CHECK(loaded == 0 && nes_timing()->region == NES_REGION_NTSC);
+    CHECK(cart_cpu_read(0x8123) == 0x5C && cart_ppu_read(0x0123) == 0xA5);
+
+    h = header_for(0, 0x4000, false);
+    h.flags7 = 0x0A; // NES 2.0 direct PlayChoice console type.
+    image = image_for(&h, 0x4000, 0x2000, &size);
+    CHECK(image != NULL);
     loaded = load_rom_memory(image, size);
     free(image);
-    CHECK(loaded == -1 && nes_timing()->region == NES_REGION_NTSC);
+    CHECK(loaded == 0 && nes_timing()->region == NES_REGION_NTSC);
+    CHECK(cart_cpu_read(0x8123) == 0x5C && cart_ppu_read(0x0123) == 0xA5);
+
+    h.flags7 = 0x0B;
+    h.zero[2] = 2; // NES 2.0 extended PlayChoice subtype.
+    image = image_for(&h, 0x4000, 0x2000, &size);
+    CHECK(image != NULL);
+    loaded = load_rom_memory(image, size);
+    free(image);
+    CHECK(loaded == 0 && nes_timing()->region == NES_REGION_NTSC);
+    CHECK(cart_cpu_read(0x8123) == 0x5C && cart_ppu_read(0x0123) == 0xA5);
+
+    previous_cart = cart;
+    previous_prg = prg_rom;
+    h.zero[2] = 5;
+    image = image_for(&h, 0x4000, 0x2000, &size);
+    CHECK(image != NULL);
+    loaded = load_rom_memory(image, size);
+    free(image);
+    CHECK(loaded == -1 && cart == previous_cart && prg_rom == previous_prg);
+    CHECK(cart_cpu_read(0x8123) == 0x5C && cart_ppu_read(0x0123) == 0xA5);
     unload_rom();
     CHECK(nes_timing()->region == NES_REGION_NTSC);
     return 0;

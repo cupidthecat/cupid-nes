@@ -101,7 +101,7 @@ static int test_jf13_replacement(void) {
     ppu_write(0x0123, 0x87);
     BOARD_CHECK(load_rom_memory(image.data, image.size - 1) < 0);
     BOARD_CHECK(read_mem(0x8000) == 16 && ppu_read(0x0123) == 0x87);
-    image.data[7] |= 2;
+    board_image_set_unsupported_console(&image);
     BOARD_CHECK(load_rom_memory(image.data, image.size) < 0);
     BOARD_CHECK(read_mem(0x8000) == 16 && ppu_read(0x0123) == 0x87);
     image.data[0] = 0;

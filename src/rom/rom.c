@@ -105,15 +105,15 @@ int rom_mapper_number(const iNESHeader *h) {
 static int rom_console_supported(const iNESHeader *h) {
     if (is_nes20(h)) {
         unsigned console = h->flags7 & 0x03u;
-        if (console == 0 || console == 1) return 1;
-        // Extended subtypes identify NES/Famicom, VS, and EPSM hardware.
+        if (console <= 2) return 1;
+        // Extended subtypes include VS, PlayChoice, EPSM, and the network terminal.
         unsigned subtype = h->zero[2] & 0x0Fu;
-        return console == 3 && (subtype <= 1 || subtype == 4 || subtype == 0x0C);
+        return console == 3 && (subtype <= 2 || subtype == 4 || subtype == 0x0C);
     }
     // Archaic headers have unreliable byte 7 contents.  Only clean iNES headers
     // use its low bits as the VS/PlayChoice console selector.
     if ((h->flags7 & 0x0Cu) == 0)
-        return (h->flags7 & 0x03u) <= 1;
+        return (h->flags7 & 0x03u) <= 2;
     return 1;
 }
 

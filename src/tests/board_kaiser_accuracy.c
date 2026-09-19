@@ -374,7 +374,7 @@ static int test_kaiser_geometry_and_replacement(void) {
         }
         uint8_t chr = ppu_read(0x1234);
         for (unsigned invalid = 0; invalid < 3; ++invalid) {
-            if (invalid == 1) image.data[7] |= 2;
+            if (invalid == 1) board_image_set_unsupported_console(&image);
             if (invalid == 2) image.data[0] = 0;
             BOARD_CHECK(load_rom_memory(image.data, image.size - (invalid == 0)) < 0);
             for (unsigned i = 0; i < sizeof(previous); ++i) {

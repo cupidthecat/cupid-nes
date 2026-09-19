@@ -11,6 +11,7 @@ Cupid models the CPU, picture processing unit (PPU), audio processing unit (APU)
 | NES and Famicom cartridges | iNES or NES 2.0 header | NTSC, PAL, and Dendy timing are implemented |
 | Famicom Disk System | NTSC | Requires a supplied BIOS and a supported disk image |
 | VS System | NTSC | Requires supported console, PPU, input, and cartridge metadata |
+| PlayChoice cartridge payload | NTSC | iNES and NES 2.0 PlayChoice headers load the game cartridge; trailing cabinet data is ignored |
 | NES with EPSM | NES 2.0 header | Extended subtype 4 adds an 8 MHz YMF288 with stereo output |
 | Famicom Network System | NES 2.0 header | Extended subtype `0x0C`; optional 256 KiB character ROM supplied by the user |
 | StudyBox | STBX media | NTSC hardware with a user-supplied 256 KiB BIOS and tape PAGE/AUDI data |

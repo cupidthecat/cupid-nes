@@ -163,15 +163,21 @@ static int test_vs_extended_console_header(void) {
     CHECK(vs_system_type() == VS_TYPE_TKO_BOXING && vs_ppu_model() == VS_PPU_2C03);
     (void)read_mem(0x5E00);
     CHECK(read_mem(0x5E01) == 0xFF && read_mem(0x5E01) == 0xBF);
+
+    h.zero[2] = 2; // Extended PlayChoice metadata is outside the VS cabinet path.
+    memcpy(image, &h, sizeof(h));
+    CHECK(load_rom_memory(image, image_size) == 0);
+    CHECK(!vs_enabled() && cart_cpu_read(0x8000) == 0x5A);
+
     Mapper *previous = cart;
     uint8_t *previous_prg = prg_rom;
-    static const uint8_t unsupported[] = {2, 3, 5, 15};
+    static const uint8_t unsupported[] = {3, 5, 15};
     for (size_t i = 0; i < sizeof(unsupported); ++i) {
         h.zero[2] = unsupported[i];
         memcpy(image, &h, sizeof(h));
         CHECK(load_rom_memory(image, image_size) == -1);
         CHECK(cart == previous && prg_rom == previous_prg);
-        CHECK(vs_system_type() == VS_TYPE_TKO_BOXING && cart_cpu_read(0x8000) == 0x5A);
+        CHECK(!vs_enabled() && cart_cpu_read(0x8000) == 0x5A);
     }
     h.zero[2] = 1;
     for (unsigned region = 1; region <= 3; region += 2) {

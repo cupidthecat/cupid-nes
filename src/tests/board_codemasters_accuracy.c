@@ -106,7 +106,7 @@ static int test_golden_five_replacement(void) {
     BOARD_CHECK(load_rom_memory(image.data, image.size - 1) < 0);
     BOARD_CHECK(read_mem(0x8000) == 28 && read_mem(0x7123) == 0x63);
     BOARD_CHECK(ppu_read(0x0222) == 0x74);
-    image.data[7] |= 2;
+    board_image_set_unsupported_console(&image);
     BOARD_CHECK(load_rom_memory(image.data, image.size) < 0);
     BOARD_CHECK(read_mem(0x8000) == 28 && read_mem(0x7123) == 0x63);
     image.data[0] = 0;

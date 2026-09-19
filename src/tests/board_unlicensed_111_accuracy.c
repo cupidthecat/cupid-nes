@@ -230,7 +230,7 @@ static int test_discrete111_small_geometry(void) {
         BOARD_CHECK(ppu_read(0x0123) == 0xB8);
         BOARD_CHECK(load_rom_memory(image.data, image.size - 1) < 0);
         BOARD_CHECK(read_mem(0x8000) == 0xA7 && ppu_read(0x0123) == 0xB8);
-        image.data[7] |= 2;
+        board_image_set_unsupported_console(&image);
         BOARD_CHECK(load_rom_memory(image.data, image.size) < 0);
         BOARD_CHECK(read_mem(0x8000) == 0xA7 && ppu_read(0x0123) == 0xB8);
         board_image_free(&image);

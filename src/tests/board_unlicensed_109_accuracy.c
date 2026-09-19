@@ -496,7 +496,7 @@ static int test_109_small_rom_geometry(void) {
         uint8_t active = read_mem(0x8000);
         BOARD_CHECK(load_rom_memory(image.data, image.size - 1) < 0);
         BOARD_CHECK(read_mem(0x8000) == active && ppu_read(0x0234) == pattern);
-        image.data[7] |= 2;
+        board_image_set_unsupported_console(&image);
         BOARD_CHECK(load_rom_memory(image.data, image.size) < 0);
         BOARD_CHECK(read_mem(0x8000) == active && ppu_read(0x0234) == pattern);
         board_image_free(&image);
