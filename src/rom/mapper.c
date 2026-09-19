@@ -7524,12 +7524,14 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         case 101: chr_limit = 0x200000; break;
         case 64: case 158: chr_limit = 0x40000; break;
         case 5: chr_limit = 0x100000; break;
-        case 13: chr_limit = 0x4000; break;
         case 93: chr_limit = CHR_BANK_8K; break;
         case 184: chr_limit = 0x8000; break;
+        // These fixed windows and masked bank registers can leave part of a
+        // declared chip unreachable without changing its physical allocation.
+        case 0: case 2: case 7: case 13: case 15: case 66: case 71:
+        case 73: case 94: case 97: case 180: case 232:
         case 28: case 30: case 96: case 111: chr_limit = SIZE_MAX; break;
         case 18: case 32: case 65: chr_limit = 0x40000; break;
-        case 73: chr_limit = CHR_BANK_8K; break;
         case 75: case 151: chr_limit = 0x20000; break;
         case 21: case 23: case 25: case 27: case 183: chr_limit = 0x80000; break;
         case 22: chr_limit = 0x40000; break;

@@ -695,12 +695,14 @@ static int test_mapper232_loader_and_cpu_bus(void) {
         CHECK(load_rom_memory(image, size) == -1);
         memcpy(image, &h, sizeof(h));
         CHECK(load_rom_memory(image, size - 1) == -1);
-        image[11] = 8;
-        CHECK(load_rom_memory(image, size) == -1);
-        free(image);
         CHECK(cart == previous && prg_rom == previous_prg);
         CHECK(read_mem(0x8000) == 6 && read_mem(0xFFFF) == 7);
         CHECK(cart_ppu_read(0x1FFF) == 0xA6);
+        image[11] = 8; // A 16 KiB chip retains the fixed first 8 KiB window.
+        CHECK(load_rom_memory(image, size) == 0 && chr_size == 0x4000);
+        cart_ppu_write(0x1FFF, 0x69);
+        CHECK(cart_ppu_read(0x1FFF) == 0x69 && chr_rom[0x3FFF] == 0);
+        free(image);
     }
     return 0;
 }
