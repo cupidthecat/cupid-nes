@@ -133,16 +133,16 @@ static void serial_write(uint16_t addr, uint8_t value) {
     }
 }
 
-#include "mapper_accuracy_nintendo.inc"
-#include "mapper_accuracy_discrete.inc"
-#include "mapper_accuracy_conflicts.inc"
-#include "mapper_accuracy_loader.inc"
-#include "mapper_accuracy_storage.inc"
-#include "mapper_accuracy_persistence.inc"
-#include "mapper_accuracy_native.inc"
-#include "mapper_accuracy_irq.inc"
-#include "mapper_accuracy_sunsoft.inc"
-#include "mapper_accuracy_followups.inc"
+#include "mapper_accuracy_nintendo.h"
+#include "mapper_accuracy_discrete.h"
+#include "mapper_accuracy_conflicts.h"
+#include "mapper_accuracy_loader.h"
+#include "mapper_accuracy_storage.h"
+#include "mapper_accuracy_persistence.h"
+#include "mapper_accuracy_native.h"
+#include "mapper_accuracy_irq.h"
+#include "mapper_accuracy_sunsoft.h"
+#include "mapper_accuracy_followups.h"
 
 int test_mapper_accuracy(void) {
     static int (*const tests[])(void) = {

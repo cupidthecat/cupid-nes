@@ -756,8 +756,8 @@ static void masked_indexed_store(uint16_t base, uint8_t index, uint8_t reg) {
 
 void execute(CPU* cpu, uint8_t opcode) {
     switch(opcode) {
-#include "cpu_opcodes_primary.inc"
-#include "cpu_opcodes_secondary.inc"
+#include "cpu_opcodes_primary.h"
+#include "cpu_opcodes_secondary.h"
         default:
             printf("Invalid opcode encountered: 0x%02X at PC: 0x%04X\n", opcode, cpu->pc);
             break;

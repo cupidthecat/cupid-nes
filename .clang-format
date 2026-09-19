@@ -14,6 +14,7 @@ InsertBraces: true
 SeparateDefinitionBlocks: Always
 EmptyLineAfterAccessModifier: Always
 EmptyLineBeforeAccessModifier: LogicalBlock
+# Preserve one visible separator between global declaration and definition groups.
 MaxEmptyLinesToKeep: 1
 SortIncludes: Never
 ...

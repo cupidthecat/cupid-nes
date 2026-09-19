@@ -289,8 +289,8 @@ static void prepare_overlap(int x) {
     ppu_write(0x3F11, 0x21);
 }
 
-#include "ppu_accuracy_registers.inc"
-#include "ppu_accuracy_video.inc"
+#include "ppu_accuracy_registers.h"
+#include "ppu_accuracy_video.h"
 
 int test_ppu_accuracy(void) {
     checks = failures = 0;

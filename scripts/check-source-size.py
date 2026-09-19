@@ -4,7 +4,7 @@ import sys
 
 
 MAX_LINES = 1500
-SOURCE_SUFFIXES = {".c", ".h", ".cc", ".hh", ".cpp", ".hpp", ".inc"}
+SOURCE_SUFFIXES = {".c", ".h", ".cc", ".hh", ".cpp", ".hpp"}
 IMPORTED_FILES = {Path("src/rom/emu2413.c")}
 IMPORTED_DIRECTORIES = {Path("src/third_party")}
 

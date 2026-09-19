@@ -132,8 +132,8 @@ static void latch_controllers(void) {
     write_mem(0x4016, 0);
 }
 
-#include "input_accuracy_ports.inc"
-#include "input_accuracy_devices.inc"
+#include "input_accuracy_ports.h"
+#include "input_accuracy_devices.h"
 
 int test_input_accuracy(void) {
     static int (*const tests[])(void) = {

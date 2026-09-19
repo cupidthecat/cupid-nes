@@ -849,11 +849,11 @@ void cart_notify_vblank_start(void) {
     // MMC5 leaves the in-frame state when three CPU clocks pass without a PPU read.
 }
 
-#include "mapper_nintendo.inc"
-#include "mapper_konami_sunsoft.inc"
-#include "mapper_mmc3.inc"
-#include "mapper_mmc5.inc"
-#include "mapper_expansion.inc"
-#include "mapper_discrete.inc"
-#include "mapper_jaleco_irem.inc"
-#include "mapper_factory.inc"
+#include "mapper_nintendo.h"
+#include "mapper_konami_sunsoft.h"
+#include "mapper_mmc3.h"
+#include "mapper_mmc5.h"
+#include "mapper_expansion.h"
+#include "mapper_discrete.h"
+#include "mapper_jaleco_irem.h"
+#include "mapper_factory.h"
