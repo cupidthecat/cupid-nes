@@ -82,6 +82,17 @@ The geometry work continued after the initial #77 and #78 commits. These later t
 | Reduced NROM, MMC1, CNROM, and MMC5 PRG pages with uncovered CPU addresses | `ee8ad005d4d51e6ffede8ddf2630802fcceb8ca0` | Both |
 | All eight FamicomBox DIP inputs, register aliases, and reset behavior | `1627ef5539650e890434f789e524754649ff861b` | Both |
 | Independent RAM in fixed cartridge windows, complete-page coverage, and save-file preservation | `3103dbb4d17eedf7fc62ae1551b41b98fc655f3b` | Both |
+| Remaining native PRG/CHR page geometry and source-specific reads | `1cbaa21814b95539fce8abaf09025a4269141064` | Both |
+| Irem 77 CHR source ownership, RAM-only aliases, and declared storage | `0622f41ba8e4c4474bc0cf1b335de80450eed2ba` | Both |
+| Default PRG-RAM windows with independent chips and register-owned writes | `4321e1bc4e0abb2577025ef37fc272b9f1fbd319` | Both |
+| Declared CHR chips beyond fixed bank windows and unreachable save bytes | `6185fe54a45e8e949c945252e29ae2233eab1092` | Both |
+| CHR ROM startup visibility before bank selection | `1f6fa07f8268aea92a68d5f91b2e9d6ed7d4d43f` | Both |
+| Native CHR sources, protected RAM writes, and UNROM 512 nametable storage | `940e66c9fbabfd6fb1cabf79aae4f9ee54bd2f89` | Both |
+| Small Action 53 and Oeka Kids CHR ROMs with CPU-driven PPU latches | `e3fe8675faa458b739c9f205c8234f88cddb74f9` | Both |
+| Mixed-CHR MMC3 source selection, explicit RAM sizes, IRQs, and persistence | `3193b5d3d24dca8420273940e21e2c3f8ebfc285` | Both |
+| Taito work/save RAM selection, declared sizes, and permission windows | `8c7d5bf92ec9e60611fda4c2bfbfcfb427d4fc84` | Both |
+| NINA-001/BNROM and FME-7 memory routing, register writes, and retained state | `cc6991c04e1b6137156babbcf308d127ca719906` | Both |
+| UNROM 512/GTROM CPU RAM and independent PRG-RAM/flash save files | `1a19f5817d89bd173bcb81684419ebfd5a022cfe` | Both |
 
 Passing AccuracyCoin does not establish the correctness of every cartridge. Focused tests cover bank selection, CPU instructions that access registers and RAM, PPU reads and writes, IRQ timing, open bus, reset, audio output, and storage round trips. NSF tests also check that cartridge rendering and APU IRQ behavior return after music playback ends.
 

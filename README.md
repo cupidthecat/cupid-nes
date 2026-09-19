@@ -35,8 +35,13 @@ does not exercise.
 Cartridge loading supports iNES, NES 2.0, named UNIF boards, and an optional CRC
 database for legacy corrections and recognized headerless images. Small and
 irregular images use the board's implemented page mapping, including open bus
-where a complete page cannot be mapped. Volatile RAM, battery RAM, and CHR
-storage retain their separate ownership and save behavior.
+where a complete page cannot be mapped. CHR ROM and RAM follow each board's
+source selectors, startup mappings, and write permissions. Declared memory can
+remain allocated even when the board cannot address every byte. Work RAM and
+save RAM retain separate ownership; UNROM 512 and GTROM also keep ordinary RAM
+saves independent of their writable flash images. The
+[cartridge checkpoints](docs/cartridge-checkpoints.md#memory-and-review-checkpoints)
+record the tested memory and banking fixes.
 
 Device selection and timing follow the ROM header and
 [command-line options](docs/configuration.md). Supported mapper families can still

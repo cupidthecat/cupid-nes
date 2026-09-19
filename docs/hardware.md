@@ -64,7 +64,7 @@ PRG is the cartridge memory read by the CPU; CHR holds graphics patterns read by
 | 19, 210 | Namco 163 / 175 / 340 | PRG/CHR banks, cartridge-backed nametables, RAM permissions, IRQs, and N163 wavetable audio |
 | 21, 22, 23, 25, 27, 183 | VRC2 / VRC4 | Board-specific register wiring, bank selection, mirroring, and VRC4 IRQs |
 | 24, 26 | VRC6 | PRG/CHR and nametable banking, IRQs, two pulse channels, and sawtooth audio |
-| 28 | Action 53 | Outer and inner PRG selection, CHR RAM, mirroring, and startup mapping |
+| 28 | Action 53 | Outer and inner PRG selection, CHR banking, mirroring, and startup mapping |
 | 30 | UNROM 512 | PRG/CHR banking, cartridge nametable memory, and flash programming and erase commands |
 | 32, 65 | Irem G-101 / H-3001 | PRG/CHR banking, board mirroring, and H-3001 IRQ timing |
 | 33, 48 | Taito | PRG/CHR banking, mirroring, and mapper 48 IRQ timing |
@@ -95,14 +95,14 @@ PRG is the cartridge memory read by the CPU; CHR holds graphics patterns read by
 | 74 | MMC3 mixed CHR | MMC3 banking and IRQs with CHR pages $08-$09 routed to 2 KiB RAM |
 | 75, 151 | VRC1 | Three switchable 8 KiB PRG windows, two 4 KiB CHR banks, and board mirroring |
 | 76, 88, 95, 154, 206 | Namco 108 family | Variant-specific PRG/CHR banking, hardwired or register-controlled nametables, and no mapper IRQ source |
-| 77 | Irem LROG017 | 32 KiB PRG banking with bus conflicts, cartridge RAM, banked 2 KiB CHR ROM, fixed 6 KiB CHR RAM, and four-screen nametables |
+| 77 | Irem LROG017 | 32 KiB PRG banking with bus conflicts, cartridge RAM, banked CHR ROM/RAM, three additional CHR-RAM slots, and four-screen nametables |
 | 79, 113, 146 | NINA-03/06 variants | 32 KiB PRG and 8 KiB CHR banks, partially decoded expansion registers, cartridge RAM, and mapper 113's extra bank bits and mirroring control |
-| 80, 82, 207 | Taito X1-005 / X1-017 | PRG/CHR banking, protected fixed-size cartridge RAM, CHR mode selection, and mapper 207 nametable routing |
+| 80, 82, 207 | Taito X1-005 / X1-017 | PRG/CHR banking, cartridge RAM permissions and source selection, CHR mode selection, and mapper 207 nametable routing |
 | 85 | VRC7 | PRG/CHR banking, IRQs, RAM control, and six-channel FM audio |
 | 89, 93, 184 | Sunsoft discrete boards | Board-specific PRG/CHR selection, single-screen wiring, CHR access control, and paired 4 KiB CHR banks |
 | 90, 209, 211 | JY Company | PRG/CHR modes, register arithmetic, mapper-specific nametable routing, latches, and selectable IRQ clock sources |
 | 94, 180 | UxROM variants | Mapper 94 uses D2-D4 to select the lower 16 KiB PRG bank; mapper 180 switches the upper bank and fixes the lower bank at zero |
-| 96 | Oeka Kids | 32 KiB PRG selection, cartridge RAM, banked CHR RAM, PPU-address-driven inner CHR selection, and ROM bus conflicts |
+| 96 | Oeka Kids | 32 KiB PRG selection, cartridge RAM, CHR banking, PPU-address-driven inner CHR selection, and ROM bus conflicts |
 | 97 | Irem TAM-S1 | Fixed lower 16 KiB PRG, switchable upper 16 KiB PRG, cartridge RAM, fixed CHR, and four mirroring modes |
 | 99 | VS System | Cabinet PRG/CHR selection, shared RAM permissions, and single/dual layouts |
 | 104 | Golden Five | Outer PRG block and inner 16 KiB bank selection, fixed bank within the selected block, and CHR RAM |
@@ -126,18 +126,37 @@ PRG is the cartridge memory read by the CPU; CHR holds graphics patterns read by
 | 513 | Sachen 9602 | MMC3 bank and IRQ registers, outer PRG bits written through CHR registers, fixed first-block banks, and battery-backed CHR RAM |
 | 56, 142, 171, 175, 302, 303, 305, 306, 307, 312, 346 | Kaiser | Board-specific address decoding, small PRG windows, delayed bank latches, RAM/ROM selection, mirroring, and CPU-clocked one-shot IRQs |
 | 105 | NES-EVENT | MMC1 serial control, competition PRG modes, fixed CHR RAM, cartridge RAM, and DIP-selected timer IRQ |
-| 111 | GTROM | 32 KiB PRG flash banking, two CHR-RAM banks, banked cartridge nametable RAM, register-read latching, and flash persistence |
+| 111 | GTROM | 32 KiB PRG flash banking, CHR banking, cartridge nametable RAM, register-read latching, and independent RAM/flash persistence |
 | 118 | TKSROM / TLSROM | MMC3 banking and IRQs with CHR-register-controlled nametable routing |
 | 119 | TQROM | MMC3 banking and IRQs with mixed CHR ROM and RAM |
 | 155 | MMC1A | MMC1 banking with the earlier revision's RAM-enable behavior |
-| 185 | Protected CNROM | CHR protection latch, ROM bus conflicts, and D0 pull-up behavior while pattern-table ROM is disabled |
+| 185 | Protected CNROM | CHR protection latch, enabled CHR-RAM writes, ROM bus conflicts, and D0 pull-up behavior while CHR is disabled |
 | 188 | Bandai Karaoke | Internal/expansion 16 KiB PRG banking, fixed upper bank, mirroring, bus conflicts, cartridge RAM, and mapper-owned A/B/microphone input |
 | 191, 192, 194, 195 | MMC3 mixed CHR | MMC3 banking and IRQs with board-specific CHR ROM/RAM selection ranges |
 | 232 | BF9096 | Outer PRG block and inner bank selection with the submapper-1 outer-bit wiring |
 
 NES 2.0 submappers select supported wiring and revisions. Examples include MMC1 submapper 5, MMC6 submapper 1, MC-ACC submapper 3, and VRC register-wiring variants. UxROM, CNROM, and AxROM submapper 2 enable ROM bus conflicts. The loader rejects unsupported submappers and memory geometries even when the mapper family appears above. The complete checks are in [`mapper_init_from_header`](../src/rom/mapper.c).
 
-PRG mapping uses each board's native bank size. Larger images expose complete banks, and a PRG image smaller than a bank repeats as a whole image where it fits in the CPU window; a remaining partial copy stays on open bus. This permits irregular and small NES 2.0 payloads without changing the board's register bits. Some older mapper implementations still reject CHR ROM smaller than their native CHR page because those paths do not yet implement reduced-size slots. The newer board runtime and the existing adaptive CHR paths map those smaller slots directly. Rejected layouts leave the current cartridge intact.
+PRG mapping uses each board's native bank size. Larger images expose complete banks, and a PRG image smaller than a bank repeats as a whole image where it fits in the CPU window; a remaining partial copy stays on open bus. CHR slots shrink to the selected source's available page size where that board supports it. Register masks, source selection, and startup mapping still determine which bytes are visible. This permits small and irregular NES 2.0 payloads without adding bank bits or substituting RAM for ROM. Rejected layouts leave the current cartridge intact.
+
+The mixed-CHR MMC3 variants select RAM through these CHR bank values:
+
+| Mapper | RAM bank range | Default CHR RAM |
+| --- | --- | --- |
+| 74 | `$08-$09` | 2 KiB |
+| 119 | `$40-$7F` | 8 KiB |
+| 191 | `$80-$FF` | 2 KiB |
+| 192 | `$08-$0B` | 4 KiB |
+| 194 | `$00-$01` | 2 KiB |
+| 195 | `$00-$03` | 4 KiB |
+
+These sizes are defaults. Explicit NES 2.0 declarations control the actual allocation, including zero, smaller chips, larger chips, and persistent CHR storage. Outside the listed range, the default source selects ROM when present and RAM otherwise. ROM remains read-only. Complete pages wrap within the selected source; a missing source does not become writable ROM. The board's MMC3 bank, RAM-permission, and IRQ registers remain active.
+
+Action 53, UNROM 512, and Oeka Kids leave CHR ROM unmapped at startup until their bank controls select it. CHR RAM retains its initial mapping. Small ROM cases keep the selected slots and uncovered addresses distinct; Oeka Kids also updates the lower CHR slot when the PPU address enters a nametable. CPU soft reset retains these bank latches.
+
+NINA-001 leaves CHR ROM unmapped until its `$7FFE/$7FFF` registers select the two slots. Writes at `$7FFD-$7FFF` update bank selection and the writable RAM beneath those registers. BNROM retains its separate bank-write decoding and ROM bus conflicts. Both retain bank state on CPU soft reset.
+
+FME-7 selects work RAM or save RAM according to the battery flag when command 8 chooses RAM. Selecting an absent chip, or one smaller than the 256-byte mapping granularity, leaves the previous low-window mapping intact. A mapped RAM window can instead be disconnected with its permission bit without losing the stored bytes. Banks, counter state, and 5B audio state survive CPU soft reset.
 
 Bandai 70/152 start with vertical mirroring and accept their shared bank register throughout `$8000-$FFFF`, without ROM bus conflicts. Mapper 152 selects either single-screen page on every write. Mapper 70 retains vertical mirroring until a write sets D7; later writes then select either single-screen page. The register state survives CPU soft reset. Both IDs ignore the NES 2.0 submapper field. Their [board implementation](../src/rom/boards/bandai.hpp) uses complete memory pages, including small and irregular ROM images.
 
@@ -171,7 +190,7 @@ Mapper 174 follows documented address wiring, but that wiring has not been verif
 
 Racermate (168) banks the lower 16 KiB PRG window and upper 4 KiB CHR window through writes at `$8000-$BFFF`. The last PRG bank and first CHR bank stay fixed. Its interrupt counter runs on every CPU cycle, including writes, DMA, and soft reset. It begins at zero, first wraps after 65,536 cycles, and then reloads to 1,024 cycles. Writes at `$C000-$FFFF` acknowledge the interrupt and restart that interval. Legacy images use 64 KiB of CHR RAM and save only its upper 32 KiB to `.chr.sav`; NES 2.0 CHR persistence follows the declared nonvolatile tail. Explicit PRG NVRAM uses the normal `.sav` path. The exercise-bike peripheral is not emulated.
 
-Taito mapper 552 reverses the six low bits of each PRG register value before selecting an 8 KiB bank. The upper bank stays fixed. Six CHR registers select two even-aligned 2 KiB pairs and four 1 KiB banks, with a mode bit exchanging their pattern-table halves. The exact unlock values `$CA`, `$69`, and `$84` independently enable the first 2 KiB, next 2 KiB, and next 1 KiB of save RAM. Other values block both reads and writes to that region. Additional RAM declared outside those 5 KiB retains its initial mapping. The control and bank registers survive CPU soft reset. A fresh load locks the save regions and leaves the lower PRG windows and CHR ROM unmapped until their bank registers are written.
+Taito mapper 552 reverses the six low bits of each PRG register value before selecting an 8 KiB bank. The upper bank stays fixed. Six CHR registers select two even-aligned 2 KiB pairs and four 1 KiB banks, with a mode bit exchanging their pattern-table halves. The exact unlock values `$CA`, `$69`, and `$84` independently enable the first 2 KiB, next 2 KiB, and next 1 KiB of mapped save RAM. Other values block both reads and writes to that mapped region. A missing or unmappable save chip leaves any previous mapping intact. Additional RAM declared outside those 5 KiB retains its initial mapping. The control and bank registers survive CPU soft reset. A fresh load locks the mapped save regions and leaves the lower PRG windows and CHR ROM unmapped until their bank registers are written.
 
 Sachen mapper 133 decodes writes at addresses matching `$4100` under mask `$6100`, including aliases above `$8000`. Mapper 143 returns an address-derived protection byte throughout `$4100-$5FFF` and keeps fixed PRG/CHR mapping. Mapper 145 selects CHR through partially decoded writes below `$8000`; mapper 149 selects it through upper CPU writes. Mapper 148 combines PRG and CHR selection after resolving ROM bus conflicts. CHR ROM on mappers 145, 148, and 149 remains unmapped until the first bank write.
 
@@ -257,9 +276,13 @@ The mapper 72 and 92 cartridge banking and latch behavior is implemented. Option
 
 Jaleco 72/78/92, Irem 77/97, and mapper 96 expose their mapped PRG RAM for CPU reads and writes. Jaleco 87/101/140 and Sunsoft 184 read PRG RAM at `$6000-$7FFF`, but writes in that window select banks instead of changing RAM. Explicit NES 2.0 zero-RAM declarations leave those reads on open bus. Trainers and battery saves can supply nonzero data to the readable RAM windows.
 
-Mapper 77 always exposes 6 KiB of fixed CHR RAM at PPU `$0800-$1FFF`; the lower 2 KiB is banked CHR ROM. NES 2.0 images for this mixed layout must declare 8 KiB of volatile CHR RAM, which is the header size accepted by the loader for the board.
+Mapper 77 defaults to 6 KiB of CHR RAM. Its banked slot uses CHR ROM when present and CHR RAM otherwise; three additional slots explicitly select RAM pages 0, 1, and 2. With ordinary 2 KiB pages, those three slots occupy `$0800-$1FFF`. Explicit NES 2.0 sizes, including zero, smaller RAM, and CHR NVRAM, determine the actual storage. Smaller source pages can shrink the slots and create aliases or overlap an earlier mapping. CHR-RAM-only images therefore share the same physical RAM between banked and fixed selections. Four-screen nametables remain separate.
 
 Mapper 185 submapper 0 keeps the legacy compatibility rule: CHR is enabled when the low nibble is nonzero except for latch value `0x13`. NES 2.0 submappers 4 through 7 use bits 0 and 1 as an exact enable value from 0 through 3.
+
+Enabled mapper 185 CHR RAM accepts writes. Disabling CHR blocks writes and returns the address's low byte with D0 set; reenabling it restores the selected source. Small CHR RAM initially repeats through the pattern-table window. After a disable/enable transition, only the explicitly selected page is remapped, leaving uncovered addresses on open bus.
+
+UNROM 512's eight-kilobyte nametable mode uses offsets `$6000-$7FFF` in an allocated CHR-RAM chip of at least 32 KiB. A large CHR ROM cannot supply that writable storage. A ROM image with a separate 32 KiB CHR-RAM or CHR-NVRAM allocation uses that allocation for nametables without changing ROM bytes. Smaller or absent CHR RAM retains the ordinary four-screen nametable mapping. The native path rejects simultaneous volatile and nonvolatile CHR chips when a CHR ROM image uses this nametable mode.
 
 Mappers 79 and 146 accept bank writes at `$4100-$5FFF` only when address bit A8 is high. Mapper 113 uses the same register decoding, with three PRG bank bits, four CHR bank bits, and vertical/horizontal mirroring selected by D7. These registers are write-only; reads retain open bus. All three boards keep ordinary RAM reads and writes at `$6000-$7FFF`. Their bank registers survive CPU soft reset.
 
@@ -299,11 +322,13 @@ SSS-NROM-256 provides the FamicomBox menu cartridge's PRG, CHR, and register beh
 
 Legacy iNES RAM fields are unreliable. Cupid uses board defaults and ignores byte 8 as a RAM-size override. Most boards default to 8 KiB, MMC5 to 64 KiB, and FME-7 to 32 KiB. Legacy mapper 99 without a battery flag uses 2 KiB of volatile RAM. UNROM 512 has its own CHR RAM and flash layout. A legacy PRG count of zero represents 256 banks of 16 KiB, or 4 MiB. The image must still contain the complete payload, and its mapper must support that size.
 
-NES 2.0 RAM declarations are normally explicit, including zero RAM. Taito X1-005/X1-017 boards are fixed-size exceptions: mappers 80 and 207 use a 256-byte cartridge-RAM allocation, while mapper 82 uses 5 KiB. For those boards, the battery flag chooses volatile or nonvolatile storage even when the NES 2.0 RAM-size fields are zero. Unsupported combinations are rejected. Do not change header bytes simply to make the loader accept an image: the resulting bank layout or save format could be wrong. Use the cartridge's board information when correcting a header, and record that correction in a bug report.
+NES 2.0 RAM declarations are normally explicit, including zero RAM. Taito X1-005, used by mappers 80 and 207, forces its battery-selected work or save chip to 256 bytes; a separately declared opposite chip keeps its own allocation. Writes in the unlocked `$7F00-$7FFF` window update both 128-byte halves. X1-017, used by mappers 82 and 552, honors explicit RAM sizes. Its legacy save-RAM default is 5 KiB, while legacy images without a battery use the ordinary 8 KiB work-RAM default. Its three permission registers explicitly select save-RAM pages; an absent selected chip does not replace an existing work-RAM mapping. Mapper 82 shifts PRG register values right by two, while mapper 552 reverses the six low bits.
 
 Cartridge RAM keeps separate volatile and persistent allocations. Native families whose RAM mapping follows the battery-selected work/save path keep both declared PRG chips independent; boards with explicit selectors, such as MMC1 and MMC5, can expose both chips according to their register wiring. In the 8 KiB plus 8 KiB MMC5 layout, bank-select bit 2 chooses the work socket when set and the save socket when clear. A single 16 KiB chip mirrors through the eight low bank selectors. Declared CHR RAM and CHR NVRAM may remain allocated beside CHR ROM without replacing the mapped ROM. Separate CHR ROM/RAM selection still requires a board that implements it; accepted storage does not imply that every allocated chip is CPU- or PPU-addressable.
 
 Mappers 0, 2, 3, 7, 11, 13, 66, 79, 94, 113, 144, 146, and 180 accept independent work and save chips without treating their combined size as one power-of-two allocation. The selected chip supplies the fixed `$6000-$7FFF` window. A chip larger than 8 KiB keeps its remaining bytes allocated but unmapped; its complete save allocation is preserved on disk. Smaller chips repeat only complete pages within the window, with uncovered addresses on open bus. For example, a 3 KiB database-declared chip repeats twice through `$77FF`, while `$7800-$7FFF` remains unmapped. The mapping granularity is 256 bytes, so a 128-byte declaration stays unmapped. Banked boards retain their own supported-layout checks and chip-selection rules.
+
+UNROM 512 and GTROM also accept explicitly declared PRG RAM. UNROM 512 exposes ordinary reads and writes at `$6000-$7FFF`. GTROM exposes ordinary RAM at `$6000-$6FFF`; reads at `$7000-$7FFF` first latch the CPU's open-bus value, then return the underlying RAM byte or zero when unmapped. Writes in that upper range remain bank-register writes. Declared PRG NVRAM persists in `.sav` independently of the board's `.flash.sav` image. GTROM's default CHR RAM is volatile, but explicitly declared CHR NVRAM uses `.chr.sav`; its dedicated nametable RAM remains volatile.
 
 The RAM power-on profile initializes ordinary cartridge RAM before trainer and save overlays. Trainer initialization prefers a volatile PRG chip of at least 8 KiB, otherwise a persistent chip of at least 8 KiB, and copies at chip offset `$1000`. This placement does not depend on the board's initial bank selection. Existing save bytes take precedence where they overlap the trainer. See [saves and media](saves.md) for save layouts, including MMC5 ExRAM and N163 audio RAM.
 
