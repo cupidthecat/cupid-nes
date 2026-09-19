@@ -136,6 +136,7 @@ class UnifFamicomBox final : public Board {
     uint8_t regs[8]{};
     std::array<uint8_t, 0x2000> cpuRam{};
 protected:
+    uint32_t GetDipSwitchCount() override { return 8; }
     uint16_t GetPrgPageSize() override { return 0x4000; }
     uint16_t GetChrPageSize() override { return 0x2000; }
     uint16_t RegisterStartAddress() override { return 0x5000; }

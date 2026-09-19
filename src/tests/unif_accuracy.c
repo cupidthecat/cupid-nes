@@ -223,10 +223,21 @@ static int test_8237a_banks_and_irq(void) {
 static int test_famicombox_cpu_ram(void) {
     BoardImage image;
     NesRamPowerOnState previous_power = nes_ram_power_on_state();
+    unsigned previous_dip = cart_dip_switches();
     BOARD_CHECK(nes_set_ram_power_on_state(NES_RAM_POWER_ZERO));
+    BOARD_CHECK(cart_set_dip_switches(0xA5));
     BOARD_CHECK(make_unif(&image, "SSS-NROM-256", 0x8000, 0x2000, NULL));
     BOARD_CHECK(board_image_load(&image) == 0);
     BOARD_CHECK(cart_cpu_ram_8k() != NULL);
+    BOARD_CHECK(read_absolute_is(0x5002, 0xA5));
+    for (unsigned bit = 0; bit < 8; ++bit) {
+        uint8_t switches = (uint8_t)(1u << bit);
+        BOARD_CHECK(cart_set_dip_switches(switches));
+        BOARD_CHECK(read_absolute_is(0x5002, switches));
+        BOARD_CHECK(read_absolute_is(0x5FFA, switches));
+    }
+    BOARD_CHECK(!cart_set_dip_switches(0x100));
+    BOARD_CHECK(write_absolute(0x5002, 0) && read_absolute_is(0x5002, 0x80));
     static const uint16_t addresses[] = {0x0033, 0x0833, 0x1033, 0x1833};
     static const uint8_t values[] = {0x40, 0x61, 0x82, 0xA3};
     for (unsigned i = 0; i < 4; ++i) BOARD_CHECK(write_absolute(addresses[i], values[i]));
@@ -236,15 +247,19 @@ static int test_famicombox_cpu_ram(void) {
     }
     BOARD_CHECK(read_mem(0x5000) == 0xFF && read_mem(0x5007) == 0x22);
     cpu_soft_reset(&cpu);
+    BOARD_CHECK(read_absolute_is(0x5002, 0x80));
     for (unsigned i = 0; i < 4; ++i) BOARD_CHECK(read_mem(addresses[i]) == values[i]);
     BOARD_CHECK(cpu_power_on(&cpu));
+    BOARD_CHECK(read_absolute_is(0x5002, 0x80));
     for (unsigned i = 0; i < 4; ++i) BOARD_CHECK(read_mem(addresses[i]) == 0);
     board_image_free(&image);
     BOARD_CHECK(make_unif(&image, "NROM", 0x8000, 0x2000, NULL));
     BOARD_CHECK(board_image_load(&image) == 0 && cart_cpu_ram_8k() == NULL);
+    BOARD_CHECK(read_absolute_is(0x5002, 0x50)); // The operand byte is now open bus.
     write_mem(0x0033, 0x57);
     BOARD_CHECK(read_mem(0x0833) == 0x57 && read_mem(0x1833) == 0x57);
     board_image_free(&image);
+    BOARD_CHECK(cart_set_dip_switches(previous_dip));
     BOARD_CHECK(nes_set_ram_power_on_state(previous_power));
     return 0;
 }
