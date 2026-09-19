@@ -9126,7 +9126,7 @@ static int test_taito_x1005_and_207(void) {
     const unsigned mappers[] = {80, 207};
     for (size_t i = 0; i < sizeof(mappers) / sizeof(mappers[0]); ++i) {
         CHECK(fixture(mappers[i], 0x40000, 0x40000, false) == (int)mappers[i]);
-        CHECK(cart != NULL && cart->clock == NULL);
+        CHECK(cart != NULL && cart->clock != NULL && cart->reset != NULL);
         CHECK(cart_cpu_read_bus(0x8000, 0x56) == 0x56);
         CHECK(cart_cpu_read_bus(0xA000, 0x69) == 0x69);
         CHECK(cart_cpu_read_bus(0xC000, 0xA6) == 0xA6);
@@ -9169,28 +9169,27 @@ static int test_taito_x1005_and_207(void) {
             CHECK(cart_get_mirroring() == MIRROR_HORIZONTAL);
         } else {
             uint8_t nt[0x1000] = {0};
-            nt[0] = 0x10;
-            nt[0x400] = 0x20;
-            CHECK(cart_nt_read(0x2000, nt) == 0x20 && cart_nt_read(0x2400, nt) == 0x20);
-            CHECK(cart_nt_read(0x2800, nt) == 0x10 && cart_nt_read(0x2C00, nt) == 0x10);
             cart_nt_write(0x2001, 0xA1, nt);
-            CHECK(nt[0x401] == 0xA1 && cart_nt_read(0x2401, nt) == 0xA1);
+            cart_nt_write(0x2801, 0xB2, nt);
+            CHECK(cart_nt_read(0x2001, nt) == 0xA1 && cart_nt_read(0x2401, nt) == 0xA1);
+            CHECK(cart_nt_read(0x2801, nt) == 0xB2 && cart_nt_read(0x2C01, nt) == 0xB2);
             Mirroring before = cart_get_mirroring();
             cart_cpu_write(0x7EF6, 1);
             CHECK(cart_get_mirroring() == before);
         }
 
         cart->reset();
-        CHECK(cart_cpu_read_bus(0x8000, 0x56) == 0x56 && cart_cpu_read(0xE000) == 31);
-        CHECK(cart_cpu_read_bus(0x7F00, 0x69) == 0x69);
-        CHECK(cart_ppu_read(0x0123) == 0x23);
+        CHECK(cart_cpu_read(0x8000) == 3 && cart_cpu_read(0xA000) == 5);
+        CHECK(cart_cpu_read(0xC000) == 7 && cart_cpu_read(0xE000) == 31);
+        CHECK(cart_cpu_read(0x7F00) == 0x53 && cart_cpu_read(0x7F80) == 0x53);
+        CHECK(cart_ppu_read(0x0123) == 0x84);
     }
     return 0;
 }
 
 static int test_taito_x1017_banks_chr_and_ram(void) {
     CHECK(fixture(82, 0x40000, 0x40000, false) == 82);
-    CHECK(cart != NULL && cart->clock == NULL);
+    CHECK(cart != NULL && cart->clock != NULL && cart->reset != NULL);
     CHECK(cart_cpu_read_bus(0x8000, 0x56) == 0x56 && cart_cpu_read(0xE000) == 31);
     CHECK(cart_ppu_read(0x0123) == 0x23);
 
@@ -9215,30 +9214,34 @@ static int test_taito_x1017_banks_chr_and_ram(void) {
     CHECK(cart_ppu_read(0x1000) == 8 && cart_ppu_read(0x1400) == 9);
     CHECK(cart_ppu_read(0x1800) == 12 && cart_ppu_read(0x1C00) == 13);
 
-    CHECK(cart_cpu_read_bus(0x6000, 0x35) == 0x35);
+    CHECK(cart_cpu_read(0x6000) == 0);
     cart_cpu_write(0x7EF7, 0xCA);
     cart_cpu_write(0x6000, 0x35);
     cart_cpu_write(0x6400, 0x53);
     CHECK(cart_cpu_read(0x6000) == 0x35 && cart_cpu_read(0x6400) == 0x53);
-    CHECK(cart_cpu_read_bus(0x6800, 0x69) == 0x69);
+    CHECK(cart_cpu_read(0x6800) == 0);
     cart_cpu_write(0x7EF8, 0x69);
     cart_cpu_write(0x6800, 0xA6);
     cart_cpu_write(0x6C00, 0x7A);
     CHECK(cart_cpu_read(0x6800) == 0xA6 && cart_cpu_read(0x6C00) == 0x7A);
-    CHECK(cart_cpu_read_bus(0x7000, 0x96) == 0x96);
+    CHECK(cart_cpu_read(0x7000) == 0);
     cart_cpu_write(0x7EF9, 0x84);
     cart_cpu_write(0x7000, 0x96);
-    CHECK(cart_cpu_read(0x7000) == 0x96 && cart_cpu_read_bus(0x7400, 0x35) == 0x35);
+    CHECK(cart_cpu_read(0x7000) == 0x96);
+    cart_cpu_write(0x7400, 0x35);
+    CHECK(cart_cpu_read(0x7400) == 0x35);
 
     cart_cpu_write(0x7EF8, 0x68);
-    CHECK(cart_cpu_read_bus(0x6800, 0x53) == 0x53);
+    CHECK(cart_cpu_read(0x6800) == 0xA6 && cart_cpu_read(0x6C00) == 0x7A);
     cart_cpu_write(0x7EF8, 0x69);
     CHECK(cart_cpu_read(0x6800) == 0xA6 && cart_cpu_read(0x6C00) == 0x7A);
 
     cart->reset();
-    CHECK(cart_cpu_read_bus(0x6000, 0x56) == 0x56);
-    CHECK(cart_cpu_read_bus(0x8000, 0x69) == 0x69 && cart_cpu_read(0xE000) == 31);
-    CHECK(cart_ppu_read(0x0123) == 0x23);
+    CHECK(cart_cpu_read(0x6000) == 0x35 && cart_cpu_read(0x6800) == 0xA6);
+    CHECK(cart_cpu_read(0x7000) == 0x96 && cart_cpu_read(0x7400) == 0x35);
+    CHECK(cart_cpu_read(0x8000) == 3 && cart_cpu_read(0xA000) == 5);
+    CHECK(cart_cpu_read(0xC000) == 7 && cart_cpu_read(0xE000) == 31);
+    CHECK(cart_ppu_read(0x0123) == 15);
     return 0;
 }
 
@@ -9259,6 +9262,20 @@ static int test_taito_x1_persistence_and_loader(void) {
     cart_battery_configure(paths.rom, true);
     cart_cpu_write(0x7EF8, 0xA3);
     CHECK(cart_cpu_read(0x7F00) == 0xA6 && cart_cpu_read(0x7F80) == 0xA6);
+
+    cart_battery_shutdown();
+    CHECK(remove(paths.prg_save) == 0);
+    iNESHeader oversized80 = header_for(80, 0x40000, false);
+    oversized80.flags7 |= 8;
+    oversized80.flags6 |= 2;
+    oversized80.flags10 = 0x97; /* 8 KiB work plus declared 32 KiB save RAM. */
+    CHECK(fixture_with_header(&oversized80, 0x40000, 0x40000) == 80);
+    cart_battery_configure(paths.rom, true);
+    cart_cpu_write(0x7EF8, 0xA3);
+    cart_cpu_write(0x7F00, 0x5C);
+    cart_battery_flush();
+    CHECK(saved_file_size(paths.prg_save) == 0x100);
+    CHECK(saved_byte(paths.prg_save, 0) == 0x5C && saved_byte(paths.prg_save, 0x80) == 0x5C);
     CHECK(save_fixture_end(&paths) == 0);
 
     CHECK(save_fixture_begin(&paths) == 0);
@@ -9281,6 +9298,68 @@ static int test_taito_x1_persistence_and_loader(void) {
     cart_cpu_write(0x7EF9, 0x84);
     CHECK(cart_cpu_read(0x6000) == 0x35 && cart_cpu_read(0x6800) == 0x53);
     CHECK(cart_cpu_read(0x7000) == 0x96);
+
+    /* Short saves fill only their prefix. A later write expands the file to
+       the mapper's full default 5 KiB save allocation. */
+    cart_battery_shutdown();
+    CHECK(remove(paths.prg_save) == 0);
+    FILE *fp = fopen(paths.prg_save, "wb");
+    CHECK(fp != NULL);
+    const uint8_t short_save[] = {0xA6, 0x53};
+    CHECK(fwrite(short_save, 1, sizeof(short_save), fp) == sizeof(short_save));
+    CHECK(fclose(fp) == 0);
+    CHECK(fixture_with_header(&h82, 0x40000, 0x40000) == 82);
+    cart_battery_configure(paths.rom, true);
+    cart_cpu_write(0x7EF7, 0xCA);
+    CHECK(cart_cpu_read(0x6000) == 0xA6 && cart_cpu_read(0x6001) == 0x53);
+    CHECK(cart_cpu_read(0x6002) == 0);
+    cart_cpu_write(0x6002, 0x71);
+    cart_battery_flush();
+    CHECK(saved_file_size(paths.prg_save) == 0x1400);
+    CHECK(saved_byte(paths.prg_save, 0) == 0xA6 && saved_byte(paths.prg_save, 2) == 0x71);
+
+    /* An oversized NES 2.0 save allocation keeps bytes beyond the CPU window
+       for persistence. Register writes at $7EF8 still target the mapper while
+       reads at the same address come from the underlying save mapping. CHR
+       sidecars remain separate when CHR ROM is present. */
+    cart_battery_shutdown();
+    CHECK(remove(paths.prg_save) == 0);
+    uint8_t large_save[0x8000];
+    memset(large_save, 0, sizeof(large_save));
+    large_save[0x1EF8] = 0xE7;
+    large_save[0x3000] = 0xC3;
+    fp = fopen(paths.prg_save, "wb");
+    CHECK(fp != NULL);
+    CHECK(fwrite(large_save, 1, sizeof(large_save), fp) == sizeof(large_save));
+    CHECK(fclose(fp) == 0);
+    uint8_t chr_sidecar[0x2000];
+    memset(chr_sidecar, 0x6B, sizeof(chr_sidecar));
+    fp = fopen(paths.chr_save, "wb");
+    CHECK(fp != NULL);
+    CHECK(fwrite(chr_sidecar, 1, sizeof(chr_sidecar), fp) == sizeof(chr_sidecar));
+    CHECK(fclose(fp) == 0);
+    iNESHeader oversized82 = header_for(82, 0x40000, false);
+    oversized82.flags7 |= 8;
+    oversized82.flags6 |= 2;
+    oversized82.flags10 = 0x90; /* 32 KiB save RAM. */
+    oversized82.zero[0] = 0x77; /* 8 KiB CHR RAM plus 8 KiB CHR NVRAM. */
+    CHECK(fixture_with_header(&oversized82, 0x40000, 0x40000) == 82);
+    cart_battery_configure(paths.rom, true);
+    CHECK(cart_cpu_read(0x7EF8) == 0xE7);
+    cart_cpu_write(0x7EF8, 0x69);
+    CHECK(cart_cpu_read(0x7EF8) == 0xE7);
+    cart_cpu_write(0x6800, 0xD4);
+    CHECK(cart_cpu_read(0x6800) == 0xD4);
+    cart_cpu_write(0x7EF0, 3);
+    CHECK(cart_ppu_read(0x0123) == 2);
+    cart_ppu_write(0x0123, 0x91);
+    CHECK(cart_ppu_read(0x0123) == 2);
+    cart_battery_flush();
+    CHECK(saved_file_size(paths.prg_save) == 0x8000);
+    CHECK(saved_byte(paths.prg_save, 0x1EF8) == 0xE7);
+    CHECK(saved_byte(paths.prg_save, 0x3000) == 0xC3);
+    CHECK(saved_file_size(paths.chr_save) == 0x2000);
+    CHECK(saved_byte(paths.chr_save, 0) == 0x6B);
     CHECK(save_fixture_end(&paths) == 0);
 
     CHECK(fixture(207, 0x40000, 0x40000, false) == 207);
@@ -9289,17 +9368,43 @@ static int test_taito_x1_persistence_and_loader(void) {
     iNESHeader invalid = header_for(207, 0x40000, false);
     invalid.flags7 |= 8;
     invalid.flags10 = 7;
-    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x40000, fixture_chr, 0x40000) == -1);
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x40000, NULL, 0) == -1);
     CHECK(cart == previous && cart_cpu_read(0x8000) == 3);
 
     iNESHeader valid80 = header_for(80, 0x40000, false);
     valid80.flags7 |= 8;
     valid80.flags10 = 2;
     CHECK(fixture_with_header(&valid80, 0x40000, 0x40000) == 80);
+    cart_cpu_write(0x6000, 0x42);
+    CHECK(cart_cpu_read(0x6000) == 0x42);
+    cart_cpu_write(0x7EF8, 0xA3);
+    CHECK(cart_cpu_read(0x7F00) == 0x42 && cart_cpu_read(0x7F80) == 0);
+    cart_cpu_write(0x7F00, 0x54);
+    CHECK(cart_cpu_read(0x7F00) == 0x54 && cart_cpu_read(0x7F80) == 0x54);
     iNESHeader valid82 = header_for(82, 0x40000, false);
     valid82.flags7 |= 8;
     valid82.flags10 = 0;
     CHECK(fixture_with_header(&valid82, 0x40000, 0x40000) == 82);
+    cart_cpu_write(0x7EF7, 0xCA);
+    cart_cpu_write(0x7EF8, 0x69);
+    cart_cpu_write(0x7EF9, 0x84);
+    CHECK(cart_cpu_read_bus(0x6000, 0xA1) == 0xA1);
+    CHECK(cart_cpu_read_bus(0x7000, 0xB2) == 0xB2);
+    CHECK(cart_cpu_read_bus(0x7400, 0xC3) == 0xC3);
+
+    iNESHeader small82 = header_for(82, 0x40000, false);
+    small82.flags7 |= 8;
+    small82.flags6 |= 2;
+    small82.flags10 = 0x25; /* 2 KiB work RAM plus a 256-byte save chip. */
+    CHECK(fixture_with_header(&small82, 0x40000, 0x40000) == 82);
+    CHECK(cart_cpu_read_bus(0x6000, 0xD4) == 0xD4);
+    cart_cpu_write(0x7EF7, 0xCA);
+    cart_cpu_write(0x6000, 0x51);
+    CHECK(cart_cpu_read(0x6000) == 0x51 && cart_cpu_read(0x6100) == 0x51);
+    CHECK(cart_cpu_read(0x6400) == 0x51);
+    cart_cpu_write(0x7400, 0x62);
+    CHECK(cart_cpu_read(0x7400) == 0x62);
+
     iNESHeader valid207 = header_for(207, 0x40000, false);
     valid207.flags7 |= 8;
     valid207.flags10 = 2;

@@ -1,5 +1,5 @@
 /*
- * board_taito_accuracy.c - X1-017 reversed banking and RAM permission tests
+ * board_taito_accuracy.c - Taito X1 banking, RAM ownership, and geometry tests
  *
  * Author: @frankischilling
  *
@@ -224,13 +224,124 @@ static int test_taito552_persistence(void) {
     return 0;
 }
 
+static int test_taito_native_ram_sources(void) {
+    BoardImage image;
+
+    /* X1-005 forces only the battery-selected chip to 256 bytes. The
+       separately declared work chip receives the trainer, while the save
+       chip remains the CPU-visible source outside the protected $7F00 page. */
+    BOARD_CHECK(board_image_create(&image, 80, 0x40000, 0x40000, true));
+    image.data[6] |= 2;
+    image.data[10] = 0x27; /* 8 KiB work RAM plus a 256-byte save chip. */
+    BOARD_CHECK(board_image_add_trainer(&image, 0x9A));
+    BOARD_CHECK(board_image_load(&image) == 0);
+    BOARD_CHECK(read_mem(0x7000) == 0);
+    write_mem(0x7000, 0x33);
+    BOARD_CHECK(read_mem(0x7000) == 0x33);
+    write_mem(0x4800, 0xA5);
+    BOARD_CHECK(read_mem(0x7F00) == 0xA5);
+    write_mem(0x7EF8, 0xA3);
+    BOARD_CHECK(read_mem(0x7F00) == 0x33 && read_mem(0x7F80) == 0);
+    write_mem(0x7F00, 0x44);
+    BOARD_CHECK(read_mem(0x7F00) == 0x44 && read_mem(0x7F80) == 0x44);
+    write_mem(0x7F7F, 0x51);
+    BOARD_CHECK(read_mem(0x7FFF) == 0x51);
+    board_image_free(&image);
+
+    /* X1-017 preserves a declared 128-byte save chip, but the mapper API has
+       256-byte CPU pages. The chip is therefore allocated without a visible
+       CPU window, including after the matching permission key is written. */
+    BOARD_CHECK(board_image_create(&image, 82, 0x40000, 0x40000, true));
+    image.data[6] |= 2;
+    image.data[10] = 0x10; /* 128-byte save RAM only. */
+    BOARD_CHECK(board_image_load(&image) == 0);
+    write_mem(0x4800, 0xA4);
+    BOARD_CHECK(read_mem(0x6000) == 0xA4 && read_mem(0x7400) == 0xA4);
+    write_mem(0x7EF7, 0xCA);
+    write_mem(0x6000, 0x52);
+    write_mem(0x4800, 0xB5);
+    BOARD_CHECK(read_mem(0x6000) == 0xB5);
+    board_image_free(&image);
+
+    /* Oversized X1-017 save RAM remains valid. The protected registers select
+       pages 0-4, while the inherited $6000-$7FFF mapping leaves page 5 and
+       later bytes in that 8 KiB CPU window untouched by the permission keys. */
+    BOARD_CHECK(board_image_create(&image, 82, 0x40000, 0x40000, true));
+    image.data[6] |= 2;
+    image.data[10] = 0x90; /* 32 KiB save RAM. */
+    BOARD_CHECK(board_image_load(&image) == 0);
+    write_mem(0x7400, 0x63);
+    write_mem(0x7800, 0x74);
+    write_mem(0x7EF7, 0xCA);
+    write_mem(0x6000, 0x85);
+    BOARD_CHECK(read_mem(0x6000) == 0x85);
+    BOARD_CHECK(read_mem(0x7400) == 0x63 && read_mem(0x7800) == 0x74);
+    board_image_free(&image);
+
+    /* CHR RAM declared beside CHR ROM is separate storage. X1 register
+       selection uses the default CHR source, so ROM remains selected and
+       read-only while the sidecar exists for persistence. */
+    BOARD_CHECK(board_image_create(&image, 82, 0x40000, 0x40000, true));
+    image.data[6] |= 2;
+    image.data[11] = 0x77; /* 8 KiB CHR RAM plus 8 KiB CHR NVRAM. */
+    BOARD_CHECK(board_image_load(&image) == 0);
+    write_mem(0x7EF0, 3);
+    BOARD_CHECK(ppu_read(0x0000) == 2 && ppu_read(0x0400) == 3);
+    ppu_write(0x0123, 0xD6);
+    BOARD_CHECK(ppu_read(0x0123) == 2);
+    board_image_free(&image);
+
+    /* With explicit NES 2.0 zero save RAM, X1-017 cannot replace the existing
+       work-RAM mapping. Trainer bytes on that work chip remain visible. */
+    BOARD_CHECK(board_image_create(&image, 82, 0x40000, 0x40000, true));
+    image.data[10] = 7; /* 8 KiB work RAM, no save RAM. */
+    BOARD_CHECK(board_image_add_trainer(&image, 0x9A));
+    BOARD_CHECK(board_image_load(&image) == 0);
+    write_mem(0x7EF7, 0xCA);
+    write_mem(0x7EF8, 0x69);
+    write_mem(0x7EF9, 0x84);
+    BOARD_CHECK(read_mem(0x6000) == 0 && read_mem(0x7000) == 0x9A);
+    write_mem(0x7400, 0x62);
+    BOARD_CHECK(read_mem(0x7400) == 0x62);
+    board_image_free(&image);
+
+    /* A small save chip repeats through each enabled X1-017 page. The
+       unequal work chip remains a separate allocation. */
+    BOARD_CHECK(board_image_create(&image, 82, 0x40000, 0x40000, true));
+    image.data[6] |= 2;
+    image.data[10] = 0x25; /* 2 KiB work RAM plus a 256-byte save chip. */
+    BOARD_CHECK(board_image_load(&image) == 0);
+    write_mem(0x7EF7, 0xCA);
+    write_mem(0x6000, 0x71);
+    BOARD_CHECK(read_mem(0x6100) == 0x71 && read_mem(0x6400) == 0x71);
+    write_mem(0x7400, 0x82);
+    BOARD_CHECK(read_mem(0x7400) == 0x82);
+    board_image_free(&image);
+
+    /* With both chips present, trainer bytes belong to work RAM. X1-017
+       permission windows select save RAM instead, so the trainer does not
+       overwrite the battery-backed source. */
+    BOARD_CHECK(board_image_create(&image, 82, 0x40000, 0x40000, true));
+    image.data[6] |= 2;
+    image.data[10] = 0x77;
+    BOARD_CHECK(board_image_add_trainer(&image, 0x9A));
+    BOARD_CHECK(board_image_load(&image) == 0);
+    write_mem(0x7EF9, 0x84);
+    BOARD_CHECK(read_mem(0x7000) == 0);
+    write_mem(0x7000, 0x93);
+    BOARD_CHECK(read_mem(0x7000) == 0x93);
+    board_image_free(&image);
+    return 0;
+}
+
 int test_board_taito_accuracy(void) {
     int failures = 0;
     failures += test_taito552_banks();
     failures += test_taito552_ram();
     failures += test_taito552_geometry();
     failures += test_taito552_persistence();
+    failures += test_taito_native_ram_sources();
     unload_rom();
-    printf("Taito X1-017 accuracy: 4 groups, %d failures\n", failures);
+    printf("Taito X1 accuracy: 5 groups, %d failures\n", failures);
     return failures;
 }

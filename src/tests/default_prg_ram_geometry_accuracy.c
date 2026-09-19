@@ -284,8 +284,7 @@ static int test_special_geometries_remain_rejected(void) {
     } cases[] = {
         {30, 0x07},  /* flash board has no CPU PRG-RAM chip */
         {34, 0x65},  /* NINA register writes overlap the RAM range */
-        {69, 0x65},  /* FME-7 selects RAM banks through its command register */
-        {80, 0x03}   /* X1-005 has a fixed 256-byte RAM device */
+        {69, 0x65}   /* FME-7 selects RAM banks through its command register */
     };
     BoardImage active;
     BOARD_CHECK(make_image(&active, 33, 0x08, false));
