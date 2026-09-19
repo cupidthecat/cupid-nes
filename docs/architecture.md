@@ -14,7 +14,7 @@ Cupid has a C11 CPU/PPU core, an SDL frontend, and C++17 cartridge and EPSM soun
 | [src/apu](../src/apu) | Channel DAC latches, frame sequencer, DMC requests, sample production, and ring buffers |
 | [src/apu/epsm.cpp](../src/apu/epsm.cpp), [src/third_party/ymfm](../src/third_party/ymfm) | EPSM bus, clock, firmware ownership, and YMF288 sound engine |
 | [src/rom/rom.c](../src/rom/rom.c) | Image parsing, allocation, validation, and cartridge replacement |
-| [src/rom/mapper.c](../src/rom/mapper.c) | Board selection, banking, cartridge RAM, nametables, interrupts, and persistence |
+| [src/rom/mapper.c](../src/rom/mapper.c) and its private `mapper_*.h` files | Shared cartridge state, board selection, banking, cartridge RAM, nametables, interrupts, and persistence |
 | [src/rom/boards](../src/rom/boards), [board.h](../src/rom/board.h) | Cartridge board modules with owned RAM, 256-byte bus mappings, register decoding, and console reset hooks |
 | [src/rom/fds.c](../src/rom/fds.c) | Disk image ownership, transport, registers, media writes, and disk audio |
 | [src/rom/nsf.c](../src/rom/nsf.c) | NSF/NSFe parsing, banked program data, track metadata, and regional playback parameters |
@@ -27,6 +27,8 @@ Cupid has a C11 CPU/PPU core, an SDL frontend, and C++17 cartridge and EPSM soun
 | [src/ui](../src/ui) | Palette editing and presentation helpers |
 | [src/tests](../src/tests) | Hardware regressions, CPU trace comparison, and cartridge-driven diagnostics |
 | [include/globals.h](../include/globals.h) | Shared framebuffer declarations and display dimensions |
+
+Large C translation units use private implementation headers at existing subsystem boundaries. This keeps file size manageable while preserving private helpers and state. CPU opcode groups live beside `cpu.c`; mapper families live beside `mapper.c`; the larger PPU, input, and mapper regression groups live beside their test runners. Imported sound components retain their upstream file layout.
 
 ## From a frame to a bus access
 

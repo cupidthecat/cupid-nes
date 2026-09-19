@@ -45,10 +45,12 @@ static const char *const adapter_names[] = {
 };
 static NesPortDevice port_devices[2];
 static NesExpansionDevice expansion_device;
+
 static const char *const port_device_names[] = {
     "pad", "none", "arkanoid", "power-pad-a", "power-pad-b", "zapper", "subor-mouse",
     "snes-pad", "snes-mouse", "ntt-keypad", "virtual-boy"
 };
+
 static const char *const expansion_device_names[] = {
     "none", "arkanoid", "family-trainer-a", "family-trainer-b", "zapper", "family-basic",
     "turbo-file", "battle-box", "subor-keyboard", "hori-track", "konami-hyper-shot",
