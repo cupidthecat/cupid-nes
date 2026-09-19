@@ -4630,12 +4630,18 @@ static int test_prg_ram_capacity(void) {
     iNESHeader h = header_for(0, 0x4000, true);
     h.flags7 = 8;
     h.zero[0] = 7;
-    h.flags10 = 1; // 128 bytes, not an 8KB allocation.
+    h.flags10 = 1; // 128 bytes cannot supply a complete 256-byte bus page.
     CHECK(fixture_with_header(&h, 0x4000, 0x2000) == 0);
     cart_cpu_write(0x6000, 0xA6);
     cart_cpu_write(0x607F, 0x56);
-    CHECK(cart_cpu_read(0x6080) == 0xA6 && cart_cpu_read(0x7FFF) == 0x56);
-    cart_cpu_write(0x7F80, 0x91);
+    CHECK(cart_cpu_read_bus(0x6080, 0xD1) == 0xD1);
+    CHECK(cart_cpu_read_bus(0x7FFF, 0xE2) == 0xE2);
+    h.flags10 = 2; // A complete 256-byte page repeats through the RAM window.
+    CHECK(fixture_with_header(&h, 0x4000, 0x2000) == 0);
+    cart_cpu_write(0x6000, 0xA6);
+    cart_cpu_write(0x60FF, 0x56);
+    CHECK(cart_cpu_read(0x6100) == 0xA6 && cart_cpu_read(0x7FFF) == 0x56);
+    cart_cpu_write(0x7F00, 0x91);
     CHECK(cart_cpu_read(0x6000) == 0x91);
     h.flags10 = 0;
     CHECK(fixture_with_header(&h, 0x4000, 0x2000) == 0);
@@ -4646,13 +4652,19 @@ static int test_prg_ram_capacity(void) {
     cart_cpu_write(0x6000, 0xA6);
     CHECK(cart_cpu_read(0x6080) == 0);
 
-    h.flags10 = 8; // NROM has no banking for a declared 16KB PRG RAM.
-    CHECK(mapper_init_from_header(&h, fixture_prg, 0x4000, fixture_chr, 0x2000) == -1);
-    CHECK(cart_cpu_read(0x6000) == 0xA6);
+    h.flags10 = 8; // The first 8 KiB of a 16 KiB chip supplies the fixed window.
+    CHECK(fixture_with_header(&h, 0x4000, 0x2000) == 0);
+    cart_cpu_write(0x6000, 0xA6);
+    cart_cpu_write(0x7FFF, 0x56);
+    CHECK(cart_cpu_read(0x6000) == 0xA6 && cart_cpu_read(0x7FFF) == 0x56);
     h.flags10 = 0x77;
     h.flags6 |= 2;
+    CHECK(fixture_with_header(&h, 0x4000, 0x2000) == 0);
+    cart_cpu_write(0x6000, 0xC3);
+    CHECK(cart_cpu_read(0x6000) == 0xC3);
+    h.flags6 &= (uint8_t)~2u; // A nonvolatile chip still requires a battery flag.
     CHECK(mapper_init_from_header(&h, fixture_prg, 0x4000, fixture_chr, 0x2000) == -1);
-    CHECK(cart_cpu_read(0x6000) == 0xA6);
+    CHECK(cart_cpu_read(0x6000) == 0xC3);
     return 0;
 }
 
@@ -10213,14 +10225,13 @@ static int test_discrete_followup_loader_and_ram(void) {
             image[0] = 0;
             CHECK(load_rom_memory(image, size) == -1);
             image[0] = signature;
-            iNESHeader unsupported_ram = h;
-            unsupported_ram.flags7 |= 8;
-            unsupported_ram.flags6 |= 2;
-            unsupported_ram.flags10 = 0x77;
-            memcpy(image, &unsupported_ram, sizeof(unsupported_ram));
-            // Separate work/save RAM chips remain an implementation limit for
-            // these boards; keep that rejection transactional until RAM
-            // representation and persistence ordering are handled together.
+            iNESHeader invalid_ram = h;
+            invalid_ram.flags7 |= 8;
+            invalid_ram.flags6 &= (uint8_t)~2u;
+            invalid_ram.flags10 = 0x77;
+            memcpy(image, &invalid_ram, sizeof(invalid_ram));
+            // A save chip requires the battery flag, even when separate work
+            // and save chips are supported by the board's fixed RAM window.
             CHECK(load_rom_memory(image, size) == -1);
             free(image);
             CHECK(cart == previous && memcmp(&active, &ines_header, sizeof(active)) == 0);

@@ -319,12 +319,25 @@ static RamBlock *default_prg_ram(void) {
     return prg_save_ram.size ? &prg_save_ram : &prg_work_ram;
 }
 
+static size_t prg_ram_window_coverage(const RamBlock *ram) {
+    if (!ram || !ram->size) return 0;
+    size_t page = ram->size < PRG_BANK_8K ? ram->size : PRG_BANK_8K;
+    if (page & 0xFFu) return 0;
+    // The fixed window contains complete physical pages. A trailing partial
+    // copy remains open bus, and RAM smaller than one bus page is unmapped.
+    return (PRG_BANK_8K / page) * page;
+}
+
 static inline uint8_t prg_ram_read(uint16_t addr) {
-    return ram_read(default_prg_ram(), addr - 0x6000u);
+    RamBlock *ram = default_prg_ram();
+    size_t offset = addr - 0x6000u;
+    return offset < prg_ram_window_coverage(ram) ? ram_read(ram, offset) : cart_cpu_bus_input;
 }
 
 static inline void prg_ram_write(uint16_t addr, uint8_t value) {
-    ram_write(default_prg_ram(), addr - 0x6000u, value);
+    RamBlock *ram = default_prg_ram();
+    size_t offset = addr - 0x6000u;
+    if (offset < prg_ram_window_coverage(ram)) ram_write(ram, offset, value);
 }
 
 static void chr_ram_write(size_t index, uint8_t value) {
@@ -7417,15 +7430,26 @@ static bool bandai_layout(int mapper, uint8_t submapper, bool nes2,
     return true;
 }
 
+static bool default_prg_ram_geometry_supported(int mapper_no) {
+    switch (mapper_no) {
+        case 0: case 2: case 3: case 7: case 11: case 13: case 66:
+        case 79: case 94: case 113: case 144: case 146: case 180:
+            return true;
+        default:
+            return false;
+    }
+}
+
 static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *ram,
                                    bool chr_is_ram, size_t chr_sz) {
     size_t prg_total = ram->prg_ram + ram->prg_nvram;
     size_t chr_total = ram->chr_ram + ram->chr_nvram;
-    if (mapper_no != 1 && mapper_no != 5 && mapper_no != 82 && mapper_no != 155
+    bool default_prg_layout = default_prg_ram_geometry_supported(mapper_no);
+    if (!default_prg_layout && mapper_no != 1 && mapper_no != 5 && mapper_no != 82 && mapper_no != 155
         && prg_total && (prg_total & (prg_total - 1))) return false;
 
     bool split_prg = ram->prg_ram && ram->prg_nvram;
-    bool split_prg_supported = mapper_no == 1 || mapper_no == 4 || mapper_no == 5
+    bool split_prg_supported = default_prg_layout || mapper_no == 1 || mapper_no == 4 || mapper_no == 5
         || mapper_no == 19 || mapper_no == 24 || mapper_no == 26 || mapper_no == 68
         || mapper_no == 69 || mapper_no == 74 || mapper_no == 76 || mapper_no == 85
         || mapper_no == 88 || mapper_no == 95 || mapper_no == 105 || mapper_no == 118
@@ -7458,7 +7482,7 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         if (prg_total != 0) return false;
     } else if (mapper_no == 30) {
         if (prg_total != 0) return false;
-    } else if (prg_total > 0x2000) {
+    } else if (!default_prg_layout && prg_total > 0x2000) {
         return false;
     }
 
