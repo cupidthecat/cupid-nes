@@ -94,6 +94,7 @@ The geometry work continued after the initial #77 and #78 commits. These later t
 | NINA-001/BNROM and FME-7 memory routing, register writes, and retained state | `cc6991c04e1b6137156babbcf308d127ca719906` | Both |
 | UNROM 512/GTROM CPU RAM and independent PRG-RAM/flash save files | `1a19f5817d89bd173bcb81684419ebfd5a022cfe` | Both |
 | CPU reset clears the latched mapper IRQ while retained counters can raise a new interrupt during reset | `e61606ba859a97a5d2669b0c4037e834687763ce` | Both |
+| Database console-family selection for Zapper wiring across legacy, headerless, and UNIF images | `ea1e0435833314c39670d6ef0bfabf196d72df50` | Both |
 
 Passing AccuracyCoin does not establish the correctness of every cartridge. Focused tests cover bank selection, CPU instructions that access registers and RAM, PPU reads and writes, IRQ timing, open bus, reset, audio output, and storage round trips. NSF tests also check that cartridge rendering and APU IRQ behavior return after music playback ends.
 
@@ -112,3 +113,11 @@ Both local builds also match all 8,991 canonical CPU states and pass all 91 diag
 The [push workflow](https://github.com/cupidthecat/cupid-nes/actions/runs/35441690837) and [pull-request workflow](https://github.com/cupidthecat/cupid-nes/actions/runs/35441692889) also pass at that revision. Both the strict GCC job and Clang sanitizer job build the application, run the hardware suite, match all 8,991 canonical CPU states, pass all 91 pinned diagnostic ROMs, and finish AccuracyCoin at 144/144 with no skipped or unfinished tests. The Linux sanitizer job enables leak detection as well as address and undefined-behavior checks.
 
 These records identify the revision actually tested. Subsequent geometry or documentation changes receive their own PR checks; a historical green result does not establish a later revision's result.
+
+## Database input follow-up
+
+Commit `ea1e0435833314c39670d6ef0bfabf196d72df50` includes all 46 issue checkpoints and corrects Zapper routing for database-identified games. Famicom and Dendy records select the expansion connector; NES records select controller port two. Tests exercise trigger transitions through CPU reads, explicit input overrides, headerless loading, UNIF replacement, failed-load preservation, and NES 2.0 metadata precedence. The ordinary-loader and UNIF regressions both fail against the preceding implementation.
+
+Strict Windows normal and ASan/UBSan builds pass the full hardware suite and AccuracyCoin 144/144, with zero skipped or unfinished tests and a matching cartridge tally in 4,182 frames. The verified fixture revisions and hashes are unchanged. Local build and cartridge logs are under `build/checks/database-zapper-integrated-*` and `build/checks/database-zapper-integrated-sanitized-*`; each result JSON records the tested commit and ROM hash. The [development guide](development.md#run-the-complete-baseline) gives the commands, and the [PR checks](https://github.com/cupidthecat/cupid-nes/pull/123/checks) identify the tested revision for each hosted run.
+
+The normal build also matches all 8,991 canonical CPU states and passes all 91 pinned diagnostic ROMs. Its log and result record are `build/checks/database-zapper-integrated-diagnostics.log` and `build/checks/database-zapper-integrated-diagnostics-result.json`.
