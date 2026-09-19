@@ -719,13 +719,13 @@ static bool mapper_has_shrinking_chr_window(uint16_t mapper_no) {
         case 0: case 1: case 2: case 3: case 4: case 7: case 9: case 10: case 11:
         case 13: case 15: case 16: case 18: case 19: case 21: case 22: case 23:
         case 24:
-        case 25: case 26: case 27:
+        case 25: case 26: case 27: case 30:
         case 32: case 33: case 34: case 48: case 64: case 65: case 66: case 67:
         case 68: case 69: case 71: case 72: case 73: case 74: case 75: case 76:
         case 78:
         case 79: case 80: case 82: case 85: case 87: case 88: case 89: case 90:
         case 92:
-        case 93: case 94: case 95: case 97: case 99: case 101: case 105: case 113: case 118: case 119:
+        case 93: case 94: case 95: case 97: case 99: case 101: case 105: case 111: case 113: case 118: case 119:
         case 140: case 144: case 146: case 151: case 153: case 154: case 155:
         case 157: case 158: case 159: case 180: case 183: case 184: case 185:
         case 191: case 192: case 194: case 195: case 206: case 207: case 209:
@@ -1362,6 +1362,7 @@ static void cnrom_reset(void) { cn.chr_bank = 0; }
 
 // Mapper 185: protected CNROM.
 static bool cnrom185_chr_enabled;
+static bool cnrom185_initial_ram_mapping;
 
 static uint8_t cnrom185_cpu_read(uint16_t a) {
     return cnrom_cpu_read(a);
@@ -1379,24 +1380,32 @@ static void cnrom185_cpu_write(uint16_t a, uint8_t value) {
     } else {
         cnrom185_chr_enabled = (value & 0x03u) == (C.submapper - 4u);
     }
+    if (!cnrom185_chr_enabled) cnrom185_initial_ram_mapping = false;
 }
 
 static uint8_t cnrom185_ppu_read(uint16_t a) {
     a &= 0x1FFFu;
     if (!cnrom185_chr_enabled) return (uint8_t)a | 0x01u;
     size_t page_size = shrunk_chr_page_size(CHR_BANK_8K);
-    return page_size && a < page_size ? C.chr[a] : (uint8_t)a;
+    size_t coverage = cnrom185_initial_ram_mapping && page_size
+                    ? CHR_BANK_8K / page_size * page_size : page_size;
+    return page_size && a < coverage ? C.chr[a % page_size] : (uint8_t)a;
 }
 
 static void cnrom185_ppu_write(uint16_t a, uint8_t value) {
-    (void)a;
-    (void)value;
+    if (!C.chr_is_ram || !cnrom185_chr_enabled) return;
+    a &= 0x1FFFu;
+    size_t page_size = shrunk_chr_page_size(CHR_BANK_8K);
+    size_t coverage = cnrom185_initial_ram_mapping && page_size
+                    ? CHR_BANK_8K / page_size * page_size : page_size;
+    if (page_size && a < coverage) chr_ram_write(a % page_size, value);
 }
 
 static Mirroring cnrom185_mirr(void) { return C.mirr_base; }
 
 static void cnrom185_reset(void) {
     cnrom185_chr_enabled = true;
+    cnrom185_initial_ram_mapping = C.chr_is_ram;
 }
 
 // Mappers 75/151: VRC1.
@@ -4366,7 +4375,9 @@ uint8_t cart_nt_read(uint16_t addr, uint8_t *nt_ram) {
     }
     if (cart == &mapper_unrom512 && unrom512_four_screen_chr) {
         size_t offset = 0x6000u + ((addr - 0x2000u) & 0x1FFFu);
-        return C.chr[offset];
+        if (C.chr_is_ram) return C.chr[offset];
+        RamBlock *ram = chr_save_ram.size ? &chr_save_ram : &chr_work_ram;
+        return ram->data[offset];
     }
     if (cart == &mapper_vrc6 && vrc6.ppu_initialized) {
         uint16_t off = (uint16_t)((addr - 0x2000u) & 0x0FFFu);
@@ -4467,7 +4478,15 @@ void cart_nt_write(uint16_t addr, uint8_t v, uint8_t *nt_ram) {
     }
     if (cart == &mapper_unrom512 && unrom512_four_screen_chr) {
         size_t offset = 0x6000u + ((addr - 0x2000u) & 0x1FFFu);
-        chr_ram_write(offset, v);
+        if (C.chr_is_ram) {
+            chr_ram_write(offset, v);
+        } else {
+            RamBlock *ram = chr_save_ram.size ? &chr_save_ram : &chr_work_ram;
+            if (ram->data[offset] != v) {
+                ram->data[offset] = v;
+                if (ram == &chr_save_ram && battery_enabled) chr_ram_dirty = true;
+            }
+        }
         return;
     }
     if (cart == &mapper_vrc6 && vrc6.ppu_initialized) {
@@ -6216,6 +6235,7 @@ static struct {
     FlashMode flash_mode;
     bool software_id;
     bool flash_writable;
+    bool chr_selected;
     bool mirroring_bit_enabled;
     bool led_variant;
     Mirroring mirr;
@@ -6333,6 +6353,7 @@ static void m30_latch(uint8_t value) {
     size_t chr_banks = chr_page_size ? C.chr_sz / chr_page_size : 1;
     m30.prg_bank = value & 0x1F;
     m30.chr_bank = (uint8_t)(((value >> 5) & 0x03) % chr_banks);
+    m30.chr_selected = true;
     if (m30.mirroring_bit_enabled) {
         if (C.submapper == 3)
             m30.mirr = (value & 0x80) ? MIRROR_VERTICAL : MIRROR_HORIZONTAL;
@@ -6368,19 +6389,13 @@ static void m30_cpu_write(uint16_t a, uint8_t value) {
 static uint8_t m30_ppu_read(uint16_t a) {
     a &= 0x1FFF;
     if (!C.chr_sz) return (uint8_t)a;
-    size_t page_size = C.chr_sz < CHR_BANK_8K ? C.chr_sz : CHR_BANK_8K;
-    size_t pages = C.chr_sz / page_size;
-    size_t bank = m30.chr_bank % pages;
-    return C.chr[bank * page_size + (a % page_size)];
+    if (!C.chr_is_ram && !m30.chr_selected) return (uint8_t)a;
+    return discrete_chr8_read(a, m30.chr_bank);
 }
 
 static void m30_ppu_write(uint16_t a, uint8_t value) {
     if (!C.chr_sz) return;
-    a &= 0x1FFF;
-    size_t page_size = C.chr_sz < CHR_BANK_8K ? C.chr_sz : CHR_BANK_8K;
-    size_t pages = C.chr_sz / page_size;
-    size_t bank = m30.chr_bank % pages;
-    chr_ram_write(bank * page_size + (a % page_size), value);
+    discrete_chr8_write(a, m30.chr_bank, value);
 }
 
 static Mirroring m30_mirr(void) { return m30.mirr; }
@@ -6406,7 +6421,8 @@ static void m30_power_on(const iNESHeader *h) {
                 break;
             case 0x09:
                 m30.mirr = MIRROR_FOUR;
-                unrom512_four_screen_chr = C.chr_sz >= 0x8000;
+                unrom512_four_screen_chr = (C.chr_is_ram ? C.chr_sz
+                    : chr_work_ram.size + chr_save_ram.size) >= 0x8000;
                 break;
         }
     }
@@ -6556,19 +6572,12 @@ static void m111_cpu_write(uint16_t addr, uint8_t value) {
 static uint8_t m111_ppu_read(uint16_t addr) {
     addr &= 0x1FFFu;
     if (!C.chr_sz) return (uint8_t)addr;
-    size_t page_size = C.chr_sz < CHR_BANK_8K ? C.chr_sz : CHR_BANK_8K;
-    size_t pages = C.chr_sz / page_size;
-    size_t bank = ((m111.bank_latch >> 4) & 1u) % pages;
-    return C.chr[bank * page_size + (addr % page_size)];
+    return discrete_chr8_read(addr, (m111.bank_latch >> 4) & 1u);
 }
 
 static void m111_ppu_write(uint16_t addr, uint8_t value) {
     if (!C.chr_sz) return;
-    addr &= 0x1FFFu;
-    size_t page_size = C.chr_sz < CHR_BANK_8K ? C.chr_sz : CHR_BANK_8K;
-    size_t pages = C.chr_sz / page_size;
-    size_t bank = ((m111.bank_latch >> 4) & 1u) % pages;
-    chr_ram_write(bank * page_size + (addr % page_size), value);
+    discrete_chr8_write(addr, (m111.bank_latch >> 4) & 1u, value);
 }
 
 static Mirroring m111_mirr(void) { return MIRROR_FOUR; }
@@ -7496,10 +7505,7 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
 
     size_t mixed_chr_ram = mmc3_mixed_chr_expected_ram(mapper_no);
     bool unmapped_chr_storage = false;
-    if (mapper_no == 111) {
-        if (!chr_is_ram) return false;
-        if (nes2 && (ram->chr_ram != chr_sz || ram->chr_nvram != 0)) return false;
-    } else if (mixed_chr_ram) {
+    if (mixed_chr_ram) {
         if (chr_is_ram || chr_sz == 0) return false;
         if (nes2 && (ram->chr_ram != mixed_chr_ram || ram->chr_nvram != 0)) return false;
     } else if (mapper_no == 77) {
@@ -7533,7 +7539,7 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
         // These fixed windows and masked bank registers can leave part of a
         // declared chip unreachable without changing its physical allocation.
         case 0: case 2: case 7: case 13: case 15: case 66: case 71:
-        case 73: case 94: case 97: case 180: case 232:
+        case 73: case 94: case 97: case 180: case 185: case 232:
         case 28: case 30: case 96: case 111: chr_limit = SIZE_MAX; break;
         case 18: case 32: case 65: chr_limit = 0x40000; break;
         case 75: case 151: chr_limit = 0x20000; break;
@@ -7739,24 +7745,13 @@ int mapper_init_from_header_metadata(const iNESHeader *h,
         fprintf(stderr, "Unsupported cartridge layout for mapper %d\n", mapper_no);
         return -1;
     }
-    if (mapper_no == 185 && chr_is_ram) {
-        fprintf(stderr, "Unsupported ROM/RAM size for mapper 185\n");
-        return -1;
-    }
     if (mmc3_mixed_chr_expected_ram(mapper_no) && chr_is_ram) {
         fprintf(stderr, "Unsupported ROM size for mapper %d\n", mapper_no);
         return -1;
     }
-    if (mapper_no == 30 && !chr_is_ram) {
-        fprintf(stderr, "Unsupported ROM/RAM size for mapper 30\n");
-        return -1;
-    }
-    if (mapper_no == 68 && (h->flags6 & 0x08)) {
-        fprintf(stderr, "Unsupported ROM/RAM size for mapper 68\n");
-        return -1;
-    }
-    if (mapper_no == 111 && !chr_is_ram) {
-        fprintf(stderr, "Unsupported ROM/RAM size for mapper 111\n");
+    if (mapper_no == 30 && !chr_is_ram && (h->flags6 & 9u) == 9u
+        && ram.chr_ram && ram.chr_nvram) {
+        fprintf(stderr, "Unsupported mixed CHR storage for four-screen mapper 30\n");
         return -1;
     }
     if (!ram_geometry_supported(mapper_no, nes2, &ram, chr_is_ram, chr_sz)

@@ -552,7 +552,7 @@ static void legacy_ram_sizes(unsigned mapper, bool battery, bool chr_rom_present
         if (battery) sizes->prg_nvram = banks * 0x2000;
         else sizes->prg_ram = banks * 0x2000;
     }
-    if (!chr_rom_present)
+    if (!chr_rom_present || mapper == 30 || mapper == 111)
         sizes->chr_ram = mapper == 13 || mapper == 111 ? 0x4000
                        : mapper == 30 || mapper == 96 ? 0x8000 : 0x2000;
 }

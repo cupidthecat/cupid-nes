@@ -52,6 +52,7 @@ static uint8_t *image_for(const iNESHeader *h, size_t prg_bytes, size_t chr_byte
 static void prepare_mapper_cpu_nops(void);
 static void run_mapper_nops(unsigned count);
 static void sunsoft69_command(uint8_t command, uint8_t value);
+static int discrete_cpu_store(uint16_t address, uint8_t value);
 
 #define CHECK(condition) do { \
     if (!(condition)) { \
@@ -2162,6 +2163,33 @@ static int test_unrom512_banks_flash_and_mirroring(void) {
     cart_cpu_write(0x8123, 0x00);
     CHECK(fixture_prg[3 * 0x4000 + 0x123] == readonly);
 
+    // CHR ROM remains unmapped until the board's latch selects a page. A
+    // separately declared CHR RAM chip does not replace the ROM source.
+    {
+        iNESHeader rom_source = unrom512_header(1, false, 7);
+        rom_source.chr_rom_chunks = 2;
+        size_t source_size;
+        uint8_t *source_image = image_for(&rom_source, 0x40000, 0x4000, &source_size);
+        CHECK(source_image != NULL);
+        uint8_t *source_chr = source_image + sizeof(rom_source) + 0x40000;
+        memset(source_chr, 0xA6, 0x2000);
+        memset(source_chr + 0x2000, 0xB7, 0x2000);
+        CHECK(load_rom_memory(source_image, source_size) == 0);
+        ppu_power_on(&ppu);
+        CHECK(ppu_read(0x0123) == 0x23);
+        ppu_write(0x0123, 0x5D);
+        CHECK(ppu_read(0x0123) == 0x23);
+        cart_cpu_write(0xC000, 0x20);
+        CHECK(ppu_read(0x0123) == 0xB7);
+        ppu_write(0x0123, 0x5D);
+        CHECK(ppu_read(0x0123) == 0xB7);
+        Mapper *source_cart = cart;
+        uint8_t *source_prg = prg_rom;
+        CHECK(load_rom_memory(source_image, source_size - 1) == -1);
+        free(source_image);
+        CHECK(cart == source_cart && prg_rom == source_prg && ppu_read(0x0123) == 0xB7);
+    }
+
     // Switchable one-screen and submapper 3 H/V mirroring use latch bit 7.
     h = unrom512_header(1, false, 9);
     h.flags6 |= 0x08;
@@ -2422,6 +2450,35 @@ static int test_mapper111_banks_flash_and_nametables(void) {
     CHECK(cart_ppu_read(0x0123) == 0x69);
     cart_cpu_write(0x5000, 0x10);
     CHECK(cart_ppu_read(0x0123) == 0x69);
+
+    // With CHR ROM present, the latch selects ROM pages even when the header
+    // also declares the board's CHR RAM. Writes leave the selected ROM intact.
+    {
+        iNESHeader rom_source = h;
+        rom_source.chr_rom_chunks = 2;
+        rom_source.zero[0] = 8;
+        size_t source_size;
+        uint8_t *source_image = image_for(&rom_source, 0x80000, 0x4000, &source_size);
+        CHECK(source_image != NULL);
+        uint8_t *source_chr = source_image + sizeof(rom_source) + 0x80000;
+        memset(source_chr, 0xA6, 0x2000);
+        memset(source_chr + 0x2000, 0xB7, 0x2000);
+        CHECK(load_rom_memory(source_image, source_size) == 0);
+        ppu_power_on(&ppu);
+        CHECK(ppu_read(0x0123) == 0xA6);
+        ppu_write(0x0123, 0x5D);
+        CHECK(ppu_read(0x0123) == 0xA6);
+        cart_cpu_write(0x5000, 0x10);
+        CHECK(ppu_read(0x0123) == 0xB7);
+        ppu_write(0x0123, 0x5D);
+        CHECK(ppu_read(0x0123) == 0xB7);
+        Mapper *source_cart = cart;
+        uint8_t *source_prg = prg_rom;
+        CHECK(load_rom_memory(source_image, source_size - 1) == -1);
+        free(source_image);
+        CHECK(cart == source_cart && prg_rom == source_prg && ppu_read(0x0123) == 0xB7);
+    }
+
     iNESHeader invalid = h;
     invalid.flags10 = 7;
     CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x80000, fixture_chr, 0x4000) == -1);
@@ -8765,13 +8822,42 @@ static int test_sunsoft4_chr_ram_persistence_and_loader(void) {
     int result = save_fixture_end(&paths);
     CHECK(result == 0);
 
-    CHECK(fixture(68, 0x20000, 0x2000, false) == 68);
-    cart_cpu_write(0xF000, 0x1B);
+    // Four-screen headers are accepted. Until the mapper selects CHR-backed
+    // nametables, all four cartridge nametable pages remain independent.
+    iNESHeader four = header_for(68, 0x20000, false);
+    four.flags6 |= 0x08;
+    size_t four_size;
+    uint8_t *four_image = image_for(&four, 0x20000, 0x2000, &four_size);
+    CHECK(four_image != NULL);
+    uint8_t *four_chr = four_image + sizeof(four) + 0x20000;
+    memset(four_chr + 0x0400, 0x31, 0x0400);
+    memset(four_chr + 0x0800, 0x52, 0x0400);
+    CHECK(load_rom_memory(four_image, four_size) == 0);
+    free(four_image);
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    CHECK(cpu_power_on(&cpu));
+    ppu_write(0x2001, 0x21);
+    ppu_write(0x2401, 0x42);
+    ppu_write(0x2801, 0x63);
+    ppu_write(0x2C01, 0x84);
+    CHECK(ppu_read(0x2001) == 0x21 && ppu_read(0x2401) == 0x42);
+    CHECK(ppu_read(0x2801) == 0x63 && ppu_read(0x2C01) == 0x84);
+    CHECK(discrete_cpu_store(0xC000, 1) == 0);
+    CHECK(discrete_cpu_store(0xD000, 2) == 0);
+    CHECK(discrete_cpu_store(0xE000, 0x10) == 0);
+    CHECK(ppu_read(0x2001) == 0x31 && ppu_read(0x2401) == 0x52);
+    CHECK(ppu_read(0x2801) == 0x31 && ppu_read(0x2C01) == 0x52);
+
     Mapper *previous = cart;
-    iNESHeader invalid = header_for(68, 0x20000, false);
-    invalid.flags6 |= 0x08;
-    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x20000, fixture_chr, 0x2000) == -1);
-    CHECK(cart == previous && cart_cpu_read(0x8000) == 6);
+    uint8_t *previous_prg = prg_rom;
+    iNESHeader invalid = four;
+    invalid.flags7 |= 8;
+    invalid.prg_ram_size = 0x10;
+    four_image = image_for(&invalid, 0x20000, 0x2000, &four_size);
+    CHECK(four_image != NULL && load_rom_memory(four_image, four_size) == -1);
+    free(four_image);
+    CHECK(cart == previous && prg_rom == previous_prg && ppu_read(0x2001) == 0x31);
     return 0;
 }
 
@@ -9918,6 +10004,32 @@ static int test_cnrom185_loader_and_cnrom_regression(void) {
         unload_rom();
     }
 
+    // CHR-RAM-only protected CNROM uses the same protection latch. Enabled
+    // reads and writes reach RAM; disabled pattern-table accesses stay open bus.
+    {
+        iNESHeader ram_only = header_for(185, 0x8000, true);
+        size_t size;
+        uint8_t *image = image_for(&ram_only, 0x8000, 0, &size);
+        CHECK(image != NULL);
+        image[sizeof(ram_only)] = 0xFF;
+        CHECK(load_rom_memory(image, size) == 0);
+        ppu_power_on(&ppu);
+        ppu_write(0x0122, 0xA6);
+        CHECK(ppu_read(0x0122) == 0xA6);
+        cart_cpu_write(0x8000, 0x00);
+        ppu_write(0x0122, 0xB7);
+        CHECK(ppu_read(0x0122) == 0x23);
+        cart_cpu_write(0x8000, 0x01);
+        CHECK(ppu_read(0x0122) == 0xA6);
+        ppu_write(0x0122, 0xC8);
+        CHECK(ppu_read(0x0122) == 0xC8);
+        Mapper *ram_cart = cart;
+        uint8_t *ram_prg = prg_rom;
+        CHECK(load_rom_memory(image, size - 1) == -1);
+        free(image);
+        CHECK(cart == ram_cart && prg_rom == ram_prg && ppu_read(0x0122) == 0xC8);
+    }
+
     CHECK(fixture(3, 0x8000, 0x8000, false) == 3);
     cart_cpu_write(0x8000, 2);
     CHECK(cart_ppu_read(0) == 16);
@@ -9931,9 +10043,6 @@ static int test_cnrom185_loader_and_cnrom_regression(void) {
         CHECK(cart == previous && cart_ppu_read(0) == 16);
     }
 
-    iNESHeader invalid = header_for(185, 0x8000, true);
-    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x8000, fixture_chr, 0x2000) == -1);
-    CHECK(cart == previous && cart_ppu_read(0) == 16);
     return 0;
 }
 
