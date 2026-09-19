@@ -4344,7 +4344,7 @@ static int test_loader_small_and_irregular_rom_pages(void) {
     // The 32 KiB discrete-window boards use the same whole-image repetition
     // rule for small PRG payloads. These paths are explicitly safe below the
     // legacy 16 KiB minimum.
-    const unsigned small_discrete[] = {11, 79, 113, 144, 146};
+    const unsigned small_discrete[] = {11, 79, 94, 113, 144, 146, 180};
     for (size_t i = 0; i < sizeof(small_discrete) / sizeof(small_discrete[0]); ++i) {
         h = header_for(small_discrete[i], 0x4000, false);
         h.flags7 |= 0x08;
@@ -4359,25 +4359,6 @@ static int test_loader_small_and_irregular_rom_pages(void) {
         CHECK(cart_cpu_read(0xA100) == (uint8_t)(0x60 + i));
         CHECK(cart_cpu_read(0xC100) == (uint8_t)(0x60 + i));
         CHECK(cart_cpu_read(0xE100) == (uint8_t)(0x60 + i));
-    }
-
-    // UxROM still indexes complete 16 KiB pages. Keep tiny images out of that
-    // mapper until its fixed/switchable windows have dedicated small-page
-    // handling, and prove a rejected replacement leaves the live cart intact.
-    Mapper *tiny_previous = cart;
-    uint8_t *tiny_previous_prg = prg_rom;
-    for (size_t i = 0; i < 2; ++i) {
-        unsigned mapper = i ? 180 : 94;
-        h = header_for(mapper, 0x4000, false);
-        h.flags7 |= 0x08;
-        h.prg_rom_chunks = 0x34; // 8 KiB.
-        h.flags9 = 0x0F;
-        image = image_for(&h, 0x2000, 0x2000, &size);
-        CHECK(image != NULL);
-        CHECK(load_rom_memory(image, size) == -1);
-        free(image);
-        CHECK(cart == tiny_previous && prg_rom == tiny_previous_prg);
-        CHECK(cart_cpu_read(0x8100) == 0x64);
     }
 
     h = header_for(69, 0x4000, false);
@@ -10282,6 +10263,56 @@ static int test_mapper180_full_prg_range(void) {
     return 0;
 }
 
+static int test_uxrom94_180_sub16_prg_geometry(void) {
+    const unsigned boards[] = {94, 180};
+    for (size_t i = 0; i < sizeof(boards) / sizeof(boards[0]); ++i) {
+        iNESHeader h = header_for(boards[i], 0x8000, false);
+        h.flags7 |= 8;
+        h.prg_rom_chunks = 0x31; // 3 * 2^12 = 12 KiB.
+        h.chr_rom_chunks = 0x30; // 1 * 2^12 = 4 KiB.
+        h.flags9 = 0xFF;
+        size_t size;
+        uint8_t *image = image_for(&h, 0x3000, 0x1000, &size);
+        CHECK(image != NULL);
+        uint8_t *prg = image + sizeof(h);
+        uint8_t *chr = prg + 0x3000;
+        memset(prg, 0x21, 0x1000);
+        memset(prg + 0x1000, 0x42, 0x1000);
+        memset(prg + 0x2000, 0x63, 0x1000);
+        memset(chr, 0xA3, 0x1000);
+
+        CHECK(load_rom_memory(image, size) == 0);
+        ppu_power_on(&ppu);
+        apu_power_on(&apu);
+        CHECK(cpu_power_on(&cpu));
+        CHECK(discrete_cpu_load(0x8100, 0x21) == 0);
+        CHECK(discrete_cpu_load(0x9100, 0x42) == 0);
+        CHECK(discrete_cpu_load(0xA100, 0x63) == 0);
+        CHECK(discrete_cpu_load(0xB100, 0x21) == 0);
+        CHECK(discrete_cpu_load(0xC100, 0x42) == 0);
+        CHECK(discrete_cpu_load(0xD100, 0x63) == 0);
+        CHECK(discrete_cpu_load(0xE100, 0xE1) == 0);
+        CHECK(ppu_read(0x0123) == 0xA3 && ppu_read(0x1123) == 0x23);
+
+        CHECK(discrete_cpu_store(0x8123, i ? 0xA5 : 0x1C) == 0);
+        CHECK(discrete_cpu_load(0x8100, 0x21) == 0);
+        CHECK(discrete_cpu_load(0xC100, 0x42) == 0);
+        CHECK(discrete_cpu_load(0xE100, 0xE1) == 0);
+
+        Mapper *previous = cart;
+        uint8_t *previous_prg = prg_rom;
+        CHECK(load_rom_memory(image, size - 1) == -1);
+        CHECK(cart == previous && prg_rom == previous_prg);
+        CHECK(discrete_cpu_load(0x8100, 0x21) == 0);
+        CHECK(discrete_cpu_load(0xD100, 0x63) == 0);
+        CHECK(discrete_cpu_load(0xE100, 0xE1) == 0);
+        CHECK(ppu_read(0x0123) == 0xA3 && ppu_read(0x1123) == 0x23);
+        free(image);
+        CHECK(unload_rom());
+    }
+    return 0;
+}
+
 static void small_chr_board_bank_write(unsigned mapper) {
     switch (mapper) {
         case 66:  cart_cpu_write(0x8000, 0x30); break;
@@ -11163,6 +11194,7 @@ int test_mapper_accuracy(void) {
         test_colordreams_high_banks_and_mapper144, test_unrom94_180_cpu_banks,
         test_nina_cpu_decode_and_mirroring, test_nina_chr_ram_banks,
         test_discrete_followup_loader_and_ram, test_mapper180_full_prg_range,
+        test_uxrom94_180_sub16_prg_geometry,
         test_native_shrunk_chr8_windows, test_discrete_followup_page_geometry,
         test_discrete_followup_ignored_submappers,
         test_discrete_followup_saves,

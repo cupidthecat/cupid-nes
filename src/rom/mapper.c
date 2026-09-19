@@ -1254,6 +1254,8 @@ static void discrete_chr8_write(uint16_t a, uint8_t bank, uint8_t value) {
 static struct { uint8_t bank; } ux;
 static uint8_t uxrom_cpu_read(uint16_t a) {
     if (a >= 0x6000 && a <= 0x7FFF) return prg_ram_read(a);
+    if (a >= 0x8000 && C.prg_sz < PRG_BANK_16K)
+        return repeated_prg_window_read(a, 0x8000, PRG_BANK_32K);
     if (a >= 0x8000 && a <= 0xBFFF) {
         size_t banks = C.prg_sz / PRG_BANK_16K;
         size_t b = C.mapper_no == 180 || banks == 0 ? 0 : ux.bank % banks;
@@ -7309,7 +7311,8 @@ int mapper_init_from_header_metadata(const iNESHeader *h,
     // below 16 KiB. Other mapper paths still index complete 8/16/32 KiB
     // pages and require their normal minimum until those paths are converted.
     bool small_prg_supported = mapper_no == 0 || mapper_no == 11 || mapper_no == 69
-        || mapper_no == 79 || mapper_no == 113 || mapper_no == 144 || mapper_no == 146;
+        || mapper_no == 79 || mapper_no == 94 || mapper_no == 113 || mapper_no == 144
+        || mapper_no == 146 || mapper_no == 180;
     if (prg_sz < PRG_BANK_16K && !small_prg_supported) {
         fprintf(stderr, "Unsupported PRG size for mapper %d\n", mapper_no);
         return -1;
