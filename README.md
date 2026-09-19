@@ -1,12 +1,13 @@
 # Cupid NES Emulator
 
-Cupid runs NES and Famicom cartridges, Famicom Disk System images with a supplied
-BIOS, and supported VS System arcade images. It uses SDL2 for video, audio, and
-controllers. The CPU and PPU core is C11; cartridge board modules and the EPSM
-YMF288 sound engine use C++17.
+Cupid runs NES and Famicom cartridges, UNIF images, NSF and NSFe music, Famicom
+Disk System disks, StudyBox media, and supported VS System arcade images. Disk
+System and StudyBox images require their respective BIOS files. It uses SDL2 for
+video, audio, and controllers. The CPU and PPU core is C11; cartridge board modules
+and the EPSM YMF288 sound engine use C++17.
 
 The core implements NTSC, PAL, and Dendy timing. The
-[tested implementation](docs/accuracy-checkpoints.md#combined-validation) passes
+[tested implementation](docs/cartridge-checkpoints.md#combined-validation) passes
 all 144 AccuracyCoin tests with zero skipped or unfinished results, the 91-ROM
 diagnostic collection, and the 8,991-state canonical CPU trace. The
 [accuracy notes](docs/accuracy.md) describe the test setup and coverage. Mapper,
@@ -27,8 +28,15 @@ does not exercise.
 | CPU and PPU | Official and undocumented instructions, shared OAM/DMC DMA timing, register delays, sprite evaluation, regional frame timing, selectable startup alignment and RAM contents, and optional PPU reset suppression |
 | Cartridges | Board-specific PRG/CHR banking, nametable routing, bus conflicts, RAM permissions, IRQs, EEPROM, and flash; the [mapper table](docs/hardware.md#cartridge-mappers) lists supported families and variants |
 | Sound | Five base APU channels, CPU-cycle band-limited reconstruction, cartridge and disk expansion audio, and EPSM stereo output with timer IRQs |
-| Controllers and storage | Gamepads, multiplayer adapters, light guns, paddles, mats, Family BASIC and Subor keyboards, mouse/trackball/tablet input, specialty expansion controllers, Turbo File, and BattleBox |
+| Music and other media | NSF/NSFe initialization and play scheduling, bank switching and expansion sound; StudyBox tape transport and audio; Famicom Network System RAM, character-ROM, and controller interfaces |
+| Controllers and storage | NES, SNES, and Virtual Boy gamepads; SNES and Subor mice; NTT Data keypads; multiplayer adapters, light guns, paddles, mats, keyboards, trackballs, tablets, specialty expansion controllers, Turbo File, and BattleBox |
 | VS System | Header-selected RGB PPU and controller behavior, cabinet controls and protection, and dual machines with shared RAM, two screens, and mixed audio |
+
+Cartridge loading supports iNES, NES 2.0, named UNIF boards, and an optional CRC
+database for legacy corrections and recognized headerless images. Small and
+irregular images use the board's implemented page mapping, including open bus
+where a complete page cannot be mapped. Volatile RAM, battery RAM, and CHR
+storage retain their separate ownership and save behavior.
 
 Device selection and timing follow the ROM header and
 [command-line options](docs/configuration.md). Supported mapper families can still
@@ -99,6 +107,7 @@ other peripheral combinations.
 | Arrow keys | D-pad |
 | R | Soft reset |
 | F7 / F6 | Show palette editor / restore default palette |
+| Page Up / Page Down | Next / previous NSF or NSFe track |
 | Ctrl+V | Paste palette text |
 
 The keyboard and first SDL game controller both drive player 1. More controllers

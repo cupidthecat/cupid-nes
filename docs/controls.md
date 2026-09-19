@@ -17,13 +17,16 @@ Select emulated input hardware with the options in [configuration](configuration
 | M, held | Original Famicom controller 2 microphone signal; Bandai Karaoke microphone when mapper 188 is loaded |
 | F6 | Restore the built-in palette |
 | F7 | Toggle the palette editor |
+| Page Up / Page Down | Next / previous NSF or NSFe track |
 | Ctrl+V | Paste palette text |
 
 Close the window for normal shutdown. The M key supplies the emulated microphone line only; Cupid does not capture a host microphone. Soft reset keeps the selected console, CPU/APU and PPU profiles, current CPU/PPU clock alignment, controller configuration, and persistent peripheral contents. It does not rerun command-line setup or reconnect host controllers.
 
+For NSF and NSFe files, Page Up selects the next track and Page Down selects the previous track, wrapping at either end. Changing tracks clears the player's RAM and audio state, then runs the file's initialization routine for the selected song. NSFe track names are printed when present.
+
 Mapper 188 Bandai Karaoke cartridges also use player-one A/B as their cartridge-owned A and B buttons. Z/X and the first SDL controller's A/B buttons update those inputs while mapper 188 is active. M drives the cartridge microphone as well as the original Famicom microphone line; mapper 188 reports the held microphone on alternating emulation frames.
 
-With `--ppu-reset-suppression`, R preserves PPU registers, scroll latches, raster position, and rendering state while the other reset paths still run. The setting also applies to the second PPU in a dual VS system. It does not change hard power-on behavior.
+With `--ppu-reset-suppression`, R preserves PPU registers, scroll latches, raster position, and rendering state while the other reset paths still run. The setting also applies to the second PPU in a dual VS system. NSF and NSFe playback always reset their clock-only PPU state. The setting does not change hard power-on behavior.
 
 Keyboard peripherals are handled before the normal application shortcuts. Family BASIC consumes every keyboard event while selected. Subor, Party Tap, Exciting Boxing, Jissen Mahjong, and mat handlers consume the keys they map, so an overlapping key acts on the selected peripheral instead of the later shortcut. For example, R is a mat key and a Subor letter key, and the number keys used by Party Tap or Boxing take priority over VS coin shortcuts.
 

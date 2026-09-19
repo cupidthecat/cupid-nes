@@ -39,7 +39,7 @@ The `default` RAM profile clears CPU and nametable RAM and fills primary and sec
 
 `--power-on-seed` sets a separate random source from `--startup-seed`; it may be supplied once. Repeating the same seed, image, and options reproduces the startup state. RAM initialization occurs on hard power-on or cartridge insertion, depending on the memory's owner. Soft reset preserves RAM. `--random-vblank` can be used with any RAM profile and remains off unless supplied.
 
-`--ppu-reset-suppression` leaves the PPU running across the R-key soft reset. CPU, APU, cartridge reset signals, and VS controls still follow their normal reset paths. The PPU retains its registers, scroll latches, raster position, and rendering state; its standalone clock remainder and OAM decay timestamps are cleared. Both screens follow this policy in a dual VS system. Hard power-on still initializes the PPU.
+`--ppu-reset-suppression` leaves the PPU running across the R-key soft reset. CPU, APU, cartridge reset signals, and VS controls still follow their normal reset paths. The PPU retains its registers, scroll latches, raster position, and rendering state; its standalone clock remainder and OAM decay timestamps are cleared. Both screens follow this policy in a dual VS system. NSF and NSFe playback always reset their clock-only PPU state. Hard power-on still initializes the PPU.
 
 `--video-filter ntsc-composite` reconstructs a 512 by 480 image from the PPU's per-pixel palette, grayscale, emphasis, and frame-phase data. Each decoded line is repeated once vertically. The filter runs after the emulated frame completes, so CPU/PPU timing and the light-gun brightness inputs stay unchanged. PAL, Dendy, and VS hardware retain direct output and report that fallback at startup. The composite path uses the PPU signal rather than an edited RGB palette.
 
@@ -49,7 +49,11 @@ Choose either `--startup-phase` or `--startup-seed`. The CPU offset delays reset
 
 `--mmc3-revision a` selects the earlier IRQ qualification rule. MMC6 and MC-ACC keep their own board-specific IRQ behavior.
 
-`--cart-dip` accepts decimal and C-style base prefixes such as `0x`. Mapper 105 uses the low four bits to select its competition timer interval.
+`--cart-dip` accepts decimal and C-style base prefixes such as `0x`. Mapper 105 uses the low four bits to select its competition timer interval. The FamicomBox menu board exposes all eight bits at `$5002` and its register aliases.
+
+## NSF and NSFe playback
+
+Supply an NSF or NSFe file as the image path. No BIOS or music-specific command-line option is required. The file selects NTSC or PAL timing and its initial track; [Page Up and Page Down](controls.md#keyboard-controls) select other tracks. The music environment does not render a game screen.
 
 ## EPSM sound
 

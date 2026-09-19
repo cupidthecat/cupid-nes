@@ -1,6 +1,6 @@
 # Cupid documentation
 
-Cupid has an SDL application for running games and a separate executable for testing the hardware core. Both link the same C11 device code and C++17 expansion-sound implementation. Start with [getting started](getting-started.md) to build the application, or [development and testing](development.md) to investigate a failure.
+Cupid has an SDL application for running games and music and a separate executable for testing the hardware core. Both link the same C11 device code and C++17 cartridge and expansion-sound implementations. Start with [getting started](getting-started.md) to build the application, or [development and testing](development.md) to investigate a failure.
 
 ## Using the emulator
 
@@ -22,6 +22,7 @@ Cupid has an SDL application for running games and a separate executable for tes
 | [Development and testing](development.md) | Build commands, pinned test data, diagnostic modes, and regression workflow |
 | [Accuracy notes](accuracy.md) | Detailed CPU, PPU, APU, DMA, and cartridge behavior, test conventions, and limits |
 | [Implementation checkpoints](accuracy-checkpoints.md) | Tested issue and review commits, full AccuracyCoin results, and combined CI evidence |
+| [Cartridge and media checkpoints](cartridge-checkpoints.md) | Issue #77 onward: geometry, cartridge families, music, media, startup behavior, and controllers |
 | [Contributing](../CONTRIBUTING.md) | Patch scope, review expectations, test evidence, and documentation changes |
 | [Credits and references](credits.md) | Component attribution, licenses, external tests, and hardware references |
 
