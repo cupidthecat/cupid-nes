@@ -563,6 +563,23 @@ CartridgeBoard *board_create_with_metadata(const iNESHeader *header,
         std::fprintf(stderr, "Missing cartridge CHR ROM\n");
         return nullptr;
     }
+    const bool corrected = database && database->present;
+    const unsigned mapper = corrected ? database->mapper
+        : static_cast<unsigned>(rom_mapper_number(header));
+    const unsigned submapper = corrected && database->submapper_present ? database->submapper
+        : !corrected && nes20 ? header->prg_ram_size >> 4 : 0;
+    if (!board_is_fcns_header(header) && (mapper == 34 || mapper == 69)) {
+        RomRamSizes ram{};
+        rom_ram_sizes_with_metadata(header, database, &ram);
+        if ((ram.prg_nvram || ram.chr_nvram) && !(header->flags6 & 2)) {
+            std::fprintf(stderr, "Nonvolatile RAM declared without the battery flag\n");
+            return nullptr;
+        }
+        if (mapper == 34 && submapper > 2) {
+            std::fprintf(stderr, "Unsupported mapper/submapper: 34/%u\n", submapper);
+            return nullptr;
+        }
+    }
     try {
         auto board = std::make_unique<CartridgeBoard>();
         board->instance = board_is_fcns_header(header)

@@ -75,6 +75,7 @@ int test_mmc5_extended_geometry_accuracy(void);
 int test_native_ram_accuracy(void);
 int test_board_irem77_accuracy(void);
 int test_default_prg_ram_geometry_accuracy(void);
+int test_board_nina_fme7_accuracy(void);
 int test_native_chr_capacity_accuracy(void);
 int test_bandai_accuracy(void);
 int test_fds_accuracy(void);
@@ -177,6 +178,7 @@ int main(int argc, char **argv) {
     failures += test_native_ram_accuracy();
     failures += test_board_irem77_accuracy();
     failures += test_default_prg_ram_geometry_accuracy();
+    failures += test_board_nina_fme7_accuracy();
     failures += test_native_chr_capacity_accuracy();
     failures += test_bandai_accuracy();
     failures += test_fds_accuracy();

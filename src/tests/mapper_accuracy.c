@@ -4460,12 +4460,15 @@ static int test_loader_small_and_irregular_rom_pages(void) {
 
     Mapper *previous = cart;
     uint8_t *previous_prg = prg_rom;
-    h.prg_ram_size = 0x10; // Unsupported mapper-69 submapper one.
+    h.prg_ram_size = 0x10; // FME-7 does not decode a submapper number.
     image = image_for(&h, 0xA0000, 0x2000, &size);
     CHECK(image != NULL);
-    CHECK(load_rom_memory(image, size) == -1);
-    free(image);
+    CHECK(load_rom_memory(image, size - 1) == -1);
     CHECK(cart == previous && prg_rom == previous_prg && cart_cpu_read(0xE000) == 79);
+    CHECK(load_rom_memory(image, size) == 0);
+    sunsoft69_command(9, 63);
+    CHECK(cart_cpu_read(0x8000) == 0x5C);
+    free(image);
     return 0;
 }
 
@@ -5825,7 +5828,10 @@ static int test_sunsoft69_banks_ram_and_startup(void) {
     CHECK(cart_cpu_read(0x6123) == 3);
 
     CHECK(fixture(69, 0x20000, 0x2000, true) == 69);
-    CHECK(cart_ppu_read(0x0423) == 1); // CHR-RAM is linearly mapped at power-on.
+    CHECK(cart_ppu_read(0x0423) == 0); // Allocated CHR RAM starts cleared.
+    cart_ppu_write(0x0423, 0x71);
+    sunsoft69_command(0, 1);
+    CHECK(cart_ppu_read(0x0023) == 0x71);
     sunsoft69_command(0, 7);
     cart_ppu_write(0x0123, 0xA6);
     CHECK(cart_ppu_read(0x0123) == 0xA6);
@@ -6013,9 +6019,9 @@ static int test_sunsoft69_persistence_and_loader(void) {
     Mapper *previous = cart;
     sunsoft69_command(9, 3);
     CHECK(cart_cpu_read(0x8000) == 0x5C);
-    iNESHeader invalid = h;
-    invalid.prg_ram_size = 0x10; // Unsupported submapper one remains transactional.
-    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x80001, fixture_chr, 0x2000) == -1);
+    image = image_for(&h, 0x20000, 0x2000, &image_size);
+    CHECK(image != NULL && load_rom_memory(image, image_size - 1) == -1);
+    free(image);
     CHECK(cart == previous && cart_cpu_read(0x8000) == 0x5C);
     h.flags10 = 0xE0; // 1 MiB NVRAM; the six-bit selector reaches its first 512 KiB.
     CHECK(mapper_init_from_header(&h, fixture_prg, 0x20000, fixture_chr, 0x2000) == 69);
@@ -6407,7 +6413,7 @@ static int test_mapper34_bnrom_banking_and_ram(void) {
     CHECK(cart_cpu_read(0x8000) == 12);
 
     cart->reset();
-    CHECK(cart_cpu_read(0x8000) == 0 && cart_cpu_read(0x6123) == 0x5A);
+    CHECK(cart_cpu_read(0x8000) == 12 && cart_cpu_read(0x6123) == 0x5A);
     CHECK(cart_get_mirroring() == MIRROR_HORIZONTAL);
     return 0;
 }
@@ -6433,8 +6439,8 @@ static int test_mapper34_nina_banks_and_selection(void) {
     CHECK(cart_ppu_read(0x0000) == 124); // 255 wraps across 32 4 KiB CHR banks.
 
     cart->reset();
-    CHECK(cart_cpu_read(0x8000) == 0);
-    CHECK(cart_ppu_read(0x0000) == 0x00 && cart_ppu_read(0x1001) == 0x01);
+    CHECK(cart_cpu_read(0x8000) == 20);
+    CHECK(cart_ppu_read(0x0000) == 124 && cart_ppu_read(0x1001) == 68);
     CHECK(cart_cpu_read(0x7FFC) == 0xA5);
 
     iNESHeader legacy_nina = header_for(34, 0x40000, false);

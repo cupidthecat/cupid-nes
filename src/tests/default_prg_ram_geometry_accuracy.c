@@ -283,8 +283,6 @@ static int test_special_geometries_remain_rejected(void) {
         uint8_t ram_sizes;
     } cases[] = {
         {30, 0x07},  /* flash board has no CPU PRG-RAM chip */
-        {34, 0x65},  /* NINA register writes overlap the RAM range */
-        {69, 0x65}   /* FME-7 selects RAM banks through its command register */
     };
     BoardImage active;
     BOARD_CHECK(make_image(&active, 33, 0x08, false));
@@ -302,7 +300,6 @@ static int test_special_geometries_remain_rejected(void) {
         header->flags10 = cases[i].ram_sizes;
         if (cases[i].ram_sizes & 0xF0u) header->flags6 |= 2;
         if (mapper == 30) header->zero[0] = 7;
-        if (mapper == 34) header->prg_ram_size = 0x10; /* NINA-001 */
         BOARD_CHECK(load_rom_memory(image.data, image.size) == -1);
         BOARD_CHECK(prg_rom == previous_prg && rom_file_crc32() == previous_crc);
         BOARD_CHECK(cpu_load_is(0x6000, 0xA4));

@@ -17,6 +17,8 @@
 #include "ffe.hpp"
 #include "farid.hpp"
 #include "irem.hpp"
+#include "nina.hpp"
+#include "sunsoft.hpp"
 #include "mmc3_95.hpp"
 #include "mmc3_96.hpp"
 #include "mmc3_97.hpp"
@@ -168,6 +170,8 @@ std::unique_ptr<Board> CreateBoard(unsigned mapper) {
         case 521: return std::make_unique<DreamTech01>();
         case 529: return std::make_unique<T230>();
         case 530: return std::make_unique<Ax5705>();
+        case 34: return std::make_unique<NinaBnrom>();
+        case 69: return std::make_unique<SunsoftFme7>();
         case 70: return std::make_unique<Bandai74161>(false);
         case 77: return std::make_unique<IremLrog017>();
         case 80: return std::make_unique<TaitoX1005>(false);
@@ -285,7 +289,7 @@ bool board_handles_mapper(unsigned mapper) {
         case 41: case 63: case 112: case 174: case 193: case 221: case 290: case 298: return true;
         case 6: case 8: case 17: return true;
         case 323: case 324: return true;
-        case 31: case 70: case 74: case 77: case 86: case 104: case 119:
+        case 31: case 34: case 69: case 70: case 74: case 77: case 86: case 104: case 119:
         case 152: case 188: case 191: case 192: case 194: case 195: case 218: return true;
         case 12: case 14: case 37: case 44: case 45: case 47: case 49: case 52:
         case 114: case 115: case 121: case 123: return true;
