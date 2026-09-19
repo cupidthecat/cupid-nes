@@ -17,6 +17,8 @@ Cupid has a C11 CPU/PPU core, an SDL frontend, and C++17 cartridge and EPSM soun
 | [src/rom/mapper.c](../src/rom/mapper.c) | Board selection, banking, cartridge RAM, nametables, interrupts, and persistence |
 | [src/rom/boards](../src/rom/boards), [board.h](../src/rom/board.h) | Cartridge board modules with owned RAM, 256-byte bus mappings, register decoding, and console reset hooks |
 | [src/rom/fds.c](../src/rom/fds.c) | Disk image ownership, transport, registers, media writes, and disk audio |
+| [src/rom/nsf.c](../src/rom/nsf.c) | NSF/NSFe parsing, banked program data, track metadata, and regional playback parameters |
+| [src/ui/nsf_frontend.c](../src/ui/nsf_frontend.c) | Application track-key handling, reset sequencing, and audio-device locking |
 | [src/rom/eeprom.c](../src/rom/eeprom.c) | Serial EEPROM state and transactions |
 | [src/rom/namco163.c](../src/rom/namco163.c), [sunsoft5b.c](../src/rom/sunsoft5b.c), [vrc7_audio.c](../src/rom/vrc7_audio.c) | Expansion sound implementations and the FM wrapper |
 | [src/joypad](../src/joypad) | Controller protocols, adapters, peripheral state, and Family BASIC keyboard/tape |
@@ -57,7 +59,7 @@ The [accuracy notes](accuracy.md) describe the exact register-delay and collisio
 
 ## CPU and PPU memory
 
-The CPU has 2 KiB internal RAM with mirrors through `$1FFF`. CPU `$2000-$3FFF` accesses reach mirrored PPU registers. APU, controller, and DMA registers occupy the CPU I/O range, while the cartridge layer handles board-specific registers and memory.
+An ordinary cartridge uses 2 KiB internal CPU RAM with mirrors through `$1FFF`. The FamicomBox menu board supplies 8 KiB of distinct RAM over that range; loading an ordinary cartridge restores the 2 KiB mirrors. CPU `$2000-$3FFF` accesses reach mirrored PPU registers. APU, controller, and DMA registers occupy the CPU I/O range, while the cartridge layer handles board-specific registers and memory.
 
 PPU pattern-table accesses reach CHR through the mapper. Nametable accesses go through `cart_nt_read()` and `cart_nt_write()` so boards can select CIRAM, cartridge memory, or generated data. Palette memory is internal to the PPU.
 
@@ -74,6 +76,7 @@ JY boards can clock IRQs from CPU cycles, CPU writes, PPU A12 edges, or physical
 | Loaded cartridge PRG/CHR buffers | Loader; mapper initialization borrows their storage |
 | Mapper registers and work/save RAM | Cartridge layer; selected through global `cart` |
 | FDS media, BIOS, RAM, and audio | Active `FdsImage` and disk-device state |
+| NSF/NSFe metadata, playback program, bank registers, and expansion audio | Music parser and cartridge playback state in `nsf.c` and `mapper.c` |
 | Ordinary CPU, PPU, and APU | Main machine globals and their runtime state |
 | Secondary VS CPU/PPU/APU and framebuffer | Static secondary machine storage in `vs_system.c` |
 | Host player button state | Controller layer, updated by frontend events |
@@ -96,6 +99,8 @@ The frontend's R handler resets the main PPU, APU, and CPU, then calls `vs_soft_
 `cpu_soft_reset()` retains A, X, Y and CPU RAM, updates the status flags, decrements SP through the reset bus sequence, and reloads PC from the reset vector. Callers reset the PPU and APU separately when they need a console reset. The APU clears its DAC latches and audio buffers on reset; its explicit soft-reset exceptions are in `apu_reset_state()`.
 
 Hardware-profile choices live outside the state cleared by power/reset operations. Do not replace a soft reset with a full structure clear merely to make a test fixture easier to initialize.
+
+NSF and NSFe use the production CPU and sound chips with a small playback program and a CPU-cycle timer. Their PPU advances frame timing without rendering or VBL NMIs, and their base-APU frame/DMC IRQs are masked. Music resets always reset that timing state, including when cartridge PPU reset suppression is enabled. Application track keys hold the audio-device lock while clearing and restarting the music state. Loading a cartridge restores ordinary PPU and APU interrupt behavior.
 
 ## Dual VS execution
 
