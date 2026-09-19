@@ -257,7 +257,8 @@ class Unl116 final : public Board {
     void NotifyVramAddressChange(uint16_t address) override {
         if ((_mode & 3) != 1 || !_a12.Rising(address, PpuFrameCycle())) return;
         if (_irqCounter == 0 || _irqReload) _irqCounter = _irqReloadValue; else --_irqCounter;
-        if (_irqCounter == 0 && _irqEnabled) SetIrq(true); _irqReload=false;
+        if (_irqCounter == 0 && _irqEnabled) SetIrq(true);
+        _irqReload = false;
     }
     void WriteVrc2(uint16_t a,uint8_t v){if(a>=0xB000&&a<=0xE003){int i=((((a&2)|(a>>10))>>1)+2)&7;int s=(a&1)<<2;_vrc2Chr[i]=static_cast<uint8_t>((_vrc2Chr[i]&(0xF0>>s))|((v&0x0F)<<s));UpdateChr();}else switch(a&0xF000){case 0x8000:_vrc2Prg[0]=v;UpdatePrg();break;case 0xA000:_vrc2Prg[1]=v;UpdatePrg();break;case 0x9000:_vrc2Mirroring=v;UpdateMirroring();break;}}
     void WriteMmc3(uint16_t a,uint8_t v){switch(a&0xE001){case 0x8000:_mmc3Ctrl=v;UpdateState();break;case 0x8001:_mmc3Regs[_mmc3Ctrl&7]=v;UpdateState();break;case 0xA000:_mmc3Mirroring=v;UpdateState();break;case 0xC000:_irqReloadValue=v;break;case 0xC001:_irqReload=true;break;case 0xE000:SetIrq(false);_irqEnabled=false;break;case 0xE001:_irqEnabled=true;break;}}
