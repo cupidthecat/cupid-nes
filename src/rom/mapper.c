@@ -3672,7 +3672,7 @@ static void mmc5_begin_ppu_read(uint16_t addr) {
 }
 
 static uint8_t mmc5_read_chr_raw(size_t offset) {
-    return C.chr_sz ? C.chr[offset % C.chr_sz] : 0;
+    return C.chr_sz ? C.chr[offset & (C.chr_sz - 1)] : 0;
 }
 
 static unsigned mmc5_split_vertical_scroll(void) {

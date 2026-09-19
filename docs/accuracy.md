@@ -46,7 +46,9 @@ CPU reset reads the current PC twice, reads three stack locations while decremen
 
 MMC5 detects scanline boundaries from repeated nametable reads and leaves the frame state after three CPU clocks without a PPU read. Address-only notifications do not count as reads. Extended attributes consume the next three physical reads after a qualifying nametable fetch, including reads that cross between the nametable and CHR ports. The mapper also supplies vertical-split tile data, separate CHR banking for large sprites, ExRAM permissions and persistence, and expansion pulse/PCM output. NMI-vector reads clear its frame IRQ state. PCM status follows the documented MMC5A revision, including its revision bit.
 
-MMC5 pulse length reloads and halt changes commit at the end of the CPU clock. A simultaneous frame-counter decrement of a nonzero length takes precedence over its pending reload. Trainer initialization uses the RAM bank mapped at CPU `$7000-$71FF`, including the battery-backed socket on a two-socket MMC5 board.
+MMC5 pulse length reloads and halt changes commit at the end of the CPU clock. A simultaneous frame-counter decrement of a nonzero length takes precedence over its pending reload. Trainer initialization prefers a volatile PRG chip of at least 8 KiB, otherwise a persistent chip of at least 8 KiB, and writes at chip offset `$1000`. It does not depend on the initially mapped CPU bank. Save data then takes precedence where the overlays overlap.
+
+MMC5 split and extended-attribute fetches mask the physical CHR address bits. This differs from ordinary bank selection on irregular ROM sizes. The extended-geometry regressions cover 8, 12, 20, and 28 KiB CHR images, CPU register writes, split and extended fetches, read-only ROM, failed-load preservation, and actual rendered pixels on a 12 KiB image.
 
 ## Family BASIC keyboard and tape
 
