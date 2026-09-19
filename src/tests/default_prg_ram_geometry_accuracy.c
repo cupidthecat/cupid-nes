@@ -277,47 +277,13 @@ static int test_small_pages_and_open_bus(void) {
     return 0;
 }
 
-static int test_special_geometries_remain_rejected(void) {
-    static const struct {
-        unsigned mapper;
-        uint8_t ram_sizes;
-    } cases[] = {
-        {30, 0x07},  /* flash board has no CPU PRG-RAM chip */
-    };
-    BoardImage active;
-    BOARD_CHECK(make_image(&active, 33, 0x08, false));
-    BOARD_CHECK(board_image_load(&active) == 0 && power_cart());
-    BOARD_CHECK(cpu_store(0x6000, 0xA4));
-    uint8_t *previous_prg = prg_rom;
-    uint32_t previous_crc = rom_file_crc32();
-
-    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
-        BoardImage image;
-        unsigned mapper = cases[i].mapper;
-        size_t chr_bytes = mapper == 30 ? 0 : 0x2000;
-        BOARD_CHECK(board_image_create(&image, mapper, 0x20000, chr_bytes, true));
-        iNESHeader *header = (iNESHeader *)image.data;
-        header->flags10 = cases[i].ram_sizes;
-        if (cases[i].ram_sizes & 0xF0u) header->flags6 |= 2;
-        if (mapper == 30) header->zero[0] = 7;
-        BOARD_CHECK(load_rom_memory(image.data, image.size) == -1);
-        BOARD_CHECK(prg_rom == previous_prg && rom_file_crc32() == previous_crc);
-        BOARD_CHECK(cpu_load_is(0x6000, 0xA4));
-        board_image_free(&image);
-    }
-    BOARD_CHECK(unload_rom());
-    board_image_free(&active);
-    return 0;
-}
-
 int test_default_prg_ram_geometry_accuracy(void) {
     int failures = test_fixed_window_matrix();
     failures += test_register_owned_read_windows();
     failures += test_bank_controls_preserve_ram();
     failures += test_save_persistence_and_trainer();
     failures += test_small_pages_and_open_bus();
-    failures += test_special_geometries_remain_rejected();
     unload_rom();
-    printf("Default PRG-RAM geometry: 6 groups, %d failures\n", failures);
+    printf("Default PRG-RAM geometry: 5 groups, %d failures\n", failures);
     return failures;
 }

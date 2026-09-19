@@ -2481,7 +2481,7 @@ static int test_mapper111_banks_flash_and_nametables(void) {
 
     iNESHeader invalid = h;
     invalid.flags10 = 7;
-    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x80000, fixture_chr, 0x4000) == -1);
+    CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x80000, fixture_chr, 0x4000) == 111);
     invalid = h;
     invalid.prg_ram_size = 0x10;
     CHECK(mapper_init_from_header(&invalid, fixture_prg, 0x80000, fixture_chr, 0x4000) == -1);

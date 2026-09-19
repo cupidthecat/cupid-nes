@@ -326,6 +326,14 @@ static inline void prg_ram_write(uint16_t addr, uint8_t value) {
     if (offset < prg_ram_window_coverage(ram)) ram_write(ram, offset, value);
 }
 
+static uint8_t prg_ram_internal_read(uint16_t addr) {
+    if (addr < 0x6000u || addr > 0x7FFFu) return 0;
+    RamBlock *ram = default_prg_ram();
+    size_t offset = addr - 0x6000u;
+    if (offset >= prg_ram_window_coverage(ram)) return 0;
+    return ram->data[offset % ram->size];
+}
+
 static void chr_ram_write(size_t index, uint8_t value) {
     if (!C.chr_is_ram || index >= C.chr_sz || C.chr[index] == value) return;
     C.chr[index] = value;
@@ -464,9 +472,10 @@ void cart_battery_flush(void) {
         board_battery_flush(active_board);
         return;
     }
-    if (cart_has_flash_storage())
+    if (cart_has_flash_storage()) {
         flush_flash_battery();
-    else if (cart == &mapper_mmc5) flush_mmc5_battery();
+        flush_battery(battery_save_path, prg_save_ram.data, prg_save_ram.size, &prg_ram_dirty);
+    } else if (cart == &mapper_mmc5) flush_mmc5_battery();
     else if (cart == &mapper_namco) flush_namco_battery();
     else flush_battery(battery_save_path, prg_save_ram.data, prg_save_ram.size, &prg_ram_dirty);
     flush_battery(chr_save_path, chr_nvram_data(), C.ram.chr_nvram, &chr_ram_dirty);
@@ -580,8 +589,10 @@ void cart_battery_configure(const char *rom_path, bool has_battery) {
     }
     battery_enabled = battery_save_path || chr_save_path || flash_save_path
                     || eeprom_save_path[0] || eeprom_save_path[1];
-    if (cart_has_flash_storage()) load_flash_battery(flash_save_path);
-    else if (cart == &mapper_mmc5) load_mmc5_battery(battery_save_path);
+    if (cart_has_flash_storage()) {
+        load_flash_battery(flash_save_path);
+        load_battery(battery_save_path, prg_save_ram.data, prg_save_ram.size);
+    } else if (cart == &mapper_mmc5) load_mmc5_battery(battery_save_path);
     else if (cart == &mapper_namco) load_namco_battery(battery_save_path);
     else load_battery(battery_save_path, prg_save_ram.data, prg_save_ram.size);
     load_battery(chr_save_path, chr_nvram_data(), C.ram.chr_nvram);
@@ -5725,6 +5736,7 @@ static void m30_latch(uint8_t value) {
 }
 
 static uint8_t m30_cpu_read(uint16_t a) {
+    if (a >= 0x6000u && a < 0x8000u) return prg_ram_read(a);
     if (a < 0x8000) return cart_cpu_bus_input;
     if (m30.flash_writable) {
         int flash_value = m30_flash_read(a);
@@ -5738,6 +5750,10 @@ static uint8_t m30_cpu_read(uint16_t a) {
 }
 
 static void m30_cpu_write(uint16_t a, uint8_t value) {
+    if (a >= 0x6000u && a < 0x8000u) {
+        prg_ram_write(a, value);
+        return;
+    }
     if (a < 0x8000) return;
     if (m30.led_variant && a < 0xC000) return;
     if (!m30.flash_writable || a >= 0xC000) {
@@ -5906,8 +5922,9 @@ static bool m111_is_register(uint16_t addr) {
 static uint8_t m111_cpu_read(uint16_t addr) {
     if (m111_is_register(addr)) {
         m111_latch(cart_cpu_bus_input);
-        return 0;
+        return prg_ram_internal_read(addr);
     }
+    if (addr >= 0x6000u && addr < 0x7000u) return prg_ram_read(addr);
     if (addr < 0x8000) return cart_cpu_bus_input;
 
     int flash_value = m111_flash_read(addr);
@@ -5923,6 +5940,10 @@ static uint8_t m111_cpu_read(uint16_t addr) {
 static void m111_cpu_write(uint16_t addr, uint8_t value) {
     if (m111_is_register(addr)) {
         m111_latch(value);
+        return;
+    }
+    if (addr >= 0x6000u && addr < 0x7000u) {
+        prg_ram_write(addr, value);
         return;
     }
     if (addr < 0x8000) return;
@@ -6805,11 +6826,11 @@ static bool default_prg_ram_geometry_supported(int mapper_no) {
     switch (mapper_no) {
         case 0: case 2: case 3: case 4: case 7: case 9: case 10: case 11:
         case 13: case 15: case 18: case 21: case 22: case 23: case 24:
-        case 25: case 26: case 27: case 28: case 32: case 33: case 48:
+        case 25: case 26: case 27: case 28: case 30: case 32: case 33: case 48:
         case 64: case 65: case 66: case 67: case 68: case 71: case 72:
         case 73: case 74: case 75: case 76: case 78: case 79: case 85:
         case 87: case 88: case 89: case 92: case 93: case 94: case 95:
-        case 96: case 97: case 101: case 105: case 113: case 118:
+        case 96: case 97: case 101: case 105: case 111: case 113: case 118:
         case 119: case 140: case 144: case 146: case 151: case 154:
         case 158: case 180: case 184: case 185: case 191: case 192:
         case 194: case 195: case 206: case 232:
@@ -6851,9 +6872,7 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
     } else if (mapper_no == 19 || mapper_no == 210) {
         // These boards select only the pages their registers can address.
         // Larger declared chips remain partially unreachable, as on hardware.
-    } else if (mapper_no == 90 || mapper_no == 111 || mapper_no == 209 || mapper_no == 211) {
-        if (prg_total != 0) return false;
-    } else if (mapper_no == 30) {
+    } else if (mapper_no == 90 || mapper_no == 209 || mapper_no == 211) {
         if (prg_total != 0) return false;
     } else if (!default_prg_layout && prg_total > 0x2000) {
         return false;
