@@ -9284,52 +9284,6 @@ static int test_taito_x1_persistence_and_loader(void) {
     return 0;
 }
 
-static int test_irem77_mixed_chr_and_bus_conflicts(void) {
-    CHECK(fixture(77, 0x40000, 0x8000, false) == 77);
-    CHECK(cart != NULL && cart->clock == NULL && cart->reset == NULL);
-    CHECK(cart_get_mirroring() == MIRROR_FOUR);
-    CHECK(cart_cpu_read(0x8000) == 0 && cart_cpu_read(0xA000) == 1);
-    CHECK(cart_cpu_read(0xC000) == 2 && cart_cpu_read(0xE000) == 3);
-    CHECK(cart_cpu_read_bus(0x6000, 0x56) == 0);
-    cart_cpu_write(0x6000, 0xA6);
-    cart_cpu_write(0x7FFF, 0x69);
-    CHECK(cart_cpu_read(0x6000) == 0xA6 && cart_cpu_read(0x7FFF) == 0x69);
-    CHECK(cart_cpu_read(0x8000) == 0 && cart_cpu_read(0xE000) == 3);
-    CHECK(cart_ppu_read(0x0000) == 0 && cart_ppu_read(0x0400) == 1);
-    CHECK(cart_ppu_read(0x0800) == 0 && cart_ppu_read(0x1FFF) == 0);
-
-    cart_ppu_write(0x0001, 0xA6);
-    CHECK(cart_ppu_read(0x0001) == 0);
-    cart_ppu_write(0x0801, 0x35);
-    cart_ppu_write(0x1002, 0x53);
-    cart_ppu_write(0x1803, 0x69);
-    CHECK(cart_ppu_read(0x0801) == 0x35 && cart_ppu_read(0x1002) == 0x53);
-    CHECK(cart_ppu_read(0x1803) == 0x69);
-
-    fixture_prg[0] = 0xF3;
-    cart_cpu_write(0x8000, 0xA5);
-    CHECK(cart_cpu_read(0x8000) == 4 && cart_cpu_read(0xE000) == 7);
-    CHECK(cart_ppu_read(0x0000) == 20 && cart_ppu_read(0x0400) == 21);
-    CHECK(cart_ppu_read(0x0801) == 0x35 && cart_ppu_read(0x1002) == 0x53);
-    CHECK(cart_ppu_read(0x1803) == 0x69);
-
-    fixture_prg[0x8000] = 0xF2;
-    cart_cpu_write(0x8000, 0x31);
-    CHECK(cart_cpu_read(0x8000) == 0xF3 && cart_ppu_read(0x0000) == 6);
-    CHECK(cart_ppu_read(0x0801) == 0x35 && cart_ppu_read(0x1002) == 0x53);
-
-    uint8_t nt[0x1000] = {0};
-    for (unsigned page = 0; page < 4; ++page)
-        cart_nt_write((uint16_t)(0x2000u + page * 0x400u), (uint8_t)(0x10u + page), nt);
-    for (unsigned page = 0; page < 4; ++page)
-        CHECK(cart_nt_read((uint16_t)(0x2000u + page * 0x400u), nt) == 0x10u + page);
-
-    CHECK(fixture(77, 0x40000, 0x8000, false) == 77);
-    CHECK(cart_cpu_read(0x8000) == 0 && cart_ppu_read(0x0801) == 0);
-    CHECK(cart_get_mirroring() == MIRROR_FOUR);
-    return 0;
-}
-
 static int test_irem97_prg_and_mirroring(void) {
     CHECK(fixture(97, 0x40000, 0x2000, false) == 97);
     CHECK(cart != NULL && cart->clock == NULL && cart->reset == NULL);
@@ -9362,36 +9316,10 @@ static int test_irem97_prg_and_mirroring(void) {
     return 0;
 }
 
-static int test_irem77_97_loader_validation(void) {
-    iNESHeader h77 = header_for(77, 0x8000, false);
-    size_t size;
-    uint8_t *image = image_for(&h77, 0x8000, 0x2000, &size);
-    CHECK(image != NULL);
-    CHECK(load_rom_memory(image, size) == 0);
-    free(image);
-    CHECK(rom_mapper_number(&ines_header) == 77 && cart_get_mirroring() == MIRROR_FOUR);
-    CHECK(cart_cpu_read(0x8000) == 0x5C && cart_ppu_read(0x0800) == 0);
-    unload_rom();
-
-    h77.flags7 |= 8;
-    h77.zero[0] = 7; // NES 2.0: 8 KiB volatile CHR RAM alongside CHR ROM.
-    image = image_for(&h77, 0x8000, 0x2000, &size);
-    CHECK(image != NULL);
-    CHECK(load_rom_memory(image, size) == 0);
-    free(image);
-    CHECK(cart_ppu_read(0x0000) == 0xA5);
-    cart_ppu_write(0x0800, 0x35);
-    cart_ppu_write(0x1000, 0x53);
-    cart_ppu_write(0x1800, 0x69);
-    CHECK(cart_ppu_read(0x0800) == 0x35);
-    CHECK(cart_ppu_read(0x1000) == 0x53);
-    CHECK(cart_ppu_read(0x1800) == 0x69);
-    cart_ppu_write(0x0000, 0x96);
-    CHECK(cart_ppu_read(0x0000) == 0xA5);
-    unload_rom();
-
+static int test_irem97_loader_validation(void) {
     iNESHeader h97 = header_for(97, 0x4000, false);
-    image = image_for(&h97, 0x4000, 0x2000, &size);
+    size_t size;
+    uint8_t *image = image_for(&h97, 0x4000, 0x2000, &size);
     CHECK(image != NULL);
     CHECK(load_rom_memory(image, size) == 0);
     free(image);
@@ -9399,35 +9327,9 @@ static int test_irem77_97_loader_validation(void) {
     CHECK(cart_cpu_read(0x8000) == 0x5C && cart_cpu_read(0xC000) == 0x5C);
     unload_rom();
 
-    CHECK(fixture(77, 0x40000, 0x8000, false) == 77);
-    fixture_prg[0] = 0xFF;
-    cart_cpu_write(0x8000, 2);
-    Mapper *previous = cart;
-    iNESHeader invalid77 = header_for(77, 0x40000, false);
-    invalid77.chr_rom_chunks = 0;
-    CHECK(mapper_init_from_header(&invalid77, fixture_prg, 0x40000, fixture_chr, 0x2000) == -1);
-    CHECK(cart == previous && cart_cpu_read(0x8000) == 8);
-    invalid77 = header_for(77, 0x40000, false);
-    invalid77.flags7 |= 8;
-    invalid77.flags10 = 8; // A single 8 KiB window cannot address 16 KiB RAM.
-    invalid77.zero[0] = 7;
-    CHECK(mapper_init_from_header(&invalid77, fixture_prg, 0x40000, fixture_chr, 0x8000) == -1);
-    CHECK(cart == previous && cart_cpu_read(0x8000) == 8);
-    invalid77.flags10 = 0;
-    invalid77.zero[0] = 0;
-    CHECK(mapper_init_from_header(&invalid77, fixture_prg, 0x40000, fixture_chr, 0x8000) == -1);
-    CHECK(cart == previous && cart_cpu_read(0x8000) == 8);
-    invalid77.zero[0] = 6;
-    CHECK(mapper_init_from_header(&invalid77, fixture_prg, 0x40000, fixture_chr, 0x8000) == -1);
-    CHECK(cart == previous && cart_cpu_read(0x8000) == 8);
-    invalid77.flags6 |= 2;
-    invalid77.zero[0] = 0x70;
-    CHECK(mapper_init_from_header(&invalid77, fixture_prg, 0x40000, fixture_chr, 0x8000) == -1);
-    CHECK(cart == previous && cart_cpu_read(0x8000) == 8);
-
     CHECK(fixture(97, 0x40000, 0x2000, false) == 97);
     cart_cpu_write(0x8000, 3);
-    previous = cart;
+    Mapper *previous = cart;
     iNESHeader invalid97 = header_for(97, 0x40000, false);
     fixture_chr[0x0123] = 0x47;
     fixture_chr[0x2123] = 0x8B;
@@ -9443,8 +9345,8 @@ static int test_irem77_97_loader_validation(void) {
     return 0;
 }
 
-static int test_irem77_97_cpu_ram_layouts(void) {
-    const unsigned boards[] = {77, 97};
+static int test_irem97_cpu_ram_layouts(void) {
+    const unsigned boards[] = {97};
     const uint8_t program[] = {
         0xA9, 0x35, 0x8D, 0x00, 0x60, 0xAD, 0x00, 0x60,
         0xA9, 0xA6, 0x8D, 0xFF, 0x7F, 0xAD, 0xFF, 0x7F,
@@ -9459,7 +9361,6 @@ static int test_irem77_97_cpu_ram_layouts(void) {
             if (layout) {
                 h.flags7 |= 8;
                 h.flags10 = layout == 2 ? 7 : layout == 3 ? 5 : 0;
-                if (boards[board] == 77) h.zero[0] = 7;
             }
             size_t size;
             uint8_t *image = image_for(&h, 0x8000, 0x2000, &size);
@@ -9499,8 +9400,8 @@ static int test_irem77_97_cpu_ram_layouts(void) {
     return 0;
 }
 
-static int irem77_97_persistence_cases(const SaveFixture *paths) {
-    const unsigned boards[] = {77, 97};
+static int irem97_persistence_cases(const SaveFixture *paths) {
+    const unsigned boards[] = {97};
     for (size_t board = 0; board < sizeof(boards) / sizeof(boards[0]); ++board) {
         for (unsigned nes2 = 0; nes2 < 2; ++nes2) {
             iNESHeader h = header_for(boards[board], 0x8000, false);
@@ -9508,7 +9409,6 @@ static int irem77_97_persistence_cases(const SaveFixture *paths) {
             if (nes2) {
                 h.flags7 |= 8;
                 h.flags10 = 0x70;
-                if (boards[board] == 77) h.zero[0] = 7;
             }
             size_t size;
             uint8_t *image = image_for(&h, 0x8000, 0x2000, &size);
@@ -9535,10 +9435,10 @@ static int irem77_97_persistence_cases(const SaveFixture *paths) {
     return 0;
 }
 
-static int test_irem77_97_ram_persistence(void) {
+static int test_irem97_ram_persistence(void) {
     SaveFixture paths;
     CHECK(save_fixture_begin(&paths) == 0);
-    int result = irem77_97_persistence_cases(&paths);
+    int result = irem97_persistence_cases(&paths);
     unload_rom();
     return result | save_fixture_end(&paths);
 }
@@ -11605,9 +11505,8 @@ int test_mapper_accuracy(void) {
         test_sunsoft_discrete_image_loading, test_sunsoft184_inherited_ram_reads,
         test_taito_x1005_and_207, test_taito_x1017_banks_chr_and_ram,
         test_taito_x1_persistence_and_loader,
-        test_irem77_mixed_chr_and_bus_conflicts, test_irem97_prg_and_mirroring,
-        test_irem77_97_loader_validation, test_irem77_97_cpu_ram_layouts,
-        test_irem77_97_ram_persistence,
+        test_irem97_prg_and_mirroring, test_irem97_loader_validation,
+        test_irem97_cpu_ram_layouts, test_irem97_ram_persistence,
         test_jaleco72_92_latches_cpu_and_bus_conflicts,
         test_jaleco78_banking_and_submapper_mirroring,
         test_jaleco87_101_140_banks_and_register_ranges,

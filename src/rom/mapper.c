@@ -78,7 +78,7 @@ static Mapper mapper_cnrom, mapper_cnrom_protect, mapper_mmc3, mapper_tqrom, map
 static Mapper mapper_mmc5, mapper_aorom, mapper_mmc2, mapper_mmc4, mapper_colordreams;
 static Mapper mapper_cprom, mapper_100in1, mapper_bandai, mapper_action53, mapper_unrom512, mapper_m111, mapper_fds;
 static Mapper mapper_taito33, mapper_taito48, mapper_taito_x1005, mapper_taito_x1017;
-static Mapper mapper_jaleco18, mapper_jaleco_discrete, mapper_irem32, mapper_irem65, mapper_irem77, mapper_irem97;
+static Mapper mapper_jaleco18, mapper_jaleco_discrete, mapper_irem32, mapper_irem65, mapper_irem97;
 static Mapper mapper_rambo1, mapper_rambo158;
 static Mapper mapper_vrc1, mapper_vrc3, mapper_vrc6, mapper_vrc24, mapper_vrc7;
 static Mapper mapper_sunsoft3, mapper_sunsoft4, mapper_sunsoft89, mapper_sunsoft93, mapper_sunsoft184;
@@ -191,7 +191,6 @@ static size_t mmc3_mixed_chr_last_bank;
 static size_t mmc3_mixed_chr_ram_size;
 static uint8_t mmc3_mixed_chr_source[0x20];
 static size_t mmc3_mixed_chr_offset[0x20];
-static uint8_t irem77_chr_ram[CHR_BANK_8K];
 static bool mmc5_exram_dirty = false;
 static bool battery_enabled = false;
 static char *battery_save_path = NULL;
@@ -629,7 +628,6 @@ void mapper_shutdown(void) {
     mmc3_mixed_chr_first_bank = 0;
     mmc3_mixed_chr_last_bank = 0;
     mmc3_mixed_chr_ram_size = 0;
-    memset(irem77_chr_ram, 0, sizeof(irem77_chr_ram));
     memset(bandai_eeprom, 0, sizeof(bandai_eeprom));
     mmc5_exram_dirty = false;
     unrom512_four_screen_chr = false;
@@ -683,7 +681,7 @@ static size_t mapper_prg_page_size(uint16_t mapper_no) {
         case 92: case 93: case 94: case 97: case 105: case 153: case 155:
         case 157: case 159: case 180: case 232:
             return PRG_BANK_16K;
-        case 3: case 7: case 11: case 13: case 34: case 66: case 77:
+        case 3: case 7: case 11: case 13: case 34: case 66:
         case 79: case 87: case 96: case 101: case 111: case 113: case 140:
         case 144: case 146: case 184: case 185:
             return PRG_BANK_32K;
@@ -701,7 +699,7 @@ static size_t mapper_chr_page_size(uint16_t mapper_no) {
         case 159: case 183: case 191: case 192: case 194: case 195: case 206:
         case 207: case 209: case 210: case 211:
             return CHR_BANK_1K;
-        case 67: case 68: case 76: case 77:
+        case 67: case 68: case 76:
             return CHR_BANK_2K;
         case 1: case 9: case 10: case 13: case 34: case 75: case 96:
         case 105: case 151: case 155: case 184:
@@ -724,7 +722,7 @@ static bool mapper_has_shrinking_chr_window(uint16_t mapper_no) {
         case 25: case 26: case 27:
         case 32: case 33: case 34: case 48: case 64: case 65: case 66: case 67:
         case 68: case 69: case 71: case 72: case 73: case 74: case 75: case 76:
-        case 77: case 78:
+        case 78:
         case 79: case 80: case 82: case 85: case 87: case 88: case 89: case 90:
         case 92:
         case 93: case 94: case 95: case 97: case 99: case 101: case 105: case 113: case 118: case 119:
@@ -6757,55 +6755,6 @@ static void jaleco_discrete_reset(void) {
         jaleco_discrete.prg_bank = (uint8_t)(C.prg_sz / PRG_BANK_16K - 1u);
 }
 
-// Mapper 77: Irem LROG017.
-static struct {
-    uint8_t prg_bank;
-    uint8_t chr_bank;
-} irem77;
-
-static uint8_t irem77_cpu_read(uint16_t a) {
-    if (a >= 0x6000u && a < 0x8000u) return prg_ram_read(a);
-    if (a < 0x8000u) return cart_cpu_bus_input;
-    size_t banks = C.prg_sz / PRG_BANK_32K;
-    size_t bank = irem77.prg_bank % banks;
-    return C.prg[bank * PRG_BANK_32K + (a & 0x7FFFu)];
-}
-
-static void irem77_cpu_write(uint16_t a, uint8_t value) {
-    if (a >= 0x6000u && a < 0x8000u) {
-        prg_ram_write(a, value);
-        return;
-    }
-    if (a < 0x8000u) return;
-    irem77.prg_bank = value & 0x0Fu;
-    irem77.chr_bank = (value >> 4) & 0x0Fu;
-}
-
-static uint8_t irem77_ppu_read(uint16_t a) {
-    a &= 0x1FFFu;
-    if (a < 0x0800u) {
-        size_t page_size = C.chr_sz < 0x0800u ? C.chr_sz : 0x0800u;
-        if (!page_size || a >= page_size) return (uint8_t)a;
-        size_t banks = C.chr_sz / page_size;
-        size_t bank = irem77.chr_bank % banks;
-        return C.chr[bank * page_size + a];
-    }
-    return irem77_chr_ram[a - 0x0800u];
-}
-
-static void irem77_ppu_write(uint16_t a, uint8_t value) {
-    a &= 0x1FFFu;
-    if (a < 0x0800u) return;
-    irem77_chr_ram[a - 0x0800u] = value;
-}
-
-static Mirroring irem77_mirr(void) { return MIRROR_FOUR; }
-
-static void irem77_power_on(void) {
-    memset(&irem77, 0, sizeof(irem77));
-    memset(irem77_chr_ram, 0, sizeof(irem77_chr_ram));
-}
-
 // Mapper 97: Irem TAM-S1.
 static struct {
     uint8_t upper_prg_bank;
@@ -7695,7 +7644,7 @@ int mapper_init_from_header_metadata(const iNESHeader *h,
         case 16: case 153: case 157: case 159:
         case 18: case 32: case 33: case 34: case 48: case 64: case 65: case 158:
         case 21: case 22: case 23: case 24: case 25: case 26: case 27: case 183:
-        case 19: case 66: case 67: case 68: case 69: case 71: case 72: case 73: case 75: case 76: case 77: case 78:
+        case 19: case 66: case 67: case 68: case 69: case 71: case 72: case 73: case 75: case 76: case 78:
         case 80: case 82: case 85: case 87: case 88: case 89: case 92: case 93: case 95: case 96: case 97: case 99: case 101:
         case 140: case 151: case 154: case 184: case 185: case 206: case 207: case 210:
         case 90: case 105: case 191: case 192: case 194: case 195: case 209: case 211: case 232:
@@ -7774,11 +7723,6 @@ int mapper_init_from_header_metadata(const iNESHeader *h,
     if (is_bandai && !bandai_layout(mapper_no, submapper, nes2, chr_sz,
                                     &ram, eeprom_sizes)) {
         fprintf(stderr, "Unsupported cartridge layout for mapper %d\n", mapper_no);
-        return -1;
-    }
-    if (mapper_no == 77
-        && (chr_is_ram || ram.chr_nvram || (nes2 && ram.chr_ram != CHR_BANK_8K))) {
-        fprintf(stderr, "Unsupported ROM/RAM size for mapper 77\n");
         return -1;
     }
     if (mapper_no == 185 && chr_is_ram) {
@@ -8088,12 +8032,6 @@ int mapper_init_from_header_metadata(const iNESHeader *h,
                         jaleco18_ppu_read, jaleco18_ppu_write, jaleco18_reset, jaleco18_mirr);
             mapper_jaleco18.clock = jaleco18_clock;
             cart = &mapper_jaleco18;
-            break;
-        case 77:
-            build_mapper(&mapper_irem77, irem77_cpu_read, irem77_cpu_write,
-                         irem77_ppu_read, irem77_ppu_write, NULL, irem77_mirr);
-            cart = &mapper_irem77;
-            irem77_power_on();
             break;
         case 97:
             build_mapper(&mapper_irem97, irem97_cpu_read, irem97_cpu_write,

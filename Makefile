@@ -41,7 +41,8 @@ TEST_SRC = src/tests/accuracy_test.c src/tests/cpu_accuracy.c \
            src/tests/board_unlicensed_110_accuracy.c src/tests/board_unlicensed_115_accuracy.c \
            src/tests/rom_database_defaults_accuracy.c src/tests/unif_accuracy.c \
            src/tests/board_waixing_116_accuracy.c src/tests/board_whirlwind_117_accuracy.c \
-           src/tests/mmc5_extended_geometry_accuracy.c src/tests/native_ram_accuracy.c
+           src/tests/mmc5_extended_geometry_accuracy.c src/tests/native_ram_accuracy.c \
+           src/tests/board_irem77_accuracy.c
 CORE_OBJ = $(CORE_SRC:.c=.o) $(CORE_CXX_SRC:.cpp=.o)
 TEST_OBJ = $(TEST_SRC:.c=.o)
 OBJ = $(CORE_OBJ) $(TEST_OBJ) src/main.o
