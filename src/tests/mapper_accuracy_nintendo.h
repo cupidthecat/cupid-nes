@@ -3,7 +3,7 @@
  *
  * Author: @frankischilling
  *
- * This private header contains regression tests for supported Nintendo cartridge
+ * These checks cover banking, mirroring, RAM, and reset behavior on supported Nintendo
  * boards.
  *
  * This file is part of Cupid NES Emulator.

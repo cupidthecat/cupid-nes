@@ -3,8 +3,7 @@
  *
  * Author: @frankischilling
  *
- * This private header contains regression tests for cartridge boards built from
- * discrete logic.
+ * These checks exercise banking and mirroring on cartridges built from discrete logic.
  *
  * This file is part of Cupid NES Emulator.
  *

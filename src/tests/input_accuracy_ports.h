@@ -3,8 +3,8 @@
  *
  * Author: @frankischilling
  *
- * This private header contains regression tests for controller ports, input latching,
- * and connected devices.
+ * These checks cover controller ports, input latching, open bus values, and connected
+ * devices.
  *
  * This file is part of Cupid NES Emulator.
  *

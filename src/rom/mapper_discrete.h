@@ -3,8 +3,7 @@
  *
  * Author: @frankischilling
  *
- * This private header contains state and behavior for cartridge boards built from
- * discrete logic.
+ * Banking, mirroring, IRQ, and board state for discrete logic cartridges live here.
  *
  * This file is part of Cupid NES Emulator.
  *

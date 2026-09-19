@@ -3,8 +3,8 @@
  *
  * Author: @frankischilling
  *
- * This private header contains MMC3, MMC6, and RAMBO-1 banking, mirroring, RAM,
- * and IRQ behavior.
+ * MMC3, MMC6, and RAMBO-1 banking, mirroring, RAM, and IRQ behavior are implemented
+ * here.
  *
  * This file is part of Cupid NES Emulator.
  *

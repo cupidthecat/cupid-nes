@@ -3,8 +3,8 @@
  *
  * Author: @frankischilling
  *
- * This private header contains cartridge mapper state and behavior for boards with
- * expansion hardware.
+ * Banking, IRQ, and audio controls for cartridges with expansion hardware are
+ * implemented here.
  *
  * This file is part of Cupid NES Emulator.
  *

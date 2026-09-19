@@ -3,7 +3,7 @@
  *
  * Author: @frankischilling
  *
- * This private header contains the first group of opcode handlers used by the CPU instruction dispatcher.
+ * These opcode handlers form the first section of the CPU instruction dispatch table.
  *
  * This file is part of Cupid NES Emulator.
  *

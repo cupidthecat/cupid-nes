@@ -3,8 +3,8 @@
  *
  * Author: @frankischilling
  *
- * This private header contains state and behavior for supported Jaleco and Irem
- * cartridge boards.
+ * Jaleco and Irem board state, bank switching, mirroring, and IRQ behavior are
+ * implemented here.
  *
  * This file is part of Cupid NES Emulator.
  *

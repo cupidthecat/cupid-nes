@@ -3,8 +3,7 @@
  *
  * Author: @frankischilling
  *
- * This private header contains regression tests for cartridge RAM loading, saving,
- * and battery backed storage.
+ * These checks verify cartridge RAM loading, saving, and battery backed storage.
  *
  * This file is part of Cupid NES Emulator.
  *

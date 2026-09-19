@@ -3,8 +3,8 @@
  *
  * Author: @frankischilling
  *
- * This private header contains state and behavior for supported Konami and Sunsoft
- * cartridge boards.
+ * Bank switching, mirroring, IRQs, and board state for supported Konami and Sunsoft
+ * cartridges are implemented here.
  *
  * This file is part of Cupid NES Emulator.
  *

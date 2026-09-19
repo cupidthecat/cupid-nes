@@ -3,8 +3,7 @@
  *
  * Author: @frankischilling
  *
- * This private header contains regression tests for expansion input devices and
- * their persistent storage.
+ * These checks cover expansion input devices and the data they save between sessions.
  *
  * This file is part of Cupid NES Emulator.
  *

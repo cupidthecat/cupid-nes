@@ -3,8 +3,7 @@
  *
  * Author: @frankischilling
  *
- * This private header contains regression tests for regional video timing, color
- * output, and rendering behavior.
+ * These checks cover regional video timing, color output, and rendering behavior.
  *
  * This file is part of Cupid NES Emulator.
  *

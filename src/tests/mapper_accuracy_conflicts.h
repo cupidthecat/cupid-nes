@@ -3,8 +3,7 @@
  *
  * Author: @frankischilling
  *
- * This private header contains regression tests for cartridge bus conflicts and
- * related register behavior.
+ * These checks verify cartridge bus conflicts and the register writes they affect.
  *
  * This file is part of Cupid NES Emulator.
  *

@@ -3,8 +3,8 @@
  *
  * Author: @frankischilling
  *
- * This private header contains regression tests for cartridge headers, mapper
- * selection, and invalid images.
+ * These checks cover cartridge headers, mapper selection, and rejection of invalid
+ * images.
  *
  * This file is part of Cupid NES Emulator.
  *

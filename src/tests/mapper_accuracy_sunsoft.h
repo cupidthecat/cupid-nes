@@ -3,8 +3,7 @@
  *
  * Author: @frankischilling
  *
- * This private header contains regression tests for supported Sunsoft cartridge
- * boards and audio hardware.
+ * These checks exercise supported Sunsoft boards, including their audio hardware.
  *
  * This file is part of Cupid NES Emulator.
  *

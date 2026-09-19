@@ -3,8 +3,7 @@
  *
  * Author: @frankischilling
  *
- * This private header contains MMC5 banking, mirroring, IRQ, multiplication, audio,
- * and ExRAM behavior.
+ * MMC5 banking, mirroring, IRQs, multiplication, audio, and ExRAM are handled here.
  *
  * This file is part of Cupid NES Emulator.
  *

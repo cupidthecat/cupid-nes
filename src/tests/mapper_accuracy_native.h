@@ -3,8 +3,8 @@
  *
  * Author: @frankischilling
  *
- * This private header contains regression tests for mapper implementations exercised
- * through the cartridge interface.
+ * These checks exercise mapper behavior through the cartridge interface used by the
+ * emulator core.
  *
  * This file is part of Cupid NES Emulator.
  *

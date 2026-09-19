@@ -3,8 +3,7 @@
  *
  * Author: @frankischilling
  *
- * This private header contains regression tests for cartridge image loading,
- * trainers, and storage sizes.
+ * These checks cover cartridge image loading, trainers, and storage size handling.
  *
  * This file is part of Cupid NES Emulator.
  *

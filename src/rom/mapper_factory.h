@@ -3,8 +3,8 @@
  *
  * Author: @frankischilling
  *
- * This private header selects the mapper implementation and initializes cartridge
- * board state.
+ * Mapper selection matches cartridge metadata to an implementation and prepares its
+ * initial board state.
  *
  * This file is part of Cupid NES Emulator.
  *

@@ -3,8 +3,8 @@
  *
  * Author: @frankischilling
  *
- * This private header contains state and behavior for supported Nintendo cartridge
- * boards.
+ * This file implements bank switching, mirroring, and board state for supported
+ * Nintendo cartridges.
  *
  * This file is part of Cupid NES Emulator.
  *

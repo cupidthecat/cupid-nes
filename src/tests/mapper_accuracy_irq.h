@@ -3,8 +3,7 @@
  *
  * Author: @frankischilling
  *
- * This private header contains regression tests for cartridge IRQ counters, lines,
- * and timing boundaries.
+ * These checks exercise cartridge IRQ counters, interrupt lines, and timing boundaries.
  *
  * This file is part of Cupid NES Emulator.
  *

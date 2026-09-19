@@ -3,8 +3,8 @@
  *
  * Author: @frankischilling
  *
- * This private header contains focused regression tests for mapper timing, banking,
- * and bus edge cases.
+ * These checks cover mapper timing, banking, and bus edge cases found during follow-up
+ * testing.
  *
  * This file is part of Cupid NES Emulator.
  *

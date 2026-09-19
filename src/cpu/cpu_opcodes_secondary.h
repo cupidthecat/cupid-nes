@@ -3,8 +3,7 @@
  *
  * Author: @frankischilling
  *
- * This private header contains the remaining opcode handlers used by the CPU
- * instruction dispatcher.
+ * These opcode handlers complete the CPU instruction dispatch table.
  *
  * This file is part of Cupid NES Emulator.
  *

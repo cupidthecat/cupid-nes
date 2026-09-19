@@ -3,8 +3,8 @@
  *
  * Author: @frankischilling
  *
- * This private header contains regression tests for PPU registers, pipelines, and
- * CPU visible timing.
+ * These checks exercise PPU registers, internal pipelines, and timing visible to the
+ * CPU.
  *
  * This file is part of Cupid NES Emulator.
  *
