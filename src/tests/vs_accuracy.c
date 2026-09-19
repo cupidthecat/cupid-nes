@@ -698,15 +698,97 @@ static int test_vs_dual_execution(void) {
     CHECK(vs_side_frame_count(1) >= vs_side_frame_count(0));
 
     write_mem(0x6000, 0x00);
+    CHECK(vs_shared_ram_access_allowed() && cart_cpu_read(0x6000) == 0);
+    ppu_soft_reset(&ppu);
+    apu_soft_reset(&apu);
+    cpu_soft_reset(&cpu);
     vs_soft_reset();
     CHECK(!vs_shared_ram_access_allowed());
     CHECK(!vs_external_irq_pending());
     for (unsigned i = 0; i < 8; ++i) vs_cpu_step();
     write_mem(0x4016, 0x02);
     CHECK(vs_shared_ram_access_allowed());
-    CHECK(cart_cpu_read(0x6000) == 0x5A); // Reset restored the sub IRQ and its initial RAM ownership.
+    CHECK(cart_cpu_read(0x6000) == 0x00); // The secondary CPU cleared the old IRQ during reset.
+    write_mem(0x4016, 0x00); // A new falling control edge raises a fresh peer IRQ.
+    for (unsigned i = 0; i < 800; ++i) vs_cpu_step();
+    write_mem(0x4016, 0x02);
+    CHECK(cart_cpu_read(0x6000) == 0x5A);
     joypad_set_player(2, BTN_A, false);
     unload_rom();
+    return 0;
+}
+
+static int test_vs_irq_reset_and_control_edges(void) {
+    iNESHeader h = nes20_vs_header(99, 4, 4, VS_TYPE_DUAL, 0, VS_INPUT_STANDARD);
+    h.flags10 = 7;
+    size_t image_size;
+    uint8_t *image = build_image(&h, 0x10000, 0x8000, &image_size);
+    CHECK(image != NULL);
+    uint8_t *prg = image + sizeof(h);
+    memset(prg, 0xEA, 0x10000);
+    static const uint8_t main_program[] = {0x4C,0x00,0x80};
+    static const uint8_t sub_program[] = {
+        0x78,                         // $8000: SEI; peer IRQs do not interrupt this driver.
+        0xA9,0x00, 0x8D,0x16,0x40,   // D1 high to low asserts the main CPU's IRQ.
+        0xA9,0x01, 0x8D,0x00,0x60,   // Report phase one in shared RAM.
+        0xAD,0x01,0x60, 0xF0,0xFB,   // $800B: wait for the first command.
+        0x8D,0x16,0x40,               // Write one: strobe changes, but D1 stays low.
+        0xA9,0x02, 0x8D,0x00,0x60,
+        0xAD,0x01,0x60, 0xC9,0x02,
+        0xD0,0xF9,                    // $8018: wait for command two.
+        0x8D,0x16,0x40,               // D1 high clears the peer IRQ source.
+        0xA9,0x00, 0x8D,0x16,0x40,   // Another falling edge asserts a new IRQ.
+        0xA9,0x03, 0x8D,0x00,0x60,
+        0x4C,0x2C,0x80
+    };
+    static const uint8_t irq_handler[] = {0xE6,0x04,0x40};
+    memcpy(prg, main_program, sizeof(main_program));
+    memcpy(prg + 0x100, irq_handler, sizeof(irq_handler));
+    memcpy(prg + 0x8000, sub_program, sizeof(sub_program));
+    for (size_t side = 0; side < 2; ++side) {
+        size_t base = side * 0x8000;
+        set_vector(prg, base + 0x7FFA, 0x8000);
+        set_vector(prg, base + 0x7FFC, 0x8000);
+        set_vector(prg, base + 0x7FFE, side ? 0x8000 : 0x8100);
+    }
+    int loaded = load_rom_memory(image, image_size);
+    free(image);
+    CHECK(loaded == 0);
+    power_main();
+    vs_power_on_secondary();
+    for (unsigned i = 0; i < 40; ++i) vs_cpu_step();
+    CHECK(vs_external_irq_pending());
+
+    write_mem(0x4016, 2);
+    CHECK(vs_shared_ram_access_allowed() && cart_cpu_read(0x6000) == 1);
+    write_mem(0x6001, 1);
+    write_mem(0x6002, 0xA6);
+    cpu_soft_reset(&cpu);
+    CHECK(!vs_external_irq_pending());
+    CHECK(vs_shared_ram_access_allowed() && cart_cpu_read(0x6002) == 0xA6);
+
+    write_mem(0x4016, 0);
+    for (unsigned i = 0; i < 40; ++i) vs_cpu_step();
+    CHECK(!vs_external_irq_pending()); // Repeating low D1 cannot undo CPU reset.
+    write_mem(0x4016, 2);
+    CHECK(cart_cpu_read(0x6000) == 2 && cart_cpu_read(0x6002) == 0xA6);
+    write_mem(0x6001, 2);
+    write_mem(0x4016, 0);
+    for (unsigned i = 0; i < 40; ++i) vs_cpu_step();
+    CHECK(vs_external_irq_pending());
+    write_mem(0x4016, 2);
+    CHECK(cart_cpu_read(0x6000) == 3 && cart_cpu_read(0x6002) == 0xA6);
+
+    // Execute CLI and the actual IRQ vector to prove the new source reaches the CPU.
+    write_mem(0x0200, 0x58);
+    write_mem(0x0201, 0xEA);
+    write_mem(0x0202, 0x4C);
+    write_mem(0x0203, 0x01);
+    write_mem(0x0204, 0x02);
+    cpu.pc = 0x0200;
+    for (unsigned i = 0; i < 8 && !ram[4]; ++i) cpu_step(&cpu);
+    CHECK(ram[4] == 1);
+    CHECK(unload_rom());
     return 0;
 }
 
@@ -972,6 +1054,7 @@ int test_vs_accuracy(void) {
         test_vs_zapper_cpu_port,
         test_mapper99_banks,
         test_vs_dual_execution,
+        test_vs_irq_reset_and_control_edges,
         test_vs_reset_and_declared_ram,
         test_vs_dual_reset_suppression,
         test_vs_dual_video_and_audio

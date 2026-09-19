@@ -89,6 +89,8 @@ bool vs_protection_read(uint16_t address, uint8_t *value);
 uint8_t vs_prg_chr_select_bit(void);
 bool vs_shared_ram_access_allowed(void);
 bool vs_external_irq_pending(void);
+// CPU reset clears its IRQ source without changing the peer's control output.
+void vs_clear_external_irq(void);
 
 bool vs_set_dip_switches(uint16_t value);
 uint16_t vs_dip_switches(void);

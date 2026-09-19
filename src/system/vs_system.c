@@ -36,6 +36,7 @@ typedef struct {
     bool strobe[2];
     uint8_t select_bit[2];
     unsigned ram_owner;
+    bool main_sub_bit[2];
     bool external_irq[2];
     uint8_t protection_counter[2];
     CpuMachineContext sub_cpu;
@@ -71,6 +72,8 @@ static void reset_control_state(void) {
     memset(vs.protection_counter, 0, sizeof(vs.protection_counter));
     if (vs.config.dual) {
         vs.ram_owner = 1;
+        vs.main_sub_bit[0] = false;
+        vs.main_sub_bit[1] = true;
         vs.external_irq[0] = false;
         vs.external_irq[1] = true;
     } else {
@@ -233,6 +236,8 @@ void vs_power_on_secondary(void) {
     printf("VS secondary startup alignment: CPU %u, PPU %u\n",
            (unsigned)alignment.cpu_offset, (unsigned)alignment.ppu_phase);
     select_side(0);
+    // The main controller initializes after the secondary CPU at power-on.
+    reset_control_state();
 }
 
 void vs_soft_reset(void) {
@@ -375,10 +380,12 @@ void vs_write_4016(uint8_t value) {
     vs.strobe[side] = strobe;
     vs.select_bit[side] = (value >> 2) & 1u;
     if (vs_dual_system()) {
-        bool main_has_ram = (value & 0x02) != 0;
-        if (side == 0) vs.ram_owner = main_has_ram ? 0u : 1u;
-        unsigned peer = side ^ 1u;
-        vs.external_irq[peer] = !main_has_ram;
+        bool main_sub_bit = (value & 0x02) != 0;
+        if (main_sub_bit != vs.main_sub_bit[side]) {
+            vs.main_sub_bit[side] = main_sub_bit;
+            if (side == 0) vs.ram_owner = main_sub_bit ? 0u : 1u;
+            vs.external_irq[side ^ 1u] = !main_sub_bit;
+        }
     }
 }
 
@@ -451,6 +458,10 @@ bool vs_shared_ram_access_allowed(void) {
 
 bool vs_external_irq_pending(void) {
     return vs_dual_system() && vs.external_irq[vs.active_side];
+}
+
+void vs_clear_external_irq(void) {
+    if (vs_dual_system()) vs.external_irq[vs.active_side] = false;
 }
 
 static const uint8_t tko_table[32] = {
