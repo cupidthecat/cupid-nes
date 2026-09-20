@@ -163,6 +163,14 @@ Revision `1dd63fd97a7228f58f14fc13812bc21ba3a3a055` connects mapper 85 console r
 
 The strict Windows build and production hardware suite passed in normal and AddressSanitizer/UndefinedBehaviorSanitizer builds. Each build then passed AccuracyCoin 144/144 with zero skipped and zero unfinished in 4,182 frames, matching the cartridge's tally. The test ROM pin and SHA-256 were unchanged.
 
+## NMI during CPU reset checkpoint
+
+Revision `6177689eed717b5c7ed32842226b866c54d92111` clears earlier NMI requests before the CPU reset bus cycles, preserving new edges detected during those cycles. With PPU reset suppression enabled, the running PPU can raise its vblank NMI inside that window. The regression advances the real PPU to five offsets in each of NTSC, PAL and Dendy, then verifies the first instruction, NMI handler and return. Paired cases use ordinary PPU reset, and the handler count checks that a held NMI line does not cause repeated delivery. Before the fix, all 15 cases with PPU reset suppression enabled missed the interrupt; the paired controls passed.
+
+This revision includes the NSF multiplier and VRC7 reset fixes above. Its strict Windows build and production hardware suite passed in normal and AddressSanitizer/UndefinedBehaviorSanitizer builds. Both builds passed the canonical CPU trace's 8,991 states, all 91 pinned diagnostic ROMs, and AccuracyCoin 144/144 with zero skipped or unfinished tests. Each AccuracyCoin run completed in 4,182 frames and matched the cartridge's tally. The ROM revisions, SHA-256 and result requirements were unchanged.
+
+These local results belong to the named implementation revision. Later documentation commits retain that source, and the final pull-request revision must pass its own GCC and Clang sanitizer CI jobs.
+
 ## Reproducing a checkpoint
 
 Check out the listed commit in a separate worktree, prepare SDL2 and the pinned ROM as described in [development and testing](development.md), then run:

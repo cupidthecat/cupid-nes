@@ -7,7 +7,7 @@ video, audio, and controllers. The CPU and PPU core is C11; cartridge board modu
 and the EPSM YMF288 sound engine use C++17.
 
 The core implements NTSC, PAL, and Dendy timing. The
-[tested implementation](docs/accuracy-checkpoints.md#hardware-revision-and-chr-checkpoints) passes
+[tested implementation](docs/accuracy-checkpoints.md#nmi-during-cpu-reset-checkpoint) passes
 all 144 AccuracyCoin tests with zero skipped or unfinished results, the 91-ROM
 diagnostic collection, and the 8,991-state canonical CPU trace in normal and
 sanitizer builds. The
@@ -51,6 +51,8 @@ For NSF and NSFe files that use MMC5, multiplier operands survive soft reset
 and track changes. Loading a music image initializes both operands to zero.
 VRC7 cartridges reset their FM synthesizer on console reset and retain their
 bank and IRQ registers.
+CPU reset preserves NMI edges raised during its bus cycles, including vblank
+edges when PPU reset suppression keeps the raster running.
 
 Device selection and timing follow the ROM header and
 [command-line options](docs/configuration.md). Supported mapper families can still
