@@ -25,6 +25,8 @@
 #include "joypad.h"
 #include "family_basic.h"
 #include "special_peripherals.h"
+#include "../replay/input_event.h"
+#include "../system/execution_policy.h"
 #include "../system/hardware.h"
 #include "../system/timing.h"
 #include "../ppu/ppu.h"
@@ -45,6 +47,23 @@ static const char *const adapter_names[] = {
 };
 static NesPortDevice port_devices[2];
 static NesExpansionDevice expansion_device;
+
+static bool deterministic_input_owned(void) {
+    uint32_t policy = nes_execution_policy();
+    return (policy & (NES_EXECUTION_MOVIE_RECORDING | NES_EXECUTION_MOVIE_PLAYBACK
+                    | NES_EXECUTION_NETPLAY)) != 0;
+}
+
+static bool submit_host_input(NesInputEventType type, int32_t a, int32_t b,
+                              int32_t c, int32_t d, const char *text) {
+    NesInputEvent event = {.type = type, .a = a, .b = b, .c = c, .d = d};
+    if (text) {
+        size_t size = strlen(text);
+        if (size >= sizeof(event.text)) return false;
+        memcpy(event.text, text, size + 1);
+    }
+    return nes_input_event_submit(&event);
+}
 
 static const char *const port_device_names[] = {
     "pad", "none", "arkanoid", "power-pad-a", "power-pad-b", "zapper", "subor-mouse",
@@ -506,6 +525,7 @@ bool joypad_clocks_adjacent_reads(void) {
 }
 
 void joypad_set_microphone(bool active) {
+    if (!submit_host_input(NES_INPUT_EVENT_MICROPHONE, active, 0, 0, 0, NULL)) return;
     microphone_active = active;
 }
 
@@ -518,6 +538,8 @@ Joypad *joypad_player(unsigned player) {
 bool joypad_set_player(unsigned player, int button, bool pressed) {
     Joypad *pad = joypad_player(player);
     if (!pad || (unsigned)button > BTN_RIGHT) return false;
+    if (!submit_host_input(NES_INPUT_EVENT_PLAYER_BUTTON, (int32_t)player, button,
+                           pressed, 0, NULL)) return false;
     joypad_set(pad, button, pressed);
     return true;
 }
@@ -577,6 +599,7 @@ NesInputAdapter joypad_adapter(void) {
 
 bool joypad_set_adapter(NesInputAdapter adapter) {
     if ((unsigned)adapter > NES_ADAPTER_FAMICOM_FOUR) return false;
+    if (deterministic_input_owned()) return false;
     input_adapter = adapter;
     adapter_strobe = 0;
     memset(adapter_remaining, 0, sizeof(adapter_remaining));
@@ -604,6 +627,7 @@ NesPortDevice joypad_port_device(unsigned port) {
 bool joypad_set_port_device(unsigned port, NesPortDevice device) {
     if (port >= 2 || (unsigned)device > NES_PORT_VIRTUAL_BOY) return false;
     if (device == NES_PORT_SUBOR_MOUSE && port != 1) return false;
+    if (deterministic_input_owned()) return false;
     port_devices[port] = device;
     joypad_player(port)->buttons = 0;
     paddles[port].strobe = paddles[port].shift = 0;
@@ -635,6 +659,7 @@ NesExpansionDevice joypad_expansion_device(void) {
 
 bool joypad_set_expansion_device(NesExpansionDevice device) {
     if ((unsigned)device > NES_EXPANSION_FCNS_CONTROLLER) return false;
+    if (deterministic_input_owned()) return false;
     expansion_device = device;
     paddles[2].strobe = paddles[2].shift = 0;
     family_trainer_rows = 0;
@@ -676,6 +701,7 @@ bool joypad_configuration_valid(void) {
 }
 
 void joypad_set_configuration_overrides(uint8_t mask) {
+    if (deterministic_input_owned()) return;
     configuration_overrides = mask & (NES_INPUT_OVERRIDE_ADAPTER | NES_INPUT_OVERRIDE_PORT1
                                     | NES_INPUT_OVERRIDE_PORT2 | NES_INPUT_OVERRIDE_EXPANSION);
 }
@@ -783,6 +809,8 @@ bool joypad_set_paddle(unsigned slot, int position, bool fire) {
     if (slot >= 3) return false;
     if (position < 0x54) position = 0x54;
     if (position > 0xF4) position = 0xF4;
+    if (!submit_host_input(NES_INPUT_EVENT_PADDLE, (int32_t)slot, position,
+                           fire, 0, NULL)) return false;
     paddles[slot].position = (uint8_t)position;
     paddles[slot].fire = fire;
     return true;
@@ -790,6 +818,8 @@ bool joypad_set_paddle(unsigned slot, int position, bool fire) {
 
 bool joypad_set_mat_pad(unsigned slot, unsigned pad, bool pressed) {
     if (slot >= 3 || pad >= 12) return false;
+    if (!submit_host_input(NES_INPUT_EVENT_MAT, (int32_t)slot, (int32_t)pad,
+                           pressed, 0, NULL)) return false;
     if (pressed) mats[slot].buttons |= (uint16_t)(1u << pad);
     else mats[slot].buttons &= (uint16_t)~(1u << pad);
     return true;
@@ -797,6 +827,8 @@ bool joypad_set_mat_pad(unsigned slot, unsigned pad, bool pressed) {
 
 bool joypad_set_zapper(unsigned slot, int x, int y, bool trigger) {
     if (slot >= 3) return false;
+    if (!submit_host_input(NES_INPUT_EVENT_ZAPPER, (int32_t)slot, x, y,
+                           trigger, NULL)) return false;
     zappers[slot] = (Zapper){x, y, trigger};
     return true;
 }
@@ -814,22 +846,30 @@ unsigned joypad_zapper_radius(void) {
 
 bool joypad_set_zapper_radius(unsigned radius) {
     if (radius > NES_ZAPPER_MAX_RADIUS) return false;
+    if (deterministic_input_owned()) return false;
     zapper_radius = radius;
     return true;
 }
 
 bool joypad_set_subor_key(SuborKey key, bool pressed) {
+    if ((unsigned)key >= SUBOR_KEY_COUNT) return false;
+    if (!submit_host_input(NES_INPUT_EVENT_SUBOR_KEY, (int32_t)key, pressed,
+                           0, 0, NULL)) return false;
     return subor_keyboard_set_key((unsigned)key, pressed);
 }
 
 bool joypad_add_subor_mouse_motion(int dx, int dy) {
     if (port_devices[1] != NES_PORT_SUBOR_MOUSE) return false;
+    if (!submit_host_input(NES_INPUT_EVENT_SUBOR_MOUSE_MOTION, dx, dy, 0, 0, NULL))
+        return false;
     subor_mouse_add_motion(dx, dy);
     return true;
 }
 
 bool joypad_set_subor_mouse_buttons(bool left, bool right) {
     if (port_devices[1] != NES_PORT_SUBOR_MOUSE) return false;
+    if (!submit_host_input(NES_INPUT_EVENT_SUBOR_MOUSE_BUTTONS, left, right,
+                           0, 0, NULL)) return false;
     subor_mouse_set_buttons(left, right);
     return true;
 }
@@ -838,6 +878,8 @@ bool joypad_set_snes_button(unsigned port, SnesButton button, bool is_pressed) {
     if (port >= 2 || (unsigned)button >= SNES_BUTTON_COUNT) return false;
     if (port_devices[port] != NES_PORT_SNES_CONTROLLER && port_devices[port] != NES_PORT_NTT_KEYPAD)
         return false;
+    if (!submit_host_input(NES_INPUT_EVENT_SNES_BUTTON, (int32_t)port,
+                           (int32_t)button, is_pressed, 0, NULL)) return false;
     int nes_button = -1;
     switch (button) {
         case SNES_BUTTON_A: nes_button = BTN_A; break;
@@ -850,7 +892,12 @@ bool joypad_set_snes_button(unsigned port, SnesButton button, bool is_pressed) {
         case SNES_BUTTON_RIGHT: nes_button = BTN_RIGHT; break;
         default: break;
     }
-    if (nes_button >= 0) return joypad_set_player(port, nes_button, is_pressed);
+    if (nes_button >= 0) {
+        nes_input_event_suppress_begin();
+        bool ok = joypad_set_player(port, nes_button, is_pressed);
+        nes_input_event_suppress_end();
+        return ok;
+    }
     uint16_t mask = (uint16_t)(1u << button);
     if (is_pressed) extended_pads[port].extra_buttons |= mask;
     else extended_pads[port].extra_buttons &= (uint16_t)~mask;
@@ -859,6 +906,8 @@ bool joypad_set_snes_button(unsigned port, SnesButton button, bool is_pressed) {
 
 bool joypad_add_snes_mouse_motion(unsigned port, int dx, int dy) {
     if (port >= 2 || port_devices[port] != NES_PORT_SNES_MOUSE) return false;
+    if (!submit_host_input(NES_INPUT_EVENT_SNES_MOUSE_MOTION, (int32_t)port,
+                           dx, dy, 0, NULL)) return false;
     SnesMouseState *mouse = &snes_mice[port];
     if ((dx > 0 && mouse->dx > INT_MAX - dx) || (dx < 0 && mouse->dx < INT_MIN - dx))
         mouse->dx = dx > 0 ? INT_MAX : INT_MIN;
@@ -873,6 +922,8 @@ bool joypad_add_snes_mouse_motion(unsigned port, int dx, int dy) {
 
 bool joypad_set_snes_mouse_buttons(unsigned port, bool left, bool right) {
     if (port >= 2 || port_devices[port] != NES_PORT_SNES_MOUSE) return false;
+    if (!submit_host_input(NES_INPUT_EVENT_SNES_MOUSE_BUTTONS, (int32_t)port,
+                           left, right, 0, NULL)) return false;
     snes_mice[port].left = left;
     snes_mice[port].right = right;
     return true;
@@ -881,6 +932,8 @@ bool joypad_set_snes_mouse_buttons(unsigned port, bool left, bool right) {
 bool joypad_set_ntt_key(unsigned port, NttKey key, bool is_pressed) {
     if (port >= 2 || port_devices[port] != NES_PORT_NTT_KEYPAD || (unsigned)key >= NTT_KEY_COUNT)
         return false;
+    if (!submit_host_input(NES_INPUT_EVENT_NTT_KEY, (int32_t)port,
+                           (int32_t)key, is_pressed, 0, NULL)) return false;
     uint32_t mask = 1u << key;
     if (is_pressed) ntt_keys[port] |= mask;
     else ntt_keys[port] &= ~mask;
@@ -890,6 +943,8 @@ bool joypad_set_ntt_key(unsigned port, NttKey key, bool is_pressed) {
 bool joypad_set_fcns_key(FcnsKey key, bool is_pressed) {
     if (expansion_device != NES_EXPANSION_FCNS_CONTROLLER || (unsigned)key >= FCNS_KEY_COUNT)
         return false;
+    if (!submit_host_input(NES_INPUT_EVENT_FCNS_KEY, (int32_t)key,
+                           is_pressed, 0, 0, NULL)) return false;
     uint16_t mask = (uint16_t)(1u << key);
     if (is_pressed) fcns_keys |= mask;
     else fcns_keys &= (uint16_t)~mask;
@@ -899,6 +954,8 @@ bool joypad_set_fcns_key(FcnsKey key, bool is_pressed) {
 bool joypad_set_virtual_boy_button(unsigned port, VirtualBoyButton button, bool is_pressed) {
     if (port >= 2 || port_devices[port] != NES_PORT_VIRTUAL_BOY || (unsigned)button >= VB_BUTTON_COUNT)
         return false;
+    if (!submit_host_input(NES_INPUT_EVENT_VIRTUAL_BOY_BUTTON, (int32_t)port,
+                           (int32_t)button, is_pressed, 0, NULL)) return false;
     int nes_button = -1;
     switch (button) {
         case VB_BUTTON_SELECT: nes_button = BTN_SELECT; break;
@@ -911,7 +968,12 @@ bool joypad_set_virtual_boy_button(unsigned port, VirtualBoyButton button, bool 
         case VB_BUTTON_A: nes_button = BTN_A; break;
         default: break;
     }
-    if (nes_button >= 0) return joypad_set_player(port, nes_button, is_pressed);
+    if (nes_button >= 0) {
+        nes_input_event_suppress_begin();
+        bool ok = joypad_set_player(port, nes_button, is_pressed);
+        nes_input_event_suppress_end();
+        return ok;
+    }
     uint16_t mask = (uint16_t)(1u << button);
     if (is_pressed) virtual_boy_extra[port] |= mask;
     else virtual_boy_extra[port] &= (uint16_t)~mask;
@@ -920,38 +982,52 @@ bool joypad_set_virtual_boy_button(unsigned port, VirtualBoyButton button, bool 
 
 bool joypad_add_hori_track_motion(int dx, int dy) {
     if (expansion_device != NES_EXPANSION_HORI_TRACK) return false;
+    if (!submit_host_input(NES_INPUT_EVENT_HORI_TRACK_MOTION, dx, dy, 0, 0, NULL))
+        return false;
     hori_track_add_motion(dx, dy);
     return true;
 }
 
 bool joypad_set_party_tap_button(unsigned button, bool pressed) {
     if (expansion_device != NES_EXPANSION_PARTY_TAP) return false;
+    if (!submit_host_input(NES_INPUT_EVENT_PARTY_TAP, (int32_t)button, pressed,
+                           0, 0, NULL)) return false;
     return party_tap_set_button(button, pressed);
 }
 
 bool joypad_set_pachinko_controls(bool press, bool release) {
     if (expansion_device != NES_EXPANSION_PACHINKO) return false;
+    if (!submit_host_input(NES_INPUT_EVENT_PACHINKO, press, release, 0, 0, NULL))
+        return false;
     pachinko_set_controls(press, release);
     return true;
 }
 
 bool joypad_set_boxing_sensor(unsigned sensor, bool pressed) {
     if (expansion_device != NES_EXPANSION_EXCITING_BOXING) return false;
+    if (!submit_host_input(NES_INPUT_EVENT_BOXING, (int32_t)sensor, pressed,
+                           0, 0, NULL)) return false;
     return exciting_boxing_set_sensor(sensor, pressed);
 }
 
 bool joypad_set_jissen_key(JissenKey key, bool pressed) {
     if (expansion_device != NES_EXPANSION_JISSEN_MAHJONG) return false;
+    if (!submit_host_input(NES_INPUT_EVENT_JISSEN, (int32_t)key, pressed,
+                           0, 0, NULL)) return false;
     return jissen_mahjong_set_key((unsigned)key, pressed);
 }
 
 bool joypad_scan_barcode_battler(const char *digits) {
     if (expansion_device != NES_EXPANSION_BARCODE_BATTLER) return false;
+    if (!digits || !submit_host_input(NES_INPUT_EVENT_BARCODE_BATTLER, 0, 0, 0, 0,
+                                      digits)) return false;
     return barcode_battler_scan(digits, cpu_total_cycles);
 }
 
 bool joypad_set_oeka_kids_tablet(int x, int y, bool touch, bool click) {
     if (expansion_device != NES_EXPANSION_OEKA_KIDS_TABLET) return false;
+    if (!submit_host_input(NES_INPUT_EVENT_OEKA_KIDS, x, y, touch, click, NULL))
+        return false;
     oeka_kids_tablet_set_state(x, y, touch, click);
     return true;
 }

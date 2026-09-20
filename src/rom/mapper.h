@@ -85,6 +85,7 @@ void    cart_expansion_audio_channels(float output[NES_AUDIO_CHANNEL_COUNT]);
 float   cart_audio_gain(void);
 // Scan an EAN-8 or EAN-13 code through the connected Datach reader.
 bool    cart_set_barcode(const char *digits);
+bool    cart_barcode_supported(void);
 
 // Select the MMC3 IRQ counter revision used by compatible MMC3-family boards.
 // MMC6 and MC-ACC keep their board-specific IRQ behavior.

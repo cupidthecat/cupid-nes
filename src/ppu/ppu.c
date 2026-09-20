@@ -29,6 +29,7 @@
 #include "../rom/mapper.h"
 #include "../cpu/cpu.h"
 #include "../system/hardware.h"
+#include "../system/execution_policy.h"
 #include "../system/timing.h"
 #include "../system/vs_system.h"
 #include "../video/video_trace.h"
@@ -93,6 +94,7 @@ PpuRevision ppu_revision(void) {
 
 bool ppu_set_revision(PpuRevision revision) {
     if ((unsigned)revision > PPU_REVISION_2C02_E_PLUS) return false;
+    if (!nes_execution_allows_host_configuration()) return false;
     active_ppu_revision = revision;
     return true;
 }
@@ -115,6 +117,7 @@ bool ppu_oam_row_corruption_worst_case(void) {
 }
 
 void ppu_set_oam_row_corruption_worst_case(bool enabled) {
+    if (!nes_execution_allows_host_configuration()) return;
     oam_row_corruption_worst_case = enabled;
 }
 
@@ -123,6 +126,7 @@ bool ppu_startup_write_restriction_enabled(void) {
 }
 
 void ppu_set_startup_write_restriction(bool enabled) {
+    if (!nes_execution_allows_host_configuration()) return;
     startup_write_restriction = enabled;
     if (!enabled) ppu.startup_writes_restricted = false;
 }
@@ -136,6 +140,7 @@ bool ppu_oam_decay_enabled(void) {
 }
 
 void ppu_set_oam_decay(bool enabled) {
+    if (!nes_execution_allows_host_configuration()) return;
     oam_decay = enabled;
 }
 
@@ -144,6 +149,7 @@ bool ppu_oamdata_read_disabled(void) {
 }
 
 void ppu_set_oamdata_read_disabled(bool disabled) {
+    if (!nes_execution_allows_host_configuration()) return;
     oamdata_read_disabled = disabled;
 }
 
@@ -152,6 +158,7 @@ bool ppu_palette_readback_disabled(void) {
 }
 
 void ppu_set_palette_readback_disabled(bool disabled) {
+    if (!nes_execution_allows_host_configuration()) return;
     palette_readback_disabled = disabled;
 }
 
@@ -160,6 +167,7 @@ bool ppu_reset_suppression_enabled(void) {
 }
 
 void ppu_set_reset_suppression(bool enabled) {
+    if (!nes_execution_allows_host_configuration()) return;
     reset_suppression = enabled;
 }
 
@@ -168,6 +176,7 @@ bool ppu_sprite_eval_wrap_bug_enabled(void) {
 }
 
 void ppu_set_sprite_eval_wrap_bug(bool enabled) {
+    if (!nes_execution_allows_host_configuration()) return;
     sprite_eval_wrap_bug = enabled;
 }
 

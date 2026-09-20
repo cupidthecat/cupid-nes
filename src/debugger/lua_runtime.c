@@ -7,6 +7,7 @@
  * GNU General Public License, version 3 or any later version.
  */
 #include "lua_runtime.h"
+#include "../system/execution_policy.h"
 
 #include "debugger.h"
 #include "../cpu/cpu.h"
@@ -379,6 +380,7 @@ static void install_emu_api(lua_State *state) {
 
 bool debugger_lua_load(const char *name, const char *source) {
     if (!source) return false;
+    if (!nes_execution_allows_host_configuration()) return false;
     debugger_lua_unload();
     runtime.state = luaL_newstate();
     if (!runtime.state) {

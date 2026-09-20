@@ -627,6 +627,9 @@ bool cart_set_barcode(const char *digits) {
     if (count != 8 && count != 13) return false;
     for (size_t i = 0; i < count; ++i)
         if (digits[i] < '0' || digits[i] > '9') return false;
+    NesInputEvent event = {.type = NES_INPUT_EVENT_CART_BARCODE};
+    memcpy(event.text, digits, count + 1);
+    if (!nes_input_event_submit(&event)) return false;
     static const uint8_t left[] = {0x0D, 0x19, 0x13, 0x3D, 0x23, 0x31, 0x2F, 0x3B, 0x37, 0x0B};
     static const uint8_t parity[] = {0x3F, 0x34, 0x32, 0x31, 0x2C, 0x26, 0x23, 0x2A, 0x29, 0x25};
     uint8_t bits[160];
@@ -659,6 +662,10 @@ bool cart_set_barcode(const char *digits) {
     bandai.barcode_length = length;
     bandai.barcode_cycles = 0;
     return true;
+}
+
+bool cart_barcode_supported(void) {
+    return cart == &mapper_bandai && bandai.mapper == 157;
 }
 
 // Mapper 28: Action 53.

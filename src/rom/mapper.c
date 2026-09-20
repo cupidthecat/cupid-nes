@@ -43,11 +43,12 @@
 #include "nsf.h"
 #include "../cpu/cpu.h"
 #include "../apu/apu.h"
+#include "../replay/input_event.h"
+#include "../system/execution_policy.h"
 #include "../system/timing.h"
 #include "../system/hardware.h"
 #include "../system/vs_system.h"
 #include "../util/file_io.h"
-#include "../system/execution_policy.h"
 #include "../video/video_trace.h"
 
 extern uint64_t cpu_total_cycles;
@@ -621,6 +622,7 @@ void cart_set_mirroring(Mirroring m) {
 }
 bool cart_set_mmc3_revision_name(const char *name) {
     if (!name) return false;
+    if (!nes_execution_allows_host_configuration()) return false;
     if (strcmp(name, "standard") == 0) {
         mmc3_revision_a_profile = false;
         return true;
@@ -636,6 +638,7 @@ const char *cart_mmc3_revision_name(void) {
 }
 bool cart_set_dip_switches(unsigned value) {
     if (value > 0xFFu) return false;
+    if (!nes_execution_allows_host_configuration()) return false;
     cart_dip_value = value;
     return true;
 }
@@ -769,6 +772,12 @@ static bool small_prg_window_read(uint16_t address, uint8_t *value) {
 
 bool cart_set_karaoke_input(CartKaraokeInput input, bool pressed) {
     if (C.mapper_no != 188 || (unsigned)input >= CART_KARAOKE_INPUT_COUNT) return false;
+    NesInputEvent event = {
+        .type = NES_INPUT_EVENT_CART_KARAOKE,
+        .a = (int32_t)input,
+        .b = pressed
+    };
+    if (!nes_input_event_submit(&event)) return false;
     return board_set_mapper_input(active_board, (unsigned)input, pressed);
 }
 uint8_t cart_cpu_read(uint16_t a) {

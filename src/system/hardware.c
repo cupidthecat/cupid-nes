@@ -22,6 +22,7 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 #include "hardware.h"
+#include "execution_policy.h"
 #include <string.h>
 
 static NesConsoleModel console_model = NES_CONSOLE_NES001;
@@ -41,6 +42,7 @@ NesConsoleModel nes_console_model(void) {
 
 bool nes_set_console_model(NesConsoleModel model) {
     if ((unsigned)model > NES_CONSOLE_HVC101) return false;
+    if (!nes_execution_allows_host_configuration()) return false;
     console_model = model;
     return true;
 }
@@ -64,6 +66,7 @@ NesRamPowerOnState nes_ram_power_on_state(void) {
 
 bool nes_set_ram_power_on_state(NesRamPowerOnState state) {
     if ((unsigned)state > NES_RAM_POWER_RANDOM) return false;
+    if (!nes_execution_allows_host_configuration()) return false;
     ram_power_on_state = state;
     return true;
 }
@@ -82,7 +85,12 @@ const char *nes_ram_power_on_state_name(void) {
 }
 
 void nes_seed_power_on_random(uint32_t seed) {
+    if (!nes_execution_allows_host_configuration()) return;
     power_on_random_state = seed;
+}
+
+uint32_t nes_power_on_random_state(void) {
+    return power_on_random_state;
 }
 
 static uint32_t next_power_on_random(void) {
@@ -123,6 +131,7 @@ bool nes_power_on_random_bool(void) {
 }
 
 void nes_set_randomize_vblank(bool enabled) {
+    if (!nes_execution_allows_host_configuration()) return;
     randomize_vblank = enabled;
 }
 

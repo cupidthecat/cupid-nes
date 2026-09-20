@@ -24,6 +24,7 @@
  */
 
 #include "fds.h"
+#include "../replay/input_event.h"
 #include "../system/hardware.h"
 #include "../system/execution_policy.h"
 #include "../video/video_trace.h"
@@ -649,6 +650,9 @@ size_t fds_current_side(void) { return fds_disk_inserted() ? fds.current_side : 
 
 bool fds_insert_disk(size_t side) {
     if (!fds.image || side >= fds.image->side_count) return false;
+    if (side > INT32_MAX) return false;
+    NesInputEvent event = {.type = NES_INPUT_EVENT_FDS_INSERT, .a = (int32_t)side};
+    if (!nes_input_event_submit(&event)) return false;
     fds.current_side = side;
     fds.end_of_head = true;
     fds.scanning = false;
@@ -657,10 +661,15 @@ bool fds_insert_disk(size_t side) {
 }
 
 void fds_eject_disk(void) {
+    NesInputEvent event = {.type = NES_INPUT_EVENT_FDS_EJECT};
+    if (!nes_input_event_submit(&event)) return;
     fds.current_side = FDS_NO_SIDE;
 }
 
 void fds_set_write_protected(bool protected_media) {
+    uint32_t policy = nes_execution_policy();
+    if (policy & (NES_EXECUTION_MOVIE_RECORDING | NES_EXECUTION_MOVIE_PLAYBACK
+                  | NES_EXECUTION_NETPLAY)) return;
     if (fds.image) fds.image->write_protected = protected_media;
 }
 

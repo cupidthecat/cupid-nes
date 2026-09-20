@@ -22,6 +22,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "timing.h"
+#include "execution_policy.h"
 #include <string.h>
 
 static const NesTiming timings[] = {
@@ -47,6 +48,7 @@ const NesTiming *nes_timing(void) {
 }
 
 void nes_set_region(NesRegion region) {
+    if (!nes_execution_allows_host_configuration()) return;
     active_timing = nes_timing_for_region(region);
 }
 
@@ -58,6 +60,7 @@ bool nes_set_region_mode(NesRegionMode mode) {
     if ((unsigned)mode > NES_REGION_MODE_DENDY) {
         return false;
     }
+    if (!nes_execution_allows_host_configuration()) return false;
 
     region_mode = mode;
     return true;

@@ -19,6 +19,9 @@ static void fds_automation_reset(void) {
 }
 
 void fds_set_automation_options(FdsAutomationOptions options) {
+    uint32_t policy = nes_execution_policy();
+    if (policy & (NES_EXECUTION_MOVIE_RECORDING | NES_EXECUTION_MOVIE_PLAYBACK
+                  | NES_EXECUTION_NETPLAY)) return;
     automatic_options = options;
 }
 

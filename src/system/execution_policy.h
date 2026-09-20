@@ -32,6 +32,7 @@ uint32_t nes_execution_policy(void);
 bool nes_execution_set_policy(uint32_t policy);
 bool nes_execution_allows_persistence(void);
 bool nes_execution_allows_automatic_media(void);
+bool nes_execution_allows_host_configuration(void);
 
 #ifdef __cplusplus
 }

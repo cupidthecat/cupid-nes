@@ -460,14 +460,17 @@ static int test_replay_frontend_contract(void) {
     FrontendCommandInfo command;
     CHECK(frontend_command_get(REPLAY_COMMAND_REWIND_FRAME, &command));
     CHECK(frontend_command_get(REPLAY_COMMAND_RUNAHEAD_CYCLE, &command));
+    CHECK(frontend_command_get(REPLAY_COMMAND_MOVIE_RECORD, &command));
+    CHECK(frontend_command_get(REPLAY_COMMAND_MOVIE_PLAY, &command));
+    CHECK(frontend_command_get(REPLAY_COMMAND_MOVIE_STOP, &command));
     FrontendPanelInfo panel;
     CHECK(frontend_panel_get(REPLAY_PANEL, &panel));
 
-    FrontendPanelControl controls[8];
-    FrontendPanelModel model = {.controls = controls, .capacity = 8};
+    FrontendPanelControl controls[12];
+    FrontendPanelModel model = {.controls = controls, .capacity = 12};
     char error[160] = {0};
     CHECK(frontend_panel_snapshot(REPLAY_PANEL, &model, error, sizeof(error)));
-    CHECK(model.count == 5);
+    CHECK(model.count == 11);
     CHECK(frontend_panel_action(REPLAY_PANEL, REPLAY_CONTROL_RUNAHEAD,
                                 NULL, 2, error, sizeof(error)));
     CHECK(frontend_execution_run_ahead(&runtime) == 2);

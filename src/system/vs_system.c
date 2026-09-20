@@ -23,6 +23,8 @@
 #include "../video/frame_snapshot.h"
 #include "timing.h"
 #include "../../include/globals.h"
+#include "../replay/input_event.h"
+#include "execution_policy.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -507,6 +509,8 @@ uint8_t vs_debug_peek_controller_port(unsigned port) {
 
 bool vs_set_dip_switches(uint16_t value) {
     if (!vs_enabled()) return false;
+    if (nes_execution_policy() & (NES_EXECUTION_MOVIE_RECORDING | NES_EXECUTION_MOVIE_PLAYBACK
+                                | NES_EXECUTION_NETPLAY)) return false;
     vs.dips = value;
     return true;
 }
@@ -515,6 +519,12 @@ uint16_t vs_dip_switches(void) { return vs.dips; }
 
 bool vs_set_coin(unsigned slot, bool pressed) {
     if (!vs_enabled() || slot >= (vs_dual_system() ? 4u : 2u)) return false;
+    NesInputEvent event = {
+        .type = NES_INPUT_EVENT_VS_COIN,
+        .a = (int32_t)slot,
+        .b = pressed
+    };
+    if (!nes_input_event_submit(&event)) return false;
     if (pressed && !vs.coin_pressed[slot]) {
         unsigned side = slot / 2;
         vs.coin_frames[slot] = 4;
@@ -526,6 +536,12 @@ bool vs_set_coin(unsigned slot, bool pressed) {
 
 bool vs_set_service(unsigned side, bool pressed) {
     if (!vs_enabled() || side >= (vs_dual_system() ? 2u : 1u)) return false;
+    NesInputEvent event = {
+        .type = NES_INPUT_EVENT_VS_SERVICE,
+        .a = (int32_t)side,
+        .b = pressed
+    };
+    if (!nes_input_event_submit(&event)) return false;
     vs.service[side] = pressed;
     return true;
 }

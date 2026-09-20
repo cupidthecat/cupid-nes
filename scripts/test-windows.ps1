@@ -69,6 +69,7 @@ $coreSources = @('src/system/timing.c', 'src/system/hardware.c', 'src/system/vs_
                  'src/ui/debug_frontend.c', 'src/ui/host_input.c', 'src/ui/output_guard.c',
                  'src/ui/cheat_frontend.c')
 $coreSources += @('src/system/execution_policy.c', 'src/replay/rewind.c', 'src/video/frame_snapshot.c',
+                  'src/replay/input_event.c', 'src/replay/movie.c',
                   'src/audio/audio_observer.c', 'src/audio/audio_mix.c', 'src/video/presentation.c',
                   'src/ui/nsf_player.c', 'src/ui/nsf_player_ui.c',
                   'src/ui/nsf_player_runtime.c',
@@ -134,7 +135,8 @@ $testSources = @('src/tests/accuracy_test.c', 'src/tests/cpu_accuracy.c', 'src/t
                  'src/tests/board_nina_fme7_accuracy.c', 'src/tests/board_state_accuracy.c', 'src/tests/state_accuracy.c',
                  'src/tests/state_ui_accuracy.c',
                  'src/tests/debugger_accuracy.c',
-                 'src/tests/cheat_accuracy.c', 'src/tests/rewind_accuracy.c', 'src/tests/frontend_accuracy.c')
+                 'src/tests/cheat_accuracy.c', 'src/tests/rewind_accuracy.c', 'src/tests/movie_accuracy.c',
+                 'src/tests/frontend_accuracy.c')
 $application = Join-Path $outputDirectory 'cupid-nes.exe'
 $testProgram = Join-Path $outputDirectory 'accuracy-tests.exe'
 $objectDirectory = Join-Path $outputDirectory 'objects'

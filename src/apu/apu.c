@@ -31,6 +31,7 @@
 #include "../rom/mapper.h"
 #include "../cpu/cpu.h"
 #include "../system/timing.h"
+#include "../system/execution_policy.h"
 #include <string.h>
 #include <math.h>
 #include <stdio.h>
@@ -428,6 +429,7 @@ bool apu_set_cpu_revision(ApuCpuRevision revision) {
         revision != APU_CPU_REVISION_LATE_2A03) {
         return false;
     }
+    if (!nes_execution_allows_host_configuration()) return false;
     cpu_revision = revision;
     return true;
 }
@@ -437,6 +439,7 @@ ApuCpuRevision apu_get_cpu_revision(void) {
 }
 
 void apu_set_disable_noise_mode(bool enabled) {
+    if (!nes_execution_allows_host_configuration()) return;
     disable_noise_mode = enabled;
 }
 
@@ -445,6 +448,7 @@ bool apu_noise_mode_disabled(void) {
 }
 
 void apu_set_swap_duty_cycles(bool enabled) {
+    if (!nes_execution_allows_host_configuration()) return;
     swap_duty_cycles = enabled;
 }
 

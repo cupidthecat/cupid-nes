@@ -34,6 +34,7 @@
 #include "../rom/mapper.h"
 #include "../joypad/joypad.h"
 #include "../system/hardware.h"
+#include "../system/execution_policy.h"
 #include "../system/timing.h"
 #include "../system/vs_system.h"
 #include "../debugger/debugger.h"
@@ -48,41 +49,59 @@ static CpuRuntimeState main_runtime = {.ppu_master_phase = 3};
 static CpuRuntimeState *cpu_runtime = &main_runtime;
 static uint8_t *cpu_ram = ram;
 static uint64_t *cpu_cycles = &cpu_total_cycles;
-static enum { ALIGNMENT_DEFAULT, ALIGNMENT_EXPLICIT, ALIGNMENT_SEEDED } alignment_mode;
+static CpuStartupAlignmentMode alignment_mode;
 static CpuStartupAlignment configured_alignment;
 static uint32_t alignment_random_state;
 static bool cpu_test_mode;
 
-void cpu_set_test_mode(bool enabled) { cpu_test_mode = enabled; }
+void cpu_set_test_mode(bool enabled) {
+    if (!nes_execution_allows_host_configuration()) return;
+    cpu_test_mode = enabled;
+}
 bool cpu_test_mode_enabled(void) { return cpu_test_mode; }
 
 void cpu_use_default_startup_alignment(void) {
-    alignment_mode = ALIGNMENT_DEFAULT;
+    if (!nes_execution_allows_host_configuration()) return;
+    alignment_mode = CPU_STARTUP_ALIGNMENT_DEFAULT;
 }
 
 bool cpu_set_startup_alignment(unsigned cpu_offset, unsigned ppu_phase) {
     const NesTiming *timing = nes_timing();
     if (cpu_offset >= timing->cpu_divider || ppu_phase >= timing->ppu_divider)
         return false;
+    if (!nes_execution_allows_host_configuration()) return false;
     configured_alignment = (CpuStartupAlignment){(uint8_t)cpu_offset, (uint8_t)ppu_phase};
-    alignment_mode = ALIGNMENT_EXPLICIT;
+    alignment_mode = CPU_STARTUP_ALIGNMENT_EXPLICIT;
     return true;
 }
 
 void cpu_seed_startup_alignment(uint32_t seed) {
+    if (!nes_execution_allows_host_configuration()) return;
     alignment_random_state = seed;
-    alignment_mode = ALIGNMENT_SEEDED;
+    alignment_mode = CPU_STARTUP_ALIGNMENT_SEEDED;
 }
 
 bool cpu_startup_alignment_valid(NesRegion region) {
     const NesTiming *timing = nes_timing_for_region(region);
-    return alignment_mode != ALIGNMENT_EXPLICIT
+    return alignment_mode != CPU_STARTUP_ALIGNMENT_EXPLICIT
         || (configured_alignment.cpu_offset < timing->cpu_divider
             && configured_alignment.ppu_phase < timing->ppu_divider);
 }
 
 CpuStartupAlignment cpu_get_startup_alignment(void) {
     return cpu_runtime->startup_alignment;
+}
+
+CpuStartupAlignmentMode cpu_get_startup_alignment_mode(void) {
+    return alignment_mode;
+}
+
+CpuStartupAlignment cpu_get_configured_startup_alignment(void) {
+    return configured_alignment;
+}
+
+uint32_t cpu_get_startup_alignment_seed(void) {
+    return alignment_random_state;
 }
 
 static uint8_t random_alignment_offset(uint32_t limit) {
@@ -321,9 +340,9 @@ bool cpu_power_on(CPU* cpu) {
     uint8_t *expanded = cart_cpu_ram_8k();
     nes_initialize_power_on_ram(expanded ? expanded : cpu_ram, expanded ? 0x2000 : 0x0800, 0x00);
     CpuStartupAlignment alignment = {0, (uint8_t)(nes_timing()->ppu_divider - 1)};
-    if (alignment_mode == ALIGNMENT_EXPLICIT) {
+    if (alignment_mode == CPU_STARTUP_ALIGNMENT_EXPLICIT) {
         alignment = configured_alignment;
-    } else if (alignment_mode == ALIGNMENT_SEEDED) {
+    } else if (alignment_mode == CPU_STARTUP_ALIGNMENT_SEEDED) {
         alignment.cpu_offset = random_alignment_offset(nes_timing()->cpu_divider);
         alignment.ppu_phase = random_alignment_offset(nes_timing()->ppu_divider);
     }
@@ -1078,7 +1097,7 @@ static bool cpu_state_decode(NesStateReader *reader, CpuSavedState *saved) {
         || !nes_state_read_u8(reader, &saved->configured_alignment.ppu_phase)
         || !nes_state_read_u32(reader, &saved->alignment_random_state)
         || !nes_state_read_bool(reader, &saved->test_mode)) return false;
-    if (saved->alignment_mode > ALIGNMENT_SEEDED) return false;
+    if (saved->alignment_mode > CPU_STARTUP_ALIGNMENT_SEEDED) return false;
     if (saved->runtime.ppu_master_phase >= nes_timing()->ppu_divider) return false;
     return nes_state_reader_remaining(reader) == 0;
 }

@@ -23,11 +23,15 @@ bool nes_execution_set_policy(uint32_t policy) {
 }
 
 bool nes_execution_allows_persistence(void) {
-    const uint32_t isolated = NES_EXECUTION_MOVIE_PLAYBACK | NES_EXECUTION_NETPLAY
+    const uint32_t isolated = NES_EXECUTION_MOVIE_RECORDING | NES_EXECUTION_MOVIE_PLAYBACK | NES_EXECUTION_NETPLAY
                             | NES_EXECUTION_SPECULATIVE | NES_EXECUTION_REWIND;
     return (active_policy & isolated) == 0;
 }
 
 bool nes_execution_allows_automatic_media(void) {
+    return active_policy == NES_EXECUTION_LIVE;
+}
+
+bool nes_execution_allows_host_configuration(void) {
     return active_policy == NES_EXECUTION_LIVE;
 }

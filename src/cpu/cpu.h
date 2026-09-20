@@ -37,6 +37,12 @@ typedef struct {
     uint8_t ppu_phase;
 } CpuStartupAlignment;
 
+typedef enum {
+    CPU_STARTUP_ALIGNMENT_DEFAULT,
+    CPU_STARTUP_ALIGNMENT_EXPLICIT,
+    CPU_STARTUP_ALIGNMENT_SEEDED
+} CpuStartupAlignmentMode;
+
 typedef struct { 
     uint8_t a;         // Accumulator
     uint8_t x;         // X register
@@ -101,6 +107,9 @@ bool cpu_set_startup_alignment(unsigned cpu_offset, unsigned ppu_phase);
 void cpu_seed_startup_alignment(uint32_t seed);
 bool cpu_startup_alignment_valid(NesRegion region);
 CpuStartupAlignment cpu_get_startup_alignment(void);
+CpuStartupAlignmentMode cpu_get_startup_alignment_mode(void);
+CpuStartupAlignment cpu_get_configured_startup_alignment(void);
+uint32_t cpu_get_startup_alignment_seed(void);
 void cpu_set_test_mode(bool enabled);
 bool cpu_test_mode_enabled(void);
 bool cpu_power_on(CPU* cpu);

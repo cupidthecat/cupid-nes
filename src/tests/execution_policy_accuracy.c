@@ -22,7 +22,7 @@
 #endif
 
 static const uint32_t isolated_modes[] = {
-    NES_EXECUTION_MOVIE_PLAYBACK, NES_EXECUTION_NETPLAY,
+    NES_EXECUTION_MOVIE_RECORDING, NES_EXECUTION_MOVIE_PLAYBACK, NES_EXECUTION_NETPLAY,
     NES_EXECUTION_SPECULATIVE, NES_EXECUTION_REWIND,
     NES_EXECUTION_MOVIE_RECORDING | NES_EXECUTION_SPECULATIVE
 };
@@ -64,11 +64,6 @@ static int policy_cart(const char *directory, unsigned mapper) {
         previous = next;
     }
 
-    BOARD_CHECK(nes_execution_set_policy(NES_EXECUTION_MOVIE_RECORDING));
-    cart_cpu_write(0x6009, 0xE2);
-    BOARD_CHECK(nes_execution_allows_persistence() && cart_battery_flush());
-    BOARD_CHECK(read_saved_byte(save_path, 9) == 0xE2);
-    BOARD_CHECK(nes_execution_set_policy(NES_EXECUTION_LIVE));
     BOARD_CHECK(unload_rom());
     BOARD_CHECK(nes_file_remove(save_path) == NES_FILE_OK);
     BOARD_CHECK(nes_file_remove(rom_path) == NES_FILE_OK);

@@ -37,6 +37,7 @@
 #include "unif.h"
 #include "../system/timing.h"
 #include "../system/hardware.h"
+#include "../system/execution_policy.h"
 #include "../system/vs_system.h"
 #include "../cpu/cpu.h"
 #include "../apu/epsm.h"
@@ -823,10 +824,12 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
 }
 
 int load_rom_memory(const uint8_t *data, size_t size) {
+    if (!nes_execution_allows_host_configuration()) return -1;
     return load_rom_data(data, size, NULL);
 }
 
 int load_rom_image(const uint8_t *data, size_t size, const char *save_path) {
+    if (!nes_execution_allows_host_configuration()) return -1;
     return load_rom_data(data, size, save_path);
 }
 
@@ -840,6 +843,7 @@ int load_fds_memory(const uint8_t *disk, size_t disk_size,
 int load_fds_memory_options(const uint8_t *disk, size_t disk_size,
                              const uint8_t *bios, size_t bios_size,
                              const char *disk_path, const FdsLoadOptions *options) {
+    if (!nes_execution_allows_host_configuration()) return -1;
     if (nes_resolve_region(NES_REGION_NTSC) != NES_REGION_NTSC) {
         fprintf(stderr, "FDS requires NTSC timing; choose --region auto or ntsc\n");
         return -1;
@@ -1040,6 +1044,7 @@ bool rom_is_fds(void) { return fds_loaded != 0; }
 bool rom_is_studybox(void) { return studybox_loaded != 0; }
 bool rom_is_nsf(void) { return nsf_loaded != 0; }
 bool rom_nsf_select_track(unsigned track) {
+    if (!nes_execution_allows_host_configuration()) return false;
     return nsf_loaded && cart_nsf_select_track(track);
 }
 unsigned rom_nsf_current_track(void) { return nsf_loaded ? cart_nsf_current_track() : 0; }
@@ -1050,6 +1055,7 @@ double rom_nsf_elapsed_seconds(void) {
 
 int load_studybox_memory(const uint8_t *media, size_t media_size,
                          const uint8_t *bios, size_t bios_size) {
+    if (!nes_execution_allows_host_configuration()) return -1;
     if (nes_resolve_region(NES_REGION_NTSC) != NES_REGION_NTSC) {
         fprintf(stderr, "StudyBox requires NTSC timing; choose --region auto or ntsc\n");
         return -1;
@@ -1116,6 +1122,7 @@ bool rom_flush_persistent(void) {
 }
 
 bool unload_rom(void) {
+    if (!nes_execution_allows_host_configuration()) return false;
     if (!rom_flush_persistent()) return false;
     mapper_shutdown();
     free(prg_rom);
@@ -1144,6 +1151,7 @@ static int read_file(const char *path, uint8_t **data, size_t *size) {
 }
 
 bool rom_set_fcns_kanji_firmware(const char *path) {
+    if (!nes_execution_allows_host_configuration()) return false;
     if (!path) return board_set_fcns_kanji_firmware(NULL, 0);
     uint8_t *data = NULL;
     size_t size = 0;
@@ -1164,6 +1172,7 @@ int load_fds(const char *disk_path, const char *bios_path, bool write_protected)
 
 int load_fds_with_options(const char *disk_path, const char *bios_path,
                            const FdsLoadOptions *options) {
+    if (!nes_execution_allows_host_configuration()) return -1;
     if (!disk_path || !bios_path) return -1;
     // In-place reloads must read after saving the current disk, too.
     if (!rom_flush_persistent()) return -1;
@@ -1183,6 +1192,7 @@ int load_fds_with_options(const char *disk_path, const char *bios_path,
 }
 
 int load_studybox(const char *media_path, const char *bios_path) {
+    if (!nes_execution_allows_host_configuration()) return -1;
     if (!media_path || !bios_path) return -1;
     uint8_t *media = NULL, *bios = NULL;
     size_t media_size = 0, bios_size = 0;
@@ -1200,6 +1210,7 @@ int load_studybox(const char *media_path, const char *bios_path) {
 }
 
 int load_rom(const char *filename) {
+    if (!nes_execution_allows_host_configuration()) return -1;
     if (!filename) return -1;
     uint8_t *data = NULL;
     size_t size = 0;

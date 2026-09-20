@@ -26,6 +26,7 @@ CORE_SRC = src/system/timing.c src/system/hardware.c src/system/vs_system.c src/
            src/ui/ui_font.c src/ui/desktop_ui.c src/ui/state_frontend.c src/ui/state_runtime.c \
            src/ui/debug_frontend.c src/ui/host_input.c src/ui/output_guard.c src/ui/cheat_frontend.c
 CORE_SRC += src/system/execution_policy.c src/replay/rewind.c src/video/frame_snapshot.c \
+            src/replay/input_event.c src/replay/movie.c \
             src/audio/audio_observer.c src/audio/audio_mix.c src/video/presentation.c \
             src/ui/nsf_player.c src/ui/nsf_player_ui.c \
             src/ui/nsf_player_runtime.c \
@@ -84,7 +85,7 @@ TEST_SRC = src/tests/accuracy_test.c src/tests/cpu_accuracy.c \
            src/tests/board_nina_fme7_accuracy.c src/tests/board_state_accuracy.c src/tests/state_accuracy.c \
            src/tests/state_ui_accuracy.c \
            src/tests/debugger_accuracy.c src/tests/cheat_accuracy.c \
-           src/tests/rewind_accuracy.c src/tests/frontend_accuracy.c
+           src/tests/rewind_accuracy.c src/tests/movie_accuracy.c src/tests/frontend_accuracy.c
 TEST_SRC += src/tests/patch_accuracy.c src/tests/media_accuracy.c src/tests/fds_options_accuracy.c \
             src/tests/fds_automation_accuracy.c src/tests/execution_policy_accuracy.c \
             src/tests/nsf_player_accuracy.c src/tests/capture_container_accuracy.c \

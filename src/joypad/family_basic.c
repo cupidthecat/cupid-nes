@@ -7,6 +7,7 @@
  * GNU General Public License, version 3 or any later version.
  */
 #include "family_basic.h"
+#include "../replay/input_event.h"
 #include "../system/execution_policy.h"
 #include "../util/file_io.h"
 #include "../state/state_alloc.h"
@@ -46,6 +47,12 @@ void family_basic_shutdown(void) {
 
 bool family_basic_set_key(FamilyBasicKey key, bool pressed) {
     if ((unsigned)key >= FB_KEY_COUNT) return false;
+    NesInputEvent event = {
+        .type = NES_INPUT_EVENT_FAMILY_BASIC_KEY,
+        .a = (int32_t)key,
+        .b = pressed
+    };
+    if (!nes_input_event_submit(&event)) return false;
     unsigned row = (unsigned)key / 8;
     uint8_t bit = (uint8_t)(1u << ((unsigned)key & 7u));
     if (pressed) matrix[row] |= bit;
@@ -138,6 +145,8 @@ static void replace_tape(uint8_t *data, size_t size) {
 }
 
 bool family_basic_tape_load(const uint8_t *data, size_t size) {
+    if (nes_execution_policy() & (NES_EXECUTION_MOVIE_RECORDING | NES_EXECUTION_MOVIE_PLAYBACK
+                                | NES_EXECUTION_NETPLAY)) return false;
     if ((size && !data) || size > SIZE_MAX / 8) return false;
     uint8_t *copy = size ? malloc(size) : NULL;
     if (size && !copy) return false;
@@ -147,6 +156,8 @@ bool family_basic_tape_load(const uint8_t *data, size_t size) {
 }
 
 bool family_basic_tape_load_file(const char *path) {
+    if (nes_execution_policy() & (NES_EXECUTION_MOVIE_RECORDING | NES_EXECUTION_MOVIE_PLAYBACK
+                                | NES_EXECUTION_NETPLAY)) return false;
     if (!path || !*path) return false;
     size_t size = 0;
     uint8_t *data = NULL;
@@ -164,19 +175,27 @@ bool family_basic_tape_save_file(const char *path) {
 
 bool family_basic_tape_play(uint64_t cpu_cycles) {
     if (!tape.samples) return false;
+    NesInputEvent event = {.type = NES_INPUT_EVENT_FAMILY_BASIC_TAPE_PLAY};
+    if (!nes_input_event_submit(&event)) return false;
     tape.mode = FB_TAPE_PLAYING;
     tape.cycle = cpu_cycles;
     return true;
 }
 
 void family_basic_tape_record(uint64_t cpu_cycles) {
+    NesInputEvent event = {.type = NES_INPUT_EVENT_FAMILY_BASIC_TAPE_RECORD};
+    if (!nes_input_event_submit(&event)) return;
     tape.samples = 0;
     tape.cycle = cpu_cycles;
     tape.mode = FB_TAPE_RECORDING;
     tape.failed = false;
 }
 
-void family_basic_tape_stop(void) { tape.mode = FB_TAPE_STOPPED; }
+void family_basic_tape_stop(void) {
+    NesInputEvent event = {.type = NES_INPUT_EVENT_FAMILY_BASIC_TAPE_STOP};
+    if (!nes_input_event_submit(&event)) return;
+    tape.mode = FB_TAPE_STOPPED;
+}
 FamilyBasicTapeMode family_basic_tape_mode(void) { return tape.mode; }
 bool family_basic_tape_failed(void) { return tape.failed; }
 

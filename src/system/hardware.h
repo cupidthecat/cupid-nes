@@ -53,6 +53,7 @@ bool nes_set_ram_power_on_state(NesRamPowerOnState state);
 bool nes_set_ram_power_on_state_name(const char *name);
 const char *nes_ram_power_on_state_name(void);
 void nes_seed_power_on_random(uint32_t seed);
+uint32_t nes_power_on_random_state(void);
 void nes_initialize_power_on_ram(void *data, size_t size, uint8_t default_value);
 bool nes_power_on_random_bool(void);
 void nes_set_randomize_vblank(bool enabled);

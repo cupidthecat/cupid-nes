@@ -13,11 +13,14 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include "execution_control.h"
+#include "../replay/movie.h"
 #include "../replay/rewind.h"
 #include "settings.h"
 
 typedef bool (*FrontendOpenHandler)(void *userdata, char *error, size_t error_size);
 typedef bool (*FrontendReloadHandler)(void *userdata, char *error, size_t error_size);
+
+enum { FRONTEND_MOVIE_PATH_CAPACITY = 1024 };
 
 typedef struct FrontendExecutionRuntime {
     ExecutionControl execution;
@@ -35,6 +38,9 @@ typedef struct FrontendExecutionRuntime {
     unsigned run_ahead_frames;
     NesReplayResult replay_status;
     NesStateResult replay_state_status;
+    NesMovieSession *movie;
+    char movie_path[FRONTEND_MOVIE_PATH_CAPACITY];
+    NesMovieStartKind movie_start_kind;
     bool (*before_machine_change)(void *context, char *error, size_t error_size);
     void *machine_change_context;
     FrontendOpenHandler open_handler;
@@ -83,5 +89,17 @@ bool frontend_execution_set_run_ahead(FrontendExecutionRuntime *runtime, unsigne
 unsigned frontend_execution_run_ahead(const FrontendExecutionRuntime *runtime);
 NesReplayResult frontend_execution_replay_status(const FrontendExecutionRuntime *runtime,
                                                  NesStateResult *state_result);
+bool frontend_execution_movie_set_path(FrontendExecutionRuntime *runtime, const char *path,
+                                       char *error, size_t error_size);
+bool frontend_execution_movie_set_start_kind(FrontendExecutionRuntime *runtime,
+                                             NesMovieStartKind start_kind);
+bool frontend_execution_movie_record(FrontendExecutionRuntime *runtime,
+                                     char *error, size_t error_size);
+bool frontend_execution_movie_play(FrontendExecutionRuntime *runtime,
+                                   char *error, size_t error_size);
+bool frontend_execution_movie_stop(FrontendExecutionRuntime *runtime,
+                                   char *error, size_t error_size);
+void frontend_execution_movie_progress(const FrontendExecutionRuntime *runtime,
+                                       NesMovieProgress *progress);
 
 #endif
