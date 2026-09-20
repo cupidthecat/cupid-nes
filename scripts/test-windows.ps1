@@ -66,7 +66,7 @@ $coreSources = @('src/system/timing.c', 'src/system/hardware.c', 'src/system/vs_
                  'src/ui/settings.c', 'src/ui/game_database.c', 'src/ui/idle_frontend.c',
                  'src/ui/image_open.c', 'src/ui/session_actions.c', 'src/ui/ui_font.c',
                  'src/ui/desktop_ui.c', 'src/ui/state_frontend.c', 'src/ui/state_runtime.c',
-                 'src/ui/debug_frontend.c', 'src/ui/host_input.c')
+                 'src/ui/debug_frontend.c', 'src/ui/host_input.c', 'src/ui/output_guard.c')
 $coreSources += @('src/system/execution_policy.c', 'src/replay/rewind.c', 'src/video/frame_snapshot.c',
                   'src/audio/audio_observer.c', 'src/audio/audio_mix.c', 'src/video/presentation.c',
                   'src/ui/nsf_player.c', 'src/ui/nsf_player_ui.c',
@@ -131,6 +131,7 @@ $testSources = @('src/tests/accuracy_test.c', 'src/tests/cpu_accuracy.c', 'src/t
                  'src/tests/board_irem77_accuracy.c', 'src/tests/default_prg_ram_geometry_accuracy.c',
                  'src/tests/native_chr_capacity_accuracy.c', 'src/tests/native_mixed_chr_accuracy.c',
                  'src/tests/board_nina_fme7_accuracy.c', 'src/tests/board_state_accuracy.c', 'src/tests/state_accuracy.c',
+                 'src/tests/state_ui_accuracy.c',
                  'src/tests/debugger_accuracy.c',
                  'src/tests/cheat_accuracy.c', 'src/tests/rewind_accuracy.c', 'src/tests/frontend_accuracy.c')
 $application = Join-Path $outputDirectory 'cupid-nes.exe'

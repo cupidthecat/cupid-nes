@@ -25,6 +25,7 @@ typedef struct FrontendExecutionRuntime {
     int audio_output_rate;
     bool muted;
     const char *rom_path;
+    const char *save_identity;
     const char *fds_bios_path;
     const char *studybox_bios_path;
     size_t *fds_side;
@@ -53,6 +54,7 @@ void frontend_execution_set_reload_handler(FrontendExecutionRuntime *runtime,
                                            FrontendReloadHandler handler, void *userdata);
 void frontend_execution_begin_machine_change(FrontendExecutionRuntime *runtime);
 void frontend_execution_end_machine_change(FrontendExecutionRuntime *runtime);
+void frontend_execution_end_machine_change_preserving_audio(FrontendExecutionRuntime *runtime);
 bool frontend_execution_handle_shortcut(FrontendExecutionRuntime *runtime,
                                         const SDL_KeyboardEvent *event);
 bool frontend_execution_handle_shortcut_action(FrontendExecutionRuntime *runtime,

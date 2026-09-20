@@ -7,6 +7,7 @@
  * GNU General Public License, version 3 or any later version.
  */
 #include "capture_runtime.h"
+#include "output_guard.h"
 #include "../rom/fds.h"
 #include "../system/vs_system.h"
 #include "../video/ntsc_composite.h"
@@ -39,13 +40,8 @@ static bool get_frame(void *context, bool displayed, NesCaptureFrame *frame,
 
 static bool validate_path(void *context, const char *path, char *error, size_t error_size) {
     NesCaptureRuntime *capture = context;
-    const FrontendExecutionRuntime *execution = capture->execution;
-    const char *protected_paths[] = {
-        execution->rom_path, execution->fds_bios_path, execution->studybox_bios_path, fds_save_path()
-    };
-    return nes_capture_path_allowed(path, protected_paths,
-                                      sizeof(protected_paths) / sizeof(protected_paths[0]), error, error_size)
-        && nes_capture_path_allowed(path, capture->protected_paths, capture->protected_path_count, error, error_size);
+    return frontend_output_path_allowed(path, capture->execution, capture->protected_paths,
+                                         capture->protected_path_count, error, error_size);
 }
 
 static bool before_machine_change(void *context, char *error, size_t error_size) {

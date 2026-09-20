@@ -244,6 +244,7 @@ void frontend_execution_init(FrontendExecutionRuntime *runtime,
     runtime->audio_device = audio_device;
     runtime->audio_output_rate = audio_output_rate;
     runtime->rom_path = rom_path;
+    runtime->save_identity = rom_path;
     runtime->fds_bios_path = fds_bios_path;
     runtime->studybox_bios_path = studybox_bios_path;
     runtime->fds_side = fds_side;
@@ -275,6 +276,10 @@ void frontend_execution_begin_machine_change(FrontendExecutionRuntime *runtime) 
 
 void frontend_execution_end_machine_change(FrontendExecutionRuntime *runtime) {
     unlock_audio_after_machine_change(runtime);
+}
+
+void frontend_execution_end_machine_change_preserving_audio(FrontendExecutionRuntime *runtime) {
+    unlock_audio_without_refresh(runtime);
 }
 
 bool frontend_execution_register_commands(FrontendExecutionRuntime *runtime) {

@@ -63,6 +63,8 @@ NesStateResult nes_state_save_file(const char *path);
 NesStateResult nes_state_load_file(const char *path);
 
 /* Slots are numbered 0 through NES_STATE_SLOT_COUNT - 1 within directory. */
+NesStateResult nes_state_slot_path(const char *directory, unsigned slot,
+                                   char *path, size_t capacity);
 NesStateResult nes_state_save_slot(const char *directory, unsigned slot);
 NesStateResult nes_state_load_slot(const char *directory, unsigned slot);
 

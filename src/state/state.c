@@ -462,15 +462,32 @@ NesStateResult nes_state_load_file(const char *path) {
     return result;
 }
 
+NesStateResult nes_state_slot_path(const char *directory, unsigned slot,
+                                   char *path, size_t capacity) {
+    if (path && capacity) path[0] = '\0';
+    if (!directory || !*directory || slot >= NES_STATE_SLOT_COUNT || !path || !capacity)
+        return NES_STATE_ERROR_ARGUMENT;
+    size_t length = strlen(directory);
+    if (length > NES_FILE_PATH_LIMIT - 32) return NES_STATE_ERROR_ARGUMENT;
+    bool separator = directory[length - 1] == '/' || directory[length - 1] == '\\';
+    int count = snprintf(path, capacity, "%s%sslot-%u.cstate", directory, separator ? "" : "/", slot);
+    if (count < 0 || (size_t)count >= capacity) {
+        path[0] = '\0';
+        return NES_STATE_ERROR_ARGUMENT;
+    }
+    return NES_STATE_OK;
+}
+
 static char *state_slot_path(const char *directory, unsigned slot) {
     if (!directory || !*directory || slot >= NES_STATE_SLOT_COUNT) return NULL;
     size_t length = strlen(directory);
     if (length > NES_FILE_PATH_LIMIT - 32) return NULL;
-    bool separator = directory[length - 1] == '/' || directory[length - 1] == '\\';
-    size_t capacity = length + 32;
-    char *path = malloc(capacity);
+    char *path = malloc(length + 32);
     if (!path) return NULL;
-    snprintf(path, capacity, "%s%sslot-%u.cstate", directory, separator ? "" : "/", slot);
+    if (nes_state_slot_path(directory, slot, path, length + 32) != NES_STATE_OK) {
+        free(path);
+        return NULL;
+    }
     return path;
 }
 

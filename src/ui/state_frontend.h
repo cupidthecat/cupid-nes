@@ -23,12 +23,18 @@ enum {
 
 typedef bool (*FrontendBeforeStateLoad)(void *context, char *error, size_t error_size);
 typedef void (*FrontendAfterStateLoad)(void *context, bool loaded);
+typedef bool (*FrontendBeforeStateSave)(void *context, const char *path,
+                                       char *error, size_t error_size);
+/* End the snapshot guard before writing the captured bytes to disk. */
+typedef void (*FrontendAfterStateCapture)(void *context, bool captured);
 
 typedef struct {
     FrontendSettings *settings;
     const char *slot_directory;
     FrontendBeforeStateLoad before_load;
     FrontendAfterStateLoad after_load;
+    FrontendBeforeStateSave before_save;
+    FrontendAfterStateCapture after_capture;
     void *context;
     char status[160];
     char slot_text[24];
@@ -40,6 +46,9 @@ void frontend_state_set_hooks(FrontendStateRuntime *runtime,
                               FrontendBeforeStateLoad before_load,
                               FrontendAfterStateLoad after_load,
                               void *context);
+void frontend_state_set_save_hooks(FrontendStateRuntime *runtime,
+                                   FrontendBeforeStateSave before_save,
+                                   FrontendAfterStateCapture after_capture);
 bool frontend_state_register_ui(FrontendStateRuntime *runtime);
 void frontend_state_unregister_ui(void);
 

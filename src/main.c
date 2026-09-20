@@ -1094,6 +1094,8 @@ static int application_main(int argc, char *argv[]) {
     const char *capture_protected_paths[] = {
         epsm_adpcm_path, fcns_kanji_path, tape_play_path, tape_record_path, game_db_path
     };
+    state_runtime_set_protected_paths(&state_runtime, capture_protected_paths,
+                                      sizeof(capture_protected_paths) / sizeof(capture_protected_paths[0]));
     NesCaptureRuntime capture_runtime = {0};
     if (running && !nes_capture_runtime_init(&capture_runtime, &execution_runtime,
         &ntsc_composite_active, composite_framebuffer, capture_protected_paths,

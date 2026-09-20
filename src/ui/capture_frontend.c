@@ -7,6 +7,7 @@
  * GNU General Public License, version 3 or any later version.
  */
 #include "capture_frontend.h"
+#include "output_guard.h"
 #include "frontend_commands.h"
 #include "frontend_panels.h"
 #include <errno.h>
@@ -41,18 +42,7 @@ static bool fail(char *error, size_t capacity, const char *message) {
 
 bool nes_capture_path_allowed(const char *path, const char *const *protected_paths, size_t count,
                                char *error, size_t error_size) {
-    if (!path || !*path || (count && !protected_paths))
-        return fail(error, error_size, "Choose an output path first");
-    for (size_t i = 0; i < count; ++i) {
-        if (!protected_paths[i] || !protected_paths[i][0]) continue;
-        bool same = false;
-        NesFileResult result = nes_file_same(path, protected_paths[i], &same);
-        if (result == NES_FILE_OK && same)
-            return fail(error, error_size, "Capture cannot replace an active image, firmware, or save file");
-        if (result != NES_FILE_OK && result != NES_FILE_NOT_FOUND)
-            return fail(error, error_size, "Could not verify the selected output path");
-    }
-    return true;
+    return frontend_output_path_excludes(path, protected_paths, count, error, error_size);
 }
 
 bool nes_capture_frontend_set_path(NesCaptureFrontend *frontend, FrontendSaveFileType type,

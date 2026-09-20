@@ -104,6 +104,7 @@ int test_epsm_accuracy(void);
 int test_frontend_accuracy(void);
 int test_board_state_accuracy(void);
 int test_state_accuracy(void);
+int test_state_ui_accuracy(void);
 int test_debugger_accuracy(void);
 int test_cheat_accuracy(void);
 int test_rewind_accuracy(void);
@@ -221,6 +222,7 @@ int main(int argc, char **argv) {
     failures += test_epsm_accuracy();
     failures += test_board_state_accuracy();
     failures += test_state_accuracy();
+    failures += test_state_ui_accuracy();
     failures += test_rewind_accuracy();
     failures += test_region_accuracy();
     failures += test_file_io_accuracy();

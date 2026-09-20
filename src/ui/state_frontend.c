@@ -45,9 +45,32 @@ static void after_load(FrontendStateRuntime *runtime, bool loaded) {
     if (runtime->after_load) runtime->after_load(runtime->context, loaded);
 }
 
+static NesStateResult capture_and_write(FrontendStateRuntime *runtime, const char *path) {
+    NesStateBlob blob = {0};
+    NesStateResult result = nes_state_capture(&blob);
+    if (runtime->after_capture) runtime->after_capture(runtime->context, result == NES_STATE_OK);
+    if (result != NES_STATE_OK) return result;
+    NesFileResult written = nes_file_write_atomic(path, blob.data, blob.size);
+    nes_state_blob_free(&blob);
+    switch (written) {
+        case NES_FILE_OK: return NES_STATE_OK;
+        case NES_FILE_OUT_OF_MEMORY: return NES_STATE_ERROR_OUT_OF_MEMORY;
+        case NES_FILE_INVALID_ARGUMENT: return NES_STATE_ERROR_ARGUMENT;
+        default: return NES_STATE_ERROR_IO;
+    }
+}
+
 static bool save_slot(void *context, char *error, size_t error_size) {
     FrontendStateRuntime *runtime = context;
-    NesStateResult result = nes_state_save_slot(runtime->slot_directory, runtime->settings->state_slot);
+    char path[NES_FILE_PATH_LIMIT];
+    NesStateResult result = nes_state_slot_path(runtime->slot_directory, runtime->settings->state_slot,
+                                               path, sizeof(path));
+    if (result != NES_STATE_OK) {
+        report_result(runtime, result, "", error, error_size);
+        return false;
+    }
+    if (runtime->before_save && !runtime->before_save(runtime->context, path, error, error_size)) return false;
+    result = capture_and_write(runtime, path);
     report_result(runtime, result, "State slot saved", error, error_size);
     return result == NES_STATE_OK;
 }
@@ -67,7 +90,9 @@ static bool save_file(void *context, char *error, size_t error_size) {
         if (error && error_size) snprintf(error, error_size, "Choose a state file path first");
         return false;
     }
-    NesStateResult result = nes_state_save_file(runtime->settings->state_file_path);
+    const char *path = runtime->settings->state_file_path;
+    if (runtime->before_save && !runtime->before_save(runtime->context, path, error, error_size)) return false;
+    NesStateResult result = capture_and_write(runtime, path);
     report_result(runtime, result, "State file saved", error, error_size);
     return result == NES_STATE_OK;
 }
@@ -154,6 +179,14 @@ void frontend_state_set_hooks(FrontendStateRuntime *runtime,
     runtime->before_load = before_load_hook;
     runtime->after_load = after_load_hook;
     runtime->context = context;
+}
+
+void frontend_state_set_save_hooks(FrontendStateRuntime *runtime,
+                                   FrontendBeforeStateSave before_save_hook,
+                                   FrontendAfterStateCapture after_capture_hook) {
+    if (!runtime) return;
+    runtime->before_save = before_save_hook;
+    runtime->after_capture = after_capture_hook;
 }
 
 bool frontend_state_register_ui(FrontendStateRuntime *runtime) {

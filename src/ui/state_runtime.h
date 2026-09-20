@@ -20,12 +20,18 @@ typedef struct {
     StateRuntimeRestored restored;
     void *restored_context;
     bool machine_locked;
+    bool paused_before_load;
+    SDL_AudioDeviceID save_audio_device;
+    const char *const *protected_paths;
+    size_t protected_path_count;
 } StateRuntime;
 
 void state_runtime_init(StateRuntime *runtime, FrontendSettings *settings,
                         const char *slot_directory, FrontendExecutionRuntime *execution);
 void state_runtime_set_restored(StateRuntime *runtime, StateRuntimeRestored restored,
                                 void *context);
+void state_runtime_set_protected_paths(StateRuntime *runtime,
+                                       const char *const *paths, size_t count);
 bool state_runtime_register_ui(StateRuntime *runtime);
 void state_runtime_shutdown(StateRuntime *runtime);
 

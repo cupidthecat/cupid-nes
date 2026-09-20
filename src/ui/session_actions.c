@@ -45,7 +45,11 @@ void frontend_session_actions_init(FrontendSessionActions *actions,
 
 void frontend_session_actions_set_execution(FrontendSessionActions *actions,
                                             FrontendExecutionRuntime *execution) {
-    if (actions) actions->execution = execution;
+    if (!actions) return;
+    actions->execution = execution;
+    if (execution && actions->session && actions->session->active)
+        execution->save_identity = actions->session->current_result.save_identity[0]
+            ? actions->session->current_result.save_identity : actions->session->current.path;
 }
 
 void frontend_session_actions_set_image_changed(FrontendSessionActions *actions,
@@ -132,6 +136,7 @@ static bool activate_request(FrontendSessionActions *actions,
     frontend_panel_set_session_active(true);
     if (actions->execution) {
         actions->execution->rom_path = actions->session->current.path;
+        actions->execution->save_identity = storage_identity;
         actions->execution->fds_bios_path = actions->session->current.fds_bios_path[0]
             ? actions->session->current.fds_bios_path : NULL;
         actions->execution->studybox_bios_path = actions->session->current.studybox_bios_path[0]
