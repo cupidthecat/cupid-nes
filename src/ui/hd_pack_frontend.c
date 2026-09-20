@@ -5,6 +5,7 @@
  */
 #include "hd_pack_frontend.h"
 #include "frontend_panels.h"
+#include "platform_frontend.h"
 #include "frontend_execution.h"
 #include "output_guard.h"
 #include "app_paths.h"
@@ -105,20 +106,22 @@ static bool snapshot(void *userdata, FrontendPanelModel *model,
          frontend->items, count, selected, count != 0, false},
         {HD_CONTROL_RESCAN, FRONTEND_PANEL_ACTION, "Rescan packs", NULL,
          NULL, 0, -1, info.game_attached, false},
-        {HD_CONTROL_INSTALL_SOURCE, FRONTEND_PANEL_TEXT, "Install pack path", frontend->install_source,
-         NULL, 0, -1, info.game_attached, false},
+        {HD_CONTROL_INSTALL_SOURCE, FRONTEND_PANEL_FILE_OPEN, "Pack ZIP file", frontend->install_source,
+         NULL, 0, FRONTEND_OPEN_HD_PACK, info.game_attached, false},
+        {HD_CONTROL_INSTALL_FOLDER, FRONTEND_PANEL_DIRECTORY, "Pack source folder", frontend->install_source,
+         NULL, 0, 0, info.game_attached, false},
         {HD_CONTROL_INSTALL_NAME, FRONTEND_PANEL_TEXT, "Installed ZIP name", frontend->install_name,
          NULL, 0, -1, info.game_attached, false},
         {HD_CONTROL_INSTALL, FRONTEND_PANEL_ACTION, "Validate and install pack", NULL,
          NULL, 0, -1, info.game_attached && frontend->install_source[0] != '\0', false},
-        {HD_CONTROL_EXPORT_PATH, FRONTEND_PANEL_TEXT, "Export current pack to ZIP", frontend->export_path,
-         NULL, 0, -1, info.pack_loaded, false},
+        {HD_CONTROL_EXPORT_PATH, FRONTEND_PANEL_FILE_SAVE, "Export current pack to ZIP", frontend->export_path,
+         NULL, 0, FRONTEND_SAVE_HD_PACK, info.pack_loaded, false},
         {HD_CONTROL_EXPORT, FRONTEND_PANEL_ACTION, "Export current pack", NULL,
          NULL, 0, -1, info.pack_loaded && frontend->export_path[0] != '\0', false},
         {HD_CONTROL_CAPTURE_ARMED, FRONTEND_PANEL_CHECKBOX, "Arm HD pack capture", NULL,
          NULL, 0, frontend->capture_armed ? 1 : 0, info.game_attached, false},
-        {HD_CONTROL_CAPTURE_PATH, FRONTEND_PANEL_TEXT, "Captured pack ZIP path", frontend->capture_path,
-         NULL, 0, -1, info.game_attached, false},
+        {HD_CONTROL_CAPTURE_PATH, FRONTEND_PANEL_FILE_SAVE, "Captured pack ZIP path", frontend->capture_path,
+         NULL, 0, FRONTEND_SAVE_HD_PACK, info.game_attached, false},
         {HD_CONTROL_CAPTURE, FRONTEND_PANEL_ACTION, "Capture completed frame as pack", NULL,
          NULL, 0, -1, info.game_attached && frontend->capture_armed
              && frontend->capture_source_valid && frontend->capture_path[0] != '\0', false}
@@ -177,6 +180,7 @@ static bool action(void *userdata, unsigned control_id, const char *value, int s
         return false;
     }
     switch (control_id) {
+        case HD_CONTROL_INSTALL_FOLDER:
         case HD_CONTROL_INSTALL_SOURCE:
             if (!value || strlen(value) >= sizeof(frontend->install_source)) {
                 set_error(error, error_size, "HD pack install path is too long");

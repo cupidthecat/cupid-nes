@@ -37,7 +37,8 @@ static const FileDialog open_dialogs[] = {
     {"Choose Game Database", "Game databases", "*.txt;*.csv", "txt", false, false},
     {"Install HD Pack", "HD pack archives", "*.zip", "zip", false, false},
     {"Load Lua Script", "Lua scripts", "*.lua", "lua", false, false},
-    {"Load Cheats", "Cheat files", "*.txt;*.cht", "txt", false, false}
+    {"Load Cheats", "Cheat files", "*.txt;*.cht", "txt", false, false},
+    {"Choose a Folder", "Folders", "*", NULL, false, true}
 };
 
 static const FileDialog save_dialogs[] = {
@@ -48,7 +49,8 @@ static const FileDialog save_dialogs[] = {
     {"Save State", "Save states", "*.cst;*.state", "cst", true, false},
     {"Save Tape", "Family BASIC tapes", "*.tap", "tap", true, false},
     {"Export HD Pack", "HD pack archives", "*.zip", "zip", true, false},
-    {"Save Cheats", "Cheat files", "*.txt;*.cht", "txt", true, false}
+    {"Save Cheats", "Cheat files", "*.txt;*.cht", "txt", true, false},
+    {"Choose Disk Overlay", "Disk overlays", "*.ips", "ips", true, false}
 };
 
 static FrontendFileChooser file_chooser;
@@ -58,7 +60,6 @@ void frontend_set_file_chooser(FrontendFileChooser chooser, void *context) {
     file_chooser_context = context;
 }
 
-static const FileDialog folder_dialog = {"Choose a Folder", "Folders", "*", NULL, false, true};
 
 static void set_error(char *error, size_t error_size, const char *message) {
     if (error && error_size) snprintf(error, error_size, "%s", message);
@@ -312,5 +313,5 @@ bool frontend_open_file_dialog(FrontendOpenFileType type, char *path, size_t pat
 
 bool frontend_select_folder_dialog(char *path, size_t path_size,
                                     char *error, size_t error_size) {
-    return native_file_dialog(&folder_dialog, path, path_size, error, error_size);
+    return frontend_open_file_dialog(FRONTEND_OPEN_FOLDER, path, path_size, error, error_size);
 }

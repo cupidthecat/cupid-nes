@@ -165,7 +165,8 @@ static bool replay_panel_snapshot(void *userdata, FrontendPanelModel *model,
     bool idle = progress.mode == NES_MOVIE_IDLE;
     FrontendPanelControl movie_path = {
         .id = REPLAY_CONTROL_MOVIE_PATH,
-        .type = FRONTEND_PANEL_TEXT,
+        .type = FRONTEND_PANEL_FILE_SAVE,
+        .selected = FRONTEND_SAVE_MOVIE,
         .label = "Input movie path",
         .value = runtime->movie_path,
         .enabled = progress.mode != NES_MOVIE_PLAYBACK

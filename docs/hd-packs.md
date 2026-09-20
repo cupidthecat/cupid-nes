@@ -8,9 +8,10 @@ or ZIP named after the loaded image is a discovery candidate; packs can also
 identify compatible images with a SHA-1 declaration. Archive members and patched
 images use the identity of the materialized game image.
 
-Select a pack and enable it in the panel. Install pack path accepts a directory
-or ZIP; Validate and install pack writes a validated ZIP below the game's pack
-folder. Rescan refreshes the list. The selected pack and enabled state are saved
+Select a pack and enable it in the panel. Use Browse beside Pack ZIP file or
+Pack source folder to select the installation source. The two controls share
+the same source path. Installed ZIP name is the filename to use below the
+game's pack folder; Validate and install pack checks and writes that ZIP. Rescan refreshes the list. The selected pack and enabled state are saved
 per image in the application data folder and restored on the next launch.
 A missing or invalid saved pack reports an error and leaves ordinary video
 available. Failed pack switches preserve the currently loaded pack.

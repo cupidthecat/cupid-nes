@@ -127,18 +127,18 @@ static void mouse_controls(FrontendDesktopUi *ui) {
     frontend_desktop_render(ui, 256, 240, NULL, NULL, "Idle");
     screenshot(ui, "build/desktop-startup.png");
     CHECK(frontend_command_invoke(FRONTEND_COMMAND_SETTINGS, NULL, 0));
-    ui->settings_category = 5;
-    ui->settings_row = 0;
+    ui->settings_category = 1;
+    ui->settings_row = 1;
     key(ui, SDL_SCANCODE_RETURN, KMOD_NONE);
     CHECK(ui->edit_text_active && ui->edit_select_all);
     SDL_Event text = {.type = SDL_TEXTINPUT};
-    strcpy(text.text.text, "firmware.bin");
+    strcpy(text.text.text, "1.25");
     CHECK(frontend_desktop_handle_event(ui, &text));
-    CHECK(!strcmp(ui->edit_text, "firmware.bin"));
+    CHECK(!strcmp(ui->edit_text, "1.25"));
     render(ui);
     screenshot(ui, "build/desktop-text-entry.png");
     click_control(ui, HIT_EDIT_OK, 0, 0);
-    CHECK(!ui->edit_text_active && !strcmp(ui->staged.fds_bios_path, "firmware.bin"));
+    CHECK(!ui->edit_text_active && ui->staged.speed == 1.25);
     SDL_Event quit = {.type = SDL_QUIT};
     CHECK(!frontend_desktop_handle_event(ui, &quit));
     render(ui);
@@ -394,7 +394,100 @@ static void menu_activate(FrontendDesktopUi *ui, int menu, unsigned id) {
     click_control(ui, HIT_MENU_ROW, ui->menu_row, ui->menu_depth);
 }
 
+typedef struct {
+    bool save, accept, fail;
+    unsigned type, calls;
+} ChooserProbe;
+
+static bool choose_path(bool save, unsigned type, char *path, size_t size, char *error, size_t error_size,
+                        void *context) {
+    ChooserProbe *probe = context;
+    CHECK(save == probe->save && type == probe->type);
+    ++probe->calls;
+    if (probe->fail) {
+        snprintf(error, error_size, "Chooser test failure");
+        return false;
+    }
+    if (error && error_size) {
+        error[0] = 0;
+    }
+    if (probe->accept) {
+        snprintf(path, size, "build/chosen path.bin");
+    }
+    return probe->accept;
+}
+
+static char chosen_panel_path[128];
+
+static bool path_panel_snapshot(void *context, FrontendPanelModel *model, char *error, size_t size) {
+    (void)context;
+    (void)error;
+    (void)size;
+    const FrontendPanelControl controls[] = {
+        {1, FRONTEND_PANEL_FILE_OPEN, "Script", chosen_panel_path, NULL, 0, FRONTEND_OPEN_SCRIPT, true, false},
+        {2, FRONTEND_PANEL_FILE_SAVE, "Recording", chosen_panel_path, NULL, 0, FRONTEND_SAVE_WAV, true, false},
+        {3, FRONTEND_PANEL_DIRECTORY, "Folder", chosen_panel_path, NULL, 0, 0, true, false},
+        {4, FRONTEND_PANEL_FILE_OPEN, "Read only", chosen_panel_path, NULL, 0, FRONTEND_OPEN_SCRIPT, true, true},
+        {5, FRONTEND_PANEL_FILE_SAVE, "Disabled", chosen_panel_path, NULL, 0, FRONTEND_SAVE_WAV, false, false}};
+    for (unsigned i = 0; i < 5; ++i) {
+        if (!frontend_panel_add_control(model, &controls[i])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool path_panel_action(void *context, unsigned id, const char *value, int selected, char *error, size_t size) {
+    (void)context;
+    (void)selected;
+    (void)error;
+    (void)size;
+    CHECK(id >= 1 && id <= 3 && value);
+    if (value) {
+        snprintf(chosen_panel_path, sizeof(chosen_panel_path), "%s", value);
+    }
+    return true;
+}
+
+static void path_controls(FrontendDesktopUi *ui) {
+    FrontendPanelSpec spec = {0x7F20, "File controls", "Tools", 0, path_panel_snapshot, path_panel_action, NULL};
+    CHECK(frontend_panel_register(&spec));
+    ui->panel_id = spec.id;
+    ui->panel_row = 0;
+    ui->panel_open = true;
+    ui->panel_scroll = 0;
+    ChooserProbe probe = {0};
+    frontend_set_file_chooser(choose_path, &probe);
+    for (int row = 0; row < 3; ++row) {
+        ui->panel_row = row;
+        probe.save = row == 1;
+        probe.type = row == 0 ? FRONTEND_OPEN_SCRIPT : row == 1 ? FRONTEND_SAVE_WAV : FRONTEND_OPEN_FOLDER;
+        probe.accept = false;
+        strcpy(chosen_panel_path, "unchanged");
+        render(ui);
+        click_control(ui, HIT_PANEL, row, 0);
+        CHECK(!strcmp(chosen_panel_path, "unchanged") && !ui->edit_text_active);
+        probe.accept = true;
+        key(ui, SDL_SCANCODE_RETURN, KMOD_NONE);
+        CHECK(!strcmp(chosen_panel_path, "build/chosen path.bin") && !ui->edit_text_active);
+        probe.fail = true;
+        key(ui, SDL_SCANCODE_RETURN, KMOD_NONE);
+        CHECK(strstr(ui->status, "Chooser test failure") && !strcmp(chosen_panel_path, "build/chosen path.bin"));
+        probe.fail = false;
+    }
+    unsigned calls = probe.calls;
+    for (int row = 3; row < 5; ++row) {
+        ui->panel_row = row;
+        key(ui, SDL_SCANCODE_RETURN, KMOD_NONE);
+    }
+    CHECK(calls == probe.calls);
+    frontend_set_file_chooser(NULL, NULL);
+    ui->panel_open = false;
+    CHECK(frontend_panel_unregister(spec.id));
+}
+
 static void typed_settings(FrontendDesktopUi *ui) {
+    CHECK(SDL_InitSubSystem(SDL_INIT_AUDIO) == 0);
     desktop_settings_open(ui, true);
     FrontendSettings original = ui->staged;
     for (int category = 0; category < 8; ++category) {
@@ -443,6 +536,34 @@ static void typed_settings(FrontendDesktopUi *ui) {
                 desktop_activate_setting(ui, row);
                 CHECK(ui->capture_binding);
                 ui->capture_binding = false;
+            } else if (kind == SETTING_FILE) {
+                ChooserProbe probe = {0};
+                if (category == 5) {
+                    probe.save = row == 4 || row == 10;
+                    probe.type = row == 4    ? FRONTEND_SAVE_DISK_OVERLAY
+                                 : row == 10 ? FRONTEND_SAVE_TAPE
+                                 : row == 9  ? FRONTEND_OPEN_TAPE
+                                             : FRONTEND_OPEN_FIRMWARE;
+                } else {
+                    probe.save = true;
+                    probe.type = row == 1 ? FRONTEND_SAVE_STATE : (unsigned)(row - 2);
+                }
+                frontend_set_file_chooser(choose_path, &probe);
+                FrontendSettings before = ui->staged;
+                desktop_activate_setting(ui, row);
+                CHECK(probe.calls == 1 && !ui->edit_text_active);
+                CHECK(!memcmp(&before, &ui->staged, sizeof(before)));
+                probe.accept = true;
+                render(ui);
+                click_control(ui, HIT_SETTING, row, 0);
+                CHECK(probe.calls == 2 && !ui->edit_text_active);
+                desktop_setting_text(ui, row, name, sizeof(name), value, sizeof(value));
+                CHECK(!strcmp(value, "build/chosen path.bin"));
+                render(ui);
+                click_control(ui, HIT_CLEAR_SETTING, 0, 0);
+                desktop_setting_text(ui, row, name, sizeof(name), value, sizeof(value));
+                CHECK(!value[0] && probe.calls == 2 && !ui->edit_text_active);
+                frontend_set_file_chooser(NULL, NULL);
             } else if (kind == SETTING_TEXT) {
                 desktop_activate_setting(ui, row);
                 CHECK(ui->edit_text_active);
@@ -498,6 +619,7 @@ static void typed_settings(FrontendDesktopUi *ui) {
     CHECK(!ui->edit_text_active);
     ui->staged = original;
     desktop_settings_open(ui, false);
+    SDL_QuitSubSystem(SDL_INIT_AUDIO);
 }
 
 static bool choose_cheats(bool save, unsigned type, char *path, size_t size, char *error, size_t error_size,
@@ -935,7 +1057,10 @@ int test_desktop_accuracy(void) {
     unsigned width = settings.window_width;
     frontend_desktop_update_window_settings(&ui);
     CHECK(settings.window_width == width);
+    SDL_SetWindowSize(window, 1280, 960);
+    SDL_RenderSetLogicalSize(renderer, 1280, 960);
     typed_settings(&ui);
+    path_controls(&ui);
     mouse_controls(&ui);
     ui.info_open = ui.log_open = true;
     ui.panel_row = ui.panel_scroll = 0;

@@ -16,6 +16,7 @@
 #include "../system/vs_system.h"
 #include "../ui/execution_control.h"
 #include "../ui/desktop_ui.h"
+#include "../ui/platform_frontend.h"
 #include "../ui/frontend_commands.h"
 #include "../ui/frontend_execution.h"
 #include "../ui/machine_actions.h"
@@ -572,6 +573,14 @@ static int session_transitions_and_recents(void) {
     return 0;
 }
 
+static bool choose_unicode_firmware(bool save, unsigned type, char *path, size_t size,
+                                    char *error, size_t error_size, void *context) {
+    (void)error; (void)error_size;
+    if (save || type != FRONTEND_OPEN_FIRMWARE) return false;
+    snprintf(path, size, "%s", (const char *)context);
+    return true;
+}
+
 static int settings_text_editing(void) {
     FrontendSettings settings;
     frontend_settings_defaults(&settings);
@@ -582,15 +591,16 @@ static int settings_text_editing(void) {
     ui.staged = settings;
     ui.settings_open = true;
     ui.settings_category = 5;
+    frontend_set_file_chooser(choose_unicode_firmware, settings.fds_bios_path);
     SDL_Event event = {0};
     event.type = SDL_KEYDOWN;
     event.key.keysym.scancode = SDL_SCANCODE_RIGHT;
     CHECK(frontend_desktop_handle_event(&ui, &event));
-    CHECK(ui.edit_text_active && !strcmp(ui.edit_text, settings.fds_bios_path));
-    event.key.keysym.scancode = SDL_SCANCODE_RETURN;
-    CHECK(frontend_desktop_handle_event(&ui, &event));
+    frontend_set_file_chooser(NULL, NULL);
     CHECK(!ui.edit_text_active && !strcmp(ui.staged.fds_bios_path, settings.fds_bios_path));
 
+    ui.settings_category = 4;
+    ui.settings_row = 7;
     event.key.keysym.scancode = SDL_SCANCODE_RIGHT;
     CHECK(frontend_desktop_handle_event(&ui, &event));
     event.key.keysym.scancode = SDL_SCANCODE_END;

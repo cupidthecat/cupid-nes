@@ -40,6 +40,7 @@ typedef enum {
     SETTING_CHOICE,
     SETTING_NUMBER,
     SETTING_TEXT,
+    SETTING_FILE,
     SETTING_BINDING,
     SETTING_READONLY
 } DesktopSettingKind;
@@ -48,6 +49,7 @@ DesktopSettingKind desktop_setting_kind(const FrontendDesktopUi *ui, int row);
 int desktop_setting_choices(FrontendDesktopUi *ui, int row, int *selected);
 void desktop_setting_choice_text(FrontendDesktopUi *ui, int row, int option, char *text, size_t size);
 void desktop_setting_choose(FrontendDesktopUi *ui, int row, int option);
+void desktop_browse_setting(FrontendDesktopUi *ui);
 void desktop_activate_setting(FrontendDesktopUi *ui, int row);
 bool desktop_setting_commit_number(FrontendDesktopUi *ui, int row, const char *text);
 int desktop_choice_count(FrontendDesktopUi *ui);

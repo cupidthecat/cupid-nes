@@ -9,6 +9,7 @@
 #include "debug_frontend.h"
 #include "frontend_commands.h"
 #include "frontend_panels.h"
+#include "platform_frontend.h"
 #include "../debugger/debugger.h"
 #include "../debugger/lua_runtime.h"
 #include "../util/file_io.h"
@@ -546,7 +547,7 @@ static bool lua_snapshot(void *context, FrontendPanelModel *model,
              debugger_lua_error());
     snprintf(frontend->lua_log, sizeof(frontend->lua_log), "%.244s", debugger_lua_log());
     FrontendPanelControl controls[] = {
-        {LUA_CONTROL_PATH, FRONTEND_PANEL_TEXT, "Lua script path", frontend->lua_path, NULL, 0, 0, true, false},
+        {LUA_CONTROL_PATH, FRONTEND_PANEL_FILE_OPEN, "Lua script path", frontend->lua_path, NULL, 0, FRONTEND_OPEN_SCRIPT, true, false},
         {LUA_CONTROL_LOAD, FRONTEND_PANEL_ACTION, "Load script", "", NULL, 0, 0, true, false},
         {LUA_CONTROL_UNLOAD, FRONTEND_PANEL_ACTION, "Unload script", "", NULL, 0, 0, debugger_lua_loaded(), false},
         {LUA_CONTROL_BUDGET, FRONTEND_PANEL_TEXT, "Instruction budget", frontend->lua_budget, NULL, 0, 0, true, false},

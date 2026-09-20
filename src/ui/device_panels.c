@@ -9,6 +9,7 @@
 #include "device_frontend.h"
 #include "frontend_commands.h"
 #include "frontend_panels.h"
+#include "platform_frontend.h"
 #include "../joypad/family_basic.h"
 #include "../joypad/joypad.h"
 #include "../rom/fds.h"
@@ -46,6 +47,10 @@ static bool field(FrontendPanelModel *model, unsigned id, const char *label,
         .id = id, .type = FRONTEND_PANEL_TEXT, .label = label,
         .value = value, .enabled = enabled, .read_only = read_only
     };
+    if (id == DEVICE_TAPE_INPUT || id == DEVICE_TAPE_OUTPUT) {
+        control.type = id == DEVICE_TAPE_INPUT ? FRONTEND_PANEL_FILE_OPEN : FRONTEND_PANEL_FILE_SAVE;
+        control.selected = id == DEVICE_TAPE_INPUT ? FRONTEND_OPEN_TAPE : FRONTEND_SAVE_TAPE;
+    }
     return frontend_panel_add_control(model, &control);
 }
 

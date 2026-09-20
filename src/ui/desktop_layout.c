@@ -342,6 +342,7 @@ static void settings(FrontendDesktopUi *ui, float height) {
                             DesktopSettingKind kind = desktop_setting_kind(ui, i);
                             const char *suffix = kind == SETTING_CHOICE                           ? "▾"
                                                  : kind == SETTING_TEXT || kind == SETTING_NUMBER ? "Edit"
+                                                 : kind == SETTING_FILE                           ? "Browse…"
                                                  : kind == SETTING_BINDING                        ? "Set"
                                                                                                   : NULL;
                             if (kind == SETTING_TOGGLE) {
@@ -362,13 +363,11 @@ static void settings(FrontendDesktopUi *ui, float height) {
             CLAY_AUTO_ID({.layout = {.sizing = {.width = CLAY_SIZING_GROW()},
                                      .childGap = 6,
                                      .childAlignment = {.y = CLAY_ALIGN_Y_CENTER}}}) {
-                label(ui, "Enter edits • Ctrl+Tab changes category", 11, muted);
+                label(ui, "Enter opens • Ctrl+Tab changes category", 11, muted);
                 spacer();
-                bool browse = (ui->settings_category == 5 &&
-                               (ui->settings_row <= 3 || ui->settings_row == 9 || ui->settings_row == 10)) ||
-                              (ui->settings_category == 6 && ui->settings_row >= 1 && ui->settings_row <= 4);
+                bool browse = desktop_setting_kind(ui, ui->settings_row) == SETTING_FILE;
                 if (browse) {
-                    button(ui, "Browse…", HIT_BROWSE, 0, 0, false, true);
+                    button(ui, "Clear", HIT_CLEAR_SETTING, 0, 0, false, true);
                 }
             }
         }
@@ -444,7 +443,12 @@ static void panel(FrontendDesktopUi *ui, float height) {
                             toggle_control(ui, c->selected != 0, HIT_PANEL, i, c->enabled && !c->read_only);
                         } else {
                             value_control(ui, value,
-                                          choice                                            ? "▾"
+                                          choice ? "▾"
+                                          : (c->type == FRONTEND_PANEL_FILE_OPEN ||
+                                             c->type == FRONTEND_PANEL_FILE_SAVE ||
+                                             c->type == FRONTEND_PANEL_DIRECTORY) &&
+                                                  !c->read_only
+                                              ? "Browse…"
                                           : c->type == FRONTEND_PANEL_TEXT && !c->read_only ? "Edit"
                                                                                             : NULL,
                                           HIT_PANEL, i, c->enabled && !c->read_only);
@@ -618,7 +622,9 @@ void desktop_layout(FrontendDesktopUi *ui, const char *title, const char *region
     if (!ui->clay) {
         return;
     }
-    if (ui->parent) desktop_window_context(ui, &title, &region, &run_state);
+    if (ui->parent) {
+        desktop_window_context(ui, &title, &region, &run_state);
+    }
     int width, height;
     SDL_GetWindowSize(ui->window, &width, &height);
     float scale = ui->ui_scale > 0 ? ui->ui_scale : 1;

@@ -129,16 +129,16 @@ DesktopSettingKind desktop_setting_kind(const FrontendDesktopUi *ui, int row) {
     case 2:
         return row == 3 ? SETTING_CHOICE : row < 7 ? SETTING_TOGGLE : SETTING_NUMBER;
     case 3:
-        return row == 0 ? SETTING_TOGGLE : row == 2 ? SETTING_TEXT : SETTING_NUMBER;
+        return row == 0 ? SETTING_TOGGLE : row == 2 ? SETTING_CHOICE : SETTING_NUMBER;
     case 4:
         return row == 5 ? SETTING_NUMBER : row == 7 ? SETTING_TEXT : row >= 8 ? SETTING_BINDING : SETTING_CHOICE;
     case 5:
-        return row <= 4 || row == 9 || row == 10 ? SETTING_TEXT
+        return row <= 4 || row == 9 || row == 10 ? SETTING_FILE
                : row == 5                        ? SETTING_CHOICE
                : row >= 15                       ? SETTING_NUMBER
                                                  : SETTING_TOGGLE;
     case 6:
-        return row == 0 ? SETTING_CHOICE : row <= 4 ? SETTING_TEXT : row == 5 ? SETTING_TOGGLE : SETTING_NUMBER;
+        return row == 0 ? SETTING_CHOICE : row <= 4 ? SETTING_FILE : row == 5 ? SETTING_TOGGLE : SETTING_NUMBER;
     case 7:
         return row == 1                                          ? SETTING_READONLY
                : row < 5 || row == 15                            ? SETTING_CHOICE
@@ -167,6 +167,21 @@ int desktop_setting_choices(FrontendDesktopUi *ui, int row, int *selected) {
         if (row == 3) {
             *selected = s->aspect_mode;
             return 2;
+        }
+        break;
+    case 3:
+        if (row == 2) {
+            int count = SDL_GetNumAudioDevices(0);
+            if (count < 0) {
+                count = 0;
+            }
+            for (int i = 0; i < count; ++i) {
+                const char *name = SDL_GetAudioDeviceName(i, 0);
+                if (name && !strcmp(name, s->audio_device)) {
+                    *selected = i + 1;
+                }
+            }
+            return count + 1;
         }
         break;
     case 4:
@@ -238,6 +253,15 @@ void desktop_setting_choose(FrontendDesktopUi *ui, int row, int option) {
     if (option < 0 || option >= count) {
         return;
     }
+    if (ui->settings_category == 3 && row == 2) {
+        const char *name = option ? SDL_GetAudioDeviceName(option - 1, 0) : "";
+        if (!name || strlen(name) >= sizeof(ui->staged.audio_device)) {
+            desktop_copy_status(ui, "This audio device is unavailable or its name is too long.");
+            return;
+        }
+        snprintf(ui->staged.audio_device, sizeof(ui->staged.audio_device), "%s", name);
+        return;
+    }
     for (int guard = 0; selected != option && guard < count; ++guard) {
         desktop_adjust_setting(ui, row, option > selected ? 1 : -1);
         (void)desktop_setting_choices(ui, row, &selected);
@@ -245,6 +269,11 @@ void desktop_setting_choose(FrontendDesktopUi *ui, int row, int option) {
 }
 
 void desktop_setting_choice_text(FrontendDesktopUi *ui, int row, int option, char *text, size_t size) {
+    if (ui->settings_category == 3 && row == 2) {
+        const char *name = option ? SDL_GetAudioDeviceName(option - 1, 0) : "System default";
+        snprintf(text, size, "%s", name ? name : "Unavailable device");
+        return;
+    }
     FrontendDesktopUi preview = *ui;
     char name[96];
     desktop_setting_choose(&preview, row, option);
@@ -325,6 +354,8 @@ void desktop_activate_setting(FrontendDesktopUi *ui, int row) {
         ui->choice_row = row;
         (void)desktop_setting_choices(ui, row, &ui->choice_index);
         ui->choice_page = ui->choice_index / 20;
+    } else if (kind == SETTING_FILE) {
+        desktop_browse_setting(ui);
     } else if (kind == SETTING_NUMBER) {
         Number n = number(ui, row);
         char text[64];

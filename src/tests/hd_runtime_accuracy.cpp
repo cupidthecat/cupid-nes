@@ -419,7 +419,7 @@ int install_discovery_switch_and_panel() {
     FrontendPanelControl controls[16]{};
     FrontendPanelModel model{controls, 16, 0, nullptr};
     CHECK(frontend_panel_snapshot(HD_PACK_PANEL, &model, error, sizeof(error)));
-    CHECK(model.count == 13);
+    CHECK(model.count == 14);
 
     std::array<std::uint8_t, 32> capture_chr{};
     for (unsigned y = 0; y < 8; ++y) capture_chr[y] = 0x80;
@@ -443,7 +443,7 @@ int install_discovery_switch_and_panel() {
     nes_hd_frontend_set_capture_source(frontend, &capture_source);
     model.count = 0;
     CHECK(frontend_panel_snapshot(HD_PACK_PANEL, &model, error, sizeof(error)));
-    CHECK(model.count == 13);
+    CHECK(model.count == 14);
     bool capture_action_enabled = false;
     for (size_t i = 0; i < model.count; ++i)
         if (controls[i].id == HD_CONTROL_CAPTURE) capture_action_enabled = controls[i].enabled;
@@ -456,7 +456,7 @@ int install_discovery_switch_and_panel() {
                                 nullptr, 0, error, sizeof(error)));
     CHECK(!nes_video_trace_active);
 
-    CHECK(frontend_panel_action(HD_PACK_PANEL, HD_CONTROL_INSTALL_SOURCE,
+    CHECK(frontend_panel_action(HD_PACK_PANEL, HD_CONTROL_INSTALL_FOLDER,
                                 "src/tests/fixtures/hd_pack_v109", -1, error, sizeof(error)));
     CHECK(frontend_panel_action(HD_PACK_PANEL, HD_CONTROL_INSTALL_NAME,
                                 "managed-pack", -1, error, sizeof(error)));
@@ -493,7 +493,7 @@ int install_discovery_switch_and_panel() {
 
     model.count = 0;
     CHECK(frontend_panel_snapshot(HD_PACK_PANEL, &model, error, sizeof(error)));
-    CHECK(model.count == 13 && model.status != nullptr);
+    CHECK(model.count == 14 && model.status != nullptr);
 
     nes_hd_frontend_destroy(frontend);
     frontend_paths_shutdown();

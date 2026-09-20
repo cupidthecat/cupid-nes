@@ -29,7 +29,8 @@ enum {
     HD_CONTROL_EXPORT = 0x180A,
     HD_CONTROL_CAPTURE_ARMED = 0x180B,
     HD_CONTROL_CAPTURE_PATH = 0x180C,
-    HD_CONTROL_CAPTURE = 0x180D
+    HD_CONTROL_CAPTURE = 0x180D,
+    HD_CONTROL_INSTALL_FOLDER = 0x180E
 };
 
 NesHdFrontend *nes_hd_frontend_create(NesHdRuntime *runtime,

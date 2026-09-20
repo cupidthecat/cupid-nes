@@ -9,6 +9,7 @@
 #include "cheat_frontend.h"
 #include "frontend_commands.h"
 #include "frontend_panels.h"
+#include "platform_frontend.h"
 #include "../cheats/cheats.h"
 #include "../util/file_io.h"
 #include <stdio.h>
@@ -171,8 +172,8 @@ static bool snapshot(void *context, FrontendPanelModel *model,
          frontend->selected > 0 && (size_t)frontend->selected + 1 < count, false},
         {CHEAT_CONTROL_CLEAR, FRONTEND_PANEL_ACTION, "Clear all cheats", "", NULL, 0, 0,
          cheats_count() != 0, false},
-        {CHEAT_CONTROL_PATH, FRONTEND_PANEL_TEXT, "Cheat file", frontend->path,
-         NULL, 0, 0, true, false},
+        {CHEAT_CONTROL_PATH, FRONTEND_PANEL_FILE_OPEN, "Cheat file", frontend->path,
+         NULL, 0, FRONTEND_OPEN_CHEATS, true, false},
         {CHEAT_CONTROL_LOAD, FRONTEND_PANEL_ACTION, "Load cheat file", "", NULL, 0, 0,
          true, false},
         {CHEAT_CONTROL_SAVE, FRONTEND_PANEL_ACTION, "Save cheat file", "", NULL, 0, 0,

@@ -30,6 +30,11 @@ the active game, region, and execution state in its status bar, and its FPS
 counter uses the game window's measurement. These values follow game changes
 while the tool remains open.
 
+File controls in tool windows also open native choosers. Scripts, cheat files,
+and databases use an Open dialog; state, movie, tape, and capture destinations
+use a Save dialog. Existing Load and Save actions remain available for choosing
+an input or output file. HD packs offer both a ZIP picker and a folder picker.
+
 ## Settings
 
 Ctrl+Comma opens Settings. The eight categories cover General, Emulation,
@@ -42,7 +47,10 @@ fields accept custom values, such as 1.25 for speed or 44100 for sample rate.
 Invalid entries stay open with their allowed range shown. Text fields start with their contents selected;
 typing replaces them. Ctrl+A selects all, Ctrl+C copies the selection, Ctrl+V
 pastes, and End lets you append. Escape cancels an edit or closes the
-window. F4 opens a picker for supported file-path rows. Lists scroll to keep
+window. File paths have a Browse button that opens a native file dialog;
+F4 also opens it for the selected row. Use Clear to unset an optional path.
+Canceling the chooser preserves the previous value. Audio > Output device
+lists the detected playback devices and System default. Lists scroll to keep
 the selected row visible. Scrollbars show the position and can be dragged; the
 wheel and arrow controls also move through rows.
 

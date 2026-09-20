@@ -28,9 +28,13 @@ static bool snapshot(void *context,FrontendPanelModel *model,char *error,size_t 
     bool live=nes_execution_policy()==NES_EXECUTION_LIVE;
     bool editable=(s->selected>=4&&s->selected<=8)||s->selected==11;
     if(s->selected==11&&(s->actions->settings->cli_overrides&FRONTEND_OVERRIDE_DATABASE))editable=false;
+    FrontendPanelControlType path_type = !editable ? FRONTEND_PANEL_TEXT :
+        s->selected == 11 ? FRONTEND_PANEL_FILE_OPEN : FRONTEND_PANEL_FILE_SAVE;
+    int format = s->selected == 11 ? FRONTEND_OPEN_DATABASE : s->selected == 4 ? FRONTEND_SAVE_STATE :
+        s->selected == 5 ? FRONTEND_SAVE_MOVIE : (int)s->selected - 6;
     FrontendPanelControl controls[]={
         {STORAGE_SELECT,FRONTEND_PANEL_CHOICE,"Location",NULL,names,12,(int)s->selected,true,false},
-        {STORAGE_PATH,FRONTEND_PANEL_TEXT,"Effective path",s->paths[s->selected],NULL,0,-1,live,!editable},
+        {STORAGE_PATH,path_type,"Effective path",s->paths[s->selected],NULL,0,format,live,!editable},
         {STORAGE_BROWSE,FRONTEND_PANEL_ACTION,"Browse...",NULL,NULL,0,-1,live&&editable,false},
         {STORAGE_FOLDER,FRONTEND_PANEL_ACTION,"Open containing folder",NULL,NULL,0,-1,true,false},
         {STORAGE_CORRECTIONS,FRONTEND_PANEL_CHECKBOX,"Apply database corrections on next load",NULL,NULL,0,

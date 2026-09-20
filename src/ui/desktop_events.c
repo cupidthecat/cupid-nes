@@ -136,6 +136,24 @@ static void activate_panel(FrontendDesktopUi *ui, int row, int direction) {
         }
         return;
     }
+    if (control->type == FRONTEND_PANEL_FILE_OPEN || control->type == FRONTEND_PANEL_FILE_SAVE ||
+        control->type == FRONTEND_PANEL_DIRECTORY) {
+        char path[FRONTEND_SETTINGS_PATH_TEXT] = {0};
+        bool chosen = control->type == FRONTEND_PANEL_DIRECTORY
+                          ? frontend_select_folder_dialog(path, sizeof(path), error, sizeof(error))
+                      : control->type == FRONTEND_PANEL_FILE_SAVE
+                          ? frontend_save_file_dialog((FrontendSaveFileType)control->selected, path, sizeof(path),
+                                                      error, sizeof(error))
+                          : frontend_open_file_dialog((FrontendOpenFileType)control->selected, path, sizeof(path),
+                                                      error, sizeof(error));
+        if (chosen) {
+            (void)frontend_panel_action(ui->panel_id, control->id, path, -1, error, sizeof(error));
+        }
+        if (error[0]) {
+            desktop_copy_status(ui, error);
+        }
+        return;
+    }
     if (!direction && (control->type == FRONTEND_PANEL_CHOICE || control->type == FRONTEND_PANEL_LIST)) {
         ui->choice_open = true;
         ui->choice_panel = true;
@@ -186,13 +204,15 @@ static void panel_key(FrontendDesktopUi *ui, SDL_Scancode sc) {
     }
 }
 
-static void browse_setting(FrontendDesktopUi *ui) {
+void desktop_browse_setting(FrontendDesktopUi *ui) {
     int row = ui->settings_row;
     char path[FRONTEND_SETTINGS_PATH_TEXT] = {0}, error[256] = {0};
     bool chosen = false;
     if (ui->settings_category == 5 && (row <= 3 || row == 9)) {
         chosen = frontend_open_file_dialog(row == 9 ? FRONTEND_OPEN_TAPE : FRONTEND_OPEN_FIRMWARE, path, sizeof(path),
                                            error, sizeof(error));
+    } else if (ui->settings_category == 5 && row == 4) {
+        chosen = frontend_save_file_dialog(FRONTEND_SAVE_DISK_OVERLAY, path, sizeof(path), error, sizeof(error));
     } else if (ui->settings_category == 5 && row == 10) {
         chosen = frontend_save_file_dialog(FRONTEND_SAVE_TAPE, path, sizeof(path), error, sizeof(error));
     } else if (ui->settings_category == 6 && row >= 1 && row <= 4) {
@@ -209,7 +229,7 @@ static void browse_setting(FrontendDesktopUi *ui) {
 
 static void settings_key(FrontendDesktopUi *ui, SDL_Scancode sc, SDL_Keymod mod) {
     if (sc == SDL_SCANCODE_F4) {
-        browse_setting(ui);
+        desktop_browse_setting(ui);
     } else if (sc == SDL_SCANCODE_TAB && (mod & KMOD_CTRL)) {
         ui->settings_category = (ui->settings_category + ((mod & KMOD_SHIFT) ? 7 : 1)) % 8;
         ui->settings_row = ui->settings_scroll = 0;
@@ -294,8 +314,14 @@ static bool handle_click(FrontendDesktopUi *ui, int x, int y) {
     case HIT_PANEL:
         activate_panel(ui, hit.index, hit.direction);
         break;
+    case HIT_CLEAR_SETTING:
+        if (desktop_setting_kind(ui, ui->settings_row) == SETTING_FILE) {
+            desktop_begin_edit(ui, (unsigned)ui->settings_row, "");
+            desktop_commit_edit(ui);
+        }
+        break;
     case HIT_BROWSE:
-        browse_setting(ui);
+        desktop_browse_setting(ui);
         break;
     case HIT_RECENT:
         ui->idle_recent_index = hit.index;
@@ -593,7 +619,7 @@ static bool handle_event(FrontendDesktopUi *ui, const SDL_Event *event) {
             } else if (sc == SDL_SCANCODE_A && (event->key.keysym.mod & KMOD_CTRL)) {
                 ui->edit_select_all = true;
             } else if (sc == SDL_SCANCODE_F4 && ui->settings_open) {
-                browse_setting(ui);
+                desktop_browse_setting(ui);
             } else if (sc == SDL_SCANCODE_RETURN) {
                 desktop_commit_edit(ui);
             } else if (sc == SDL_SCANCODE_ESCAPE) {

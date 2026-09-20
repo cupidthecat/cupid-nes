@@ -4,6 +4,11 @@
 
 Cupid loads saved application settings and input profiles, then applies explicit command-line choices for the current launch. Use the desktop Settings window for the same supported options and **Controllers and shortcuts** for bindings.
 
+Audio > Output device lists detected playback devices and the system default.
+Click Browse beside a BIOS or other file path to choose it in the native file
+dialog. Cancel keeps the current path; Clear removes an optional setting.
+Changes take effect when you choose Apply or OK.
+
 The application data directory contains `settings.ini`, `recent.ini`, and the optional `NesDB.txt`. By default, SDL chooses the current user's preference directory for `cupidthecat/cupid-nes`. `--data-dir DIR` selects another directory; make sure that directory exists and is writable. Settings and recent-file updates replace their destination only after a complete write succeeds. A missing settings file uses defaults. Malformed input is reported instead of partly applying a configuration.
 
 ```sh

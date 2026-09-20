@@ -19,7 +19,10 @@ typedef enum {
     FRONTEND_PANEL_LIST,
     FRONTEND_PANEL_CHOICE,
     FRONTEND_PANEL_CHECKBOX,
-    FRONTEND_PANEL_ACTION
+    FRONTEND_PANEL_ACTION,
+    FRONTEND_PANEL_FILE_OPEN,
+    FRONTEND_PANEL_FILE_SAVE,
+    FRONTEND_PANEL_DIRECTORY
 } FrontendPanelControlType;
 
 typedef enum {
@@ -34,6 +37,7 @@ typedef struct {
     const char *value;
     const char *const *items;
     size_t item_count;
+    /* File controls use the corresponding FrontendOpen/SaveFileType. */
     int selected;
     bool enabled;
     bool read_only;

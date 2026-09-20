@@ -629,6 +629,16 @@ void desktop_begin_edit(FrontendDesktopUi *ui, unsigned row, const char *text) {
 }
 
 void desktop_adjust_setting(FrontendDesktopUi *ui, int row, int direction) {
+    if (desktop_setting_kind(ui, row) == SETTING_FILE) {
+        ui->settings_row = row;
+        desktop_browse_setting(ui);
+        return;
+    }
+    if (ui->settings_category == 3 && row == 2) {
+        int selected, count = desktop_setting_choices(ui, row, &selected);
+        if (count) desktop_setting_choose(ui, row, (selected + count + direction) % count);
+        return;
+    }
     FrontendSettings *s = &ui->staged;
     if (ui->settings_category == 0) {
         if (row == 0) s->reopen_last_image = !s->reopen_last_image;

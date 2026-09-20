@@ -141,6 +141,7 @@ static const struct {
 static bool add_control(FrontendPanelModel *model, unsigned id, FrontendPanelControlType type,
                          const char *label, const char *value, bool enabled) {
     FrontendPanelControl control = {.id = id, .type = type, .label = label, .value = value, .enabled = enabled};
+    if (type == FRONTEND_PANEL_FILE_SAVE) control.selected = (int)(id - CAPTURE_PATH_PNG);
     return frontend_panel_add_control(model, &control);
 }
 
@@ -154,7 +155,7 @@ static bool capture_snapshot(void *context, FrontendPanelModel *model,
     bool ok = true;
     for (unsigned i = 0; i < 3; ++i) {
         bool enabled = !recording || i == FRONTEND_SAVE_PNG;
-        ok = ok && add_control(model, CAPTURE_PATH_PNG + i, FRONTEND_PANEL_TEXT,
+        ok = ok && add_control(model, CAPTURE_PATH_PNG + i, FRONTEND_PANEL_FILE_SAVE,
                                 labels[i], frontend->paths[i], enabled);
         ok = ok && add_control(model, CAPTURE_BROWSE_PNG + i, FRONTEND_PANEL_ACTION,
                                 i == 0 ? "Choose screenshot file" : i == 1 ? "Choose audio file" : "Choose video file",
