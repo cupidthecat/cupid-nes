@@ -173,7 +173,7 @@ protected:
     void ReadBattery(const char *suffix, uint8_t *bytes, uint32_t size);
     bool WriteBattery(const char *suffix, const uint8_t *bytes, uint32_t size);
     virtual void LoadBattery();
-    virtual void SaveBattery();
+    virtual bool SaveBattery();
 
 public:
     virtual ~Board() = default;
@@ -208,7 +208,7 @@ public:
     void SetMirroring(Mirroring type) { SetMirroringType(static_cast<MirroringType>(type)); }
     void ApplyTrainer(const uint8_t trainer[512]);
     void ConfigureBattery(const char *romPath);
-    void FlushBattery();
+    bool FlushBattery();
 };
 
 std::unique_ptr<Board> CreateBoard(unsigned mapper);

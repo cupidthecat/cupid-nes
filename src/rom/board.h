@@ -57,7 +57,7 @@ Mirroring board_mirroring(const CartridgeBoard *board);
 void board_set_mirroring(CartridgeBoard *board, Mirroring mirroring);
 void board_apply_trainer(CartridgeBoard *board, const uint8_t trainer[512]);
 void board_battery_configure(CartridgeBoard *board, const char *rom_path);
-void board_battery_flush(CartridgeBoard *board);
+bool board_battery_flush(CartridgeBoard *board);
 
 #ifdef __cplusplus
 }

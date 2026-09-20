@@ -92,7 +92,7 @@ The frontend configures expansion-device storage separately through `joypad_pers
 
 `nes_set_region_mode()` stores the requested Auto, NTSC, PAL, or Dendy choice without changing a running machine. Each loader resolves the effective region before checking startup alignment and timing restrictions, then commits it with the replacement image. The override leaves the header or database timing declaration unchanged. The caller powers on the loaded CPU, PPU, and APU after a successful load; reset keeps the committed timing. A failed replacement preserves the previous timing and machine.
 
-`unload_rom()` returns a boolean. Dirty FDS media that cannot be saved leaves the device loaded and returns false. Callers must handle that result before destroying the only in-memory copy. [Saves and media](saves.md) distinguishes this from ordinary cartridge persistence.
+`rom_flush_persistent()` checks cartridge, disk, and input-device storage before an image replacement. `unload_rom()` performs the same check and returns false if a write fails, retaining the loaded machine and unwritten data. Callers must handle that result before destroying the only in-memory copy. Cartridge saves use the shared UTF-8 file layer and atomic replacement, including composite RAM and expansion-audio files. See [saves and media](saves.md) for the file layouts.
 
 ## Power-on and reset
 

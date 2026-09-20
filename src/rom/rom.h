@@ -93,12 +93,17 @@ int load_rom(const char *filename);
 bool rom_set_fcns_kanji_firmware(const char *path);
 int load_fds(const char *disk_path, const char *bios_path, bool write_protected);
 int load_studybox(const char *media_path, const char *bios_path);
-// Eject the cartridge and release loader-owned buffers; false preserves dirty FDS media
-// when its pending disk image cannot be flushed.
+// Eject the cartridge and release loader-owned buffers. A failed persistent
+// write leaves the active machine loaded so the caller can retry.
 bool unload_rom(void);
+// Flush cartridge, disk, and input-device data before replacing a session.
+// A failure keeps the active machine and any unwritten data available.
+bool rom_flush_persistent(void);
 // Load an iNES image without a disk file or battery save path; copies its bytes.
 // Failed loads preserve the currently inserted cartridge.
 int load_rom_memory(const uint8_t *data, size_t size);
+// Load prepared cartridge/music bytes with a separate persistence identity.
+int load_rom_image(const uint8_t *data, size_t size, const char *save_path);
 // Test and embedding entry point. Failed validation leaves the active machine untouched.
 int load_fds_memory(const uint8_t *disk, size_t disk_size,
                     const uint8_t *bios, size_t bios_size,

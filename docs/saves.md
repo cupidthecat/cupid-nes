@@ -49,7 +49,7 @@ Some mapper save files contain more than one memory area:
 
 Do not assume another emulator uses the same composite layout. Keep a backup before moving saves between emulator versions or board configurations.
 
-The C mapper implementations write ordinary PRG/CHR battery memory and EEPROM files directly to their destination. Flash and the C++ board modules use a temporary file and replacement. Failed cartridge saves print an error; they do not keep the application open for recovery as a failed FDS save does.
+Cartridge saves use a sibling temporary file and replace the destination only after the complete write succeeds. This applies to PRG and CHR NVRAM, EEPROM, flash, and the composite MMC5 and Namco 163 files. Paths use UTF-8, including on Windows. A failed write leaves the changed bytes available in memory. The production image loaders and `unload_rom()` report that failure and retain the current machine so the caller can retry.
 
 ## Expansion storage
 

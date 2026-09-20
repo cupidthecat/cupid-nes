@@ -126,7 +126,7 @@ void cart_notify_vblank_start(void);
 
 // Persist nonvolatile PRG, CHR and serial EEPROM chips in separate save images.
 void cart_battery_configure(const char *rom_path, bool has_battery);
-void cart_battery_flush(void);
+bool cart_battery_flush(void);
 void cart_battery_shutdown(void);
 // Initialize the trainer window after PRG-RAM and battery data have been loaded.
 void cart_apply_trainer(const uint8_t trainer[512]);

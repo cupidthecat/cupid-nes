@@ -21,7 +21,7 @@ CORE_CXX_SRC = src/apu/epsm.cpp src/third_party/ymfm/ymfm_opn.cpp \
                src/third_party/ymfm/ymfm_ssg.cpp src/third_party/ymfm/ymfm_adpcm.cpp \
                src/rom/game_db.cpp src/rom/boards/runtime.cpp src/rom/boards/factory.cpp
 TEST_SRC = src/tests/accuracy_test.c src/tests/cpu_accuracy.c \
-           src/tests/cpu_trace.c src/tests/apu_accuracy.c src/tests/file_io_accuracy.c \
+           src/tests/cpu_trace.c src/tests/apu_accuracy.c src/tests/file_io_accuracy.c src/tests/persistence_accuracy.c \
            src/tests/ppu_accuracy.c src/tests/mapper_accuracy.c src/tests/region_accuracy.c \
            src/tests/native_flash_geometry_accuracy.c src/tests/mapper30_111_prg_ram_accuracy.c \
            src/tests/fds_accuracy.c src/tests/studybox_accuracy.c src/tests/nsf_accuracy.c \

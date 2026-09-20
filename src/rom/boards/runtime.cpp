@@ -12,6 +12,7 @@
  */
 #include "runtime.hpp"
 #include "studybox.hpp"
+#include "../../util/file_io.h"
 #include <cstdio>
 #include <limits>
 #include <stdexcept>
@@ -470,7 +471,7 @@ void Board::ApplyTrainer(const uint8_t trainer[512]) {
 void Board::ReadBattery(const char *suffix, uint8_t *bytes, uint32_t size) {
     if (_saveStem.empty() || !bytes || !size) return;
     std::string path = _saveStem + suffix;
-    if (FILE *file = std::fopen(path.c_str(), "rb")) {
+    if (FILE *file = nes_file_open(path.c_str(), "rb")) {
         size_t count = std::fread(bytes, 1, size, file);
         if (count < size && std::ferror(file))
             std::fprintf(stderr, "Failed to read cartridge save '%s'\n", path.c_str());
@@ -485,23 +486,8 @@ bool Board::WriteBattery(const char *suffix, const uint8_t *bytes, uint32_t size
     if (previous != _savedBytes.end() && previous->second.size() == size
         && !std::memcmp(previous->second.data(), bytes, size)) return true;
     std::string path = _saveStem + suffix;
-    std::string temporary = path + ".tmp";
-    FILE *file = std::fopen(temporary.c_str(), "wb");
-    if (!file) {
-        std::fprintf(stderr, "Cannot write cartridge save '%s'\n", path.c_str());
-        return false;
-    }
-    bool complete = std::fwrite(bytes, 1, size, file) == size;
-    if (std::fclose(file) != 0) complete = false;
-#ifdef _WIN32
-    if (complete) complete = MoveFileExA(temporary.c_str(), path.c_str(),
-                                       MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
-#else
-    if (complete) complete = std::rename(temporary.c_str(), path.c_str()) == 0;
-#endif
-    if (!complete) {
+    if (nes_file_write_atomic(path.c_str(), bytes, size) != NES_FILE_OK) {
         std::fprintf(stderr, "Cannot replace cartridge save '%s'; changes remain unsaved\n", path.c_str());
-        std::remove(temporary.c_str());
         return false;
     }
     _savedBytes[suffix].assign(bytes, bytes + size);
@@ -514,14 +500,19 @@ void Board::LoadBattery() {
         ReadBattery(".chr.sav", _chrRam + (_chrRamSize - _saveChrRamSize), _saveChrRamSize);
 }
 
-void Board::SaveBattery() {
-    if (HasBattery()) WriteBattery(".sav", _saveRam, _saveRamSize);
-    if (_saveChrRamSize)
-        WriteBattery(".chr.sav", _chrRam + (_chrRamSize - _saveChrRamSize), _saveChrRamSize);
+bool Board::SaveBattery() {
+    bool saved = !HasBattery() || WriteBattery(".sav", _saveRam, _saveRamSize);
+    if (_saveChrRamSize) {
+        saved = WriteBattery(".chr.sav", _chrRam + (_chrRamSize - _saveChrRamSize), _saveChrRamSize) && saved;
+    }
+
+    return saved;
 }
 
 void Board::ConfigureBattery(const char *romPath) {
-    FlushBattery();
+    if (!FlushBattery()) {
+        throw std::runtime_error("Current cartridge save could not be written");
+    }
     _saveStem.clear();
     _savedBytes.clear();
     if (!romPath) return;
@@ -532,8 +523,8 @@ void Board::ConfigureBattery(const char *romPath) {
     LoadBattery();
 }
 
-void Board::FlushBattery() {
-    if (!_saveStem.empty()) SaveBattery();
+bool Board::FlushBattery() {
+    return _saveStem.empty() || SaveBattery();
 }
 
 } // namespace cupid::boards
@@ -676,10 +667,11 @@ void board_battery_configure(CartridgeBoard *board, const char *romPath) {
         std::fprintf(stderr, "Cartridge save setup failed: %s\n", error.what());
     }
 }
-void board_battery_flush(CartridgeBoard *board) {
-    if (!board) return;
-    try { board->instance->FlushBattery(); }
+bool board_battery_flush(CartridgeBoard *board) {
+    if (!board) return true;
+    try { return board->instance->FlushBattery(); }
     catch (const std::exception &error) {
         std::fprintf(stderr, "Cartridge save failed: %s\n", error.what());
+        return false;
     }
 }

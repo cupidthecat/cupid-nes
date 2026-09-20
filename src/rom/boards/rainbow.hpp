@@ -82,10 +82,11 @@ class Rainbow final : public Board {
         ReadBattery(".flash.sav", _prgRom, _prgSize);
         ReadBattery(".chr.flash.sav", _chrRom, _chrRomSize);
     }
-    void SaveBattery() override {
-        Board::SaveBattery();
-        WriteBattery(".flash.sav", _prgRom, _prgSize);
-        WriteBattery(".chr.flash.sav", _chrRom, _chrRomSize);
+    bool SaveBattery() override {
+        bool saved = Board::SaveBattery();
+        saved = WriteBattery(".flash.sav", _prgRom, _prgSize) && saved;
+        saved = WriteBattery(".chr.flash.sav", _chrRom, _chrRomSize) && saved;
+        return saved;
     }
     PrgMemoryType RamType() const { return HasBattery() ? PrgMemoryType::SaveRam : PrgMemoryType::WorkRam; }
     void MapHigh(uint16_t start, uint16_t size, unsigned reg) {

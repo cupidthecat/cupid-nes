@@ -41,6 +41,7 @@
 #include "../cpu/cpu.h"
 #include "../apu/epsm.h"
 #include "../joypad/joypad.h"
+#include "../util/file_io.h"
 
 #define PRG_ROM_BANK_SIZE 0x4000  // 16KB
 #define CHR_ROM_BANK_SIZE 0x2000  // 8KB
@@ -396,14 +397,7 @@ static int load_unif_data(const uint8_t *data, size_t size, const char *filename
         }
     }
 
-    if (fds_active() && fds_disk_dirty() && !fds_flush()) {
-        fprintf(stderr, "Cannot replace the active FDS disk while modified media is unsaved\n");
-        free(new_prg); free(new_chr);
-        return -1;
-    }
-
-    if (apply_input_config && !joypad_persistent_flush()) {
-        fprintf(stderr, "Cannot change input configuration while expansion-device data is unsaved\n");
+    if (!rom_flush_persistent()) {
         free(new_prg); free(new_chr);
         return -1;
     }
@@ -455,8 +449,7 @@ static int load_nsf_data(const uint8_t *data, size_t size, const char *filename)
         nsf_image_free(&image);
         return -1;
     }
-    if (fds_active() && fds_disk_dirty() && !fds_flush()) {
-        fprintf(stderr, "Cannot replace the active FDS disk while modified media is unsaved\n");
+    if (!rom_flush_persistent()) {
         free(new_chr);
         nsf_image_free(&image);
         return -1;
@@ -772,14 +765,7 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
     else if (!board_handles_header(&header))
         nes_initialize_power_on_ram(new_chr, new_chr_size, 0);
 
-    if (fds_active() && fds_disk_dirty() && !fds_flush()) {
-        fprintf(stderr, "Cannot replace the active FDS disk while modified media is unsaved\n");
-        free(new_prg);
-        free(new_chr);
-        return -1;
-    }
-    if (apply_input_config && !joypad_persistent_flush()) {
-        fprintf(stderr, "Cannot change input configuration while expansion-device data is unsaved\n");
+    if (!rom_flush_persistent()) {
         free(new_prg);
         free(new_chr);
         return -1;
@@ -836,6 +822,10 @@ int load_rom_memory(const uint8_t *data, size_t size) {
     return load_rom_data(data, size, NULL);
 }
 
+int load_rom_image(const uint8_t *data, size_t size, const char *save_path) {
+    return load_rom_data(data, size, save_path);
+}
+
 int load_fds_memory(const uint8_t *disk, size_t disk_size,
                     const uint8_t *bios, size_t bios_size,
                     const char *disk_path, bool write_protected) {
@@ -855,8 +845,7 @@ int load_fds_memory(const uint8_t *disk, size_t disk_size,
         return -1;
     }
 
-    if (fds_active() && fds_disk_dirty() && !fds_flush()) {
-        fprintf(stderr, "Cannot replace the active FDS disk while modified media is unsaved\n");
+    if (!rom_flush_persistent()) {
         fds_image_destroy(image);
         return -1;
     }
@@ -1060,8 +1049,7 @@ int load_studybox_memory(const uint8_t *media, size_t media_size,
     CartridgeBoard *prepared = board_create_studybox(bios, bios_size, media, media_size);
     if (!prepared) return -1;
 
-    if (fds_active() && fds_disk_dirty() && !fds_flush()) {
-        fprintf(stderr, "Cannot replace the active FDS disk while modified media is unsaved\n");
+    if (!rom_flush_persistent()) {
         board_destroy(prepared);
         return -1;
     }
@@ -1093,11 +1081,28 @@ int load_studybox_memory(const uint8_t *media, size_t media_size,
     return 0;
 }
 
-bool unload_rom(void) {
-    if (fds_active() && fds_disk_dirty() && !fds_flush()) {
-        fprintf(stderr, "Cannot unload FDS disk while modified media is unsaved\n");
-        return false;
+bool rom_flush_persistent(void) {
+    bool saved = true;
+    if (!cart_battery_flush()) {
+        fprintf(stderr, "Cannot replace the current image while cartridge data is unsaved\n");
+        saved = false;
     }
+
+    if (!fds_flush()) {
+        fprintf(stderr, "Cannot replace the current image while disk data is unsaved\n");
+        saved = false;
+    }
+
+    if (!joypad_persistent_flush()) {
+        fprintf(stderr, "Cannot replace the current image while input-device data is unsaved\n");
+        saved = false;
+    }
+
+    return saved;
+}
+
+bool unload_rom(void) {
+    if (!rom_flush_persistent()) return false;
     mapper_shutdown();
     free(prg_rom);
     free(chr_rom);
@@ -1120,25 +1125,7 @@ bool unload_rom(void) {
 }
 
 static int read_file(const char *path, uint8_t **data, size_t *size) {
-    *data = NULL;
-    *size = 0;
-    FILE *fp = fopen(path, "rb");
-    if (!fp) return -1;
-    if (fseek(fp, 0, SEEK_END) != 0) { fclose(fp); return -1; }
-    long length = ftell(fp);
-    if (length < 0 || fseek(fp, 0, SEEK_SET) != 0) { fclose(fp); return -1; }
-    size_t bytes = (size_t)length;
-    uint8_t *buffer = (uint8_t *)malloc(bytes ? bytes : 1);
-    if (!buffer) { fclose(fp); return -1; }
-    size_t bytes_read = fread(buffer, 1, bytes, fp);
-    int close_result = fclose(fp);
-    if (bytes_read != bytes || close_result != 0) {
-        free(buffer);
-        return -1;
-    }
-    *data = buffer;
-    *size = bytes;
-    return 0;
+    return nes_file_read_all(path, 256u * 1024u * 1024u, data, size) == NES_FILE_OK ? 0 : -1;
 }
 
 bool rom_set_fcns_kanji_firmware(const char *path) {
@@ -1192,25 +1179,10 @@ int load_studybox(const char *media_path, const char *bios_path) {
 
 int load_rom(const char *filename) {
     if (!filename) return -1;
-    FILE *fp = fopen(filename, "rb");
-    if (!fp) { perror("open"); return -1; }
-    if (fseek(fp, 0, SEEK_END) != 0) {
-        fclose(fp);
-        return -1;
-    }
-    long length = ftell(fp);
-    if (length < 0 || fseek(fp, 0, SEEK_SET) != 0) {
-        fclose(fp);
-        return -1;
-    }
-    size_t size = (size_t)length;
-    uint8_t *data = (uint8_t *)malloc(size ? size : 1);
-    if (!data) { fclose(fp); return -1; }
-    size_t bytes_read = fread(data, 1, size, fp);
-    fclose(fp);
-    if (bytes_read != size) {
+    uint8_t *data = NULL;
+    size_t size = 0;
+    if (read_file(filename, &data, &size) != 0) {
         fprintf(stderr, "Failed to read ROM file\n");
-        free(data);
         return -1;
     }
     int result;

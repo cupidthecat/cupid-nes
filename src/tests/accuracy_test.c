@@ -38,6 +38,7 @@ int test_ppu_accuracy(void);
 int test_mapper_accuracy(void);
 int test_region_accuracy(void);
 int test_file_io_accuracy(void);
+int test_persistence_accuracy(void);
 int test_native_flash_geometry_accuracy(void);
 int test_mapper30_111_prg_ram_accuracy(void);
 int test_board_accuracy(void);
@@ -198,6 +199,7 @@ int main(int argc, char **argv) {
     failures += test_epsm_accuracy();
     failures += test_region_accuracy();
     failures += test_file_io_accuracy();
+    failures += test_persistence_accuracy();
     failures += test_frontend_accuracy();
     unload_rom();
     printf("Hardware regressions: %s (%d failures)\n", failures ? "FAIL" : "PASS", failures);

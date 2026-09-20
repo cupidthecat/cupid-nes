@@ -199,6 +199,12 @@ The committed source passed strict Windows builds with normal and AddressSanitiz
 
 This revision includes the partial CHR, disk-adapter RAM, NSF multiplier, VRC7 reset and NMI during reset corrections above. Their separate checkpoints retain the results for each fix and the seven earlier hardware issues. These local results belong to the named implementation revision. Later documentation commits retain that source; the final pull-request revision must pass its own GCC and Clang sanitizer CI jobs.
 
+## Cartridge save failure checkpoint
+
+The production loaders now refuse an image replacement or unload when cartridge storage cannot be saved. The regression runs a CPU store on a native cartridge and a C++ board, then places a nonempty directory at the save destination to force the final atomic replacement to fail. It checks that both a valid replacement image and an unload are rejected, while the current ROM, program counter, RAM, and destination contents remain intact. Removing the obstruction allows a retry; reloading the original cartridge verifies the saved byte.
+
+Both groups passed with the complete hardware suite in strict Windows normal and AddressSanitizer/UndefinedBehaviorSanitizer builds. The region and database launch checks passed in both builds. Each AccuracyCoin run passed 144/144 with zero skipped or unfinished tests in 4,182 frames, matching the cartridge's tally. These local results cover the persistence changes on the combined integration branch; they do not establish results for later frontend or archive changes. The existing ROM pins and pass requirements were unchanged.
+
 ## Reproducing a checkpoint
 
 Check out the listed commit in a separate worktree, prepare SDL2 and the pinned ROM as described in [development and testing](development.md), then run:
