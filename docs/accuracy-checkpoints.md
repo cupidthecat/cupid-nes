@@ -290,3 +290,23 @@ are not substituted for those runs.
 Revision `368e6a9` passed the strict Linux hardware suite and AccuracyCoin
 144/144 with zero skipped or unfinished tests after binding-label and panel
 navigation updates.
+
+
+Revision `3b0d27a6d61d7e79a7eeb9a545e2da5f3d171ad0` passed both
+[push CI](https://github.com/cupidthecat/cupid-nes/actions/runs/35531524325) and
+[pull-request CI](https://github.com/cupidthecat/cupid-nes/actions/runs/35531526979).
+Each workflow passed strict GCC and Clang ASan/UBSan with Linux leak detection,
+the production hardware suite, seven network scenarios, eleven region launches,
+database discovery, 8,991 CPU trace states, all 91 diagnostic ROMs, and AccuracyCoin
+144/144 with zero skipped or unfinished tests. The same revision passed the
+strict Windows suite, network/region/Unicode checks, all 91 diagnostics, the CPU
+trace, and AccuracyCoin 144/144 in 4,182 frames.
+
+
+Revision `c596a77` adds saved rewind speed from 1 through 30 frames per activation
+and shows cartridge submapper details. The regression restores two retained
+boundaries, compares the CPU cycle position with the expected boundary, and
+checks that a larger step stops at the oldest retained frame. Configuration
+round-trip coverage retains the chosen speed. Its strict Linux hardware suite
+and AccuracyCoin passed 144/144 with zero skipped or unfinished tests in 4,182
+frames. Windows hardware, region, Unicode, and network checks also passed.
