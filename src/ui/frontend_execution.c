@@ -647,8 +647,11 @@ bool frontend_execution_rewind_step(FrontendExecutionRuntime *runtime,
     if (runtime->before_machine_change
         && !runtime->before_machine_change(runtime->machine_change_context, error, error_size)) return false;
     lock_audio_for_machine_change(runtime);
-    runtime->replay_status = nes_rewind_step(&runtime->rewind,
-                                             &runtime->replay_state_status);
+    unsigned steps=runtime->settings?runtime->settings->rewind_step_frames:1;
+    if(!steps || steps>30)steps=1;
+    do {
+        runtime->replay_status = nes_rewind_step(&runtime->rewind, &runtime->replay_state_status);
+    } while(runtime->replay_status==NES_REPLAY_OK && --steps && nes_rewind_count(&runtime->rewind));
     if (runtime->replay_status == NES_REPLAY_OK) notify_timeline_restored(runtime);
     unlock_audio_without_refresh(runtime);
     replay_frontend_refresh(runtime);

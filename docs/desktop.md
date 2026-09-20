@@ -31,6 +31,7 @@ settings. Explicit launch options retain precedence over saved preferences.
 The settings window indicates when those overrides are present.
 
 Display, mixing, speed, and binding changes apply to the running session.
+Rewind speed selects 1 through 30 retained frames per activation.
 Timing changes take effect on reload; startup alignment, RAM initialization,
 and VS DIP changes take effect on power cycle. Firmware changes require a
 restart. The application reports these boundaries after Apply. Invalid firmware,

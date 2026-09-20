@@ -19,7 +19,9 @@ State writes use an atomic replacement; failed writes retain the existing file.
 
 Tools > Rewind, Run-Ahead and Movies sets the retained history and run-ahead depth. History can retain
 up to 60 seconds, subject to the memory limit. Ctrl+Backspace moves back through
-available frames; keyboard repeat continues stepping. Resuming from an earlier
+available frames; keyboard repeat continues stepping. Settings > Emulation >
+Rewind speed chooses 1 through 30 frames per activation, saved as
+`rewind_step_frames`. Rewind stops at the oldest available frame. Resuming from an earlier
 frame discards the abandoned future. Rewind is unavailable until frames have
 been retained. Reloading or replacing the image clears history.
 

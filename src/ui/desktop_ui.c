@@ -425,7 +425,7 @@ static const char *on_off(bool enabled) { return enabled ? "On" : "Off"; }
 static int setting_rows(const FrontendDesktopUi *ui) {
     switch (ui->settings_category) {
         case 0: return 8;
-        case 1: return 5;
+        case 1: return 6;
         case 2: return 19;
         case 3: return 5 + NES_AUDIO_CHANNEL_COUNT * 2;
         case 4: return 24 + FRONTEND_SHORTCUT_COUNT * 2;
@@ -461,13 +461,14 @@ static void setting_text(FrontendDesktopUi *ui, int row, char *label, size_t lc,
         else snprintf(value, vc, "%u", row == 6 ? s->window_width : s->window_height);
     } else if (ui->settings_category == 1) {
         const char *labels[] = {"Timing selection", "Emulation speed", "Fast-forward speed",
-            "Rewind history", "Run-ahead frames"};
+            "Rewind history", "Run-ahead frames", "Rewind speed"};
         snprintf(label, lc, "%s", labels[row]);
         if (row == 0) snprintf(value, vc, "%s", region_value(s->region_mode));
         else if (row == 1 || row == 2)
             snprintf(value, vc, "%.2gx", row == 1 ? s->speed : s->fast_forward_speed);
         else if (row == 3) snprintf(value, vc, "%u seconds", s->rewind_seconds);
-        else snprintf(value, vc, "%u", s->run_ahead_frames);
+        else if(row==4) snprintf(value, vc, "%u", s->run_ahead_frames);
+        else snprintf(value,vc,"%u frames/activation",s->rewind_step_frames);
     } else if (ui->settings_category == 2) {
         if (row < 7) {
             const char *labels[] = {"Fullscreen", "Integer scaling", "VSync", "Aspect ratio",
@@ -628,7 +629,8 @@ static void adjust_setting(FrontendDesktopUi *ui, int row, int direction) {
         else if (row == 1) { s->speed += direction * 0.25; if (s->speed < .1) s->speed = .1; if (s->speed > 16) s->speed = 16; }
         else if (row == 2) { s->fast_forward_speed += direction; if (s->fast_forward_speed < .1) s->fast_forward_speed = .1; if (s->fast_forward_speed > 16) s->fast_forward_speed = 16; }
         else if (row == 3) { int v = (int)s->rewind_seconds + direction; s->rewind_seconds = (unsigned)(v < 0 ? 0 : v > 60 ? 60 : v); }
-        else { int v = (int)s->run_ahead_frames + direction; s->run_ahead_frames = (unsigned)(v < 0 ? 0 : v > 4 ? 4 : v); }
+        else if(row==4) { int v = (int)s->run_ahead_frames + direction; s->run_ahead_frames = (unsigned)(v < 0 ? 0 : v > 4 ? 4 : v); }
+        else {int v=(int)s->rewind_step_frames+direction;s->rewind_step_frames=(unsigned)(v<1?1:v>30?30:v);}
     } else if (ui->settings_category == 2) {
         if (row == 0) s->fullscreen = !s->fullscreen;
         else if (row == 1) s->integer_scaling = !s->integer_scaling;
@@ -850,7 +852,7 @@ static void render_info(FrontendDesktopUi *ui) {
     char line[256]; snprintf(line,sizeof(line),"Metadata: %s",rom_metadata_source_name()); frontend_draw_text(ui->renderer,box.x+18,box.y+64,1,line,220,220,225,255);
     snprintf(line,sizeof(line),"Region: %s",nes_region_name(nes_timing()->region)); frontend_draw_text(ui->renderer,box.x+18,box.y+88,1,line,220,220,225,255);
     snprintf(line,sizeof(line),"Console: %s",nes_console_model_name()); frontend_draw_text(ui->renderer,box.x+18,box.y+112,1,line,220,220,225,255);
-    if (!rom_is_fds() && !rom_is_studybox() && !rom_is_nsf()) { snprintf(line,sizeof(line),"Mapper: %d",rom_mapper_number(&ines_header)); frontend_draw_text(ui->renderer,box.x+18,box.y+136,1,line,220,220,225,255); }
+    if (!rom_is_fds() && !rom_is_studybox() && !rom_is_nsf()) { snprintf(line,sizeof(line),"Mapper: %d / submapper %u",rom_mapper_number(&ines_header), (ines_header.flags7&0x0Cu)==0x08u?(unsigned)(ines_header.prg_ram_size>>4):0u); frontend_draw_text(ui->renderer,box.x+18,box.y+136,1,line,220,220,225,255); }
     if(ui->sessions && ui->sessions->session && ui->sessions->session->active){ snprintf(line,sizeof(line),"Image: %.70s",ui->sessions->session->current.path); frontend_draw_text(ui->renderer,box.x+18,box.y+170,1,line,170,205,255,255); }
 }
 
@@ -1019,6 +1021,7 @@ static void category_defaults(FrontendDesktopUi *ui) {
             memcpy(&ui->staged.speed, &d.speed, sizeof(d.speed));
             memcpy(&ui->staged.fast_forward_speed, &d.fast_forward_speed, sizeof(d.fast_forward_speed));
             memcpy(&ui->staged.rewind_seconds, &d.rewind_seconds, sizeof(d.rewind_seconds));
+            ui->staged.rewind_step_frames=d.rewind_step_frames;
             memcpy(&ui->staged.run_ahead_frames, &d.run_ahead_frames, sizeof(d.run_ahead_frames));
             break;
         case 2:

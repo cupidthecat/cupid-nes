@@ -66,10 +66,11 @@ static void audio_settings(void){
 static void storage_settings(void){
     FrontendSettings settings;frontend_settings_defaults(&settings);
     strcpy(settings.game_database_path,"build/custom-database.txt");strcpy(settings.movie_file_path,"build/movie.cpm");
-    settings.disable_database_corrections=true;
+    settings.disable_database_corrections=true;settings.rewind_step_frames=3;
     FrontendSettingsReport report;CHECK(frontend_settings_save("build/storage-settings.ini",&settings,&report));
     FrontendSettings restored;CHECK(frontend_settings_load("build/storage-settings.ini",&restored,&report));
     CHECK(!strcmp(restored.game_database_path,settings.game_database_path));
+    CHECK(restored.rewind_step_frames==3);
     CHECK(!strcmp(restored.movie_file_path,settings.movie_file_path)&&restored.disable_database_corrections);
     (void)nes_file_remove("build/storage-settings.ini");
     FrontendExecutionRuntime execution;frontend_execution_init(&execution,NULL,44100,NULL,NULL,NULL,NULL);

@@ -279,6 +279,7 @@ void frontend_settings_defaults(FrontendSettings *settings) {
     settings->speed = 1.0;
     settings->fast_forward_speed = 4.0;
     settings->rewind_seconds = 10;
+    settings->rewind_step_frames = 1;
     settings->remember_window_size = true;
     settings->recent_file_limit = FRONTEND_RECENT_MAX;
     settings->pause_on_focus_loss = true;
@@ -617,6 +618,8 @@ static bool set_known_setting(FrontendSettings *settings, const char *key,
         if (!parse_double_range(value, 0.1, 16.0, &settings->fast_forward_speed)) return false;
     } else if (strcmp(key, "rewind_seconds") == 0) {
         if (!parse_unsigned_range(value, 60, &settings->rewind_seconds)) return false;
+    } else if (strcmp(key, "rewind_step_frames") == 0) {
+        if (!parse_unsigned_range(value, 30, &settings->rewind_step_frames) || !settings->rewind_step_frames) return false;
     } else if (strcmp(key, "run_ahead_frames") == 0) {
         if (!parse_unsigned_range(value, 4, &settings->run_ahead_frames)) return false;
     } else if (strcmp(key, "reopen_last_image") == 0) {
@@ -1096,7 +1099,7 @@ bool frontend_settings_save(const char *path, const FrontendSettings *settings,
                                          settings->input.expansion),
                           settings->zapper_radius, settings->active_profile);
     ok = ok && append_text(buffer, SETTINGS_SAVE_CAPACITY, &used,
-                          "rewind_seconds=%u\nrun_ahead_frames=%u\n"
+                          "rewind_seconds=%u\nrewind_step_frames=%u\nrun_ahead_frames=%u\n"
                           "vsync=%s\naspect_ratio=%s\n"
                           "show_background=%s\nshow_sprites=%s\n"
                           "audio_master_volume=%u\naudio_device=%s\n"
@@ -1113,7 +1116,7 @@ bool frontend_settings_save(const char *path, const FrontendSettings *settings,
                           "startup_phase_set=%s\nstartup_cpu_offset=%u\nstartup_ppu_phase=%u\n"
                           "startup_seed_set=%s\nstartup_seed=%u\n"
                           "power_on_seed_set=%s\npower_on_seed=%u\n",
-                          settings->rewind_seconds, settings->run_ahead_frames,
+                          settings->rewind_seconds, settings->rewind_step_frames, settings->run_ahead_frames,
                           settings->vsync ? "true" : "false",
                           settings->aspect_mode == FRONTEND_ASPECT_4_3 ? "4:3" : "source",
                           settings->presentation.show_background ? "true" : "false",
@@ -1234,6 +1237,8 @@ bool frontend_settings_validate(const FrontendSettings *settings,
         || !isfinite(settings->fast_forward_speed) || settings->fast_forward_speed < 0.1
         || settings->fast_forward_speed > 16.0)
         SETTINGS_FAIL("Emulation speed must be from 0.1x to 16x");
+    if (!settings->rewind_step_frames || settings->rewind_step_frames > 30)
+        SETTINGS_FAIL("Rewind speed must be from 1 to 30 frames per activation");
     if (settings->rewind_seconds > 60 || settings->run_ahead_frames > 4)
         SETTINGS_FAIL("Rewind must be at most 60 seconds and run-ahead at most 4 frames");
     if (settings->window_width < 320 || settings->window_width > 16384

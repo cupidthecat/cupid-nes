@@ -130,7 +130,7 @@ static bool replay_panel_snapshot(void *userdata, FrontendPanelModel *model,
     FrontendPanelControl rewind = {
         .id = REPLAY_CONTROL_REWIND,
         .type = FRONTEND_PANEL_ACTION,
-        .label = "Rewind one frame",
+        .label = "Rewind",
         .enabled = live && frontend_execution_rewind_available(runtime) != 0
     };
     FrontendPanelControl clear = {
@@ -300,7 +300,7 @@ bool replay_frontend_register(FrontendExecutionRuntime *runtime) {
     if (!runtime) return false;
     FrontendCommandSpec rewind = {
         .id = REPLAY_COMMAND_REWIND_FRAME,
-        .label = "Rewind One Frame",
+        .label = "Rewind",
         .menu = "Emulation",
         .shortcut = "Ctrl+Backspace",
         .flags = FRONTEND_COMMAND_NEEDS_SESSION | FRONTEND_COMMAND_MOMENTARY,

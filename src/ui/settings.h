@@ -126,6 +126,7 @@ typedef struct {
     FrontendAspectMode aspect_mode;
     bool muted;
     unsigned rewind_seconds;
+    unsigned rewind_step_frames;
     unsigned run_ahead_frames;
     unsigned window_width;
     unsigned window_height;

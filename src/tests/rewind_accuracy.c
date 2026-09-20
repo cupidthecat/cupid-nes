@@ -23,6 +23,7 @@
 #include "../ui/frontend_execution.h"
 #include "../ui/frontend_panels.h"
 #include "../ui/replay_frontend.h"
+#include "../ui/settings.h"
 #include "../video/video_trace.h"
 #include "../../include/globals.h"
 
@@ -502,6 +503,16 @@ static int test_replay_frontend_contract(void) {
                                 NULL, 0, error, sizeof(error)));
     CHECK(frontend_execution_rewind_available(&runtime) == 0);
     CHECK(frontend_command_get(REPLAY_COMMAND_REWIND_FRAME, &command) && !command.enabled);
+    FrontendSettings settings;frontend_settings_defaults(&settings);settings.rewind_step_frames=2;
+    runtime.settings=&settings;
+    CHECK(frontend_execution_run_frame(&runtime));
+    uint64_t rewind_target=cpu_total_cycles;
+    CHECK(frontend_execution_run_frame(&runtime));CHECK(frontend_execution_run_frame(&runtime));
+    CHECK(frontend_execution_rewind_available(&runtime)==3);
+    CHECK(frontend_execution_rewind_step(&runtime,error,sizeof(error)));
+    CHECK(cpu_total_cycles==rewind_target && frontend_execution_rewind_available(&runtime)==1);
+    CHECK(frontend_execution_rewind_step(&runtime,error,sizeof(error)));
+    CHECK(frontend_execution_rewind_available(&runtime)==0);
     CHECK(nes_video_trace_use(NES_VIDEO_TRACE_EXPORT, false));
 
     frontend_execution_shutdown(&runtime);
