@@ -637,6 +637,7 @@ int test_ppu_accuracy(void) {
     test_startup_register_restriction();
     test_oam_decay_refresh();
     test_oamdata_read_profile();
+    test_palette_readback_profile();
     test_regional_video();
     test_video_reset();
     test_reset_suppression();

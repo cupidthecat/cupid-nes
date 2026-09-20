@@ -81,6 +81,7 @@ static bool oam_decay = false;
 static bool reset_suppression = false;
 static bool sprite_eval_wrap_bug = false;
 static bool oamdata_read_disabled = false;
+static bool palette_readback_disabled = false;
 
 static const char *const ppu_revision_names[] = {"2c02-pre-e", "2c02e-plus"};
 
@@ -142,6 +143,14 @@ bool ppu_oamdata_read_disabled(void) {
 
 void ppu_set_oamdata_read_disabled(bool disabled) {
     oamdata_read_disabled = disabled;
+}
+
+bool ppu_palette_readback_disabled(void) {
+    return palette_readback_disabled;
+}
+
+void ppu_set_palette_readback_disabled(bool disabled) {
+    palette_readback_disabled = disabled;
 }
 
 bool ppu_reset_suppression_enabled(void) {
@@ -413,7 +422,7 @@ uint8_t ppu_reg_read(uint16_t reg) {
             if (ppu.data_read_cooldown) return get_open_bus();
             uint16_t addr = ppu.bus_address;
             uint8_t value;
-            if (addr >= 0x3F00) {
+            if (addr >= 0x3F00 && !palette_readback_disabled) {
                 uint8_t mask = (ppu.mask & 1) ? 0x30 : 0x3F;
                 value = (ppu_read(addr) & mask) | (get_open_bus() & 0xC0);
                 set_open_bus_masked(value, 0x3F);

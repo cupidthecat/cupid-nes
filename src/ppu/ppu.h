@@ -209,6 +209,8 @@ bool ppu_oam_decay_enabled(void);
 void ppu_set_oam_decay(bool enabled);
 bool ppu_oamdata_read_disabled(void);
 void ppu_set_oamdata_read_disabled(bool disabled);
+bool ppu_palette_readback_disabled(void);
+void ppu_set_palette_readback_disabled(bool disabled);
 bool ppu_reset_suppression_enabled(void);
 void ppu_set_reset_suppression(bool enabled);
 bool ppu_sprite_eval_wrap_bug_enabled(void);

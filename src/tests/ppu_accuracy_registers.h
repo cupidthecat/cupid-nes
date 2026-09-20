@@ -762,4 +762,62 @@ static void test_oamdata_read_profile(void) {
     ppu_set_oam_decay(saved_decay);
 }
 
+static void test_palette_readback_profile(void) {
+    bool saved_disabled = ppu_palette_readback_disabled();
+
+    ppu_set_palette_readback_disabled(false);
+    reset_video(0);
+    ppu.scanline = 241;
+    ppu.dot = 20;
+    ppu_write(0x2F00, 0x5A);
+    ppu_write(0x3F00, 0x21);
+    set_data_address(0x3F00);
+    ppu.ppudata_buffer = 0x71;
+    ppu_reg_write(PPUCTRL, 0xC0);
+    CHECK("enabled palette readback reaches palette RAM through a real CPU read", cpu_lda_abs(PPUDATA) == 0xE1);
+    ppu_step_dots(6);
+    CHECK("enabled palette readback still refills from the external nametable bus",
+          ppu.ppudata_buffer == 0x5A && ppu.v == 0x3F01);
+
+    set_data_address(0x3F00);
+    ppu.ppudata_buffer = 0x71;
+    ppu.mask = 1;
+    ppu_reg_write(PPUCTRL, 0xC0);
+    CHECK("enabled palette readback keeps grayscale and high open-bus handling", ppu_reg_read(PPUDATA) == 0xE0);
+    ppu_step_dots(6);
+
+    ppu_set_palette_readback_disabled(true);
+    reset_video(0);
+    ppu.scanline = 241;
+    ppu.dot = 20;
+    ppu_write(0x2F00, 0x5A);
+    ppu_write(0x3F00, 0x21);
+    set_data_address(0x3F00);
+    ppu.ppudata_buffer = 0x71;
+    ppu.mask = 1;
+    ppu_reg_write(PPUCTRL, 0xC0);
+    CHECK("disabled palette readback returns the buffered byte through a real CPU read", cpu_lda_abs(PPUDATA) == 0x71);
+    ppu_step_dots(6);
+    CHECK("disabled palette readback preserves external refill and address increment",
+          ppu.ppudata_buffer == 0x5A && ppu.v == 0x3F01);
+
+    set_data_address(0x3F00);
+    ppu.ppudata_buffer = 0x65;
+    ppu.mask = 1;
+    ppu_reg_write(PPUCTRL, 0xC0);
+    CHECK("disabled palette readback ignores palette grayscale and high open-bus bits", ppu_reg_read(PPUDATA) == 0x65);
+    ppu_step_dots(3);
+    uint8_t delay = ppu.data_read_delay;
+    uint8_t cooldown = ppu.data_read_cooldown;
+    CHECK("disabled palette readback keeps consecutive-read recovery open bus",
+          ppu_reg_read(PPUDATA) == 0x65 && ppu.data_read_delay == delay && ppu.data_read_cooldown == cooldown);
+    ppu_step_dots(3);
+    CHECK("ignored consecutive palette read does not restart refill or increment",
+          ppu.ppudata_buffer == 0x5A && ppu.v == 0x3F01 && !ppu.data_read_delay);
+    CHECK("disabled palette readback accepts a read after cooldown", ppu_reg_read(PPUDATA) == 0x5A);
+    ppu_step_dots(6);
+
+    ppu_set_palette_readback_disabled(saved_disabled);
+}
+
 #endif // PPU_ACCURACY_REGISTERS_H

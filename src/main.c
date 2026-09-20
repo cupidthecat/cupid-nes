@@ -604,6 +604,8 @@ int main(int argc, char *argv[]) {
             ppu_set_sprite_eval_wrap_bug(true);
         } else if (strcmp(argv[i], "--ppu-disable-oamdata-read") == 0) {
             ppu_set_oamdata_read_disabled(true);
+        } else if (strcmp(argv[i], "--ppu-disable-palette-readback") == 0) {
+            ppu_set_palette_readback_disabled(true);
         } else if (strcmp(argv[i], "--ppu-reset-suppression") == 0) {
             ppu_set_reset_suppression(true);
         } else if (strcmp(argv[i], "--video-filter") == 0) {
@@ -748,7 +750,7 @@ int main(int argc, char *argv[]) {
                "[--ppu-revision REVISION] [--ppu-oam-row-corruption] "
                "[--ppu-startup-restriction] [--ppu-oam-decay] [--ppu-sprite-eval-wrap-bug] "
                "[--ppu-disable-oamdata-read] "
-               "[--ppu-reset-suppression] "
+               "[--ppu-disable-palette-readback] [--ppu-reset-suppression] "
                "[--video-filter direct|ntsc-composite] "
                "[--mmc3-revision REVISION] [--cart-dip VALUE] "
                "[--adapter TYPE] [--port1 DEVICE] [--port2 DEVICE] "
@@ -791,6 +793,8 @@ int main(int argc, char *argv[]) {
     printf("PPU sprite-evaluation wrap bug: %s\n", ppu_sprite_eval_wrap_bug_enabled() ? "enabled" : "disabled");
     printf("PPU OAMDATA reads: %s\n",
            ppu_oamdata_read_disabled() ? "open-bus only" : "enabled");
+    printf("PPU palette readback: %s\n",
+           ppu_palette_readback_disabled() ? "buffered" : "enabled");
     printf("PPU soft-reset suppression: %s\n",
            ppu_reset_suppression_enabled() ? "enabled" : "disabled");
     printf("MMC3 revision: %s\n", cart_mmc3_revision_name());
