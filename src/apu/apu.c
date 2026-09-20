@@ -25,6 +25,7 @@
 
 #include "apu.h"
 #include "epsm.h"
+#include "../audio/audio_observer.h"
 #include "../third_party/blip_buf.h"
 #include "../rom/mapper.h"
 #include "../cpu/cpu.h"
@@ -795,6 +796,7 @@ static void apu_output_reconstructed_samples(APU *a) {
         if (left < -1.0f) left = -1.0f;
         if (right > 1.0f) right = 1.0f;
         if (right < -1.0f) right = -1.0f;
+        nes_audio_observe(a == main_apu ? 0u : 1u, a->sample_rate, left, right);
         float middle = (left + right) * 0.5f;
         float side = (left - right) * 0.5f;
         a->last_output_sample = middle;

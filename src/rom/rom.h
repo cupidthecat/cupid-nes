@@ -132,6 +132,7 @@ bool rom_is_nsf(void);
 bool rom_nsf_select_track(unsigned track);
 unsigned rom_nsf_current_track(void);
 const NsfMetadata *rom_nsf_metadata(void);
+double rom_nsf_elapsed_seconds(void);
 int rom_mapper_number(const iNESHeader *header);
 bool rom_database_load_file(const char *path);
 bool rom_database_load_memory(const char *text, size_t size);

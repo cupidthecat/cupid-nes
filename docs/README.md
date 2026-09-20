@@ -11,6 +11,7 @@ Cupid has an SDL application for running games and music and a separate executab
 | [Controls and peripherals](controls.md) | Gamepads, adapters, paddles, light guns, mats, keyboards, Subor mouse, Hori Track, Oeka tablet, and specialty expansion controls |
 | [Hardware and compatibility](hardware.md) | Supported systems and mappers, RAM/register behavior, expansion sound, ROM metadata, and implementation limits |
 | [Saves and media](saves.md) | Cartridge saves, EEPROM and flash, Turbo File/BattleBox storage, disk images, tapes, and save failures |
+| [Music player](music.md) | NSF/NSFe track selection, pause and stop, metadata, fades, silence detection, repeat, and shuffle |
 | [Troubleshooting](troubleshooting.md) | Common error messages and the information needed for a reproducible report |
 
 ## Working on the core

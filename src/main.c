@@ -41,8 +41,9 @@
 #include <time.h>
 #include "rom/mapper.h"
 #include <math.h>
+#include <limits.h>
 #include "ui/palette_tool.h"
-#include "ui/nsf_frontend.h"
+#include "ui/nsf_player_runtime.h"
 #include "ui/frontend_execution.h"
 #include "ui/app_paths.h"
 #include "ui/game_database.h"
@@ -59,16 +60,6 @@ uint32_t framebuffer[SCREEN_WIDTH * SCREEN_HEIGHT];
 static uint32_t composite_framebuffer[NTSC_COMPOSITE_WIDTH * NTSC_COMPOSITE_HEIGHT];
 
 Joypad pad1 = {0}, pad2 = {0};
-
-static void nsf_audio_lock(void *context) {
-    SDL_AudioDeviceID device = *(SDL_AudioDeviceID *)context;
-    if (device) SDL_LockAudioDevice(device);
-}
-
-static void nsf_audio_unlock(void *context) {
-    SDL_AudioDeviceID device = *(SDL_AudioDeviceID *)context;
-    if (device) SDL_UnlockAudioDevice(device);
-}
 
 static SDL_GameController *controllers[NES_INPUT_PLAYERS];
 static void open_controller(int device) {
@@ -1041,6 +1032,13 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Could not initialize frontend commands\n");
         running = false;
     }
+    NsfPlayer music_player = {0};
+    if (running && !nsf_player_bind_frontend(&music_player, &execution_runtime, SDL_GetTicks())) {
+        fprintf(stderr, "Could not initialize the music player\n");
+        running = false;
+    }
+    unsigned last_music_track = UINT_MAX;
+    unsigned last_music_second = UINT_MAX;
 
     palette_tool_init();
     const double performance_frequency = (double)SDL_GetPerformanceFrequency();
@@ -1111,6 +1109,14 @@ int main(int argc, char *argv[]) {
                 && e.key.windowID == SDL_GetWindowID(window)
                 && frontend_execution_handle_shortcut(&execution_runtime, &e.key)) continue;
             if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
+                && e.key.windowID == SDL_GetWindowID(window)) {
+                char music_error[160] = {0};
+                if (nsf_player_handle_shortcut(&music_player, &e.key, music_error, sizeof(music_error))) {
+                    if (music_error[0]) fprintf(stderr, "%s\n", music_error);
+                    continue;
+                }
+            }
+            if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
                 && e.key.windowID == SDL_GetWindowID(window)
                 && family_basic_key_event(&e.key, tape_play_path, tape_record_path)) continue;
             if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
@@ -1135,24 +1141,6 @@ int main(int argc, char *argv[]) {
                 int down = (e.type == SDL_KEYDOWN);
     
                 switch (e.key.keysym.sym) {
-                    case SDLK_PAGEUP:
-                    case SDLK_PAGEDOWN:
-                        if (down && !e.key.repeat && rom_is_nsf()) {
-                            const NsfMetadata *music = rom_nsf_metadata();
-                            unsigned track = 0;
-                            if (music && music->total_songs) {
-                                int direction = e.key.keysym.sym == SDLK_PAGEUP ? 1 : -1;
-                                bool changed = nsf_frontend_step_track(direction,
-                                    nsf_audio_lock, nsf_audio_unlock, &audio_dev, &track);
-                                if (changed) {
-                                    printf("Music track: %u/%u", track + 1u,
-                                           (unsigned)music->total_songs);
-                                    if (music->track_names[track][0]) printf(" - %s", music->track_names[track]);
-                                    printf("\n");
-                                }
-                            }
-                        }
-                        break;
                     case SDLK_F10:
                         if (down && rom_is_fds()) fds_set_write_protected(!fds_write_protected());
                         break;
@@ -1244,6 +1232,23 @@ int main(int argc, char *argv[]) {
         if (!running) break;
     
         bool ran_frame = frontend_execution_run_frame(&execution_runtime);
+        char music_error[160] = {0};
+        (void)nsf_player_poll(&music_player, music_error, sizeof(music_error));
+        if (music_error[0]) fprintf(stderr, "%s\n", music_error);
+        NsfPlayerInfo music_info;
+        if (nsf_player_info(&music_player, &music_info)) {
+            unsigned seconds = music_info.position_seconds > UINT_MAX
+                ? UINT_MAX : (unsigned)music_info.position_seconds;
+            if (music_info.track != last_music_track || seconds != last_music_second) {
+                char title[512];
+                snprintf(title, sizeof(title), "Cupid NES | %s | Track %u/%u | %u:%02u",
+                         music_info.metadata->title, music_info.track + 1u,
+                         (unsigned)music_info.metadata->total_songs, seconds / 60u, seconds % 60u);
+                SDL_SetWindowTitle(window, title);
+                last_music_track = music_info.track;
+                last_music_second = seconds;
+            }
+        }
 
         // Presentation filters consume captured PPU signal data after emulation has
         // finished the frame, so they cannot change beam timing or light-sensor input.
@@ -1283,6 +1288,7 @@ int main(int argc, char *argv[]) {
     SDL_DestroyTexture(texture);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
+    nsf_player_shutdown(&music_player);
     if (audio_dev) SDL_CloseAudioDevice(audio_dev);
     apu_audio_shutdown_state(&apu);
     for (unsigned player = 0; player < NES_INPUT_PLAYERS; ++player)

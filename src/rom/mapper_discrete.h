@@ -602,6 +602,11 @@ int mapper_init_nsf(const NsfImage *image, uint8_t *program, size_t program_size
 
 bool cart_nsf_active(void) { return cart == &mapper_nsf; }
 unsigned cart_nsf_current_track(void) { return cart == &mapper_nsf ? nsf_player.song : 0; }
+uint64_t cart_nsf_elapsed_cycles(void) {
+    return cart == &mapper_nsf && cpu_total_cycles >= nsf_player.track_start_cycle
+        ? cpu_total_cycles - nsf_player.track_start_cycle : 0;
+}
+
 bool cart_nsf_select_track(unsigned track) {
     if (cart != &mapper_nsf || track >= nsf_player.metadata.total_songs) return false;
     nsf_player.song = (uint8_t)track;

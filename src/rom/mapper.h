@@ -113,6 +113,7 @@ int mapper_init_nsf(const NsfImage *image, uint8_t *program, size_t program_size
 bool cart_nsf_select_track(unsigned track);
 bool cart_nsf_active(void);
 unsigned cart_nsf_current_track(void);
+uint64_t cart_nsf_elapsed_cycles(void);
 
 // Notify physical PPU bus address changes using monotonic NTSC PPU cycles.
 // MMC3 qualifies A12 after three CPU clocks low; palette RAM is internal.

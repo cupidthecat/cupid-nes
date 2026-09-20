@@ -29,7 +29,7 @@ does not exercise.
 | CPU and PPU | Official and undocumented instructions, shared OAM/DMC DMA timing, register delays, selectable PPU readback and sprite-evaluation behavior, regional frame timing, startup alignment and RAM contents, and optional PPU reset suppression |
 | Cartridges | Board-specific PRG/CHR banking, mixed CHR RAM/NVRAM with separate persistence, nametable routing, bus conflicts, RAM permissions, IRQs, EEPROM, and flash; the [mapper table](docs/hardware.md#cartridge-mappers) lists supported families and variants |
 | Sound | Five base APU channels, optional oldest-Famicom noise and clone pulse duty behavior, CPU-cycle band-limited reconstruction, cartridge and disk expansion audio, and EPSM stereo output with timer IRQs |
-| Music and other media | NSF/NSFe initialization and play scheduling, bank switching and expansion sound; StudyBox tape transport and audio; Famicom Network System RAM, character-ROM, and controller interfaces |
+| Music and other media | NSF/NSFe initialization and play scheduling, track transport, timed fades, silence-based progression, repeat and shuffle, bank switching and expansion sound; StudyBox tape transport and audio; Famicom Network System RAM, character-ROM, and controller interfaces |
 | Controllers and storage | NES, SNES, and Virtual Boy gamepads; SNES and Subor mice; NTT Data keypads; multiplayer adapters, light guns, paddles, mats, keyboards, trackballs, tablets, specialty expansion controllers, Turbo File, and BattleBox |
 | VS System | Header-selected RGB PPU and controller behavior, hardware-palette light sensing, cabinet controls and protection, and dual machines with shared RAM, two screens, and mixed audio |
 
@@ -135,6 +135,7 @@ other peripheral combinations.
 | R | Soft reset |
 | F7 / F6 | Show palette editor / restore default palette |
 | Page Up / Page Down | Next / previous NSF or NSFe track |
+| Ctrl+Space / Ctrl+End / Ctrl+Home | Music play-pause / stop / restart |
 | Ctrl+V | Paste palette text |
 
 The keyboard and first SDL game controller both drive player 1. More controllers
@@ -184,6 +185,7 @@ process exits.
 | Check supported hardware and ROM formats | [Hardware](docs/hardware.md) |
 | Look up hardware and test terminology | [Hardware terminology](docs/glossary.md) |
 | Locate saves and use writable media | [Saves and media](docs/saves.md) |
+| Play NSF and NSFe tracks | [Music player](docs/music.md) |
 | Diagnose a build or runtime problem | [Troubleshooting](docs/troubleshooting.md) |
 | Understand the core and source layout | [Architecture](docs/architecture.md) |
 | Run tests or investigate an accuracy failure | [Development and testing](docs/development.md) |

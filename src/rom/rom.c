@@ -1039,6 +1039,9 @@ bool rom_nsf_select_track(unsigned track) {
 }
 unsigned rom_nsf_current_track(void) { return nsf_loaded ? cart_nsf_current_track() : 0; }
 const NsfMetadata *rom_nsf_metadata(void) { return nsf_loaded ? &loaded_nsf_metadata : NULL; }
+double rom_nsf_elapsed_seconds(void) {
+    return nsf_loaded ? (double)cart_nsf_elapsed_cycles() / nes_timing()->cpu_hz : 0.0;
+}
 
 int load_studybox_memory(const uint8_t *media, size_t media_size,
                          const uint8_t *bios, size_t bios_size) {

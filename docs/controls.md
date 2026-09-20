@@ -18,11 +18,13 @@ Select emulated input hardware with the options in [configuration](configuration
 | F6 | Restore the built-in palette |
 | F7 | Toggle the palette editor |
 | Page Up / Page Down | Next / previous NSF or NSFe track |
+| Ctrl+Space | Play / pause NSF or NSFe music |
+| Ctrl+End / Ctrl+Home | Stop / restart the selected music track |
 | Ctrl+V | Paste palette text |
 
 Close the window for normal shutdown. The M key supplies the emulated microphone line only; Cupid does not capture a host microphone. Soft reset keeps the selected console, CPU/APU and PPU profiles, current CPU/PPU clock alignment, controller configuration, and persistent peripheral contents. It does not rerun command-line setup or reconnect host controllers.
 
-For NSF and NSFe files, Page Up selects the next track and Page Down selects the previous track, wrapping at either end. Changing tracks clears the player's RAM and audio state, then runs the file's initialization routine for the selected song. NSFe track names are printed when present.
+For NSF and NSFe files, Page Up selects the next track. Page Down selects the previous track during the first two seconds and otherwise restarts the current track. Track selection wraps at either end. Manual changes clear music RAM and queued audio, then run the file's initialization routine for the selected song. The [music player](music.md) also provides direct track selection, duration and silence-based advancement, repeat, and shuffle.
 
 Mapper 188 Bandai Karaoke cartridges also use player-one A/B as their cartridge-owned A and B buttons. Z/X and the first SDL controller's A/B buttons update those inputs while mapper 188 is active. M drives the cartridge microphone as well as the original Famicom microphone line; mapper 188 reports the held microphone on alternating emulation frames.
 
