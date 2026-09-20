@@ -602,6 +602,8 @@ int main(int argc, char *argv[]) {
             ppu_set_oam_decay(true);
         } else if (strcmp(argv[i], "--ppu-sprite-eval-wrap-bug") == 0) {
             ppu_set_sprite_eval_wrap_bug(true);
+        } else if (strcmp(argv[i], "--ppu-disable-oamdata-read") == 0) {
+            ppu_set_oamdata_read_disabled(true);
         } else if (strcmp(argv[i], "--ppu-reset-suppression") == 0) {
             ppu_set_reset_suppression(true);
         } else if (strcmp(argv[i], "--video-filter") == 0) {
@@ -745,6 +747,7 @@ int main(int argc, char *argv[]) {
                "[--ram-power-on STATE] [--power-on-seed SEED] [--random-vblank] "
                "[--ppu-revision REVISION] [--ppu-oam-row-corruption] "
                "[--ppu-startup-restriction] [--ppu-oam-decay] [--ppu-sprite-eval-wrap-bug] "
+               "[--ppu-disable-oamdata-read] "
                "[--ppu-reset-suppression] "
                "[--video-filter direct|ntsc-composite] "
                "[--mmc3-revision REVISION] [--cart-dip VALUE] "
@@ -786,7 +789,10 @@ int main(int argc, char *argv[]) {
            ppu_startup_write_restriction_enabled() ? "enabled" : "compatibility");
     printf("PPU OAM decay: %s\n", ppu_oam_decay_enabled() ? "enabled" : "compatibility");
     printf("PPU sprite-evaluation wrap bug: %s\n", ppu_sprite_eval_wrap_bug_enabled() ? "enabled" : "disabled");
-    printf("PPU soft-reset suppression: %s\n", ppu_reset_suppression_enabled() ? "enabled" : "disabled");
+    printf("PPU OAMDATA reads: %s\n",
+           ppu_oamdata_read_disabled() ? "open-bus only" : "enabled");
+    printf("PPU soft-reset suppression: %s\n",
+           ppu_reset_suppression_enabled() ? "enabled" : "disabled");
     printf("MMC3 revision: %s\n", cart_mmc3_revision_name());
     printf("Input adapter: %s\n", joypad_adapter_name());
     printf("Loading ROM: %s\n", rom_path);

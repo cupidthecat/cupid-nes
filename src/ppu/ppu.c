@@ -80,6 +80,7 @@ static bool startup_write_restriction = false;
 static bool oam_decay = false;
 static bool reset_suppression = false;
 static bool sprite_eval_wrap_bug = false;
+static bool oamdata_read_disabled = false;
 
 static const char *const ppu_revision_names[] = {"2c02-pre-e", "2c02e-plus"};
 
@@ -133,6 +134,14 @@ bool ppu_oam_decay_enabled(void) {
 
 void ppu_set_oam_decay(bool enabled) {
     oam_decay = enabled;
+}
+
+bool ppu_oamdata_read_disabled(void) {
+    return oamdata_read_disabled;
+}
+
+void ppu_set_oamdata_read_disabled(bool disabled) {
+    oamdata_read_disabled = disabled;
 }
 
 bool ppu_reset_suppression_enabled(void) {
@@ -382,6 +391,10 @@ uint8_t ppu_reg_read(uint16_t reg) {
             return value;
         }
         case 4: {
+            if (oamdata_read_disabled) {
+                return get_open_bus();
+            }
+
             uint8_t value;
             if (rendering_active()) {
                 if (ppu.dot == 0 || ppu.dot >= 257)
@@ -432,6 +445,10 @@ uint8_t ppu_reg_read_finish(uint16_t reg, uint8_t value) {
             }
             return value;
         case 4:
+            if (oamdata_read_disabled) {
+                return value;
+            }
+
             if (rendering_active()) value = ppu.oam_read_latch;
             set_open_bus(value);
             return value;
