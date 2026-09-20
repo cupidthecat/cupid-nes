@@ -53,7 +53,7 @@ if ($Sanitize) {
 $cppFlags = @($flags | Where-Object { $_ -ne '-std=c11' }) + @('-std=c++17')
 
 $coreSources = @('src/system/timing.c', 'src/system/hardware.c', 'src/system/vs_system.c', 'src/cpu/cpu.c', 'src/ppu/ppu.c', 'src/rom/rom.c', 'src/rom/mapper.c',
-                 'src/rom/fds.c', 'src/rom/nsf.c',
+                 'src/rom/fds.c', 'src/rom/nsf.c', 'src/util/file_io.c',
                  'src/rom/vrc7_audio.c', 'src/rom/emu2413.c',
                  'src/rom/eeprom.c', 'src/rom/namco163.c', 'src/rom/sunsoft5b.c',
                  'src/joypad/joypad.c', 'src/joypad/family_basic.c', 'src/joypad/special_peripherals.c',
@@ -64,7 +64,7 @@ $cppSources = @('src/apu/epsm.cpp', 'src/third_party/ymfm/ymfm_opn.cpp',
                 'src/rom/game_db.cpp', 'src/rom/boards/runtime.cpp', 'src/rom/boards/factory.cpp')
 $testSources = @('src/tests/accuracy_test.c', 'src/tests/cpu_accuracy.c', 'src/tests/cpu_trace.c',
                  'src/tests/apu_accuracy.c', 'src/tests/ppu_accuracy.c', 'src/tests/mapper_accuracy.c',
-                 'src/tests/region_accuracy.c',
+                 'src/tests/region_accuracy.c', 'src/tests/file_io_accuracy.c',
                  'src/tests/native_flash_geometry_accuracy.c', 'src/tests/mapper30_111_prg_ram_accuracy.c',
                  'src/tests/fds_accuracy.c',
                  'src/tests/studybox_accuracy.c', 'src/tests/nsf_accuracy.c',
