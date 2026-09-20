@@ -47,6 +47,9 @@ saves independent of their writable flash images. The
 [cartridge checkpoints](docs/cartridge-checkpoints.md#memory-and-review-checkpoints)
 record the tested memory and banking fixes.
 
+For NSF and NSFe files that use MMC5, multiplier operands survive soft reset
+and track changes. Loading a music image initializes both operands to zero.
+
 Device selection and timing follow the ROM header and
 [command-line options](docs/configuration.md). Supported mapper families can still
 reject unsupported submappers or memory layouts. The

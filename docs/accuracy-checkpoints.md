@@ -149,6 +149,14 @@ The combined implementation is `a3c8afd8d5cd155d297917079072aad7ee430151`. Its L
 
 Revision `6cbf43b6ddb4ad03c09675f63ae732eff3bbfb88` updates the README and five technical guides while retaining that implementation, build scripts, and test pins. Its [push workflow](https://github.com/cupidthecat/cupid-nes/actions/runs/35484461117) and [pull-request workflow](https://github.com/cupidthecat/cupid-nes/actions/runs/35484472930) both passed the GCC and Clang sanitizer jobs. Each job passed the production hardware suite, 8,991-state CPU trace, all 91 diagnostic ROMs, and AccuracyCoin 144/144 with zero skipped or unfinished tests. These are results for the named revision; later commits require their own CI checks.
 
+## NSF multiplier reset checkpoint
+
+Revision `265f7d2919940db3dac83faf3617cb65dddb11eb` preserves the NSF/NSFe MMC5 multiplier operands across soft reset and track changes. A fresh music-image load initializes both operands to zero. The regression runs a synthetic program through the production loader and CPU: its initialization routine reads `$5205/$5206` and stores both product bytes in RAM. It checks `$FE * $FD` across soft reset, a partial operand write followed by a track change, and separate operand initialization after reload. The expansion-audio combination tests also check retained operands while continuing to require cleared audio output.
+
+Before the implementation change, the new reset regression and corrected audio-combination check both failed because the multiplier returned zero. The committed fix passed the strict Windows build, production hardware suite, and AccuracyCoin in normal and AddressSanitizer/UndefinedBehaviorSanitizer builds. Both AccuracyCoin runs reported 144/144 passed, zero skipped, zero unfinished, and 4,182 frames, matching the cartridge's tally. The ROM revision, SHA-256, and result requirements above were unchanged.
+
+Both Windows builds also passed the canonical CPU trace's 8,991 states and all 91 pinned diagnostic ROMs through `scripts/run-diagnostics.py`.
+
 ## Reproducing a checkpoint
 
 Check out the listed commit in a separate worktree, prepare SDL2 and the pinned ROM as described in [development and testing](development.md), then run:

@@ -53,7 +53,7 @@ The C mapper implementations write ordinary PRG/CHR battery memory and EEPROM fi
 
 ## Expansion storage
 
-NSF and NSFe playback does not create cartridge save files. Track changes clear the music program's RAM and sound-chip state, and unloading the file discards that playback state.
+NSF and NSFe playback does not create cartridge save files. Track changes clear the music program's RAM and audio state. MMC5 multiplier operands survive soft reset and track changes, and loading a music image initializes them to zero. Unloading the file discards its playback state.
 
 The ASCII Turbo File uses an 8 KiB `.turbofile.sav` file derived from the ROM stem. For example, `games/game.nes` uses `games/game.turbofile.sav`. The file must be exactly 8 KiB when it already exists.
 
