@@ -1,3 +1,4 @@
+#include "../util/sha1.h"
 /*
  * frontend_accuracy.c - Desktop frontend execution regression tests
  *
@@ -695,12 +696,25 @@ static int session_replacement_rollback(void) {
     return 0;
 }
 
+static int image_identity_hash(void) {
+    char hash[41];
+    nes_sha1(NULL, 0, hash);
+    CHECK(!strcmp(hash, "da39a3ee5e6b4b0d3255bfef95601890afd80709"));
+    nes_sha1("abc", 3, hash);
+    CHECK(!strcmp(hash, "a9993e364706816aba3e25717850c26c9cd0d89d"));
+    const char *long_vector = "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
+    nes_sha1(long_vector, strlen(long_vector), hash);
+    CHECK(!strcmp(hash, "84983e441c3bd26ebaae4aa1f95129e5e54670f1"));
+    return 0;
+}
+
 int test_frontend_accuracy(void) {
     const NesRegionMode saved_mode = nes_region_mode();
     const NesRegion saved_region = nes_timing()->region;
     const NesRamPowerOnState saved_ram = nes_ram_power_on_state();
     int failures = 0;
     frontend_checks = 0;
+    failures += image_identity_hash();
     failures += execution_gate_regions();
     failures += lifecycle_actions();
     failures += command_registry();

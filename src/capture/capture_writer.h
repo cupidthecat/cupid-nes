@@ -11,6 +11,10 @@
 
 #include "../util/file_io.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 enum { NES_CAPTURE_MAX_DIMENSION = 4096 };
 
 typedef struct {
@@ -24,6 +28,10 @@ typedef struct NesCaptureStream NesCaptureStream;
 
 // Pixels are 0xAARRGGBB, rows top to bottom, stride in pixels.
 NesFileResult nes_capture_png(const char *path, const NesCaptureFrame *frame);
+/* Encode a PNG using the same screenshot path without writing it. The caller
+ * owns *data and releases it with free(). */
+NesFileResult nes_capture_png_memory(const NesCaptureFrame *frame,
+                                     uint8_t **data, size_t *size);
 
 // All recordings contain signed 16-bit little-endian stereo PCM. AVI video is
 // uncompressed 24-bit BGR with a rational frame rate. A byte limit includes the
@@ -45,5 +53,9 @@ void nes_capture_abort(NesCaptureStream **stream);
 uint64_t nes_capture_audio_frames(const NesCaptureStream *stream);
 uint32_t nes_capture_video_frames(const NesCaptureStream *stream);
 uint64_t nes_capture_file_size(const NesCaptureStream *stream);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

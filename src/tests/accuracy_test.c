@@ -111,6 +111,8 @@ int test_rewind_accuracy(void);
 int test_movie_accuracy(void);
 int test_movie_frontend_accuracy(void);
 int test_hd_pack_accuracy(void);
+int test_hd_renderer_accuracy(void);
+int test_hd_runtime_accuracy(void);
 int test_cpu_trace(const char *rom_path, const char *trace_path);
 int run_diagnostic_rom(const char *path, unsigned frame_limit);
 int run_mmc3_diagnostic_rom(const char *path, unsigned frame_limit);
@@ -241,6 +243,8 @@ int main(int argc, char **argv) {
     failures += test_cheat_accuracy();
     failures += test_frontend_accuracy();
     failures += test_hd_pack_accuracy();
+    failures += test_hd_renderer_accuracy();
+    failures += test_hd_runtime_accuracy();
     unload_rom();
     printf("Hardware regressions: %s (%d failures)\n", failures ? "FAIL" : "PASS", failures);
     return failures ? 1 : 0;

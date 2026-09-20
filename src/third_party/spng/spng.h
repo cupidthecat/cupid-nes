@@ -517,7 +517,7 @@ struct spng_ctx
 
 	struct spng_subimage subimage[7];
 
-	z_stream zstream;
+	mz_stream zstream;
 	unsigned char* scanline_buf, * prev_scanline_buf, * row_buf;
 	unsigned char* scanline, * prev_scanline, * row;
 

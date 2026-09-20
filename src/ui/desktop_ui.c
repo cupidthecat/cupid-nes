@@ -811,7 +811,7 @@ static void handle_panel_mouse(FrontendDesktopUi *ui, int x, int y) {
         start_text_edit(ui, control->id, control->value);
         return;
     }
-    int selected = control->selected;
+    int selected = control->type == FRONTEND_PANEL_CHECKBOX ? !control->selected : control->selected;
     if (control->type == FRONTEND_PANEL_CHOICE && control->item_count)
         selected = (selected + 1) % (int)control->item_count;
     if (!frontend_panel_action(ui->panel_id, control->id, NULL, selected, error, sizeof(error))

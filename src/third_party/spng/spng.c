@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: (BSD-2-Clause AND libpng-2.0) */
 #define SPNG__BUILD
+#undef MINIZ_NO_ZLIB_COMPATIBLE_NAMES
 
 #include "spng.h"
 
@@ -15,6 +16,7 @@
     #include "tests/framac_stubs.h"
 #else
     #ifdef SPNG_USE_MINIZ
+        #undef MINIZ_NO_ZLIB_COMPATIBLE_NAMES
         #include "../miniz/miniz.h"
     #else
         #include <zlib.h>

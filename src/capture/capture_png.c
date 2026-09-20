@@ -10,7 +10,11 @@
 #include "../third_party/miniz/miniz.h"
 #include <stdlib.h>
 
-NesFileResult nes_capture_png(const char *path, const NesCaptureFrame *frame) {
+NesFileResult nes_capture_png_memory(const NesCaptureFrame *frame,
+                                     uint8_t **data, size_t *output_size) {
+    if (data) *data = NULL;
+    if (output_size) *output_size = 0;
+    if (!data || !output_size) return NES_FILE_INVALID_ARGUMENT;
     if (!frame || !frame->pixels || !frame->width || !frame->height
         || frame->width > NES_CAPTURE_MAX_DIMENSION || frame->height > NES_CAPTURE_MAX_DIMENSION
         || frame->stride < frame->width
@@ -33,7 +37,24 @@ NesFileResult nes_capture_png(const char *path, const NesCaptureFrame *frame) {
                                                         (int)frame->height, 4, &png_size);
     free(rgba);
     if (!png) return NES_FILE_OUT_OF_MEMORY;
-    NesFileResult result = nes_file_write_atomic(path, png, png_size);
+    uint8_t *copy = malloc(png_size ? png_size : 1);
+    if (!copy) {
+        mz_free(png);
+        return NES_FILE_OUT_OF_MEMORY;
+    }
+    memcpy(copy, png, png_size);
     mz_free(png);
+    *data = copy;
+    *output_size = png_size;
+    return NES_FILE_OK;
+}
+
+NesFileResult nes_capture_png(const char *path, const NesCaptureFrame *frame) {
+    uint8_t *png = NULL;
+    size_t png_size = 0;
+    NesFileResult encoded = nes_capture_png_memory(frame, &png, &png_size);
+    if (encoded != NES_FILE_OK) return encoded;
+    NesFileResult result = nes_file_write_atomic(path, png, png_size);
+    free(png);
     return result;
 }

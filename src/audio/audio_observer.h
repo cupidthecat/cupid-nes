@@ -18,12 +18,17 @@ extern "C" {
 
 typedef void (*NesAudioObserver)(void *context, unsigned machine,
                                  double sample_rate, float left, float right);
+typedef void (*NesAudioProcessor)(void *context, unsigned machine,
+                                  double sample_rate, float *left, float *right);
 
 /* Registration, removal, and callbacks belong to the emulation thread.
  * Observers see the reconstructed stereo output before the host consumes it.
  * They must not clock or reset the machine from inside a callback. */
 uint32_t nes_audio_observer_add(NesAudioObserver observer, void *context);
 bool nes_audio_observer_remove(uint32_t token);
+uint32_t nes_audio_processor_add(NesAudioProcessor processor, void *context);
+bool nes_audio_processor_remove(uint32_t token);
+void nes_audio_process(unsigned machine, double sample_rate, float *left, float *right);
 void nes_audio_observe(unsigned machine, double sample_rate, float left, float right);
 
 #ifdef __cplusplus

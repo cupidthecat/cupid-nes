@@ -28,6 +28,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include "cpu.h"
+#include "cpu_observer.h"
 #include "../ppu/ppu.h"
 #include "../apu/apu.h"
 #include "../apu/epsm.h"
@@ -539,6 +540,7 @@ static void write_bus_raw(uint16_t addr, uint8_t value) {
 static void write_bus(uint16_t addr, uint8_t value) {
     write_bus_raw(addr, value);
     debugger_on_cpu_write(addr, value);
+    nes_cpu_write_observe(addr, value);
 }
 
 static uint8_t read_mem_cycle(uint16_t addr, bool opcode_fetch) {

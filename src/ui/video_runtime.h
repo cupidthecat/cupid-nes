@@ -14,9 +14,13 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "settings.h"
+#include "hd_pack_frontend.h"
+#include "frontend_session.h"
 #include "../video/presentation.h"
 
 typedef struct {
+    NesHdRuntime *hd;
+    NesHdFrontend *hd_frontend;
     SDL_Renderer *renderer;
     SDL_Texture *texture;
     FrontendSettings *settings;
@@ -32,6 +36,8 @@ typedef struct {
 bool frontend_video_runtime_init(FrontendVideoRuntime *runtime, SDL_Renderer *renderer,
                                  FrontendSettings *settings, bool composite,
                                  char *error, size_t error_size);
+bool frontend_video_runtime_attach_hd(FrontendVideoRuntime *runtime,
+    const FrontendSession *session, char *error, size_t error_size);
 void frontend_video_runtime_set_composite(FrontendVideoRuntime *runtime, bool composite);
 bool frontend_video_runtime_refresh(FrontendVideoRuntime *runtime,
                                     char *error, size_t error_size);

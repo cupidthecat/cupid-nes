@@ -225,6 +225,15 @@ VsSystemType vs_system_type(void) { return vs.config.type; }
 VsPpuModel vs_ppu_model(void) { return vs.config.ppu_model; }
 unsigned vs_active_side(void) { return vs.active_side; }
 
+uint8_t vs_debug_peek_memory(unsigned side, bool ppu_space, uint16_t address) {
+    if (side > 1 || (side && !vs_dual_system())) return 0;
+    unsigned previous = vs.active_side;
+    select_side(side);
+    uint8_t value = ppu_space ? debugger_peek_ppu(address) : debugger_peek_cpu(address);
+    select_side(previous);
+    return value;
+}
+
 void vs_power_on_secondary(void) {
     if (!vs_dual_system()) return;
     apu_audio_shutdown_state(&vs.sub_apu);

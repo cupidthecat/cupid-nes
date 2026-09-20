@@ -53,6 +53,7 @@ typedef struct FdsImage FdsImage;
 
 // Global “inserted” cart
 extern Mapper *cart;
+bool cart_has_chr_rom(void);
 
 typedef enum {
     CART_PPU_FETCH_CPU = 0,

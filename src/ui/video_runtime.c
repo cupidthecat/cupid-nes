@@ -7,6 +7,9 @@
  * GNU General Public License, version 3 or any later version.
  */
 #include "video_runtime.h"
+#include "app_paths.h"
+#include "../rom/rom.h"
+#include "../rom/mapper.h"
 #include "../replay/rewind.h"
 #include "../system/vs_system.h"
 #include "../system/timing.h"
@@ -78,6 +81,34 @@ bool frontend_video_runtime_init(FrontendVideoRuntime *runtime, SDL_Renderer *re
     return frontend_video_runtime_refresh(runtime, error, error_size);
 }
 
+static uint8_t hd_memory(void *context, unsigned side, bool ppu_space, uint16_t address) {
+    (void)context;
+    return vs_debug_peek_memory(side, ppu_space, address);
+}
+
+bool frontend_video_runtime_attach_hd(FrontendVideoRuntime *runtime,
+    const FrontendSession *session, char *error, size_t error_size) {
+    if (!runtime || !session || !session->active) return false;
+    if (!runtime->hd) {
+        char root[4096];
+        if (!frontend_paths_join(root, sizeof(root), "hd-packs")) return false;
+        runtime->hd = nes_hd_runtime_create(root, error, error_size);
+        if (!runtime->hd) return false;
+        runtime->hd_frontend = nes_hd_frontend_create(runtime->hd, error, error_size);
+        if (!runtime->hd_frontend) return false;
+        nes_hd_runtime_set_memory_reader(runtime->hd, hd_memory, NULL);
+    }
+    const FrontendImageResult *image = &session->current_result;
+    NesHdGameInfo game = {
+        .rom_path = image->archive_member[0] ? image->archive_member : session->current.path,
+        .rom_sha1 = image->sha1[0] ? image->sha1 : NULL,
+        .chr_rom = chr_rom, .chr_size = chr_size, .chr_is_rom = cart_has_chr_rom()
+    };
+    if (!nes_hd_runtime_set_game(runtime->hd, &game, error, error_size)) return false;
+    nes_hd_frontend_set_capture_source(runtime->hd_frontend, NULL);
+    return nes_hd_runtime_discover(runtime->hd, error, error_size);
+}
+
 void frontend_video_runtime_set_composite(FrontendVideoRuntime *runtime, bool composite) {
     if (runtime) runtime->composite = composite;
 }
@@ -89,6 +120,29 @@ bool frontend_video_runtime_refresh(FrontendVideoRuntime *runtime,
     NesVideoPresentationSource source;
     if (!source_for_current_frame(runtime, &source, error, error_size)) return false;
     if (!nes_video_presentation_render(&source, &runtime->frame, error, error_size)) return false;
+    if (runtime->hd) {
+        NesHdFrameSource hd_source = {
+            .fallback_pixels = runtime->frame.pixels,
+            .fallback_width = runtime->frame.width, .fallback_height = runtime->frame.height,
+            .screens = source.screens, .trace = {source.trace[0], source.trace[1]},
+            .overscan = {runtime->frame.overscan.left, runtime->frame.overscan.right,
+                         runtime->frame.overscan.top, runtime->frame.overscan.bottom},
+            .show_background = runtime->settings->presentation.show_background,
+            .show_sprites = runtime->settings->presentation.show_sprites,
+            .allow_pack_overscan = true
+        };
+        nes_hd_frontend_set_capture_source(runtime->hd_frontend, &hd_source);
+        NesHdFrame frame;
+        if (!nes_hd_runtime_render(runtime->hd, &hd_source, &frame, error, error_size)) return false;
+        if (frame.hd_rendered) {
+            runtime->frame.pixels = frame.pixels;
+            runtime->frame.width = frame.width;
+            runtime->frame.height = frame.height;
+            runtime->frame.overscan = (NesVideoOverscan){frame.overscan.left, frame.overscan.right,
+                                                        frame.overscan.top, frame.overscan.bottom};
+            runtime->frame.filtered = false;
+        }
+    }
     if (!ensure_texture(runtime, runtime->frame.width, runtime->frame.height, error, error_size)) return false;
     if (SDL_UpdateTexture(runtime->texture, NULL, runtime->frame.pixels,
                           (int)(runtime->frame.width * sizeof(uint32_t))) != 0)
@@ -99,6 +153,8 @@ bool frontend_video_runtime_refresh(FrontendVideoRuntime *runtime,
 
 void frontend_video_runtime_shutdown(FrontendVideoRuntime *runtime) {
     if (!runtime) return;
+    nes_hd_frontend_destroy(runtime->hd_frontend);
+    nes_hd_runtime_destroy(runtime->hd);
     if (runtime->texture) SDL_DestroyTexture(runtime->texture);
     memset(runtime, 0, sizeof(*runtime));
 }

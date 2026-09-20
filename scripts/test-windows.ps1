@@ -53,8 +53,8 @@ if ($Sanitize) {
 }
 $cppFlags = @($flags | Where-Object { $_ -ne '-std=c11' }) + @('-std=c++17')
 
-$coreSources = @('src/system/timing.c', 'src/system/hardware.c', 'src/system/vs_system.c', 'src/state/state.c', 'src/state/state_io.c', 'src/state/state_alloc.c', 'src/cpu/cpu.c', 'src/ppu/ppu.c', 'src/rom/rom.c', 'src/rom/mapper.c',
-                 'src/rom/fds.c', 'src/rom/nsf.c', 'src/util/file_io.c',
+$coreSources = @('src/system/timing.c', 'src/system/hardware.c', 'src/system/vs_system.c', 'src/state/state.c', 'src/state/state_io.c', 'src/state/state_alloc.c', 'src/cpu/cpu.c', 'src/cpu/cpu_observer.c', 'src/ppu/ppu.c', 'src/rom/rom.c', 'src/rom/mapper.c',
+                 'src/rom/fds.c', 'src/rom/nsf.c', 'src/util/file_io.c', 'src/util/sha1.c',
                  'src/debugger/debugger.c', 'src/debugger/disassembly.c', 'src/debugger/lua_runtime.c', 'src/cheats/cheats.c',
                  'src/rom/vrc7_audio.c', 'src/rom/emu2413.c',
                  'src/rom/eeprom.c', 'src/rom/namco163.c', 'src/rom/sunsoft5b.c',
@@ -63,7 +63,7 @@ $coreSources = @('src/system/timing.c', 'src/system/hardware.c', 'src/system/vs_
                  'src/ui/nsf_frontend.c', 'src/ui/frontend_commands.c', 'src/ui/execution_control.c',
                  'src/ui/machine_actions.c', 'src/ui/app_paths.c', 'src/ui/frontend_execution.c', 'src/ui/replay_frontend.c',
                  'src/ui/frontend_panels.c', 'src/ui/frontend_session.c', 'src/ui/platform_frontend.c',
-                 'src/ui/settings.c', 'src/ui/game_database.c', 'src/ui/idle_frontend.c',
+                 'src/ui/settings.c', 'src/ui/game_database.c', 'src/ui/hd_pack_frontend.c', 'src/ui/idle_frontend.c',
                  'src/ui/image_open.c', 'src/ui/session_actions.c', 'src/ui/ui_font.c',
                  'src/ui/desktop_ui.c', 'src/ui/state_frontend.c', 'src/ui/state_runtime.c',
                  'src/ui/debug_frontend.c', 'src/ui/output_guard.c', 'src/ui/host_input.c', 'src/ui/peripheral_input.c', 'src/ui/cheat_frontend.c',
@@ -99,6 +99,7 @@ $cppSources = @('src/apu/epsm.cpp', 'src/third_party/ymfm/ymfm_opn.cpp',
                 'src/third_party/ymfm/ymfm_ssg.cpp', 'src/third_party/ymfm/ymfm_adpcm.cpp',
                 'src/rom/game_db.cpp', 'src/rom/boards/runtime.cpp', 'src/rom/boards/factory.cpp',
                 'src/rom/boards/state.cpp', 'src/hd/hd_assets.cpp', 'src/hd/hd_pack_loader.cpp',
+                'src/hd/hd_conditions.cpp', 'src/hd/hd_renderer.cpp', 'src/hd/hd_runtime.cpp',
                 'src/third_party/stb/stb_vorbis.cpp')
 $testSources = @('src/tests/accuracy_test.c', 'src/tests/cpu_accuracy.c', 'src/tests/cpu_trace.c',
                  'src/tests/apu_accuracy.c', 'src/tests/ppu_accuracy.c', 'src/tests/mapper_accuracy.c',
@@ -139,7 +140,7 @@ $testSources = @('src/tests/accuracy_test.c', 'src/tests/cpu_accuracy.c', 'src/t
                  'src/tests/cheat_accuracy.c', 'src/tests/rewind_accuracy.c', 'src/tests/movie_accuracy.c',
                  'src/tests/movie_frontend_accuracy.c',
                  'src/tests/frontend_accuracy.c')
-$cppTestSources = @('src/tests/hd_pack_accuracy.cpp')
+$cppTestSources = @('src/tests/hd_pack_accuracy.cpp', 'src/tests/hd_renderer_accuracy.cpp', 'src/tests/hd_runtime_accuracy.cpp')
 $application = Join-Path $outputDirectory 'cupid-nes.exe'
 $testProgram = Join-Path $outputDirectory 'accuracy-tests.exe'
 $objectDirectory = Join-Path $outputDirectory 'objects'

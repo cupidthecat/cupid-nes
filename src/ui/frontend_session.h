@@ -34,6 +34,7 @@ typedef struct {
 
 typedef struct {
     char title[FRONTEND_IMAGE_TITLE_MAX];
+    char sha1[41];
     char save_identity[FRONTEND_IMAGE_PATH_MAX];
     char archive_member[FRONTEND_IMAGE_MEMBER_MAX];
 } FrontendImageResult;

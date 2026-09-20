@@ -872,6 +872,11 @@ static int application_main(int argc, char *argv[]) {
             }
         }
     }
+    if (running && !frontend_video_runtime_attach_hd(&video_runtime, &frontend_session,
+                                                     path_error, sizeof(path_error))) {
+        frontend_desktop_set_status(&desktop_ui, path_error);
+    }
+    nes_hd_frontend_bind_execution(video_runtime.hd_frontend, &execution_runtime);
     LiveFrontend live = {
         .music = &music_player, .debug = debug_frontend, .cheats = cheat_frontend,
         .capture = &capture_runtime
@@ -1128,6 +1133,9 @@ static int application_main(int argc, char *argv[]) {
 
         if (live.image_changed) {
             live.image_changed = false;
+            if (!frontend_video_runtime_attach_hd(&video_runtime, &frontend_session,
+                                                  path_error, sizeof(path_error)))
+                frontend_desktop_set_status(&desktop_ui, path_error);
             if (!frontend_audio_runtime_apply(&audio_runtime, &frontend_settings, true,
                                               path_error, sizeof(path_error))) {
                 fprintf(stderr, "Audio output: %s\n", path_error);

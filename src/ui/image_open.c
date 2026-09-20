@@ -8,6 +8,7 @@
  */
 #include "image_open.h"
 #include "../media/image_source.h"
+#include "../util/sha1.h"
 #include <SDL2/SDL.h>
 #include <stdio.h>
 #include <string.h>
@@ -135,6 +136,7 @@ bool frontend_image_open(void *userdata, const FrontendImageRequest *request,
 
     FrontendImageResult prepared;
     memset(&prepared, 0, sizeof(prepared));
+    nes_sha1(source.data, source.size, prepared.sha1);
     bool valid = copy_text(prepared.save_identity, sizeof(prepared.save_identity), source.save_path)
         && copy_text(prepared.title, sizeof(prepared.title), display_name(&source))
         && (!source.member || copy_text(prepared.archive_member,

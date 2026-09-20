@@ -860,6 +860,7 @@ static void apu_output_reconstructed_samples(APU *a) {
         if (a == main_apu) epsm_sample_stereo(&epsm_left, &epsm_right);
         left += epsm_left * nes_audio_mix_side_gains(false)[NES_AUDIO_EPSM];
         right += epsm_right * nes_audio_mix_side_gains(true)[NES_AUDIO_EPSM];
+        nes_audio_process(a == main_apu ? 0u : 1u, a->sample_rate, &left, &right);
         if (left > 1.0f) left = 1.0f;
         if (left < -1.0f) left = -1.0f;
         if (right > 1.0f) right = 1.0f;

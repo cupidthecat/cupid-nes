@@ -71,6 +71,7 @@ bool vs_dual_system(void);
 VsSystemType vs_system_type(void);
 VsPpuModel vs_ppu_model(void);
 unsigned vs_active_side(void);
+uint8_t vs_debug_peek_memory(unsigned side, bool ppu_space, uint16_t address);
 
 void vs_power_on_secondary(void);
 // Called after resetting the main CPU/PPU/APU.

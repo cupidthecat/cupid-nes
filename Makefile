@@ -12,8 +12,8 @@ LDLIBS ?= -lSDL2 -lm
 
 TARGET = cupid-nes
 TEST_TARGET = build/accuracy-tests
-CORE_SRC = src/system/timing.c src/system/hardware.c src/system/vs_system.c src/state/state.c src/state/state_io.c src/state/state_alloc.c src/cpu/cpu.c src/ppu/ppu.c src/rom/rom.c src/rom/mapper.c \
-           src/rom/fds.c src/rom/nsf.c src/util/file_io.c \
+CORE_SRC = src/system/timing.c src/system/hardware.c src/system/vs_system.c src/state/state.c src/state/state_io.c src/state/state_alloc.c src/cpu/cpu.c src/cpu/cpu_observer.c src/ppu/ppu.c src/rom/rom.c src/rom/mapper.c \
+           src/rom/fds.c src/rom/nsf.c src/util/file_io.c src/util/sha1.c \
            src/debugger/debugger.c src/debugger/disassembly.c src/debugger/lua_runtime.c src/cheats/cheats.c \
            src/rom/vrc7_audio.c src/rom/emu2413.c \
            src/rom/eeprom.c src/rom/namco163.c src/rom/sunsoft5b.c \
@@ -21,7 +21,7 @@ CORE_SRC = src/system/timing.c src/system/hardware.c src/system/vs_system.c src/
            src/apu/apu.c src/third_party/blip_buf.c src/video/ntsc_composite.c src/video/video_trace.c src/ui/palette_tool.c src/ui/nsf_frontend.c \
            src/ui/frontend_commands.c src/ui/execution_control.c src/ui/machine_actions.c src/ui/app_paths.c \
            src/ui/frontend_execution.c src/ui/replay_frontend.c src/ui/frontend_panels.c src/ui/frontend_session.c \
-           src/ui/platform_frontend.c src/ui/settings.c src/ui/game_database.c \
+           src/ui/platform_frontend.c src/ui/settings.c src/ui/game_database.c src/ui/hd_pack_frontend.c \
            src/ui/idle_frontend.c src/ui/image_open.c src/ui/session_actions.c \
            src/ui/ui_font.c src/ui/desktop_ui.c src/ui/state_frontend.c src/ui/state_runtime.c \
            src/ui/debug_frontend.c src/ui/output_guard.c src/ui/host_input.c src/ui/peripheral_input.c src/ui/cheat_frontend.c \
@@ -56,7 +56,8 @@ CORE_SRC += src/third_party/lua/lapi.c src/third_party/lua/lauxlib.c src/third_p
 CORE_CXX_SRC = src/apu/epsm.cpp src/third_party/ymfm/ymfm_opn.cpp \
                src/third_party/ymfm/ymfm_ssg.cpp src/third_party/ymfm/ymfm_adpcm.cpp \
                src/rom/game_db.cpp src/rom/boards/runtime.cpp src/rom/boards/factory.cpp src/rom/boards/state.cpp \
-               src/hd/hd_assets.cpp src/hd/hd_pack_loader.cpp src/third_party/stb/stb_vorbis.cpp
+               src/hd/hd_assets.cpp src/hd/hd_pack_loader.cpp src/hd/hd_conditions.cpp \
+               src/hd/hd_renderer.cpp src/hd/hd_runtime.cpp src/third_party/stb/stb_vorbis.cpp
 TEST_SRC = src/tests/accuracy_test.c src/tests/cpu_accuracy.c \
            src/tests/cpu_trace.c src/tests/apu_accuracy.c src/tests/file_io_accuracy.c src/tests/persistence_accuracy.c \
            src/tests/ppu_accuracy.c src/tests/mapper_accuracy.c src/tests/region_accuracy.c \
@@ -94,7 +95,7 @@ TEST_SRC += src/tests/patch_accuracy.c src/tests/media_accuracy.c src/tests/fds_
             src/tests/nsf_player_accuracy.c src/tests/capture_container_accuracy.c \
             src/tests/capture_session_accuracy.c src/tests/video_trace_accuracy.c \
             src/tests/video_presentation_accuracy.c src/tests/audio_mix_accuracy.c
-TEST_CXX_SRC = src/tests/hd_pack_accuracy.cpp
+TEST_CXX_SRC = src/tests/hd_pack_accuracy.cpp src/tests/hd_renderer_accuracy.cpp src/tests/hd_runtime_accuracy.cpp
 CORE_OBJ = $(CORE_SRC:.c=.o) $(CORE_CXX_SRC:.cpp=.o)
 TEST_OBJ = $(TEST_SRC:.c=.o) $(TEST_CXX_SRC:.cpp=.o)
 OBJ = $(CORE_OBJ) $(TEST_OBJ) src/main.o
