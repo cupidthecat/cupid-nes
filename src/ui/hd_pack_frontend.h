@@ -38,6 +38,7 @@ NesHdFrontend *nes_hd_frontend_create(NesHdRuntime *runtime,
  * frontend copies the structure; trace storage remains owned by video_trace. */
 void nes_hd_frontend_set_capture_source(NesHdFrontend *frontend,
                                         const NesHdFrameSource *source);
+bool nes_hd_frontend_restore_preferences(NesHdFrontend *frontend, const char *sha1, char *error, size_t error_size);
 void nes_hd_frontend_destroy(NesHdFrontend *frontend);
 
 #endif

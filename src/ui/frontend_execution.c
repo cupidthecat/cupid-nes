@@ -10,6 +10,7 @@
 #include "output_guard.h"
 #include "platform_frontend.h"
 #include "frontend_commands.h"
+#include "state_frontend.h"
 #include "frontend_panels.h"
 #include "machine_actions.h"
 #include "../debugger/debugger.h"
@@ -171,7 +172,7 @@ static bool command_power_cycle(void *userdata, char *error, size_t error_size) 
                                            error, error_size)) return false;
     frontend_execution_clear_timeline(runtime);
     lock_audio_for_machine_change(runtime);
-    bool result = frontend_machine_power_cycle();
+    bool result = frontend_settings_prepare_power(runtime->settings) && frontend_machine_power_cycle();
     unlock_audio_after_machine_change(runtime);
     if (!result)
         set_error(error, error_size, "Power cycle failed for the selected startup alignment");
@@ -452,7 +453,7 @@ bool frontend_execution_handle_shortcut_action(FrontendExecutionRuntime *runtime
         }
         return true;
     }
-    if (!down || repeat) return true;
+    if (!down || (repeat && shortcut != FRONTEND_SHORTCUT_REWIND)) return true;
     static const unsigned commands[FRONTEND_SHORTCUT_COUNT] = {
         FRONTEND_COMMAND_PAUSE,
         FRONTEND_COMMAND_FRAME_ADVANCE,
@@ -464,7 +465,10 @@ bool frontend_execution_handle_shortcut_action(FrontendExecutionRuntime *runtime
         FRONTEND_COMMAND_SPEED_HALF,
         FRONTEND_COMMAND_SPEED_NORMAL,
         FRONTEND_COMMAND_SPEED_DOUBLE,
-        FRONTEND_COMMAND_OPEN
+        FRONTEND_COMMAND_OPEN,
+        STATE_COMMAND_SAVE_SLOT, STATE_COMMAND_LOAD_SLOT, STATE_COMMAND_SAVE_FILE,
+        STATE_COMMAND_LOAD_FILE, REPLAY_COMMAND_REWIND_FRAME, REPLAY_COMMAND_RUNAHEAD_CYCLE,
+        FRONTEND_COMMAND_MUTE
     };
     char error[160] = {0};
     if (!frontend_command_invoke(commands[shortcut], error, sizeof(error)) && error[0])

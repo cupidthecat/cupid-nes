@@ -76,7 +76,8 @@ static const char *const player_button_names[8] = {
 static const char *const shortcut_names[FRONTEND_SHORTCUT_COUNT] = {
     "pause", "frame-advance", "soft-reset", "power-cycle", "reload",
     "fast-forward-hold", "fast-forward-toggle", "speed-half",
-    "speed-normal", "speed-double", "open"
+    "speed-normal", "speed-double", "open",
+    "save_slot", "load_slot", "save_file", "load_file", "rewind", "run_ahead", "mute"
 };
 
 static const NameValue gamepad_names[] = {
@@ -259,6 +260,13 @@ bool frontend_binding_profile_preset(FrontendBindingProfile *profile,
     set_shortcut_default(profile, FRONTEND_SHORTCUT_SPEED_NORMAL, SDL_SCANCODE_2, KMOD_CTRL);
     set_shortcut_default(profile, FRONTEND_SHORTCUT_SPEED_DOUBLE, SDL_SCANCODE_3, KMOD_CTRL);
     set_shortcut_default(profile, FRONTEND_SHORTCUT_OPEN, SDL_SCANCODE_O, KMOD_CTRL);
+    set_shortcut_default(profile, FRONTEND_SHORTCUT_SAVE_SLOT, SDL_SCANCODE_F5, KMOD_NONE);
+    set_shortcut_default(profile, FRONTEND_SHORTCUT_LOAD_SLOT, SDL_SCANCODE_F6, KMOD_NONE);
+    set_shortcut_default(profile, FRONTEND_SHORTCUT_SAVE_FILE, SDL_SCANCODE_F5, KMOD_CTRL);
+    set_shortcut_default(profile, FRONTEND_SHORTCUT_LOAD_FILE, SDL_SCANCODE_F6, KMOD_CTRL);
+    set_shortcut_default(profile, FRONTEND_SHORTCUT_REWIND, SDL_SCANCODE_BACKSPACE, KMOD_CTRL);
+    set_shortcut_default(profile, FRONTEND_SHORTCUT_RUNAHEAD, SDL_SCANCODE_A, KMOD_CTRL|KMOD_SHIFT);
+    set_shortcut_default(profile, FRONTEND_SHORTCUT_MUTE, SDL_SCANCODE_M, KMOD_CTRL);
     return true;
 }
 

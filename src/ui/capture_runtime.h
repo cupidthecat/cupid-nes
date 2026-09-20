@@ -12,6 +12,7 @@
 #include "capture_frontend.h"
 #include "frontend_execution.h"
 #include "video_runtime.h"
+#include "device_frontend.h"
 
 typedef struct {
     NesCaptureFrontend frontend;
@@ -19,6 +20,7 @@ typedef struct {
     const bool *composite_enabled;
     uint32_t *composite_pixels;
     FrontendVideoRuntime *video;
+    FrontendDeviceRuntime *devices;
     const char *const *protected_paths;
     size_t protected_path_count;
 } NesCaptureRuntime;

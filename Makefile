@@ -21,9 +21,9 @@ CORE_SRC = src/system/timing.c src/system/hardware.c src/system/vs_system.c src/
            src/apu/apu.c src/third_party/blip_buf.c src/video/ntsc_composite.c src/video/video_trace.c src/ui/palette_tool.c src/ui/nsf_frontend.c \
            src/ui/frontend_commands.c src/ui/execution_control.c src/ui/machine_actions.c src/ui/app_paths.c \
            src/ui/frontend_execution.c src/ui/replay_frontend.c src/ui/netplay_frontend.c src/ui/frontend_panels.c src/ui/frontend_session.c \
-           src/ui/platform_frontend.c src/ui/settings.c src/ui/game_database.c src/ui/hd_pack_frontend.c \
+           src/ui/platform_frontend.c src/ui/platform_paths.c src/ui/device_frontend.c src/ui/device_panels.c src/ui/settings.c src/ui/settings_runtime.c src/ui/game_database.c src/ui/hd_pack_frontend.c \
            src/ui/idle_frontend.c src/ui/image_open.c src/ui/session_actions.c \
-           src/ui/ui_font.c src/ui/desktop_ui.c src/ui/state_frontend.c src/ui/state_runtime.c \
+           src/ui/ui_font.c src/ui/desktop_ui.c src/ui/desktop_idle.c src/ui/state_frontend.c src/ui/state_runtime.c \
            src/ui/debug_frontend.c src/ui/output_guard.c src/ui/host_input.c src/ui/peripheral_input.c src/ui/cheat_frontend.c \
            src/ui/video_runtime.c src/ui/audio_runtime.c
 CORE_SRC += src/system/execution_policy.c src/replay/rewind.c src/video/frame_snapshot.c \
@@ -90,7 +90,7 @@ TEST_SRC = src/tests/netplay_accuracy.c src/tests/accuracy_test.c src/tests/cpu_
            src/tests/state_ui_accuracy.c \
            src/tests/debugger_accuracy.c src/tests/cheat_accuracy.c \
            src/tests/rewind_accuracy.c src/tests/movie_accuracy.c src/tests/movie_frontend_accuracy.c \
-           src/tests/frontend_accuracy.c
+           src/tests/frontend_accuracy.c src/tests/desktop_accuracy.c
 TEST_SRC += src/tests/patch_accuracy.c src/tests/media_accuracy.c src/tests/fds_options_accuracy.c \
             src/tests/fds_automation_accuracy.c src/tests/execution_policy_accuracy.c \
             src/tests/nsf_player_accuracy.c src/tests/capture_container_accuracy.c \

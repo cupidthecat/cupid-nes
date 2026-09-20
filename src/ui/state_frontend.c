@@ -9,6 +9,7 @@
 #include "state_frontend.h"
 #include "frontend_commands.h"
 #include "frontend_panels.h"
+#include "platform_frontend.h"
 #include "../state/state.h"
 #include <errno.h>
 #include <stdio.h>
@@ -21,7 +22,9 @@ enum {
     STATE_CONTROL_SAVE_SLOT,
     STATE_CONTROL_LOAD_SLOT,
     STATE_CONTROL_SAVE_FILE,
-    STATE_CONTROL_LOAD_FILE
+    STATE_CONTROL_LOAD_FILE,
+    STATE_CONTROL_BROWSE_SAVE,
+    STATE_CONTROL_BROWSE_LOAD
 };
 
 static const char *const slot_names[NES_STATE_SLOT_COUNT] = {
@@ -128,7 +131,9 @@ static bool state_snapshot(void *context, FrontendPanelModel *model,
         {STATE_CONTROL_SAVE_FILE, FRONTEND_PANEL_ACTION, "Save state file", NULL,
          NULL, 0, 0, true, false},
         {STATE_CONTROL_LOAD_FILE, FRONTEND_PANEL_ACTION, "Load state file", NULL,
-         NULL, 0, 0, true, false}
+         NULL, 0, 0, true, false},
+        {STATE_CONTROL_BROWSE_SAVE, FRONTEND_PANEL_ACTION, "Choose save destination...", NULL, NULL, 0, 0, true, false},
+        {STATE_CONTROL_BROWSE_LOAD, FRONTEND_PANEL_ACTION, "Choose existing state...", NULL, NULL, 0, 0, true, false}
     };
     for (size_t i = 0; i < sizeof(controls) / sizeof(controls[0]); ++i)
         if (!frontend_panel_add_control(model, &controls[i])) return false;
@@ -151,6 +156,14 @@ static bool state_action(void *context, unsigned id, const char *value, int sele
         }
         strcpy(runtime->settings->state_file_path, value);
         return true;
+    }
+    if (id==STATE_CONTROL_BROWSE_SAVE || id==STATE_CONTROL_BROWSE_LOAD) {
+        char path[FRONTEND_SETTINGS_PATH_TEXT]={0};
+        bool chosen=id==STATE_CONTROL_BROWSE_SAVE
+            ? frontend_save_file_dialog(FRONTEND_SAVE_STATE,path,sizeof(path),error,error_size)
+            : frontend_open_file_dialog(FRONTEND_OPEN_STATE,path,sizeof(path),error,error_size);
+        if(chosen)strcpy(runtime->settings->state_file_path,path);
+        return chosen;
     }
     switch (id) {
         case STATE_CONTROL_SAVE_SLOT: return save_slot(runtime, error, error_size);
@@ -194,11 +207,11 @@ bool frontend_state_register_ui(FrontendStateRuntime *runtime) {
     const FrontendCommandSpec commands[] = {
         {STATE_COMMAND_SAVE_SLOT, "Quick Save State", "File", "F5",
          FRONTEND_COMMAND_NEEDS_SESSION, save_slot, runtime},
-        {STATE_COMMAND_LOAD_SLOT, "Quick Load State", "File", "F7",
+        {STATE_COMMAND_LOAD_SLOT, "Quick Load State", "File", "F6",
          FRONTEND_COMMAND_NEEDS_SESSION, load_slot, runtime},
         {STATE_COMMAND_SAVE_FILE, "Save State File", "File", "Ctrl+F5",
          FRONTEND_COMMAND_NEEDS_SESSION, save_file, runtime},
-        {STATE_COMMAND_LOAD_FILE, "Load State File", "File", "Ctrl+F7",
+        {STATE_COMMAND_LOAD_FILE, "Load State File", "File", "Ctrl+F6",
          FRONTEND_COMMAND_NEEDS_SESSION, load_file, runtime}
     };
     for (size_t i = 0; i < sizeof(commands) / sizeof(commands[0]); ++i) {

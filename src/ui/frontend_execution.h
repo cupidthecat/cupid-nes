@@ -27,6 +27,7 @@ enum { FRONTEND_MOVIE_PATH_CAPACITY = 1024 };
 
 typedef struct FrontendExecutionRuntime {
     ExecutionControl execution;
+    const FrontendSettings *settings;
     SDL_AudioDeviceID *audio_device;
     int audio_output_rate;
     bool muted;

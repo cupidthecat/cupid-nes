@@ -13,6 +13,7 @@
 #include "frontend_panels.h"
 #include "platform_frontend.h"
 #include "ui_font.h"
+#include "palette_tool.h"
 #include "../joypad/joypad.h"
 #include "../rom/rom.h"
 #include "../system/hardware.h"
@@ -21,7 +22,7 @@
 #include <string.h>
 
 enum { MENU_H = 28, TOOLBAR_H = 36, STATUS_H = 24, MODAL_W = 620, MODAL_H = 430 };
-static const char *const menu_names[] = {"File", "Emulation", "View", "Tools", "Help"};
+static const char *const menu_names[] = {"File", "Emulation", "View", "Audio", "Media", "Tools", "Help"};
 static const char *const setting_categories[] = {
     "General", "Emulation", "Video", "Audio", "Controllers",
     "Media and firmware", "Files and storage", "Advanced hardware"
@@ -41,6 +42,10 @@ static void copy_status(FrontendDesktopUi *ui, const char *text) {
     if (!ui) return;
     snprintf(ui->status, sizeof(ui->status), "%s", text ? text : "");
     ui->status_until = SDL_GetTicks() + 6000;
+    if(text && *text){
+        if(ui->log_count==12){memmove(ui->log_lines,ui->log_lines+1,11*sizeof(ui->log_lines[0]));--ui->log_count;}
+        snprintf(ui->log_lines[ui->log_count++],sizeof(ui->log_lines[0]),"%s",text);
+    }
 }
 
 static void visible_text(char *target, size_t capacity, const char *text) {
@@ -69,6 +74,12 @@ void frontend_desktop_set_fps(FrontendDesktopUi *ui, double fps) {
     if (ui) ui->fps = fps;
 }
 
+static void ui_dimensions(const FrontendDesktopUi *ui, int *w, int *h) {
+    SDL_GetWindowSize(ui->window, w, h);
+    int scale=ui->ui_scale>0?ui->ui_scale:1;
+    *w/=scale;*h/=scale;
+}
+
 static void sync_scale(FrontendDesktopUi *ui) {
     if (!ui || !ui->window || !ui->renderer) return;
     int w = 0, h = 0;
@@ -77,7 +88,8 @@ static void sync_scale(FrontendDesktopUi *ui) {
     float ddpi = 96.0f;
     int display = SDL_GetWindowDisplayIndex(ui->window);
     if (display >= 0) (void)SDL_GetDisplayDPI(display, &ddpi, NULL, NULL);
-    ui->ui_scale = ddpi >= 144.0f ? 2 : 1;
+    ui->ui_scale = ddpi >= 144.0f && w >= 1280 && h >= 960 ? 2 : 1;
+    SDL_SetWindowMinimumSize(ui->window, 640, 480);
 }
 
 void frontend_desktop_compute_game_rect(int ww, int wh, int vw, int vh,
@@ -101,6 +113,13 @@ void frontend_desktop_compute_game_rect(int ww, int wh, int vw, int vh,
     rect->h = h;
 }
 
+void frontend_desktop_game_rect(const FrontendDesktopUi *ui, int ww, int wh,
+                                 int vw, int vh, bool integer_scaling, SDL_Rect *rect) {
+    int scale=ui && ui->ui_scale>0?ui->ui_scale:1;
+    frontend_desktop_compute_game_rect(ww,wh-(scale-1)*(MENU_H+TOOLBAR_H+STATUS_H),vw,vh,integer_scaling,rect);
+    rect->y+=(scale-1)*(MENU_H+TOOLBAR_H);
+}
+
 static bool invoke_command(FrontendDesktopUi *ui, unsigned id) {
     char error[256] = {0};
     bool ok = frontend_command_invoke(id, error, sizeof(error));
@@ -111,6 +130,8 @@ static bool invoke_command(FrontendDesktopUi *ui, unsigned id) {
 static void set_settings_open(FrontendDesktopUi *ui, bool open) {
     if (!ui || ui->settings_open == open) return;
     if (open) {
+        ui->open_menu=-1;
+        ui->settings_focus=ui->settings_button=0;
         ui->staged = *ui->settings;
         ui->settings_category = 0;
         ui->settings_row = 0;
@@ -168,7 +189,8 @@ static bool save_settings(FrontendDesktopUi *ui) {
     if (!ui || !ui->settings) return false;
     ui->staged.audio_mix.muted = ui->staged.muted;
     char error[256] = {0};
-    if (!frontend_settings_validate(&ui->staged, error, sizeof(error))) {
+    if (!frontend_settings_validate(&ui->staged, error, sizeof(error))
+        || !frontend_settings_validate_firmware(&ui->staged,error,sizeof(error))) {
         copy_status(ui, error[0] ? error : "Settings are invalid");
         return false;
     }
@@ -246,7 +268,7 @@ static bool save_settings(FrontendDesktopUi *ui) {
     if (ui->video) ui->video->settings = ui->settings;
     (void)frontend_command_set_checked(FRONTEND_COMMAND_FULLSCREEN, ui->settings->fullscreen);
     (void)frontend_command_set_checked(FRONTEND_COMMAND_MUTE, ui->settings->muted);
-    copy_status(ui, "Settings applied");
+    copy_status(ui, "Settings applied. Timing/firmware: next load; startup: next power cycle.");
     return true;
 
 rollback:
@@ -281,6 +303,8 @@ static bool command_mute(void *context, char *error, size_t error_size) {
     (void)error; (void)error_size;
     FrontendDesktopUi *ui = context;
     ui->settings->muted = !ui->settings->muted;
+    ui->settings->audio_mix.muted = ui->settings->muted;
+    (void)nes_audio_mix_set(&ui->settings->audio_mix, NULL, 0);
     if (ui->execution) frontend_execution_set_muted(ui->execution, ui->settings->muted);
     (void)frontend_command_set_checked(FRONTEND_COMMAND_MUTE, ui->settings->muted);
     return true;
@@ -300,6 +324,7 @@ void frontend_desktop_init(FrontendDesktopUi *ui, SDL_Window *window,
     ui->sessions = sessions;
     ui->settings_path = settings_path;
     ui->settings_player = 0;
+    ui->open_menu = -1;
     sync_scale(ui);
 }
 
@@ -311,9 +336,25 @@ void frontend_desktop_set_runtime(FrontendDesktopUi *ui,
     ui->video = video;
 }
 
+static bool command_palette(void *context, char *error, size_t size) {
+    (void)context;(void)error;(void)size;palette_tool_toggle_overlay();return true;
+}
+static bool command_palette_load(void *context, char *error, size_t size) {
+    (void)context;char path[4096]={0};
+    if(!frontend_open_file_dialog(FRONTEND_OPEN_PALETTE,path,sizeof(path),error,size))return false;
+    if(ppu_palette_load_pal_file(path)==0)return true;
+    if(error&&size)snprintf(error,size,"Palette must contain 64 or 512 RGB colors");return false;
+}
+static bool command_palette_reset(void *context, char *error, size_t size) {
+    (void)context;(void)error;(void)size;ppu_palette_reset_default();return true;
+}
+
 bool frontend_desktop_register_commands(FrontendDesktopUi *ui) {
     if (!ui || !ui->settings) return false;
     const FrontendCommandSpec specs[] = {
+        {0x1B00,"Palette editor","View","F7",0,command_palette,ui},
+        {0x1B01,"Load palette...","View",NULL,0,command_palette_load,ui},
+        {0x1B02,"Reset palette","View",NULL,0,command_palette_reset,ui},
         {FRONTEND_COMMAND_SETTINGS, "Settings...", "File", "Ctrl+,", 0, command_settings, ui},
         {FRONTEND_COMMAND_FULLSCREEN, "Fullscreen", "View", "Alt+Enter",
          FRONTEND_COMMAND_CHECKABLE, command_fullscreen, ui},
@@ -716,35 +757,71 @@ static void handle_binding_gamepad(FrontendDesktopUi *ui, SDL_GameControllerButt
 }
 
 static void render_settings(FrontendDesktopUi *ui) {
-    int ww = 0, wh = 0; SDL_GetWindowSize(ui->window, &ww, &wh);
+    int ww = 0, wh = 0; ui_dimensions(ui, &ww, &wh);
     SDL_Rect box = {(ww - MODAL_W)/2, (wh - MODAL_H)/2, MODAL_W, MODAL_H};
     fill(ui->renderer, box, 30, 32, 38, 250); SDL_SetRenderDrawColor(ui->renderer, 180,180,190,255); SDL_RenderDrawRect(ui->renderer, &box);
     frontend_draw_text(ui->renderer, box.x+16, box.y+14, 2, "Settings", 245,245,245,255);
     int cy = box.y + 48;
-    for (int i=0;i<8;i++) { SDL_Rect c={box.x+12,cy+i*30,150,26}; if(i==ui->settings_category) fill(ui->renderer,c,65,75,95,255); frontend_draw_text(ui->renderer,c.x+8,c.y+7,1,setting_categories[i],230,230,235,255); }
+    for (int i=0;i<8;i++) { SDL_Rect c={box.x+12,cy+i*30,150,26}; if(i==ui->settings_category) fill(ui->renderer,c,ui->settings_focus==2?95:65,75,95,255); frontend_draw_text(ui->renderer,c.x+8,c.y+7,1,setting_categories[i],230,230,235,255); }
     int rows = setting_rows(ui), start = ui->settings_scroll; if (ui->settings_row < start) start = ui->settings_row; if (ui->settings_row >= start+13) start = ui->settings_row-12; ui->settings_scroll=start;
     for (int visible=0; visible<13 && start+visible<rows; ++visible) {
         int row=start+visible, y=box.y+50+visible*24; SDL_Rect rr={box.x+174,y,430,22}; if(row==ui->settings_row) fill(ui->renderer,rr,55,60,72,255);
-        char label[96], value[160]; setting_text(ui,row,label,sizeof(label),value,sizeof(value)); frontend_draw_text(ui->renderer,rr.x+5,rr.y+7,1,label,220,220,225,255); int tw=frontend_text_width(value,1); frontend_draw_text(ui->renderer,rr.x+rr.w-tw-6,rr.y+7,1,value,170,205,255,255);
+        char label[96], value[160]; setting_text(ui,row,label,sizeof(label),value,sizeof(value)); char short_label[35],short_value[30];visible_text(short_label,sizeof(short_label),label);visible_text(short_value,sizeof(short_value),value); frontend_draw_text(ui->renderer,rr.x+5,rr.y+7,1,short_label,220,220,225,255); int tw=frontend_text_width(short_value,1); frontend_draw_text(ui->renderer,rr.x+rr.w-tw-6,rr.y+7,1,short_value,170,205,255,255);
     }
     const char *buttons[] = {"Apply", "OK", "Cancel", "Defaults", "Reset all"};
-    for(int i=0;i<5;i++){ SDL_Rect b={box.x+175+i*84,box.y+390,78,26}; fill(ui->renderer,b,65,70,80,255); frontend_draw_text(ui->renderer,b.x+8,b.y+8,1,buttons[i],235,235,235,255); }
+    for(int i=0;i<5;i++){ SDL_Rect b={box.x+175+i*84,box.y+390,78,26}; fill(ui->renderer,b,ui->settings_focus==1&&i==ui->settings_button?95:65,70,80,255); frontend_draw_text(ui->renderer,b.x+8,b.y+8,1,buttons[i],235,235,235,255); }
+    if (!ui->capture_binding&&!ui->edit_text_active)frontend_draw_text(ui->renderer,box.x+180,box.y+370,1,"F4 browse paths | Ctrl+Tab categories",160,180,205,255);
     if (ui->capture_binding) frontend_draw_text(ui->renderer,box.x+180,box.y+370,1,
         ui->capture_gamepad ? "Press controller button; Backspace clears" : "Press key; Backspace clears",255,210,120,255);
-    if (ui->edit_text_active) frontend_draw_text(ui->renderer,box.x+180,box.y+370,1,ui->edit_text,255,210,120,255);
+    if (ui->edit_text_active) frontend_draw_text(ui->renderer,box.x+180,box.y+370,1,ui->edit_text+ (strlen(ui->edit_text)>65?strlen(ui->edit_text)-65:0),255,210,120,255);
+}
+
+static void detail_text(SDL_Renderer *renderer, int x, int y, const char *text, int columns, int lines) {
+    if(!text)return;
+    for(int row=0;row<lines && *text;++row){
+        char line[128];int count=0;
+        while(*text && *text!='\n' && count<columns)line[count++]=*text++;
+        if(*text=='\n')++text;
+        line[count]='\0';frontend_draw_text(renderer,x,y+row*13,1,line,170,205,255,255);
+    }
 }
 
 static void render_panel(FrontendDesktopUi *ui) {
     FrontendPanelControl controls[64]; FrontendPanelModel model={.controls=controls,.capacity=64}; char error[256]={0};
     if (!frontend_panel_snapshot(ui->panel_id,&model,error,sizeof(error))) { copy_status(ui,error); ui->panel_open=false; return; }
-    int ww=0,wh=0; SDL_GetWindowSize(ui->window,&ww,&wh); SDL_Rect box={(ww-600)/2,(wh-430)/2,600,430}; fill(ui->renderer,box,28,30,35,250); SDL_SetRenderDrawColor(ui->renderer,180,180,190,255); SDL_RenderDrawRect(ui->renderer,&box);
-    FrontendPanelInfo info; frontend_panel_get(ui->panel_id,&info); frontend_draw_text(ui->renderer,box.x+16,box.y+14,2,info.title,245,245,245,255);
-    for(size_t i=0;i<model.count && i<15;i++){ int y=box.y+52+(int)i*23; char value[120]=""; const FrontendPanelControl *c=&controls[i]; if(c->type==FRONTEND_PANEL_CHECKBOX) snprintf(value,sizeof(value),"[%c]",c->selected?'x':' '); else if(c->type==FRONTEND_PANEL_CHOICE && c->selected>=0 && (size_t)c->selected<c->item_count) snprintf(value,sizeof(value),"%s",c->items[c->selected]); else if(c->value) snprintf(value,sizeof(value),"%s",c->value); frontend_draw_text(ui->renderer,box.x+18,y,1,c->label,c->enabled?220:110,c->enabled?220:110,c->enabled?225:110,255); frontend_draw_text(ui->renderer,box.x+360,y,1,value,170,205,255,255); }
-    if(model.status) frontend_draw_text(ui->renderer,box.x+18,box.y+400,1,model.status,200,200,205,255);
+    int ww=0,wh=0; ui_dimensions(ui, &ww, &wh); SDL_Rect box={(ww-600)/2,(wh-430)/2,600,430};
+    fill(ui->renderer,box,28,30,35,250);SDL_SetRenderDrawColor(ui->renderer,180,180,190,255);SDL_RenderDrawRect(ui->renderer,&box);
+    FrontendPanelInfo info; frontend_panel_get(ui->panel_id,&info);
+    frontend_draw_text(ui->renderer,box.x+16,box.y+14,2,info.title,245,245,245,255);
+    if(ui->panel_row>=(int)model.count)ui->panel_row=model.count?(int)model.count-1:0;
+    if(ui->panel_row<ui->panel_scroll)ui->panel_scroll=ui->panel_row;
+    if(ui->panel_row>=ui->panel_scroll+12)ui->panel_scroll=ui->panel_row-11;
+    const char *detail=NULL;
+    for(size_t i=(size_t)ui->panel_scroll;i<model.count && i<(size_t)ui->panel_scroll+12;i++){
+        int y=box.y+52+((int)i-ui->panel_scroll)*23;
+        const FrontendPanelControl *c=&controls[i];
+        if((int)i==ui->panel_row)fill(ui->renderer,(SDL_Rect){box.x+12,y-4,576,22},55,60,72,255);
+        const char *full=c->value?c->value:"";
+        char checked[4];
+        if(c->type==FRONTEND_PANEL_CHECKBOX){snprintf(checked,sizeof(checked),"[%c]",c->selected?'x':' ');full=checked;}
+        else if((c->type==FRONTEND_PANEL_CHOICE || c->type==FRONTEND_PANEL_LIST) && c->selected>=0 && (size_t)c->selected<c->item_count)full=c->items[c->selected];
+        char label[48],value[44];visible_text(label,sizeof(label),c->label);visible_text(value,sizeof(value),full);
+        frontend_draw_text(ui->renderer,box.x+18,y,1,label,c->enabled?220:110,c->enabled?220:110,c->enabled?225:110,255);
+        frontend_draw_text(ui->renderer,box.x+320,y,1,value,170,205,255,255);
+        if((int)i==ui->panel_row && c->type!=FRONTEND_PANEL_CHECKBOX)detail=full;
+    }
+    detail_text(ui->renderer,box.x+18,box.y+337,ui->edit_text_active?ui->edit_text:detail,92,4);
+    char status[94];visible_text(status,sizeof(status),model.status?model.status:"Arrows move; Enter selects; Escape closes");
+    frontend_draw_text(ui->renderer,box.x+18,box.y+405,1,status,200,200,205,255);
 }
 
 static void render_info(FrontendDesktopUi *ui) {
-    int ww=0,wh=0; SDL_GetWindowSize(ui->window,&ww,&wh); SDL_Rect box={(ww-520)/2,(wh-300)/2,520,300}; fill(ui->renderer,box,28,30,35,250);
+    int ww=0,wh=0; ui_dimensions(ui, &ww, &wh); SDL_Rect box={(ww-520)/2,(wh-300)/2,520,300}; fill(ui->renderer,box,28,30,35,250);
+    if(ui->log_open){
+        frontend_draw_text(ui->renderer,box.x+18,box.y+18,2,"Recent messages",245,245,245,255);
+        for(unsigned i=0;i<ui->log_count;++i){char line[80];visible_text(line,sizeof(line),ui->log_lines[i]);frontend_draw_text(ui->renderer,box.x+18,box.y+55+(int)i*18,1,line,220,220,225,255);}
+        return;
+    }
     frontend_draw_text(ui->renderer,box.x+18,box.y+18,2,"Game information",245,245,245,255);
     char line[256]; snprintf(line,sizeof(line),"Metadata: %s",rom_metadata_source_name()); frontend_draw_text(ui->renderer,box.x+18,box.y+64,1,line,220,220,225,255);
     snprintf(line,sizeof(line),"Region: %s",nes_region_name(nes_timing()->region)); frontend_draw_text(ui->renderer,box.x+18,box.y+88,1,line,220,220,225,255);
@@ -753,58 +830,254 @@ static void render_info(FrontendDesktopUi *ui) {
     if(ui->sessions && ui->sessions->session && ui->sessions->session->active){ snprintf(line,sizeof(line),"Image: %.70s",ui->sessions->session->current.path); frontend_draw_text(ui->renderer,box.x+18,box.y+170,1,line,170,205,255,255); }
 }
 
-static int menu_index_at(int x) { int offset=10; for(int i=0;i<5;i++){ int w=frontend_text_width(menu_names[i],1)+22; if(x>=offset&&x<offset+w)return i; offset+=w;} return -1; }
+static int menu_index_at(int x) { int offset=10; for(int i=0;i<7;i++){ int w=frontend_text_width(menu_names[i],1)+22; if(x>=offset&&x<offset+w)return i; offset+=w;} return -1; }
+
+typedef struct {
+    unsigned id;
+    unsigned kind;
+    bool enabled;
+    char label[128];
+    const char *shortcut;
+} DesktopMenuItem;
+
+static int menu_items(FrontendDesktopUi *ui, DesktopMenuItem items[128]) {
+    if (ui->open_menu < 0 || ui->open_menu >= 7) return 0;
+    const char *menu = menu_names[ui->open_menu];
+    int count = 0;
+    FrontendCommandInfo command;
+    for (size_t i=0; i<frontend_command_count() && count<100; ++i) {
+        if (!frontend_command_at(i,&command) || strcmp(command.menu,menu)) continue;
+        items[count]=(DesktopMenuItem){.id=command.id,.enabled=command.enabled,.shortcut=command.shortcut};
+        snprintf(items[count++].label,128,"%s%s",command.checked?"[x] ":"",command.label);
+    }
+    if (ui->open_menu==5 || ui->open_menu==4) {
+        FrontendPanelInfo panel;
+        for (size_t i=0; i<frontend_panel_count() && count<120; ++i) {
+            if (!frontend_panel_at(i,&panel)) continue;
+            bool media = !strcmp(panel.category,"Media");
+            if (media != (ui->open_menu==4)) continue;
+            items[count]=(DesktopMenuItem){.id=panel.id,.kind=1,.enabled=panel.enabled};
+            snprintf(items[count++].label,128,"%s",panel.title);
+        }
+    }
+    if (ui->open_menu==0) {
+        if (ui->sessions) for (size_t i=0; i<frontend_session_recent_count(ui->sessions->session) && count<126; ++i) {
+            const FrontendImageRequest *recent=frontend_session_recent(ui->sessions->session,i);
+            items[count]=(DesktopMenuItem){.id=(unsigned)i,.kind=2,.enabled=true};
+            snprintf(items[count++].label,128,"Recent: %.90s",recent->archive_member[0]?recent->archive_member:recent->path);
+        }
+        items[count]=(DesktopMenuItem){.kind=3,.enabled=true};
+        snprintf(items[count++].label,128,"Exit");
+    } else if(ui->open_menu==6) {
+        items[count]=(DesktopMenuItem){.kind=4,.enabled=true}; snprintf(items[count++].label,128,"Game information");
+        items[count]=(DesktopMenuItem){.kind=5,.enabled=true}; snprintf(items[count++].label,128,"Documentation");
+        items[count]=(DesktopMenuItem){.kind=6,.enabled=true};snprintf(items[count++].label,128,"Recent messages");
+    }
+    return count;
+}
+
+static int menu_x(const FrontendDesktopUi *ui) {
+    int x=10;
+    for(int i=0;i<ui->open_menu;i++)x+=frontend_text_width(menu_names[i],1)+22;
+    int w,h; ui_dimensions(ui, &w, &h); (void)h;
+    if(x+420>w)x=w-420;
+    return x<0?0:x;
+}
 
 static void render_menu(FrontendDesktopUi *ui) {
-    if (ui->open_menu < 0 || ui->open_menu > 4) return;
-    int x=10; for(int i=0;i<ui->open_menu;i++) x += frontend_text_width(menu_names[i],1)+22;
-    const char *menu=menu_names[ui->open_menu]; int count=0; FrontendCommandInfo ci;
-    for(size_t i=0;i<frontend_command_count();i++) if(frontend_command_at(i,&ci) && !strcmp(ci.menu,menu)) count++;
-    int panel_start=count; if(ui->open_menu==3){ FrontendPanelInfo pi; for(size_t i=0;i<frontend_panel_count();i++) if(frontend_panel_at(i,&pi)&&pi.enabled) count++; }
-    if (ui->open_menu == 4) count += 2;
-    if (!count) return;
-    SDL_Rect box={x,MENU_H,260,count*24+8}; fill(ui->renderer,box,36,38,44,250);
-    int row=0; for(size_t i=0;i<frontend_command_count();i++){ if(!frontend_command_at(i,&ci)||strcmp(ci.menu,menu))continue; char line[128]; snprintf(line,sizeof(line),"%s%s%s",ci.checked?"[x] ":"",ci.label,ci.enabled?"":" (disabled)"); frontend_draw_text(ui->renderer,x+8,MENU_H+8+row*24,1,line,ci.enabled?230:120,ci.enabled?230:120,ci.enabled?235:120,255); row++; }
-    if(ui->open_menu==3){ FrontendPanelInfo pi; for(size_t i=0;i<frontend_panel_count();i++){ if(!frontend_panel_at(i,&pi)||!pi.enabled)continue; frontend_draw_text(ui->renderer,x+8,MENU_H+8+row*24,1,pi.title,220,220,225,255); row++; } }
-    if(ui->open_menu==4){ frontend_draw_text(ui->renderer,x+8,MENU_H+8+row++*24,1,"Game information",220,220,225,255); frontend_draw_text(ui->renderer,x+8,MENU_H+8+row*24,1,"Documentation",220,220,225,255); }
-    (void)panel_start;
+    DesktopMenuItem items[128];
+    int count=menu_items(ui,items);
+    if(!count)return;
+    int w,h;ui_dimensions(ui, &w, &h);(void)w;
+    int visible=(h-MENU_H-STATUS_H-8)/24;
+    if(visible<1)visible=1;
+    if(ui->menu_row>=count)ui->menu_row=count-1;
+    if(ui->menu_row<ui->menu_scroll)ui->menu_scroll=ui->menu_row;
+    if(ui->menu_row>=ui->menu_scroll+visible)ui->menu_scroll=ui->menu_row-visible+1;
+    if(visible>count)visible=count;
+    int x=menu_x(ui);
+    fill(ui->renderer,(SDL_Rect){x,MENU_H,420,visible*24+8},36,38,44,250);
+    for(int row=0;row<visible && row+ui->menu_scroll<count;++row){
+        int index=row+ui->menu_scroll;
+        DesktopMenuItem *item=&items[index];
+        if(index==ui->menu_row)fill(ui->renderer,(SDL_Rect){x+3,MENU_H+4+row*24,414,23},60,70,90,255);
+        char label[51];visible_text(label,sizeof(label),item->label);
+        frontend_draw_text(ui->renderer,x+8,MENU_H+8+row*24,1,label,item->enabled?230:110,item->enabled?230:110,item->enabled?235:110,255);
+        if(item->shortcut)frontend_draw_text(ui->renderer,x+410-frontend_text_width(item->shortcut,1),MENU_H+8+row*24,1,item->shortcut,155,180,215,255);
+    }
 }
 
 void frontend_desktop_render(FrontendDesktopUi *ui, int video_width, int video_height,
                              const char *title, const char *region, const char *run_state) {
     (void)video_width; (void)video_height;
     if (!ui || !ui->renderer || !ui->window) return;
-    int ww=0,wh=0; SDL_GetWindowSize(ui->window,&ww,&wh);
+    float scale_x,scale_y;SDL_RenderGetScale(ui->renderer,&scale_x,&scale_y);
+    int scale=ui->ui_scale>0?ui->ui_scale:1;
+    SDL_RenderSetScale(ui->renderer,scale_x*scale,scale_y*scale);
+    int ww=0,wh=0; ui_dimensions(ui, &ww, &wh);
     fill(ui->renderer,(SDL_Rect){0,0,ww,MENU_H},28,30,34,255);
-    int x=10; for(int i=0;i<5;i++){ frontend_draw_text(ui->renderer,x,10,1,menu_names[i],230,230,235,255); x+=frontend_text_width(menu_names[i],1)+22; }
+    int x=10; for(int i=0;i<7;i++){ frontend_draw_text(ui->renderer,x,10,1,menu_names[i],230,230,235,255); x+=frontend_text_width(menu_names[i],1)+22; }
     fill(ui->renderer,(SDL_Rect){0,MENU_H,ww,TOOLBAR_H},42,45,52,255);
     const struct {const char *label; unsigned id;} tb[]={{"Open",FRONTEND_COMMAND_OPEN},{"Pause",FRONTEND_COMMAND_PAUSE},{"Reset",FRONTEND_COMMAND_SOFT_RESET},{"Settings",FRONTEND_COMMAND_SETTINGS}};
-    x=10; for(size_t i=0;i<4;i++){ FrontendCommandInfo info={0}; bool ok=frontend_command_get(tb[i].id,&info)&&info.enabled; SDL_Rect b={x,MENU_H+5,82,26}; fill(ui->renderer,b,ok?65:48,ok?70:48,ok?82:48,255); frontend_draw_text(ui->renderer,b.x+8,b.y+8,1,tb[i].label,ok?235:120,ok?235:120,ok?240:120,255); x+=88; }
+    x=10; for(size_t i=0;i<4;i++){ FrontendCommandInfo info={0}; bool ok=frontend_command_get(tb[i].id,&info)&&info.enabled; SDL_Rect b={x,MENU_H+5,82,26}; fill(ui->renderer,b,ok?65:48,ok?70:48,ok?82:48,255); frontend_draw_text(ui->renderer,b.x+8,b.y+8,1,(tb[i].id==FRONTEND_COMMAND_PAUSE&&info.checked)?"Resume":tb[i].label,ok?235:120,ok?235:120,ok?240:120,255); x+=88; }
     fill(ui->renderer,(SDL_Rect){0,wh-STATUS_H,ww,STATUS_H},28,30,34,255); char status[320]; snprintf(status,sizeof(status),"%s | %s | %s%s%s",title&&*title?title:"No image",region?region:"-",run_state?run_state:"Idle",ui->settings&&ui->settings->show_fps?" | ":"",ui->settings&&ui->settings->show_fps?"FPS":""); frontend_draw_text(ui->renderer,8,wh-STATUS_H+8,1,status,205,205,210,255); if(ui->settings&&ui->settings->show_fps){char f[24];snprintf(f,sizeof(f),"%.1f",ui->fps);frontend_draw_text(ui->renderer,ww-frontend_text_width(f,1)-10,wh-STATUS_H+8,1,f,170,205,255,255);} if(ui->status[0] && SDL_GetTicks()<ui->status_until) frontend_draw_text(ui->renderer,ww/2-frontend_text_width(ui->status,1)/2,wh-STATUS_H+8,1,ui->status,255,210,120,255);
     render_menu(ui); if(ui->settings_open)render_settings(ui); if(ui->panel_open)render_panel(ui); if(ui->info_open)render_info(ui);
+    SDL_RenderSetScale(ui->renderer,scale_x,scale_y);
 }
 
 static void activate_menu_row(FrontendDesktopUi *ui, int row) {
-    const char *menu=menu_names[ui->open_menu]; FrontendCommandInfo ci;
-    for(size_t i=0;i<frontend_command_count();i++){ if(!frontend_command_at(i,&ci)||strcmp(ci.menu,menu))continue; if(row--==0){ if(ci.enabled)(void)invoke_command(ui,ci.id); ui->open_menu=-1; return; } }
-    if(ui->open_menu==3){ FrontendPanelInfo pi; for(size_t i=0;i<frontend_panel_count();i++){ if(!frontend_panel_at(i,&pi)||!pi.enabled)continue; if(row--==0){ui->panel_id=pi.id;ui->panel_open=true;ui->open_menu=-1;return;} } }
-    if(ui->open_menu==4){ if(row==0)ui->info_open=true; else if(row==1)(void)SDL_OpenURL("https://github.com/cupidthecat/cupid-nes/tree/main/docs"); ui->open_menu=-1; }
+    DesktopMenuItem items[128];
+    int count=menu_items(ui,items);
+    if(row<0 || row>=count){ui->open_menu=-1;return;}
+    DesktopMenuItem *item=&items[row];
+    if(!item->enabled)return;
+    char error[256]={0};
+    if(item->kind==0)(void)invoke_command(ui,item->id);
+    else if(item->kind==1){ui->panel_id=item->id;ui->panel_row=ui->panel_scroll=0;ui->panel_open=true;}
+    else if(item->kind==2){
+        if(!frontend_session_action_open_recent(ui->sessions,item->id,error,sizeof(error)))copy_status(ui,error);
+    } else if(item->kind==3){SDL_Event quit={.type=SDL_QUIT};SDL_PushEvent(&quit);}
+    else if(item->kind==4){ui->info_open=true;ui->log_open=false;}
+    else if(item->kind==6){ui->info_open=true;ui->log_open=true;}
+    else if(item->kind==5)(void)SDL_OpenURL("https://github.com/cupidthecat/cupid-nes/tree/main/docs");
+    ui->open_menu=-1;
+}
+
+static void menu_key(FrontendDesktopUi *ui, SDL_Scancode sc) {
+    DesktopMenuItem items[128];int count=menu_items(ui,items);
+    if(sc==SDL_SCANCODE_LEFT || sc==SDL_SCANCODE_RIGHT){
+        ui->open_menu=(ui->open_menu+(sc==SDL_SCANCODE_LEFT?6:1))%7;
+        ui->menu_row=ui->menu_scroll=0;
+    } else if(count && (sc==SDL_SCANCODE_UP || sc==SDL_SCANCODE_DOWN))
+        ui->menu_row=(ui->menu_row+count+(sc==SDL_SCANCODE_UP?-1:1))%count;
+    else if(sc==SDL_SCANCODE_RETURN || sc==SDL_SCANCODE_SPACE)activate_menu_row(ui,ui->menu_row);
+}
+
+static void category_defaults(FrontendDesktopUi *ui) {
+    FrontendSettings d;
+    frontend_settings_defaults(&d);
+    switch (ui->settings_category) {
+        case 0:
+            memcpy(&ui->staged.reopen_last_image, &d.reopen_last_image, sizeof(d.reopen_last_image));
+            memcpy(&ui->staged.remember_window_size, &d.remember_window_size, sizeof(d.remember_window_size));
+            memcpy(&ui->staged.recent_file_limit, &d.recent_file_limit, sizeof(d.recent_file_limit));
+            memcpy(&ui->staged.pause_on_focus_loss, &d.pause_on_focus_loss, sizeof(d.pause_on_focus_loss));
+            memcpy(&ui->staged.pause_on_ui, &d.pause_on_ui, sizeof(d.pause_on_ui));
+            memcpy(&ui->staged.show_fps, &d.show_fps, sizeof(d.show_fps));
+            memcpy(&ui->staged.window_width, &d.window_width, sizeof(d.window_width));
+            memcpy(&ui->staged.window_height, &d.window_height, sizeof(d.window_height));
+            break;
+        case 1:
+            memcpy(&ui->staged.region_mode, &d.region_mode, sizeof(d.region_mode));
+            memcpy(&ui->staged.speed, &d.speed, sizeof(d.speed));
+            memcpy(&ui->staged.fast_forward_speed, &d.fast_forward_speed, sizeof(d.fast_forward_speed));
+            memcpy(&ui->staged.rewind_seconds, &d.rewind_seconds, sizeof(d.rewind_seconds));
+            memcpy(&ui->staged.run_ahead_frames, &d.run_ahead_frames, sizeof(d.run_ahead_frames));
+            break;
+        case 2:
+            memcpy(&ui->staged.fullscreen, &d.fullscreen, sizeof(d.fullscreen));
+            memcpy(&ui->staged.integer_scaling, &d.integer_scaling, sizeof(d.integer_scaling));
+            memcpy(&ui->staged.vsync, &d.vsync, sizeof(d.vsync));
+            memcpy(&ui->staged.aspect_mode, &d.aspect_mode, sizeof(d.aspect_mode));
+            memcpy(&ui->staged.ntsc_composite, &d.ntsc_composite, sizeof(d.ntsc_composite));
+            memcpy(&ui->staged.presentation, &d.presentation, sizeof(d.presentation));
+            break;
+        case 3:
+            memcpy(&ui->staged.audio_mix, &d.audio_mix, sizeof(d.audio_mix));
+            memcpy(&ui->staged.muted, &d.muted, sizeof(d.muted));
+            memcpy(&ui->staged.audio_device, &d.audio_device, sizeof(d.audio_device));
+            memcpy(&ui->staged.audio_sample_rate, &d.audio_sample_rate, sizeof(d.audio_sample_rate));
+            memcpy(&ui->staged.audio_buffer_samples, &d.audio_buffer_samples, sizeof(d.audio_buffer_samples));
+            break;
+        case 4:
+            memcpy(&ui->staged.input, &d.input, sizeof(d.input));
+            memcpy(&ui->staged.zapper_radius, &d.zapper_radius, sizeof(d.zapper_radius));
+            memcpy(&ui->staged.saved_input_overrides, &d.saved_input_overrides, sizeof(d.saved_input_overrides));
+            memcpy(&ui->staged.active_profile, &d.active_profile, sizeof(d.active_profile));
+            memcpy(&ui->staged.profiles, &d.profiles, sizeof(d.profiles));
+            memcpy(&ui->staged.profile_count, &d.profile_count, sizeof(d.profile_count));
+            memcpy(&ui->staged.device_guid, &d.device_guid, sizeof(d.device_guid));
+            break;
+        case 5:
+            memcpy(&ui->staged.disk_save_mode, &d.disk_save_mode, sizeof(d.disk_save_mode));
+            memcpy(&ui->staged.disk_overlay_path, &d.disk_overlay_path, sizeof(d.disk_overlay_path));
+            memcpy(&ui->staged.fds_bios_path, &d.fds_bios_path, sizeof(d.fds_bios_path));
+            memcpy(&ui->staged.studybox_bios_path, &d.studybox_bios_path, sizeof(d.studybox_bios_path));
+            memcpy(&ui->staged.epsm_adpcm_path, &d.epsm_adpcm_path, sizeof(d.epsm_adpcm_path));
+            memcpy(&ui->staged.fcns_kanji_path, &d.fcns_kanji_path, sizeof(d.fcns_kanji_path));
+            memcpy(&ui->staged.tape_play_path, &d.tape_play_path, sizeof(d.tape_play_path));
+            memcpy(&ui->staged.tape_record_path, &d.tape_record_path, sizeof(d.tape_record_path));
+            memcpy(&ui->staged.fds_write_protected, &d.fds_write_protected, sizeof(d.fds_write_protected));
+            memcpy(&ui->staged.fds_auto_insert, &d.fds_auto_insert, sizeof(d.fds_auto_insert));
+            memcpy(&ui->staged.fds_loading_fast_forward, &d.fds_loading_fast_forward, sizeof(d.fds_loading_fast_forward));
+            memcpy(&ui->staged.nsf_player, &d.nsf_player, sizeof(d.nsf_player));
+            break;
+        case 6:
+            memcpy(&ui->staged.capture, &d.capture, sizeof(d.capture));
+            memcpy(&ui->staged.capture_paths, &d.capture_paths, sizeof(d.capture_paths));
+            memcpy(&ui->staged.state_slot, &d.state_slot, sizeof(d.state_slot));
+            memcpy(&ui->staged.state_file_path, &d.state_file_path, sizeof(d.state_file_path));
+            break;
+        case 7:
+            memcpy(&ui->staged.console_model, &d.console_model, sizeof(d.console_model));
+            memcpy(&ui->staged.cpu_revision, &d.cpu_revision, sizeof(d.cpu_revision));
+            memcpy(&ui->staged.ppu_revision, &d.ppu_revision, sizeof(d.ppu_revision));
+            memcpy(&ui->staged.ram_power_state, &d.ram_power_state, sizeof(d.ram_power_state));
+            memcpy(&ui->staged.randomize_vblank, &d.randomize_vblank, sizeof(d.randomize_vblank));
+            memcpy(&ui->staged.apu_disable_noise_mode, &d.apu_disable_noise_mode, sizeof(d.apu_disable_noise_mode));
+            memcpy(&ui->staged.apu_swap_duty_cycles, &d.apu_swap_duty_cycles, sizeof(d.apu_swap_duty_cycles));
+            memcpy(&ui->staged.ppu_oam_row_corruption, &d.ppu_oam_row_corruption, sizeof(d.ppu_oam_row_corruption));
+            memcpy(&ui->staged.ppu_startup_restriction, &d.ppu_startup_restriction, sizeof(d.ppu_startup_restriction));
+            memcpy(&ui->staged.ppu_oam_decay, &d.ppu_oam_decay, sizeof(d.ppu_oam_decay));
+            memcpy(&ui->staged.ppu_sprite_eval_wrap_bug, &d.ppu_sprite_eval_wrap_bug, sizeof(d.ppu_sprite_eval_wrap_bug));
+            memcpy(&ui->staged.ppu_oamdata_read_disabled, &d.ppu_oamdata_read_disabled, sizeof(d.ppu_oamdata_read_disabled));
+            memcpy(&ui->staged.ppu_palette_readback_disabled, &d.ppu_palette_readback_disabled, sizeof(d.ppu_palette_readback_disabled));
+            memcpy(&ui->staged.ppu_reset_suppression, &d.ppu_reset_suppression, sizeof(d.ppu_reset_suppression));
+            memcpy(&ui->staged.mmc3_revision_a, &d.mmc3_revision_a, sizeof(d.mmc3_revision_a));
+            memcpy(&ui->staged.cart_dips, &d.cart_dips, sizeof(d.cart_dips));
+            memcpy(&ui->staged.vs_dips, &d.vs_dips, sizeof(d.vs_dips));
+            memcpy(&ui->staged.startup_phase_set, &d.startup_phase_set, sizeof(d.startup_phase_set));
+            memcpy(&ui->staged.startup_cpu_offset, &d.startup_cpu_offset, sizeof(d.startup_cpu_offset));
+            memcpy(&ui->staged.startup_ppu_phase, &d.startup_ppu_phase, sizeof(d.startup_ppu_phase));
+            memcpy(&ui->staged.startup_seed_set, &d.startup_seed_set, sizeof(d.startup_seed_set));
+            memcpy(&ui->staged.startup_seed, &d.startup_seed, sizeof(d.startup_seed));
+            memcpy(&ui->staged.power_on_seed_set, &d.power_on_seed_set, sizeof(d.power_on_seed_set));
+            memcpy(&ui->staged.power_on_seed, &d.power_on_seed, sizeof(d.power_on_seed));
+            break;
+    }
+}
+
+static void settings_button(FrontendDesktopUi *ui, int button) {
+    if (button == 0) (void)save_settings(ui);
+    else if (button == 1) { if (save_settings(ui)) set_settings_open(ui, false); }
+    else if (button == 2) set_settings_open(ui, false);
+    else if (button == 3) category_defaults(ui);
+    else if (button == 4) {
+        if (ui->confirm_restore_all) {
+            uint32_t overrides = ui->staged.cli_overrides;
+            frontend_settings_defaults(&ui->staged);
+            ui->staged.cli_overrides = overrides;
+            ui->confirm_restore_all = false;
+        } else { ui->confirm_restore_all = true; copy_status(ui, "Activate Reset all again to confirm"); }
+    }
 }
 
 static void handle_settings_mouse(FrontendDesktopUi *ui, int x, int y) {
-    int ww=0,wh=0;SDL_GetWindowSize(ui->window,&ww,&wh); SDL_Rect box={(ww-MODAL_W)/2,(wh-MODAL_H)/2,MODAL_W,MODAL_H}; if(!inside(x,y,box))return;
+    int ww=0,wh=0;ui_dimensions(ui, &ww, &wh); SDL_Rect box={(ww-MODAL_W)/2,(wh-MODAL_H)/2,MODAL_W,MODAL_H}; if(!inside(x,y,box))return;
     if(x<box.x+165 && y>=box.y+48 && y<box.y+48+8*30){ ui->settings_category=(y-(box.y+48))/30; ui->settings_row=0; ui->settings_scroll=0; return; }
     if(x>=box.x+174 && y>=box.y+50 && y<box.y+50+13*24){ int row=ui->settings_scroll+(y-(box.y+50))/24; if(row<setting_rows(ui)){ui->settings_row=row;adjust_setting(ui,row,x>box.x+430?1:-1);}return;}
-    if(y>=box.y+390&&y<box.y+416){int b=(x-(box.x+175))/84;if(b==0)(void)save_settings(ui);else if(b==1){if(save_settings(ui))set_settings_open(ui,false);}else if(b==2)set_settings_open(ui,false);else if(b==3){FrontendSettings d;frontend_settings_defaults(&d);d.cli_overrides=ui->staged.cli_overrides;ui->staged=d;}else if(b==4){if(ui->confirm_restore_all){FrontendSettings d;frontend_settings_defaults(&d);d.cli_overrides=ui->staged.cli_overrides;ui->staged=d;ui->confirm_restore_all=false;}else{ui->confirm_restore_all=true;copy_status(ui,"Click Reset all again to confirm");}}}
+    if(y>=box.y+390&&y<box.y+416&&x>=box.x+175) settings_button(ui,(x-(box.x+175))/84);
 }
 
 static void handle_panel_mouse(FrontendDesktopUi *ui, int x, int y) {
     int ww = 0, wh = 0;
-    SDL_GetWindowSize(ui->window, &ww, &wh);
+    ui_dimensions(ui, &ww, &wh);
     SDL_Rect box = {(ww - 600) / 2, (wh - 430) / 2, 600, 430};
     if (!inside(x, y, box)) return;
     int row = (y - (box.y + 52)) / 23;
-    if (row < 0) return;
+    if (y < box.y+52 || row >= 12) return;
+    row += ui->panel_scroll;
+    ui->panel_row = row;
     FrontendPanelControl controls[64];
     FrontendPanelModel model = {.controls = controls, .capacity = 64};
     char error[256] = {0};
@@ -817,39 +1090,101 @@ static void handle_panel_mouse(FrontendDesktopUi *ui, int x, int y) {
         return;
     }
     int selected = control->type == FRONTEND_PANEL_CHECKBOX ? !control->selected : control->selected;
-    if (control->type == FRONTEND_PANEL_CHOICE && control->item_count)
+    if ((control->type == FRONTEND_PANEL_CHOICE || control->type == FRONTEND_PANEL_LIST) && control->item_count)
         selected = (selected + 1) % (int)control->item_count;
     if (!frontend_panel_action(ui->panel_id, control->id, NULL, selected, error, sizeof(error))
         && error[0]) copy_status(ui, error);
 }
 
-bool frontend_desktop_handle_event(FrontendDesktopUi *ui, const SDL_Event *event) {
+static void panel_key(FrontendDesktopUi *ui, SDL_Scancode sc) {
+    FrontendPanelControl controls[64];
+    FrontendPanelModel model = {.controls=controls,.capacity=64};
+    if (!frontend_panel_snapshot(ui->panel_id, &model, NULL, 0) || !model.count) return;
+    if (sc == SDL_SCANCODE_DOWN || sc == SDL_SCANCODE_TAB) ui->panel_row = (ui->panel_row+1) % (int)model.count;
+    else if (sc == SDL_SCANCODE_UP) ui->panel_row = (ui->panel_row+(int)model.count-1) % (int)model.count;
+    else if (sc == SDL_SCANCODE_RETURN || sc == SDL_SCANCODE_SPACE || sc == SDL_SCANCODE_RIGHT) {
+        if(ui->panel_row<ui->panel_scroll)ui->panel_scroll=ui->panel_row;
+        if(ui->panel_row>=ui->panel_scroll+12)ui->panel_scroll=ui->panel_row-11;
+        int w,h; ui_dimensions(ui, &w, &h);
+        handle_panel_mouse(ui,(w-600)/2+20,(h-430)/2+52+(ui->panel_row-ui->panel_scroll)*23+2);
+    }
+}
+
+static void browse_setting(FrontendDesktopUi *ui) {
+    int row=ui->settings_row;char path[FRONTEND_SETTINGS_PATH_TEXT]={0},error[256]={0};
+    bool chosen=false;
+    if(ui->settings_category==5 && (row<=3 || row==9))
+        chosen=frontend_open_file_dialog(row==9?FRONTEND_OPEN_TAPE:FRONTEND_OPEN_FIRMWARE,path,sizeof(path),error,sizeof(error));
+    else if(ui->settings_category==5 && row==10)
+        chosen=frontend_save_file_dialog(FRONTEND_SAVE_TAPE,path,sizeof(path),error,sizeof(error));
+    else if(ui->settings_category==6 && row>=1 && row<=4)
+        chosen=frontend_save_file_dialog(row==1?FRONTEND_SAVE_STATE:(FrontendSaveFileType)(row-2),path,sizeof(path),error,sizeof(error));
+    if(chosen){begin_edit(ui,(unsigned)row,path);commit_edit(ui);}
+    else if(error[0])copy_status(ui,error);
+}
+
+static void settings_key(FrontendDesktopUi *ui, SDL_Scancode sc, SDL_Keymod mod) {
+    if (sc == SDL_SCANCODE_F4) browse_setting(ui);
+    else if (sc == SDL_SCANCODE_TAB && (mod & KMOD_CTRL)) {
+        ui->settings_category = (ui->settings_category + ((mod & KMOD_SHIFT) ? 7 : 1)) % 8;
+        ui->settings_row = ui->settings_scroll = 0;
+    } else if (sc == SDL_SCANCODE_TAB) ui->settings_focus = (ui->settings_focus + ((mod & KMOD_SHIFT) ? 2 : 1)) % 3;
+    else if (ui->settings_focus == 2) {
+        if (sc == SDL_SCANCODE_UP || sc == SDL_SCANCODE_DOWN) {
+            ui->settings_category = (ui->settings_category + (sc == SDL_SCANCODE_UP ? 7 : 1)) % 8;
+            ui->settings_row = ui->settings_scroll = 0;
+        } else if (sc == SDL_SCANCODE_RETURN || sc == SDL_SCANCODE_RIGHT) ui->settings_focus = 0;
+    } else if (ui->settings_focus == 1) {
+        if (sc == SDL_SCANCODE_LEFT || sc == SDL_SCANCODE_RIGHT)
+            ui->settings_button = (ui->settings_button + (sc == SDL_SCANCODE_LEFT ? 4 : 1)) % 5;
+        else if (sc == SDL_SCANCODE_RETURN || sc == SDL_SCANCODE_SPACE) settings_button(ui, ui->settings_button);
+    } else {
+        int rows = setting_rows(ui);
+        if (sc == SDL_SCANCODE_DOWN) ui->settings_row = (ui->settings_row + 1) % rows;
+        else if (sc == SDL_SCANCODE_UP) ui->settings_row = (ui->settings_row + rows - 1) % rows;
+        else if (sc == SDL_SCANCODE_LEFT) adjust_setting(ui, ui->settings_row, -1);
+        else if (sc == SDL_SCANCODE_RIGHT || sc == SDL_SCANCODE_RETURN) adjust_setting(ui, ui->settings_row, 1);
+    }
+}
+
+static bool handle_event(FrontendDesktopUi *ui, const SDL_Event *event) {
     if (!ui || !event) return false;
-    if(event->type==SDL_WINDOWEVENT&&ui->window&&event->window.windowID==SDL_GetWindowID(ui->window)){if(event->window.event==SDL_WINDOWEVENT_SIZE_CHANGED){ui->settings->window_width=(unsigned)event->window.data1;ui->settings->window_height=(unsigned)event->window.data2;sync_scale(ui);}if(event->window.event==SDL_WINDOWEVENT_FOCUS_LOST&&ui->settings->pause_on_focus_loss&&ui->execution&&!frontend_execution_paused(ui->execution)){ui->paused_for_focus=invoke_command(ui,FRONTEND_COMMAND_PAUSE);}if(event->window.event==SDL_WINDOWEVENT_FOCUS_GAINED&&ui->paused_for_focus&&ui->execution&&frontend_execution_paused(ui->execution)){(void)invoke_command(ui,FRONTEND_COMMAND_PAUSE);ui->paused_for_focus=false;}}
+    SDL_Event adjusted=*event;
+    if(ui->ui_scale>1 && (event->type==SDL_MOUSEBUTTONDOWN || event->type==SDL_MOUSEBUTTONUP)){
+        adjusted.button.x/=ui->ui_scale;adjusted.button.y/=ui->ui_scale;event=&adjusted;
+    }
+    if(event->type==SDL_WINDOWEVENT&&ui->window&&event->window.windowID==SDL_GetWindowID(ui->window)){if(event->window.event==SDL_WINDOWEVENT_SIZE_CHANGED){frontend_desktop_update_window_settings(ui);sync_scale(ui);}if(event->window.event==SDL_WINDOWEVENT_FOCUS_LOST&&ui->settings->pause_on_focus_loss&&ui->execution&&!frontend_execution_paused(ui->execution)){ui->paused_for_focus=invoke_command(ui,FRONTEND_COMMAND_PAUSE);}if(event->window.event==SDL_WINDOWEVENT_FOCUS_GAINED&&ui->paused_for_focus&&ui->execution&&frontend_execution_paused(ui->execution)){(void)invoke_command(ui,FRONTEND_COMMAND_PAUSE);ui->paused_for_focus=false;}}
+    if(event->type==SDL_MOUSEWHEEL && ui->open_menu>=0){menu_key(ui,event->wheel.y>0?SDL_SCANCODE_UP:SDL_SCANCODE_DOWN);return true;}
+    if (event->type==SDL_MOUSEWHEEL && (ui->settings_open || ui->panel_open)) {
+        SDL_Scancode direction=event->wheel.y>0?SDL_SCANCODE_UP:SDL_SCANCODE_DOWN;
+        if(ui->settings_open){ui->settings_focus=0;settings_key(ui,direction,KMOD_NONE);}
+        else panel_key(ui,direction);
+        return true;
+    }
     if(event->type==SDL_TEXTINPUT&&ui->edit_text_active){size_t n=strlen(ui->edit_text),a=strlen(event->text.text);if(n+a<sizeof(ui->edit_text)){memcpy(ui->edit_text+n,event->text.text,a+1);}return true;}
     if(ui->capture_binding&&event->type==SDL_CONTROLLERBUTTONDOWN&&ui->capture_gamepad){handle_binding_gamepad(ui,(SDL_GameControllerButton)event->cbutton.button);return true;}
     if((event->type==SDL_KEYDOWN||event->type==SDL_KEYUP)&&ui->capture_binding){if(event->type==SDL_KEYDOWN&&!event->key.repeat){if(event->key.keysym.scancode==SDL_SCANCODE_BACKSPACE&&ui->capture_gamepad)handle_binding_gamepad(ui,SDL_CONTROLLER_BUTTON_INVALID);else if(!ui->capture_gamepad)handle_binding_key(ui,&event->key);}return true;}
-    if(event->type==SDL_KEYDOWN&&!event->key.repeat){SDL_Scancode sc=event->key.keysym.scancode;if(ui->edit_text_active){if(sc==SDL_SCANCODE_RETURN)commit_edit(ui);else if(sc==SDL_SCANCODE_ESCAPE){ui->edit_text_active=false;SDL_StopTextInput();}else if(sc==SDL_SCANCODE_BACKSPACE){size_t n=strlen(ui->edit_text);if(n){--n;while(n&&((unsigned char)ui->edit_text[n]&0xC0u)==0x80u)--n;ui->edit_text[n]='\0';}}return true;}if(sc==SDL_SCANCODE_ESCAPE){if(ui->settings_open)set_settings_open(ui,false);else if(ui->panel_open)ui->panel_open=false;else if(ui->info_open)ui->info_open=false;else ui->open_menu=-1;return true;}if(ui->settings_open){int rows=setting_rows(ui);if(sc==SDL_SCANCODE_TAB||sc==SDL_SCANCODE_DOWN)ui->settings_row=(ui->settings_row+1)%rows;else if(sc==SDL_SCANCODE_UP)ui->settings_row=(ui->settings_row+rows-1)%rows;else if(sc==SDL_SCANCODE_LEFT)adjust_setting(ui,ui->settings_row,-1);else if(sc==SDL_SCANCODE_RIGHT||sc==SDL_SCANCODE_RETURN)adjust_setting(ui,ui->settings_row,1);return true;}if((event->key.keysym.mod&KMOD_ALT)&&sc==SDL_SCANCODE_RETURN){(void)invoke_command(ui,FRONTEND_COMMAND_FULLSCREEN);return true;}if((event->key.keysym.mod&KMOD_CTRL)&&sc==SDL_SCANCODE_COMMA){set_settings_open(ui,true);return true;}}
-    if(event->type==SDL_MOUSEBUTTONDOWN&&event->button.button==SDL_BUTTON_LEFT){int x=event->button.x,y=event->button.y;if(ui->settings_open){handle_settings_mouse(ui,x,y);return true;}if(ui->panel_open){handle_panel_mouse(ui,x,y);return true;}if(ui->info_open){ui->info_open=false;return true;}if(y<MENU_H){ui->open_menu=menu_index_at(x);return true;}if(ui->open_menu>=0){if(y>=MENU_H){activate_menu_row(ui,(y-MENU_H-8)/24);return true;}}if(y>=MENU_H&&y<MENU_H+TOOLBAR_H){int index=(x-10)/88;if(index>=0&&index<4){unsigned ids[]={FRONTEND_COMMAND_OPEN,FRONTEND_COMMAND_PAUSE,FRONTEND_COMMAND_SOFT_RESET,FRONTEND_COMMAND_SETTINGS};(void)invoke_command(ui,ids[index]);return true;}}}
-    return ui->settings_open||ui->panel_open||ui->info_open||ui->edit_text_active;
+    if(event->type==SDL_KEYDOWN&&!event->key.repeat){SDL_Scancode sc=event->key.keysym.scancode;if(ui->edit_text_active){if(sc==SDL_SCANCODE_F4&&ui->settings_open)browse_setting(ui);else if(sc==SDL_SCANCODE_RETURN)commit_edit(ui);else if(sc==SDL_SCANCODE_ESCAPE){ui->edit_text_active=false;SDL_StopTextInput();}else if(sc==SDL_SCANCODE_BACKSPACE){size_t n=strlen(ui->edit_text);if(n){--n;while(n&&((unsigned char)ui->edit_text[n]&0xC0u)==0x80u)--n;ui->edit_text[n]='\0';}}return true;}if(sc==SDL_SCANCODE_ESCAPE){if(ui->settings_open)set_settings_open(ui,false);else if(ui->panel_open)ui->panel_open=false;else if(ui->info_open)ui->info_open=false;else ui->open_menu=-1;return true;}if(ui->settings_open){settings_key(ui,sc,(SDL_Keymod)event->key.keysym.mod);return true;}if(ui->panel_open){panel_key(ui,sc);return true;}if(ui->open_menu>=0){menu_key(ui,sc);return true;}if((event->key.keysym.mod&KMOD_ALT)&&sc==SDL_SCANCODE_F){ui->open_menu=0;ui->menu_row=ui->menu_scroll=0;return true;}if((event->key.keysym.mod&KMOD_ALT)&&sc==SDL_SCANCODE_RETURN){(void)invoke_command(ui,FRONTEND_COMMAND_FULLSCREEN);return true;}if((event->key.keysym.mod&KMOD_CTRL)&&sc==SDL_SCANCODE_COMMA){set_settings_open(ui,true);return true;}}
+    if(event->type==SDL_MOUSEBUTTONDOWN&&event->button.button==SDL_BUTTON_LEFT){int x=event->button.x,y=event->button.y;if(ui->settings_open){handle_settings_mouse(ui,x,y);return true;}if(ui->panel_open){handle_panel_mouse(ui,x,y);return true;}if(ui->info_open){ui->info_open=false;return true;}if(y<MENU_H){ui->open_menu=menu_index_at(x);ui->menu_row=ui->menu_scroll=0;return true;}if(ui->open_menu>=0){if(y>=MENU_H){int mx=menu_x(ui);if(x>=mx&&x<mx+420&&y>=MENU_H+8)activate_menu_row(ui,ui->menu_scroll+(y-MENU_H-8)/24);else ui->open_menu=-1;return true;}}if(y>=MENU_H&&y<MENU_H+TOOLBAR_H){int index=(x-10)/88;if(index>=0&&index<4){unsigned ids[]={FRONTEND_COMMAND_OPEN,FRONTEND_COMMAND_PAUSE,FRONTEND_COMMAND_SOFT_RESET,FRONTEND_COMMAND_SETTINGS};(void)invoke_command(ui,ids[index]);return true;}}}
+    return frontend_desktop_input_captured(ui);
 }
 
-bool frontend_desktop_input_captured(const FrontendDesktopUi *ui){return ui&&(ui->settings_open||ui->panel_open||ui->info_open||ui->edit_text_active||ui->capture_binding);}
+bool frontend_desktop_handle_event(FrontendDesktopUi *ui, const SDL_Event *event) {
+    bool before=frontend_desktop_input_captured(ui);
+    bool handled=handle_event(ui,event);
+    bool after=frontend_desktop_input_captured(ui);
+    if(ui && ui->execution && ui->settings && ui->settings->pause_on_ui){
+        if(!before && after && !frontend_execution_paused(ui->execution))ui->paused_for_ui=invoke_command(ui,FRONTEND_COMMAND_PAUSE);
+        else if(before && !after && ui->paused_for_ui){
+            if(frontend_execution_paused(ui->execution))(void)invoke_command(ui,FRONTEND_COMMAND_PAUSE);
+            ui->paused_for_ui=false;
+        }
+    }
+    return handled;
+}
+
+bool frontend_desktop_input_captured(const FrontendDesktopUi *ui){return ui&&(ui->settings_open||ui->panel_open||ui->info_open||ui->edit_text_active||ui->capture_binding||ui->open_menu>=0);}
 bool frontend_desktop_quit_requested(const FrontendDesktopUi *ui){return ui&&ui->quit_requested;}
-void frontend_desktop_update_window_settings(FrontendDesktopUi *ui){if(!ui||!ui->window||!ui->settings)return;int w,h;SDL_GetWindowSize(ui->window,&w,&h);if(w>0&&h>0){ui->settings->window_width=(unsigned)w;ui->settings->window_height=(unsigned)h;}}
+void frontend_desktop_update_window_settings(FrontendDesktopUi *ui){if(!ui||!ui->window||!ui->settings||!ui->settings->remember_window_size)return;int w,h;SDL_GetWindowSize(ui->window,&w,&h);if(w>0&&h>0){ui->settings->window_width=(unsigned)w;ui->settings->window_height=(unsigned)h;}}
 void frontend_desktop_shutdown(FrontendDesktopUi *ui){if(!ui)return;set_settings_open(ui,false);SDL_StopTextInput();}
 
-FrontendIdleResult frontend_desktop_idle_open(FrontendSettings *settings,
-                                              const FrontendSession *session,
-                                              const char *settings_path,
-                                              FrontendImageRequest *request,
-                                              SDL_Window **window,
-                                              SDL_Renderer **renderer,
-                                              char *error, size_t error_size) {
-    if(!settings||!request||!window||!renderer)return FRONTEND_IDLE_ERROR;
-    if(settings->reopen_last_image&&frontend_session_recent_count(session)){*request=*frontend_session_recent(session,0);return FRONTEND_IDLE_OPEN;}
-    if(!(SDL_WasInit(SDL_INIT_VIDEO)&SDL_INIT_VIDEO)&&SDL_InitSubSystem(SDL_INIT_VIDEO)!=0){if(error&&error_size)snprintf(error,error_size,"Could not start desktop interface: %s",SDL_GetError());return FRONTEND_IDLE_ERROR;}
-    *window=SDL_CreateWindow("Cupid NES",SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED,(int)settings->window_width,(int)settings->window_height,SDL_WINDOW_SHOWN|SDL_WINDOW_RESIZABLE|SDL_WINDOW_ALLOW_HIGHDPI);if(!*window){if(error&&error_size)snprintf(error,error_size,"Could not create window: %s",SDL_GetError());return FRONTEND_IDLE_ERROR;}
-    *renderer=SDL_CreateRenderer(*window,-1,SDL_RENDERER_ACCELERATED|SDL_RENDERER_PRESENTVSYNC);if(!*renderer)*renderer=SDL_CreateRenderer(*window,-1,SDL_RENDERER_SOFTWARE);if(!*renderer){if(error&&error_size)snprintf(error,error_size,"Could not create renderer: %s",SDL_GetError());SDL_DestroyWindow(*window);*window=NULL;return FRONTEND_IDLE_ERROR;}
-    FrontendDesktopUi ui;frontend_desktop_init(&ui,*window,*renderer,settings,NULL,NULL,settings_path);bool running=true;while(running){SDL_Event e;while(SDL_PollEvent(&e)){if(e.type==SDL_QUIT){running=false;break;}if(frontend_desktop_handle_event(&ui,&e))continue;if(e.type==SDL_MOUSEBUTTONDOWN&&e.button.button==SDL_BUTTON_LEFT){int ww,wh;SDL_GetWindowSize(*window,&ww,&wh);SDL_Rect open={ww/2-110,wh/2-50,220,42},set={ww/2-110,wh/2+6,220,34};if(inside(e.button.x,e.button.y,open)){char path[FRONTEND_IMAGE_PATH_MAX];if(frontend_open_image_dialog(path,sizeof(path),error,error_size)&&frontend_image_request_init(request,path)){frontend_desktop_update_window_settings(&ui);return FRONTEND_IDLE_OPEN;}if(error&&error_size&&error[0])copy_status(&ui,error);}else if(inside(e.button.x,e.button.y,set))set_settings_open(&ui,true);else{size_t count=frontend_session_recent_count(session);for(size_t i=0;i<count&&i<6;i++){SDL_Rect rr={ww/2-220,wh/2+60+(int)i*28,440,24};if(inside(e.button.x,e.button.y,rr)){*request=*frontend_session_recent(session,i);frontend_desktop_update_window_settings(&ui);return FRONTEND_IDLE_OPEN;}}}}}int ww,wh;SDL_GetWindowSize(*window,&ww,&wh);SDL_SetRenderDrawColor(*renderer,18,20,24,255);SDL_RenderClear(*renderer);frontend_draw_text(*renderer,ww/2-frontend_text_width("Cupid NES",2)/2,wh/2-125,2,"Cupid NES",245,245,245,255);SDL_Rect open={ww/2-110,wh/2-50,220,42};fill(*renderer,open,70,80,100,255);frontend_draw_text(*renderer,open.x+58,open.y+15,1,"Open Game...",245,245,245,255);SDL_Rect set={ww/2-110,wh/2+6,220,34};fill(*renderer,set,55,60,70,255);frontend_draw_text(*renderer,set.x+70,set.y+12,1,"Settings",235,235,235,255);for(size_t i=0;i<frontend_session_recent_count(session)&&i<6;i++){const FrontendImageRequest*r=frontend_session_recent(session,i);char line[80];snprintf(line,sizeof(line),"Recent: %.58s",r->archive_member[0]?r->archive_member:r->path);frontend_draw_text(*renderer,ww/2-210,wh/2+68+(int)i*28,1,line,180,205,235,255);}if(ui.settings_open)render_settings(&ui);if(ui.status[0]&&SDL_GetTicks()<ui.status_until)frontend_draw_text(*renderer,12,wh-20,1,ui.status,255,210,120,255);SDL_RenderPresent(*renderer);SDL_Delay(10);}frontend_desktop_update_window_settings(&ui);frontend_desktop_shutdown(&ui);SDL_DestroyRenderer(*renderer);SDL_DestroyWindow(*window);*renderer=NULL;*window=NULL;if(error&&error_size)error[0]='\0';return FRONTEND_IDLE_QUIT;
-}

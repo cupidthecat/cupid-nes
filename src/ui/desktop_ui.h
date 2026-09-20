@@ -37,6 +37,9 @@ typedef struct {
     FrontendSettings staged;
     bool settings_open;
     bool info_open;
+    bool log_open;
+    unsigned log_count;
+    char log_lines[12][256];
     bool panel_open;
     bool quit_requested;
     bool paused_for_ui;
@@ -47,6 +50,11 @@ typedef struct {
     bool confirm_restore_all;
     int open_menu;
     int menu_row;
+    int menu_scroll;
+    int panel_row;
+    int panel_scroll;
+    int settings_focus;
+    int settings_button;
     int settings_category;
     int settings_row;
     int settings_scroll;
@@ -84,6 +92,8 @@ void frontend_desktop_render(FrontendDesktopUi *ui, int video_width, int video_h
 void frontend_desktop_compute_game_rect(int window_width, int window_height,
                                         int video_width, int video_height,
                                         bool integer_scaling, SDL_Rect *rect);
+void frontend_desktop_game_rect(const FrontendDesktopUi *ui, int ww, int wh,
+                                 int vw, int vh, bool integer_scaling, SDL_Rect *rect);
 bool frontend_desktop_input_captured(const FrontendDesktopUi *ui);
 bool frontend_desktop_quit_requested(const FrontendDesktopUi *ui);
 void frontend_desktop_set_status(FrontendDesktopUi *ui, const char *message);

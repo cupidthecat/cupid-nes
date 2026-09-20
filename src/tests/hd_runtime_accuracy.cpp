@@ -12,6 +12,7 @@
 extern "C" {
 #include "../ui/frontend_panels.h"
 #include "../ui/hd_pack_frontend.h"
+#include "../ui/app_paths.h"
 #include "board_tests.h"
 }
 
@@ -404,6 +405,8 @@ int install_discovery_switch_and_panel() {
     frontend_panels_reset();
     NesHdFrontend *frontend = nes_hd_frontend_create(runtime, error, sizeof(error));
     CHECK(frontend != nullptr);
+    CHECK(frontend_paths_init(root_text.c_str(),error,sizeof(error)));
+    CHECK(nes_hd_frontend_restore_preferences(frontend,game.rom_sha1,error,sizeof(error)));
     FrontendPanelInfo panel_info{};
     CHECK(frontend_panel_get(HD_PACK_PANEL, &panel_info));
     CHECK((panel_info.flags & FRONTEND_PANEL_NEEDS_SESSION) != 0);
@@ -480,6 +483,9 @@ int install_discovery_switch_and_panel() {
     CHECK(frontend_panel_action(HD_PACK_PANEL, HD_CONTROL_ENABLED,
                                 nullptr, 0, error, sizeof(error)));
     CHECK(nes_hd_runtime_info(runtime, &info) && !info.enabled);
+    CHECK(nes_hd_runtime_enable(runtime,true,error,sizeof(error)));
+    CHECK(nes_hd_frontend_restore_preferences(frontend,game.rom_sha1,error,sizeof(error)));
+    CHECK(nes_hd_runtime_info(runtime,&info) && !info.enabled && info.pack_loaded);
     CHECK(frontend_panel_action(HD_PACK_PANEL, HD_CONTROL_RESCAN,
                                 nullptr, -1, error, sizeof(error)));
 
@@ -488,6 +494,7 @@ int install_discovery_switch_and_panel() {
     CHECK(model.count == 13 && model.status != nullptr);
 
     nes_hd_frontend_destroy(frontend);
+    frontend_paths_shutdown();
     CHECK(!frontend_panel_get(HD_PACK_PANEL, &panel_info));
     frontend_panels_reset();
     nes_hd_runtime_destroy(runtime);

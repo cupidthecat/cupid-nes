@@ -253,7 +253,7 @@ static bool activate_request(FrontendSessionActions *actions,
 
     const char *storage_identity = session_storage_identity(actions->session);
     bool storage_ready = joypad_persistent_configure(storage_identity);
-    bool powered = frontend_machine_power_cycle();
+    bool powered = frontend_settings_prepare_power(actions->settings) && frontend_machine_power_cycle();
     char recent_error[160] = {0};
     if (actions->settings)
         frontend_session_trim_recent(actions->session, actions->settings->recent_file_limit);
@@ -344,5 +344,14 @@ bool frontend_session_action_open_path(FrontendSessionActions *actions, const ch
         }
         frontend_image_request_apply_settings(&request, actions->settings);
     }
+    return activate_request(actions, &request, false, error, error_size);
+}
+
+bool frontend_session_action_open_recent(FrontendSessionActions *actions, size_t index,
+                                         char *error, size_t error_size) {
+    const FrontendImageRequest *recent = actions
+        ? frontend_session_recent(actions->session, index) : NULL;
+    if (!recent) { set_error(error, error_size, "Recent image is unavailable"); return false; }
+    FrontendImageRequest request = *recent;
     return activate_request(actions, &request, false, error, error_size);
 }

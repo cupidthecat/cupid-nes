@@ -47,6 +47,13 @@ typedef enum {
     FRONTEND_SHORTCUT_SPEED_NORMAL,
     FRONTEND_SHORTCUT_SPEED_DOUBLE,
     FRONTEND_SHORTCUT_OPEN,
+    FRONTEND_SHORTCUT_SAVE_SLOT,
+    FRONTEND_SHORTCUT_LOAD_SLOT,
+    FRONTEND_SHORTCUT_SAVE_FILE,
+    FRONTEND_SHORTCUT_LOAD_FILE,
+    FRONTEND_SHORTCUT_REWIND,
+    FRONTEND_SHORTCUT_RUNAHEAD,
+    FRONTEND_SHORTCUT_MUTE,
     FRONTEND_SHORTCUT_COUNT
 } FrontendShortcut;
 
@@ -87,7 +94,10 @@ typedef enum {
     FRONTEND_OVERRIDE_PPU_PALETTE = 1u << 21,
     FRONTEND_OVERRIDE_PPU_RESET = 1u << 22,
     FRONTEND_OVERRIDE_MMC3_REVISION = 1u << 23,
-    FRONTEND_OVERRIDE_CART_DIPS = 1u << 24
+    FRONTEND_OVERRIDE_CART_DIPS = 1u << 24,
+    FRONTEND_OVERRIDE_STARTUP = 1u << 25,
+    FRONTEND_OVERRIDE_POWER_SEED = 1u << 26,
+    FRONTEND_OVERRIDE_VS_DIPS = 1u << 27
 } FrontendSettingOverride;
 
 typedef enum {
@@ -187,6 +197,8 @@ bool frontend_settings_save(const char *path, const FrontendSettings *settings,
                             FrontendSettingsReport *report);
 bool frontend_settings_validate(const FrontendSettings *settings,
                                 char *error, size_t error_size);
+bool frontend_settings_prepare_power(const FrontendSettings *settings);
+bool frontend_settings_validate_firmware(const FrontendSettings *settings, char *error, size_t error_size);
 bool frontend_settings_apply_core(const FrontendSettings *settings,
                                   char *error, size_t error_size);
 

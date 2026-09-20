@@ -817,7 +817,6 @@ NesNetplayResult nes_netplay_poll(NesNetplaySession *session, unsigned timeout_m
     if (!session) return NES_NETPLAY_INVALID_ARGUMENT;
     if (session->mode != NES_NETPLAY_CONNECTED)
         return netplay_set_result(session, NES_NETPLAY_CONFLICT);
-    if (session->pending_packet.type) return netplay_set_result(session, NES_NETPLAY_OK);
     NesNetplayIoResult available = nes_netplay_socket_wait_readable(session->peer, timeout_ms);
     if (available == NES_NETPLAY_IO_TIMEOUT) return netplay_set_result(session, NES_NETPLAY_OK);
     if (available != NES_NETPLAY_IO_OK)

@@ -102,6 +102,7 @@ int test_input_accuracy(void);
 int test_vs_accuracy(void);
 int test_epsm_accuracy(void);
 int test_frontend_accuracy(void);
+int test_desktop_accuracy(void);
 int test_board_state_accuracy(void);
 int test_state_accuracy(void);
 int test_state_ui_accuracy(void);
@@ -245,6 +246,7 @@ int main(int argc, char **argv) {
     failures += test_debugger_accuracy();
     failures += test_cheat_accuracy();
     failures += test_frontend_accuracy();
+    failures += test_desktop_accuracy();
     failures += test_hd_pack_accuracy();
     failures += test_hd_renderer_accuracy();
     failures += test_hd_runtime_accuracy();

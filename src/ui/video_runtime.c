@@ -106,7 +106,8 @@ bool frontend_video_runtime_attach_hd(FrontendVideoRuntime *runtime,
     };
     if (!nes_hd_runtime_set_game(runtime->hd, &game, error, error_size)) return false;
     nes_hd_frontend_set_capture_source(runtime->hd_frontend, NULL);
-    return nes_hd_runtime_discover(runtime->hd, error, error_size);
+    return nes_hd_runtime_discover(runtime->hd, error, error_size)
+        && nes_hd_frontend_restore_preferences(runtime->hd_frontend,image->sha1,error,error_size);
 }
 
 void frontend_video_runtime_set_composite(FrontendVideoRuntime *runtime, bool composite) {

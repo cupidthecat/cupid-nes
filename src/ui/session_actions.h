@@ -37,6 +37,8 @@ void frontend_image_request_apply_settings(FrontendImageRequest *request,
                                            const FrontendSettings *settings);
 bool frontend_session_action_open(void *userdata, char *error, size_t error_size);
 bool frontend_session_action_reload(void *userdata, char *error, size_t error_size);
+bool frontend_session_action_open_recent(FrontendSessionActions *actions, size_t index,
+                                         char *error, size_t error_size);
 bool frontend_session_action_open_path(FrontendSessionActions *actions, const char *path,
                                        char *error, size_t error_size);
 

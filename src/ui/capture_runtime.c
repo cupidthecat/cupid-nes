@@ -57,6 +57,7 @@ static bool validate_path(void *context, const char *path, char *error, size_t e
 
 static bool before_machine_change(void *context, char *error, size_t error_size) {
     NesCaptureRuntime *capture = context;
+    if (capture->devices && !frontend_devices_finish(capture->devices, error, error_size)) return false;
     NesFileResult result = nes_capture_session_stop(&capture->frontend.session);
     nes_capture_frontend_refresh(&capture->frontend);
     if (result != NES_FILE_OK && error && error_size)

@@ -60,6 +60,7 @@
 #include "ui/host_input.h"
 #include "ui/peripheral_input.h"
 #include "ui/desktop_ui.h"
+#include "ui/device_frontend.h"
 #include "ui/state_runtime.h"
 #include "ui/debug_frontend.h"
 #include "ui/cheat_frontend.h"
@@ -84,12 +85,14 @@ typedef struct {
     DebugFrontend *debug;
     CheatFrontend *cheats;
     NesCaptureRuntime *capture;
+    FrontendDeviceRuntime *devices;
     bool image_changed;
 } LiveFrontend;
 
 static void live_image_changed(void *context) {
     LiveFrontend *live = context;
     if (!live) return;
+    if (live->devices) frontend_devices_session_changed(live->devices);
     if (live->music) nsf_player_image_changed(live->music);
     if (live->debug) debug_frontend_image_changed(live->debug);
     if (live->cheats) cheat_frontend_image_changed(live->cheats, rom_file_crc32());
@@ -100,6 +103,7 @@ static void live_image_changed(void *context) {
 static void live_state_restored(void *context) {
     LiveFrontend *live = context;
     if (!live) return;
+    if (live->devices) frontend_devices_session_changed(live->devices);
     if (live->music) nsf_player_image_changed(live->music);
     if (live->capture) nes_capture_frontend_refresh(&live->capture->frontend);
 }
@@ -218,6 +222,7 @@ static int application_main(int argc, char *argv[]) {
             }
             startup_cpu_offset = (unsigned)cpu_offset;
             startup_ppu_phase = (unsigned)ppu_phase;
+            frontend_cli_overrides |= FRONTEND_OVERRIDE_STARTUP;
             startup_phase_set = true;
         } else if (strcmp(argv[i], "--startup-seed") == 0) {
             if (++i == argc || startup_phase_set || startup_seed_set) {
@@ -232,6 +237,7 @@ static int application_main(int argc, char *argv[]) {
                 return 1;
             }
             startup_seed = (uint32_t)seed;
+            frontend_cli_overrides |= FRONTEND_OVERRIDE_STARTUP;
             startup_seed_set = true;
         } else if (strcmp(argv[i], "--ram-power-on") == 0) {
             if (++i == argc || !nes_set_ram_power_on_state_name(argv[i])) {
@@ -252,6 +258,7 @@ static int application_main(int argc, char *argv[]) {
                 return 1;
             }
             power_on_seed = (uint32_t)seed;
+            frontend_cli_overrides |= FRONTEND_OVERRIDE_POWER_SEED;
             power_on_seed_set = true;
         } else if (strcmp(argv[i], "--random-vblank") == 0) {
             nes_set_randomize_vblank(true);
@@ -364,6 +371,7 @@ static int application_main(int argc, char *argv[]) {
                 return 1;
             }
             vs_dips = (uint16_t)value;
+            frontend_cli_overrides |= FRONTEND_OVERRIDE_VS_DIPS;
             vs_dip_set = true;
         } else if (strcmp(argv[i], "--barcode") == 0) {
             if (++i == argc) {
@@ -596,12 +604,17 @@ static int application_main(int argc, char *argv[]) {
     printf("Game database: %s: %s\n", database_status.path, database_status.message);
     if (power_on_seed_set) nes_seed_power_on_random(power_on_seed);
     printf("Loading ROM: %s\n", rom_path);
-    if (!frontend_session_open(&frontend_session, &startup_request,
-                               path_error, sizeof(path_error))) {
-        fprintf(stderr, "Failed to load image: %s\n",
-                path_error[0] ? path_error : "unknown image error");
-        frontend_paths_shutdown();
-        return 1;
+    while (!frontend_session_open(&frontend_session, &startup_request,
+                                   path_error, sizeof(path_error))) {
+        fprintf(stderr, "Failed to load image: %s\n",path_error[0]?path_error:"unknown image error");
+        if (!window) {frontend_paths_shutdown();return 1;}
+        bool reopen=frontend_settings.reopen_last_image;
+        frontend_settings.reopen_last_image=false;
+        FrontendIdleResult idle=frontend_desktop_idle_open(&frontend_settings,&frontend_session,
+            settings_path,&startup_request,&window,&renderer,path_error,sizeof(path_error));
+        frontend_settings.reopen_last_image=reopen;
+        if(idle!=FRONTEND_IDLE_OPEN){frontend_paths_shutdown();return idle==FRONTEND_IDLE_ERROR?1:0;}
+        if(!startup_request.save_identity[0])frontend_image_request_apply_settings(&startup_request,&frontend_settings);
     }
     rom_path = frontend_session.current.path;
     fds_bios_path = frontend_session.current.fds_bios_path[0]
@@ -641,6 +654,7 @@ static int application_main(int argc, char *argv[]) {
         unload_rom();
         return 1;
     }
+    if (!vs_dip_set && vs_enabled()) (void)vs_set_dip_switches(frontend_settings.vs_dips);
     if (vs_dip_set && !vs_set_dip_switches(vs_dips)) {
         fprintf(stderr, "--vs-dip requires a VS System image\n");
         unload_rom();
@@ -792,6 +806,7 @@ static int application_main(int argc, char *argv[]) {
                             audio_dev ? have.freq : (int)frontend_settings.audio_sample_rate,
                             rom_path, fds_bios_path, studybox_bios_path,
                             &fds_frontend_side);
+    execution_runtime.settings = &frontend_settings;
     frontend_audio_runtime_set_execution(&audio_runtime, &execution_runtime);
     if (!frontend_execution_set_speeds(&execution_runtime, frontend_settings.speed,
                                        frontend_settings.fast_forward_speed)) {
@@ -818,6 +833,14 @@ static int application_main(int argc, char *argv[]) {
     frontend_desktop_set_runtime(&desktop_ui, &audio_runtime, &video_runtime);
     if (running && !frontend_desktop_register_commands(&desktop_ui)) {
         fprintf(stderr, "Could not initialize desktop commands\n");
+        running = false;
+    }
+    FrontendDeviceRuntime device_runtime;
+    frontend_devices_init(&device_runtime, &execution_runtime, &frontend_settings, &fds_frontend_side);
+    if (!frontend_devices_set_tape_paths(&device_runtime, tape_play_path, tape_record_path,
+                                          path_error, sizeof(path_error))
+        || !frontend_devices_register(&device_runtime)) {
+        frontend_desktop_set_status(&desktop_ui, path_error);
         running = false;
     }
     StateRuntime state_runtime;
@@ -860,6 +883,12 @@ static int application_main(int argc, char *argv[]) {
         fprintf(stderr, "Could not initialize capture controls\n");
         running = false;
     }
+    capture_runtime.devices = &device_runtime;
+    const char *device_protected_paths[] = {epsm_adpcm_path, fcns_kanji_path, game_db_path,
+        frontend_settings.state_file_path, frontend_settings.capture_paths[0],
+        frontend_settings.capture_paths[1], frontend_settings.capture_paths[2]};
+    frontend_devices_set_protected_paths(&device_runtime, device_protected_paths,
+        sizeof(device_protected_paths) / sizeof(device_protected_paths[0]));
     nes_capture_runtime_set_video(&capture_runtime, &video_runtime);
     if (running) {
         capture_runtime.frontend.options = frontend_settings.capture;
@@ -880,7 +909,7 @@ static int application_main(int argc, char *argv[]) {
     nes_hd_frontend_bind_execution(video_runtime.hd_frontend, &execution_runtime);
     LiveFrontend live = {
         .music = &music_player, .debug = debug_frontend, .cheats = cheat_frontend,
-        .capture = &capture_runtime
+        .capture = &capture_runtime, .devices = &device_runtime
     };
     frontend_session_actions_set_image_changed(&session_actions, live_image_changed, &live);
     state_runtime_set_restored(&state_runtime, live_state_restored, &live);
@@ -915,7 +944,7 @@ static int application_main(int argc, char *argv[]) {
                 uint32_t buttons = SDL_GetMouseState(&mouse_x, &mouse_y);
                 SDL_GetWindowSize(window, &window_width, &window_height);
                 SDL_Rect game_rect;
-                frontend_desktop_compute_game_rect(window_width, window_height,
+                frontend_desktop_game_rect(&desktop_ui, window_width, window_height,
                     video_width, video_height, frontend_settings.integer_scaling, &game_rect);
                 bool pointer_on_screen = mouse_x >= game_rect.x && mouse_y >= game_rect.y
                     && mouse_x < game_rect.x + game_rect.w && mouse_y < game_rect.y + game_rect.h;
@@ -969,7 +998,7 @@ static int application_main(int argc, char *argv[]) {
                 if (capture_result != NES_FILE_OK) {
                     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Capture Save Error",
                         capture_runtime.frontend.session.error, window);
-                } else if (!finish_tape_capture(tape_record_path)) {
+                } else if (!frontend_devices_finish(&device_runtime, path_error, sizeof(path_error))) {
                     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Tape Save Error",
                         "The tape recording could not be saved. The emulator will remain open.", window);
                 } else if (!rom_flush_persistent()) {
@@ -982,7 +1011,13 @@ static int application_main(int argc, char *argv[]) {
             }
             if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
                 && e.key.windowID == SDL_GetWindowID(window)
-                && family_basic_key_event(&e.key, tape_play_path, tape_record_path,
+                && frontend_devices_handle_tape_key(&device_runtime, &e.key, path_error, sizeof(path_error))) {
+                if (path_error[0]) frontend_desktop_set_status(&desktop_ui, path_error);
+                continue;
+            }
+            if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
+                && e.key.windowID == SDL_GetWindowID(window)
+                && family_basic_key_event(&e.key, NULL, NULL,
                                           cpu_total_cycles)) continue;
             if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
                 && e.key.windowID == SDL_GetWindowID(window)
@@ -1162,6 +1197,7 @@ static int application_main(int argc, char *argv[]) {
             nes_capture_frontend_begin_frame(&capture_runtime.frontend);
         uint64_t frame_start_cycles = cpu_total_cycles;
         bool ran_frame = frontend_execution_run_frame(&execution_runtime);
+        if (ran_frame) frontend_devices_frame_complete(&device_runtime);
         uint64_t frame_elapsed_cycles = ran_frame && cpu_total_cycles >= frame_start_cycles
             ? cpu_total_cycles - frame_start_cycles : 0;
         char video_error[192] = {0};
@@ -1203,7 +1239,7 @@ static int application_main(int argc, char *argv[]) {
         int ww = 0, hh = 0;
         SDL_GetWindowSize(window, &ww, &hh);
         SDL_Rect game_rect;
-        frontend_desktop_compute_game_rect(ww, hh, video_width, video_height,
+        frontend_desktop_game_rect(&desktop_ui, ww, hh, video_width, video_height,
                                            frontend_settings.integer_scaling, &game_rect);
         SDL_RenderCopy(renderer, frontend_video_runtime_texture(&video_runtime), NULL, &game_rect);
         if (palette_tool_is_visible()) { palette_tool_draw(renderer, ww, hh); }
@@ -1239,6 +1275,8 @@ static int application_main(int argc, char *argv[]) {
     frontend_desktop_update_window_settings(&desktop_ui);
     bool capture_saved = nes_capture_runtime_shutdown(&capture_runtime) == NES_FILE_OK;
     if (!capture_saved) fprintf(stderr, "%s\n", capture_runtime.frontend.session.error);
+    bool tape_saved = frontend_devices_finish(&device_runtime, path_error, sizeof(path_error));
+    frontend_devices_unregister();
     state_runtime_shutdown(&state_runtime);
     frontend_execution_shutdown(&execution_runtime);
     cheat_frontend_destroy(cheat_frontend);
@@ -1252,7 +1290,6 @@ static int application_main(int argc, char *argv[]) {
     frontend_audio_runtime_shutdown(&audio_runtime);
     apu_audio_shutdown_state(&apu);
     frontend_host_input_shutdown();
-    bool tape_saved = finish_tape_capture(tape_record_path);
     bool tape_failed = family_basic_tape_failed();
     bool peripheral_saved = joypad_persistent_shutdown();
     if (tape_failed) fprintf(stderr, "Tape recording stopped because the capture buffer could not grow\n");

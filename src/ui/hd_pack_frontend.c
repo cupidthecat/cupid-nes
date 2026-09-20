@@ -7,6 +7,8 @@
 #include "frontend_panels.h"
 #include "frontend_execution.h"
 #include "output_guard.h"
+#include "app_paths.h"
+#include "../util/file_io.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,6 +25,7 @@ struct NesHdFrontend {
     char install_name[NES_HD_PACK_NAME_MAX];
     char export_path[32768];
     char capture_path[32768];
+    char preference_path[4096];
     NesHdFrameSource capture_source;
     bool capture_source_valid;
     bool capture_armed;
@@ -126,6 +129,42 @@ static bool snapshot(void *userdata, FrontendPanelModel *model,
     return true;
 }
 
+static bool remember(NesHdFrontend *frontend, bool changed, char *error, size_t size) {
+    if(!changed || !frontend->preference_path[0])return changed;
+    NesHdRuntimeInfo info;
+    if(!nes_hd_runtime_info(frontend->runtime,&info))return false;
+    const char *path=info.active_path?info.active_path:"";
+    size_t length=strlen(path);
+    if(length>32767)return false;
+    uint8_t *data=malloc(length+9);
+    if(!data)return false;
+    memcpy(data,"CHDP1",5);data[5]=info.enabled?1:0;data[6]=(uint8_t)length;data[7]=(uint8_t)(length>>8);
+    memcpy(data+8,path,length+1);
+    NesFileResult result=nes_file_write_atomic(frontend->preference_path,data,length+9);
+    free(data);
+    if(result!=NES_FILE_OK){set_error(error,size,"HD pack is active, but its preference could not be saved");return false;}
+    return true;
+}
+
+bool nes_hd_frontend_restore_preferences(NesHdFrontend *frontend,const char *sha1,char *error,size_t size) {
+    if(!frontend)return false;
+    frontend->preference_path[0]='\0';
+    if(!sha1 || strlen(sha1)!=40)return true;
+    for(unsigned i=0;i<40;++i)if(!strchr("0123456789abcdefABCDEF",sha1[i]))return false;
+    char name[80];snprintf(name,sizeof(name),"hd-%s.pref",sha1);
+    if(!frontend_paths_join(frontend->preference_path,sizeof(frontend->preference_path),name))return false;
+    uint8_t *data=NULL;size_t count=0;
+    NesFileResult result=nes_file_read_all(frontend->preference_path,32776,&data,&count);
+    if(result==NES_FILE_NOT_FOUND)return true;
+    bool valid=result==NES_FILE_OK && count>=9 && !memcmp(data,"CHDP1",5) && data[5]<=1;
+    size_t length=valid?(size_t)data[6]+((size_t)data[7]<<8):0;
+    valid=valid && count==length+9 && data[count-1]==0 && !memchr(data+8,0,length);
+    if(!valid){free(data);set_error(error,size,"The saved HD pack selection is invalid");return false;}
+    bool loaded=!length || nes_hd_runtime_load(frontend->runtime,(char *)data+8,error,size);
+    bool enabled=loaded && (!length || nes_hd_runtime_enable(frontend->runtime,data[5]!=0,error,size));
+    free(data);return enabled;
+}
+
 static bool action(void *userdata, unsigned control_id, const char *value, int selected,
                    char *error, size_t error_size) {
     NesHdFrontend *frontend = userdata;
@@ -176,13 +215,13 @@ static bool action(void *userdata, unsigned control_id, const char *value, int s
             return true;
         }
         case HD_CONTROL_ENABLED:
-            return nes_hd_runtime_enable(frontend->runtime, selected != 0, error, error_size);
+            return remember(frontend,nes_hd_runtime_enable(frontend->runtime, selected != 0, error, error_size),error,error_size);
         case HD_CONTROL_PACK:
             if (selected < 0) {
                 set_error(error, error_size, "No HD pack was selected");
                 return false;
             }
-            return nes_hd_runtime_switch(frontend->runtime, (size_t)selected, error, error_size);
+            return remember(frontend,nes_hd_runtime_switch(frontend->runtime, (size_t)selected, error, error_size),error,error_size);
         case HD_CONTROL_RESCAN:
             return nes_hd_runtime_discover(frontend->runtime, error, error_size);
         case HD_CONTROL_INSTALL: {
@@ -194,7 +233,7 @@ static bool action(void *userdata, unsigned control_id, const char *value, int s
                 format_path(frontend->status, sizeof(frontend->status), "Installed ", installed);
                 (void)nes_hd_runtime_discover(frontend->runtime, NULL, 0);
             }
-            return ok;
+            return remember(frontend,ok,error,error_size);
         }
         case HD_CONTROL_EXPORT:
             if (!frontend_output_path_allowed(frontend->export_path, frontend->execution,
