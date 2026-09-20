@@ -67,6 +67,7 @@ bool frontend_database_load(const char *explicit_path, const char *data_director
     }
     status->outcome = FRONTEND_DATABASE_LOADED;
     status->entry_count = game_db_entry_count();
-    snprintf(status->message, sizeof(status->message), "Loaded %zu entries", status->entry_count);
+    snprintf(status->message, sizeof(status->message), "Loaded %zu %s", status->entry_count,
+             status->entry_count == 1 ? "entry" : "entries");
     return true;
 }

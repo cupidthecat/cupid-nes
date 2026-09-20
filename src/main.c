@@ -45,6 +45,7 @@
 #include "ui/nsf_frontend.h"
 #include "ui/frontend_execution.h"
 #include "ui/app_paths.h"
+#include "ui/game_database.h"
 #include "system/timing.h"
 #include "system/hardware.h"
 #include "system/vs_system.h"
@@ -828,7 +829,6 @@ int main(int argc, char *argv[]) {
            ppu_reset_suppression_enabled() ? "enabled" : "disabled");
     printf("MMC3 revision: %s\n", cart_mmc3_revision_name());
     printf("Input adapter: %s\n", joypad_adapter_name());
-    printf("Loading ROM: %s\n", rom_path);
     if (epsm_adpcm_path && !epsm_load_adpcm_file(epsm_adpcm_path)) {
         fprintf(stderr, "Could not load the 8 KiB YMF288 ADPCM ROM: %s\n", epsm_adpcm_path);
         return 1;
@@ -838,11 +838,15 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     rom_database_set_overrides(!disable_game_db_overrides);
-    if (game_db_path && !rom_database_load_file(game_db_path)) {
-        fprintf(stderr, "Could not load the game database: %s\n", game_db_path);
+    FrontendDatabaseStatus database_status;
+    if (!frontend_database_load(game_db_path, frontend_paths_data_dir(), &database_status)) {
+        fprintf(stderr, "Game database: %s: %s\n", database_status.path, database_status.message);
+        frontend_paths_shutdown();
         return 1;
     }
+    printf("Game database: %s: %s\n", database_status.path, database_status.message);
     if (power_on_seed_set) nes_seed_power_on_random(power_on_seed);
+    printf("Loading ROM: %s\n", rom_path);
     int load_result = fds_bios_path
         ? load_fds(rom_path, fds_bios_path, fds_start_write_protected)
         : studybox_bios_path ? load_studybox(rom_path, studybox_bios_path)

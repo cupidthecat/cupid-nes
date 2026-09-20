@@ -96,13 +96,16 @@ The emulator models the local cartridge, character-ROM interface, RAM banking, a
 
 ## Game database and headerless cartridges
 
-`--game-db FILE` loads an optional cartridge metadata database before the positional image. The file uses the 18-field CSV layout for CRC, system, board, PCB, chip, mapper, PRG ROM, CHR ROM, CHR RAM, work RAM, save RAM, battery, mirroring, input, bus conflicts, submapper, VS hardware type, and VS PPU model. ROM and RAM sizes are KiB unless prefixed with `b`, which records an exact byte count. Blank optional RAM fields on unvalidated legacy entries retain the cartridge header's normal RAM defaults.
+Cupid looks for `NesDB.txt` in its application data folder before loading an image. `--data-dir DIR` selects another data folder, and `--game-db FILE` takes precedence over that default. Startup output reports the selected path and whether the database loaded or the optional default was absent. A missing default allows normal image loading. An unreadable or malformed database, or a missing file explicitly selected with `--game-db`, stops startup with an error. Failed database replacements preserve the previous entries and the running machine.
+
+Database files are limited to 64 MiB and use the 18-field CSV layout for CRC, system, board, PCB, chip, mapper, PRG ROM, CHR ROM, CHR RAM, work RAM, save RAM, battery, mirroring, input, bus conflicts, submapper, VS hardware type, and VS PPU model. ROM and RAM sizes are KiB unless prefixed with `b`, which records an exact byte count. Blank optional RAM fields on unvalidated legacy entries retain the cartridge header's normal RAM defaults.
 
 For legacy iNES images, Cupid hashes the PRG+CHR payload after the header and optional trainer. A matching entry can correct the mapper, submapper, ROM sizes, supported RAM sizes, battery state, mirroring, regional or VS metadata, input type, board/chip information, and bus-conflict setting. NES 2.0 metadata keeps precedence over ordinary database corrections. `--no-game-db-overrides` disables corrections for headered legacy images.
 
 Headerless images use a separate whole-file CRC lookup. A matching database entry supplies the complete cartridge description needed to validate and load the payload. Headerless lookup remains available with `--no-game-db-overrides` because there is no image header to fall back to. Unknown headerless payloads and invalid database records are rejected without replacing an active cartridge. Startup output reports the selected metadata source together with whole-file, PRG, and PRG+CHR CRCs for cartridge images.
 
 ```sh
+./cupid-nes --data-dir "cupid-data" "game.nes"
 ./cupid-nes --game-db "NesDB.txt" "game.nes"
 ./cupid-nes --game-db "NesDB.txt" --no-game-db-overrides "headerless.bin"
 ```

@@ -54,6 +54,8 @@ jobs:
         run: make -j2 CC='${{ matrix.compiler }}' CXX='${{ matrix.cpp_compiler }}' CFLAGS='${{ matrix.flags }}' all test
       - name: Check region launch options
         run: python3 scripts/check-region-cli.py ./cupid-nes
+      - name: Check game database discovery
+        run: python3 scripts/check-game-database-cli.py ./cupid-nes
       - name: Check CPU trace and diagnostic ROMs
         run: python3 scripts/run-diagnostics.py build/accuracy-tests build/diagnostic-roms
       - name: Check all 144 AccuracyCoin tests
