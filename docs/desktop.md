@@ -25,7 +25,10 @@ Settings, game information, the palette editor, and feature panels open in separ
 Drag their title bars to move them beside the game or onto another display.
 Opening a debugger or inspection tool leaves emulation running. A breakpoint,
 Pause, or a stepping command can still stop it. Moving focus between Cupid
-windows does not trigger the pause-on-focus-loss preference.
+windows does not trigger the pause-on-focus-loss preference. Each tool shows
+the active game, region, and execution state in its status bar, and its FPS
+counter uses the game window's measurement. These values follow game changes
+while the tool remains open.
 
 ## Settings
 

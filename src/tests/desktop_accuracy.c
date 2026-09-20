@@ -549,6 +549,9 @@ static void cheat_prompt(FrontendDesktopUi *ui) {
     FrontendDesktopUi *tool = ui->tools;
     CHECK(tool && tool->edit_text_active && tool->prompt_command == CHEATS_ADD_COMMAND);
     if (tool) {
+        CHECK(desktop_clay_contains_text(tool->clay, "Synthetic cartridge"));
+        CHECK(!desktop_clay_contains_text(tool->clay, "No game loaded"));
+
         strcpy(tool->edit_text, "invalid");
         key(tool, SDL_SCANCODE_RETURN, KMOD_NONE);
         CHECK(tool->edit_text_active && tool->status[0] && cheats_count() == 0);
@@ -605,6 +608,12 @@ static void window_regressions(FrontendDesktopUi *ui) {
     CHECK(frontend_machine_power_cycle());
     FrontendExecutionRuntime runtime;
     frontend_execution_init(&runtime, NULL, 44100, NULL, NULL, NULL, NULL);
+    FrontendSession session = {.active = true};
+    snprintf(session.current_result.title, sizeof(session.current_result.title), "Synthetic cartridge");
+    FrontendSessionActions actions = {.session = &session, .execution = &runtime};
+    ui->sessions = &actions;
+    ui->fps = 59.9;
+    ui->settings->show_fps = true;
     ui->execution = &runtime;
     runtime.settings = ui->settings;
     CHECK(frontend_execution_register_commands(&runtime));
@@ -617,6 +626,20 @@ static void window_regressions(FrontendDesktopUi *ui) {
     if (!tool) {
         return;
     }
+    /* Check the first native paint, which previously received an empty session. */
+    CHECK(desktop_clay_contains_text(tool->clay, "Synthetic cartridge"));
+    CHECK(desktop_clay_contains_text(tool->clay, "Running"));
+    CHECK(desktop_clay_contains_text(tool->clay, "59.9 FPS"));
+    CHECK(!desktop_clay_contains_text(tool->clay, "No game loaded"));
+    strcpy(session.current_result.title, "Replacement cartridge");
+    desktop_layout(tool, "", "", "");
+    CHECK(desktop_clay_contains_text(tool->clay, "Replacement cartridge"));
+    CHECK(!desktop_clay_contains_text(tool->clay, "Synthetic cartridge"));
+    session.active = false;
+    desktop_layout(tool, "", "", "");
+    CHECK(desktop_clay_contains_text(tool->clay, "No game loaded"));
+    session.active = true;
+    strcpy(session.current_result.title, "Synthetic cartridge");
     focus_event(ui, ui->window, false);
     focus_event(ui, tool->window, true);
     frontend_desktop_update_activity(ui);
@@ -657,6 +680,9 @@ static void window_regressions(FrontendDesktopUi *ui) {
     CHECK(!runtime.execution.fast_forward_held);
     key(ui, SDL_SCANCODE_P, KMOD_RCTRL);
     CHECK(runtime.execution.paused);
+    desktop_layout(tool, "", "", "");
+    CHECK(desktop_clay_contains_text(tool->clay, "Paused"));
+
     focus_event(ui, tool->window, false);
     frontend_desktop_update_activity(ui);
     focus_event(ui, tool->window, true);
@@ -723,6 +749,10 @@ static void window_regressions(FrontendDesktopUi *ui) {
             CHECK(frontend_execution_run_frame(&runtime));
         }
         CHECK(cpu_total_cycles > cycles && !frontend_execution_paused(&runtime));
+        CHECK(desktop_clay_contains_text(debug_window->clay, "Synthetic cartridge"));
+        CHECK(!desktop_clay_contains_text(debug_window->clay, "No game loaded"));
+        FrontendDesktopUi *viewer = desktop_open_window(ui, 1, DEBUGGER_VIEWERS_FRONTEND_PANEL);
+        CHECK(viewer && desktop_clay_contains_text(viewer->clay, "Synthetic cartridge"));
         render(debug_window);
         screenshot(debug_window, "build/desktop-debugger-window.png");
         CHECK(desktop_open_window(ui, 1, DEBUGGER_FRONTEND_PANEL) == debug_window);
@@ -768,6 +798,7 @@ static void window_regressions(FrontendDesktopUi *ui) {
     debugger_shutdown();
     frontend_execution_shutdown(&runtime);
     ui->execution = NULL;
+    ui->sessions = NULL;
     ui->native_windows = false;
 }
 

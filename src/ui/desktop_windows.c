@@ -2,8 +2,32 @@
 #include "desktop_internal.h"
 #include "frontend_panels.h"
 #include "palette_tool.h"
+#include "netplay_frontend.h"
+#include "../system/timing.h"
 #include <stdlib.h>
 #include <string.h>
+
+void desktop_window_context(const FrontendDesktopUi *ui, const char **title, const char **region, const char **state) {
+    const FrontendDesktopUi *root = ui->parent ? ui->parent : ui;
+    const FrontendSession *session = root->sessions ? root->sessions->session : NULL;
+    if (!session || !session->active) {
+        *title = NULL;
+        *region = "Ready";
+        *state = "Idle";
+        return;
+    }
+    *title = session->current_result.title;
+    *region = nes_region_name(nes_timing()->region);
+    const FrontendExecutionRuntime *execution = root->execution;
+    if (execution && (nes_netplay_mode(execution->netplay) == NES_NETPLAY_CONNECTED ||
+                      nes_netplay_mode(execution->netplay) == NES_NETPLAY_LISTENING)) {
+        *state = frontend_netplay_status(execution->network);
+    } else if (execution && execution->rewind_held) {
+        *state = "Rewinding";
+    } else {
+        *state = execution && frontend_execution_paused(execution) ? "Paused" : "Running";
+    }
+}
 
 FrontendDesktopUi *desktop_open_window(FrontendDesktopUi *ui, int kind, unsigned id) {
     FrontendDesktopUi *root = ui->parent ? ui->parent : ui;
@@ -120,7 +144,8 @@ bool desktop_route_window(FrontendDesktopUi *ui, const SDL_Event *event) {
     for (FrontendDesktopUi **link = &ui->tools; *link; link = &(*link)->next) {
         FrontendDesktopUi *tool = *link;
         bool controller = (event->type == SDL_CONTROLLERBUTTONDOWN || event->type == SDL_CONTROLLERBUTTONUP) &&
-                          tool->focused && (tool->settings_open || tool->edit_text_active || tool->capture_binding || tool->choice_open);
+                          tool->focused &&
+                          (tool->settings_open || tool->edit_text_active || tool->capture_binding || tool->choice_open);
         if (id != SDL_GetWindowID(tool->window) && !controller) {
             continue;
         }
@@ -151,7 +176,9 @@ void frontend_desktop_update_activity(FrontendDesktopUi *ui) {
         modal |= tool->settings_open;
     }
     unsigned reasons = modal && ui->settings->pause_on_ui ? FRONTEND_SUSPEND_UI : 0;
-    if (!focused && ui->settings->pause_on_focus_loss) reasons |= FRONTEND_SUSPEND_FOCUS;
+    if (!focused && ui->settings->pause_on_focus_loss) {
+        reasons |= FRONTEND_SUSPEND_FOCUS;
+    }
     frontend_execution_set_suspension(ui->execution, reasons);
 }
 

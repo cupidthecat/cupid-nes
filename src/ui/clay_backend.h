@@ -36,4 +36,6 @@ Clay_ElementId desktop_clay_hit(DesktopClay *clay, int kind, int index, int dire
 void desktop_clay_block(DesktopClay *clay);
 const DesktopHit *desktop_clay_at(DesktopClay *clay, float x, float y);
 bool desktop_clay_bounds(DesktopClay *clay, int kind, int index, int direction, SDL_FRect *bounds);
+/* Inspect text submitted by the most recent layout for render regression checks. */
+bool desktop_clay_contains_text(const DesktopClay *clay, const char *text);
 #endif

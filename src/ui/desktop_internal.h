@@ -29,6 +29,7 @@ void desktop_settings_button(FrontendDesktopUi *ui, int button);
 void desktop_binding_key(FrontendDesktopUi *ui, const SDL_KeyboardEvent *key);
 void desktop_binding_gamepad(FrontendDesktopUi *ui, SDL_GameControllerButton button);
 bool desktop_palette_visible(const FrontendDesktopUi *ui);
+void desktop_window_context(const FrontendDesktopUi *ui, const char **title, const char **region, const char **state);
 FrontendDesktopUi *desktop_open_window(FrontendDesktopUi *ui, int kind, unsigned id);
 bool desktop_route_window(FrontendDesktopUi *ui, const SDL_Event *event);
 void desktop_render_windows(FrontendDesktopUi *ui);

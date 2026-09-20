@@ -93,6 +93,12 @@ const DesktopHit *desktop_clay_at(DesktopClay *clay, float x, float y) {
     }
     return NULL;
 }
+bool desktop_clay_contains_text(const DesktopClay *clay, const char *text) {
+    if (!clay || !text || !*text) return false;
+    for (size_t offset = 0; offset < clay->used; offset += strlen(clay->strings + offset) + 1)
+        if (strstr(clay->strings + offset, text)) return true;
+    return false;
+}
 bool desktop_clay_bounds(DesktopClay *clay, int kind, int index, int direction, SDL_FRect *bounds) {
     if (!clay || !bounds)
         return false;

@@ -618,6 +618,7 @@ void desktop_layout(FrontendDesktopUi *ui, const char *title, const char *region
     if (!ui->clay) {
         return;
     }
+    if (ui->parent) desktop_window_context(ui, &title, &region, &run_state);
     int width, height;
     SDL_GetWindowSize(ui->window, &width, &height);
     float scale = ui->ui_scale > 0 ? ui->ui_scale : 1;
@@ -683,7 +684,7 @@ void desktop_layout(FrontendDesktopUi *ui, const char *title, const char *region
                 label(ui, message ? ui->status : status, 12, message ? accent : muted);
             }
             if (ui->settings && ui->settings->show_fps && !message) {
-                snprintf(status, sizeof(status), "%.1f FPS", ui->fps);
+                snprintf(status, sizeof(status), "%.1f FPS", ui->parent ? ui->parent->fps : ui->fps);
                 label(ui, status, 12, accent);
             }
         }
