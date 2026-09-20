@@ -14,7 +14,9 @@ CORE_SRC = src/system/timing.c src/system/hardware.c src/system/vs_system.c src/
            src/rom/vrc7_audio.c src/rom/emu2413.c \
            src/rom/eeprom.c src/rom/namco163.c src/rom/sunsoft5b.c \
            src/joypad/joypad.c src/joypad/family_basic.c src/joypad/special_peripherals.c \
-           src/apu/apu.c src/third_party/blip_buf.c src/video/ntsc_composite.c src/ui/palette_tool.c src/ui/nsf_frontend.c src/ui/game_database.c
+           src/apu/apu.c src/third_party/blip_buf.c src/video/ntsc_composite.c src/ui/palette_tool.c src/ui/nsf_frontend.c \
+           src/ui/frontend_commands.c src/ui/execution_control.c src/ui/machine_actions.c src/ui/app_paths.c \
+           src/ui/frontend_execution.c src/ui/frontend_panels.c src/ui/game_database.c
 CORE_CXX_SRC = src/apu/epsm.cpp src/third_party/ymfm/ymfm_opn.cpp \
                src/third_party/ymfm/ymfm_ssg.cpp src/third_party/ymfm/ymfm_adpcm.cpp \
                src/rom/game_db.cpp src/rom/boards/runtime.cpp src/rom/boards/factory.cpp
@@ -45,7 +47,7 @@ TEST_SRC = src/tests/accuracy_test.c src/tests/cpu_accuracy.c \
            src/tests/mmc5_extended_geometry_accuracy.c src/tests/native_ram_accuracy.c \
            src/tests/board_irem77_accuracy.c src/tests/default_prg_ram_geometry_accuracy.c \
            src/tests/native_chr_capacity_accuracy.c src/tests/native_mixed_chr_accuracy.c \
-           src/tests/board_nina_fme7_accuracy.c
+           src/tests/board_nina_fme7_accuracy.c src/tests/frontend_accuracy.c
 CORE_OBJ = $(CORE_SRC:.c=.o) $(CORE_CXX_SRC:.cpp=.o)
 TEST_OBJ = $(TEST_SRC:.c=.o)
 OBJ = $(CORE_OBJ) $(TEST_OBJ) src/main.o

@@ -43,6 +43,8 @@
 #include <math.h>
 #include "ui/palette_tool.h"
 #include "ui/nsf_frontend.h"
+#include "ui/frontend_execution.h"
+#include "ui/app_paths.h"
 #include "system/timing.h"
 #include "system/hardware.h"
 #include "system/vs_system.h"
@@ -489,6 +491,7 @@ int main(int argc, char *argv[]) {
     const char *epsm_adpcm_path = NULL;
     const char *fcns_kanji_path = NULL;
     const char *game_db_path = NULL;
+    const char *data_dir_override = NULL;
     bool disable_game_db_overrides = false;
     bool ntsc_composite_requested = false;
     for (int i = 1; i < argc; ++i) {
@@ -539,6 +542,12 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             game_db_path = argv[i];
+        } else if (strcmp(argv[i], "--data-dir") == 0) {
+            if (++i == argc || !argv[i][0]) {
+                fprintf(stderr, "--data-dir requires a directory\n");
+                return 1;
+            }
+            data_dir_override = argv[i];
         } else if (strcmp(argv[i], "--no-game-db-overrides") == 0) {
             disable_game_db_overrides = true;
         } else if (strcmp(argv[i], "--startup-phase") == 0) {
@@ -754,6 +763,7 @@ int main(int argc, char *argv[]) {
                "[--epsm-adpcm FILE] "
                "[--fcns-kanji FILE] "
                "[--game-db FILE] [--no-game-db-overrides] "
+               "[--data-dir DIR] "
                "[--startup-phase CPU:PPU | --startup-seed SEED] "
                "[--ram-power-on STATE] [--power-on-seed SEED] [--random-vblank] "
                "[--ppu-revision REVISION] [--ppu-oam-row-corruption] "
@@ -787,6 +797,12 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     joypad_set_configuration_overrides(input_overrides);
+
+    char path_error[160];
+    if (!frontend_paths_init(data_dir_override, path_error, sizeof(path_error))) {
+        fprintf(stderr, "%s\n", path_error);
+        return 1;
+    }
 
     printf("Console: %s\n", nes_console_model_name());
     printf("CPU revision: %s\n", apu_get_cpu_revision() == APU_CPU_REVISION_EARLY_2A03 ? "early-2a03" : "late-2a03");
@@ -1012,6 +1028,15 @@ int main(int argc, char *argv[]) {
 
     bool running = true;
     SDL_Event e;
+    FrontendExecutionRuntime execution_runtime;
+    frontend_execution_init(&execution_runtime, &audio_dev,
+                            audio_dev ? have.freq : AUDIO_SAMPLE_RATE,
+                            rom_path, fds_bios_path, studybox_bios_path,
+                            &fds_frontend_side);
+    if (!frontend_execution_register_commands(&execution_runtime)) {
+        fprintf(stderr, "Could not initialize frontend commands\n");
+        running = false;
+    }
 
     palette_tool_init();
     const double performance_frequency = (double)SDL_GetPerformanceFrequency();
@@ -1080,6 +1105,9 @@ int main(int argc, char *argv[]) {
             }
             if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
                 && e.key.windowID == SDL_GetWindowID(window)
+                && frontend_execution_handle_shortcut(&execution_runtime, &e.key)) continue;
+            if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
+                && e.key.windowID == SDL_GetWindowID(window)
                 && family_basic_key_event(&e.key, tape_play_path, tape_record_path)) continue;
             if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
                 && e.key.windowID == SDL_GetWindowID(window)
@@ -1144,16 +1172,6 @@ int main(int argc, char *argv[]) {
                         break;
                     case SDLK_F6:
                         if (down) { ppu_palette_reset_default(); palette_tool_flash(true); }
-                        break;
-                    case SDLK_r:
-                        if (down) {
-                            if (audio_dev) SDL_LockAudioDevice(audio_dev);
-                            ppu_soft_reset(&ppu);
-                            apu_soft_reset(&apu);
-                            cpu_soft_reset(&cpu);
-                            vs_soft_reset();
-                            if (audio_dev) SDL_UnlockAudioDevice(audio_dev);
-                        }
                         break;
                     case SDLK_5: if (vs_enabled()) vs_set_coin(0, down != 0); break;
                     case SDLK_6: if (vs_enabled()) vs_set_coin(1, down != 0); break;
@@ -1221,11 +1239,7 @@ int main(int argc, char *argv[]) {
         // writable disk media. Do not run another frame after accepting SDL_QUIT.
         if (!running) break;
     
-        // Run CPU steps until the PPU completes the current frame.
-        vs_start_frame();
-        while (!ppu.frame_complete) {
-            vs_cpu_step();
-        }
+        bool ran_frame = frontend_execution_run_frame(&execution_runtime);
 
         // Presentation filters consume captured PPU signal data after emulation has
         // finished the frame, so they cannot change beam timing or light-sensor input.
@@ -1244,10 +1258,16 @@ int main(int argc, char *argv[]) {
     
         Uint32 frameTime = SDL_GetTicks() - frameStart;
         palette_tool_tick(frameTime);
-        frame_deadline += (double)(cpu_total_cycles - frame_start_cycles)
-                        * performance_frequency / nes_timing()->cpu_hz;
+        double speed = frontend_execution_speed(&execution_runtime);
+        if (ran_frame) {
+            frame_deadline += (double)(cpu_total_cycles - frame_start_cycles)
+                            * performance_frequency / (nes_timing()->cpu_hz * speed);
+        }
         double current_ticks = (double)SDL_GetPerformanceCounter();
-        if (frame_deadline > current_ticks) {
+        if (!ran_frame) {
+            frame_deadline = current_ticks;
+            SDL_Delay(8);
+        } else if (frame_deadline > current_ticks) {
             // Carry fractional milliseconds into the next deadline instead of
             // running every frame early after truncating SDL's delay argument.
             SDL_Delay((Uint32)((frame_deadline - current_ticks) * 1000.0 / performance_frequency));
@@ -1274,5 +1294,6 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     SDL_Quit();
+    frontend_paths_shutdown();
     return tape_saved && !tape_failed && peripheral_saved ? 0 : 1;
 }
