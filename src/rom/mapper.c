@@ -752,7 +752,8 @@ static bool mapper_has_shrinking_chr_window(uint16_t mapper_no) {
 
 static size_t shrunk_chr_page_size(size_t native_page_size) {
     if (!C.chr_sz) return 0;
-    return C.chr_sz < native_page_size ? C.chr_sz : native_page_size;
+    size_t page_size = C.chr_sz < native_page_size ? C.chr_sz : native_page_size;
+    return C.chr_is_ram && (page_size & 0xFFu) ? 0 : page_size;
 }
 
 static bool chr_bank_slot_offset(uint16_t address, size_t native_page_size,
@@ -769,9 +770,25 @@ static bool chr_bank_slot_offset(uint16_t address, size_t native_page_size,
     return true;
 }
 
-static uint8_t chr_unmapped_read(uint16_t address) {
+static size_t chr_default_offset(uint16_t address, size_t native_page_size) {
+    if (!C.chr_is_ram) return SIZE_MAX;
+    size_t page_size = shrunk_chr_page_size(native_page_size);
+    if (!page_size) return SIZE_MAX;
     address &= 0x1FFFu;
-    return C.chr_is_ram ? C.chr[address % C.chr_sz] : (uint8_t)address;
+    // Initial RAM mapping repeats complete banks and leaves a partial final window open.
+    size_t coverage = CHR_BANK_8K / page_size * page_size;
+    if (address >= coverage) return SIZE_MAX;
+    size_t page_count = C.chr_sz / page_size;
+    return ((address / page_size) % page_count) * page_size + address % page_size;
+}
+
+static uint8_t chr_default_read(uint16_t address, size_t native_page_size) {
+    size_t offset = chr_default_offset(address, native_page_size);
+    return offset < C.chr_sz ? C.chr[offset] : (uint8_t)address;
+}
+
+static void chr_default_write(uint16_t address, size_t native_page_size, uint8_t value) {
+    chr_ram_write(chr_default_offset(address, native_page_size), value);
 }
 
 static bool small_prg_window_read(uint16_t address, uint8_t *value) {

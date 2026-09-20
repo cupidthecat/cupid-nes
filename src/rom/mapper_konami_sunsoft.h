@@ -98,7 +98,7 @@ static uint8_t vrc1_ppu_read(uint16_t a) {
     a &= 0x1FFFu;
     size_t page_size = shrunk_chr_page_size(CHR_BANK_4K);
     unsigned slot = page_size ? (unsigned)(a / page_size) : 2u;
-    if (slot >= 2 || !vrc1.chr_mapped[slot]) return chr_unmapped_read(a);
+    if (slot >= 2 || !vrc1.chr_mapped[slot]) return chr_default_read(a, CHR_BANK_4K);
     size_t banks = C.chr_sz / page_size;
     size_t bank = vrc1.chr[slot] % banks;
     return C.chr[bank * page_size + (a % page_size)];
@@ -109,7 +109,7 @@ static void vrc1_ppu_write(uint16_t a, uint8_t value) {
     a &= 0x1FFFu;
     size_t page_size = shrunk_chr_page_size(CHR_BANK_4K);
     unsigned slot = page_size ? (unsigned)(a / page_size) : 2u;
-    size_t offset = a % C.chr_sz;
+    size_t offset = chr_default_offset(a, CHR_BANK_4K);
     if (slot < 2 && vrc1.chr_mapped[slot]) {
         size_t banks = C.chr_sz / page_size;
         size_t bank = vrc1.chr[slot] % banks;
@@ -298,10 +298,10 @@ static uint8_t sunsoft3_ppu_read(uint16_t a) {
     a &= 0x1FFFu;
     size_t page_size = shrunk_chr_page_size(CHR_BANK_2K);
     unsigned slot = page_size ? (unsigned)(a / page_size) : 4u;
-    if (slot >= 4 || !sunsoft3.chr_mapped[slot]) return chr_unmapped_read(a);
+    if (slot >= 4 || !sunsoft3.chr_mapped[slot]) return chr_default_read(a, CHR_BANK_2K);
     size_t offset;
     if (!chr_bank_slot_offset(a, CHR_BANK_2K, 4, sunsoft3.chr, &offset)) {
-        return chr_unmapped_read(a);
+        return chr_default_read(a, CHR_BANK_2K);
     }
     return C.chr[offset];
 }
@@ -314,7 +314,7 @@ static void sunsoft3_ppu_write(uint16_t a, uint8_t value) {
     size_t offset;
     if (slot >= 4 || !sunsoft3.chr_mapped[slot]
         || !chr_bank_slot_offset(a, CHR_BANK_2K, 4, sunsoft3.chr, &offset)) {
-        offset = a % C.chr_sz;
+        offset = chr_default_offset(a, CHR_BANK_2K);
     }
     chr_ram_write(offset, value);
 }
@@ -417,10 +417,10 @@ static uint8_t sunsoft4_ppu_read(uint16_t a) {
     a &= 0x1FFFu;
     size_t page_size = shrunk_chr_page_size(CHR_BANK_2K);
     unsigned slot = page_size ? (unsigned)(a / page_size) : 4u;
-    if (slot >= 4 || !sunsoft4.chr_mapped[slot]) return chr_unmapped_read(a);
+    if (slot >= 4 || !sunsoft4.chr_mapped[slot]) return chr_default_read(a, CHR_BANK_2K);
     size_t offset;
     if (!chr_bank_slot_offset(a, CHR_BANK_2K, 4, sunsoft4.chr, &offset)) {
-        return chr_unmapped_read(a);
+        return chr_default_read(a, CHR_BANK_2K);
     }
     return C.chr[offset];
 }
@@ -433,7 +433,7 @@ static void sunsoft4_ppu_write(uint16_t a, uint8_t value) {
     size_t offset;
     if (slot >= 4 || !sunsoft4.chr_mapped[slot]
         || !chr_bank_slot_offset(a, CHR_BANK_2K, 4, sunsoft4.chr, &offset)) {
-        offset = a % C.chr_sz;
+        offset = chr_default_offset(a, CHR_BANK_2K);
     }
     chr_ram_write(offset, value);
 }
@@ -446,6 +446,16 @@ static unsigned sunsoft4_nt_reg(unsigned nt) {
         case MIRROR_SINGLE0:
         default: return 0u;
     }
+}
+
+static size_t sunsoft4_nt_chr_offset(uint16_t address) {
+    if (!C.chr_sz) return SIZE_MAX;
+    uint16_t off = (uint16_t)((address - 0x2000u) & 0x0FFFu);
+    unsigned nt = off >> 10;
+    size_t base = ((size_t)sunsoft4.nt[sunsoft4_nt_reg(nt)] * CHR_BANK_1K) % C.chr_sz;
+    size_t coverage = (C.chr_sz - base) & ~(size_t)0xFFu;
+    size_t in = off & 0x03FFu;
+    return in < coverage ? base + in : SIZE_MAX;
 }
 
 static void sunsoft4_clock(int cpu_cycles) {
@@ -493,9 +503,9 @@ static void sunsoft89_cpu_write(uint16_t a, uint8_t value) {
 
 static uint8_t sunsoft89_ppu_read(uint16_t a) {
     a &= 0x1FFFu;
-    if (!sunsoft89.mapped) return chr_unmapped_read(a);
+    if (!sunsoft89.mapped) return chr_default_read(a, CHR_BANK_8K);
     size_t page_size = shrunk_chr_page_size(CHR_BANK_8K);
-    if (!page_size || a >= page_size) return chr_unmapped_read(a);
+    if (!page_size || a >= page_size) return chr_default_read(a, CHR_BANK_8K);
     size_t banks = C.chr_sz / page_size;
     size_t bank = sunsoft89.chr_bank % banks;
     return C.chr[bank * page_size + a];
@@ -504,7 +514,7 @@ static uint8_t sunsoft89_ppu_read(uint16_t a) {
 static void sunsoft89_ppu_write(uint16_t a, uint8_t value) {
     if (!C.chr_is_ram) return;
     a &= 0x1FFFu;
-    size_t offset = a % C.chr_sz;
+    size_t offset = chr_default_offset(a, CHR_BANK_8K);
     if (sunsoft89.mapped) {
         size_t page_size = shrunk_chr_page_size(CHR_BANK_8K);
         if (page_size && a < page_size) {
@@ -548,7 +558,7 @@ static void sunsoft93_cpu_write(uint16_t a, uint8_t value) {
 static uint8_t sunsoft93_ppu_read(uint16_t a) {
     a &= 0x1FFFu;
     if (!sunsoft93.chr_enabled) return (uint8_t)a;
-    if (sunsoft93.chr_startup_aliases) return C.chr[a % C.chr_sz];
+    if (sunsoft93.chr_startup_aliases) return chr_default_read(a, CHR_BANK_8K);
     size_t page_size = shrunk_chr_page_size(CHR_BANK_8K);
     return page_size && a < page_size ? C.chr[a] : (uint8_t)a;
 }
@@ -557,7 +567,7 @@ static void sunsoft93_ppu_write(uint16_t a, uint8_t value) {
     a &= 0x1FFFu;
     size_t page_size = shrunk_chr_page_size(CHR_BANK_8K);
     if (sunsoft93.chr_startup_aliases) {
-        chr_ram_write(a % C.chr_sz, value);
+        chr_default_write(a, CHR_BANK_8K, value);
         return;
     }
     if (sunsoft93.chr_enabled && C.chr_is_ram && page_size && a < page_size)
@@ -588,10 +598,10 @@ static void sunsoft184_cpu_write(uint16_t a, uint8_t value) {
 
 static uint8_t sunsoft184_ppu_read(uint16_t a) {
     a &= 0x1FFFu;
-    if (!sunsoft184.mapped) return chr_unmapped_read(a);
+    if (!sunsoft184.mapped) return chr_default_read(a, CHR_BANK_4K);
     size_t offset;
     if (!chr_bank_slot_offset(a, CHR_BANK_4K, 2, sunsoft184.chr, &offset))
-        return chr_unmapped_read(a);
+        return chr_default_read(a, CHR_BANK_4K);
     return C.chr[offset];
 }
 
@@ -601,7 +611,7 @@ static void sunsoft184_ppu_write(uint16_t a, uint8_t value) {
     size_t offset;
     if (!sunsoft184.mapped
         || !chr_bank_slot_offset(a, CHR_BANK_4K, 2, sunsoft184.chr, &offset)) {
-        offset = a % C.chr_sz;
+        offset = chr_default_offset(a, CHR_BANK_4K);
     }
     chr_ram_write(offset, value);
 }
@@ -610,4 +620,3 @@ static Mirroring sunsoft184_mirr(void) { return C.mirr_base; }
 static void sunsoft184_reset(void) { memset(&sunsoft184, 0, sizeof(sunsoft184)); }
 
 #endif // MAPPER_KONAMI_SUNSOFT_H
-

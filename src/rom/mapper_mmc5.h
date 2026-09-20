@@ -129,6 +129,8 @@ static struct {
     uint8_t prg8_bank;
     uint8_t banking_mode;
     uint8_t chr_regs[8];
+    bool nt_chr[16];
+    size_t nt_offsets[16];
     bool prg16_selected;
     bool prg8_selected;
     bool ppu_initialized;

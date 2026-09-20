@@ -324,7 +324,7 @@ static uint8_t jy_ppu_read(uint16_t addr) {
     unsigned slot;
     size_t page_size, page_count;
     if (!shrunk_chr_slot_geometry(addr, CHR_BANK_1K, 8, &slot, &page_size, &page_count))
-        return chr_unmapped_read(addr);
+        return chr_default_read(addr, CHR_BANK_1K);
     return C.chr[shrunk_chr_bank_offset(addr, page_size, page_count, jy_chr_bank(slot))];
 }
 
@@ -334,7 +334,7 @@ static void jy_ppu_write(uint16_t addr, uint8_t value) {
     unsigned slot;
     size_t page_size, page_count;
     if (!shrunk_chr_slot_geometry(addr, CHR_BANK_1K, 8, &slot, &page_size, &page_count)) {
-        chr_ram_write(addr % C.chr_sz, value);
+        chr_default_write(addr, CHR_BANK_1K, value);
         return;
     }
     chr_ram_write(shrunk_chr_bank_offset(addr, page_size, page_count, jy_chr_bank(slot)), value);
@@ -611,9 +611,9 @@ static size_t mmc3_chr_bank_for_slot(uint8_t slot) {
 static uint8_t mmc3_ppu_read(uint16_t a) {
     a &= 0x1FFF;
     size_t page_size = shrunk_chr_page_size(CHR_BANK_1K);
-    if (!page_size) return chr_unmapped_read(a);
+    if (!page_size) return chr_default_read(a, CHR_BANK_1K);
     size_t slot = a / page_size;
-    if (slot >= 8) return chr_unmapped_read(a);
+    if (slot >= 8) return chr_default_read(a, CHR_BANK_1K);
     size_t page_count = C.chr_sz / page_size;
     size_t bank = mmc3_chr_bank_for_slot((uint8_t)slot) % page_count;
     return C.chr[bank * page_size + (a % page_size)];
@@ -626,7 +626,7 @@ static void mmc3_ppu_write(uint16_t a, uint8_t v) {
     if (!page_size) return;
     size_t slot = a / page_size;
     if (slot >= 8) {
-        chr_ram_write(a % C.chr_sz, v);
+        chr_default_write(a, CHR_BANK_1K, v);
         return;
     }
     size_t page_count = C.chr_sz / page_size;
@@ -684,8 +684,8 @@ static uint8_t taito_ppu_read(const TaitoBankState *state, uint16_t a) {
     unsigned slot;
     size_t page_size, page_count;
     if (!shrunk_chr_slot_geometry(a, CHR_BANK_1K, 8, &slot, &page_size, &page_count))
-        return chr_unmapped_read(a);
-    if (!(state->chr_mapped & (1u << slot))) return chr_unmapped_read(a);
+        return chr_default_read(a, CHR_BANK_1K);
+    if (!(state->chr_mapped & (1u << slot))) return chr_default_read(a, CHR_BANK_1K);
     return C.chr[shrunk_chr_bank_offset(a, page_size, page_count, state->chr[slot])];
 }
 
@@ -696,7 +696,7 @@ static void taito_ppu_write(const TaitoBankState *state, uint16_t a, uint8_t v) 
     size_t page_size, page_count;
     if (!shrunk_chr_slot_geometry(a, CHR_BANK_1K, 8, &slot, &page_size, &page_count)
         || !(state->chr_mapped & (1u << slot))) {
-        chr_ram_write(a % C.chr_sz, v);
+        chr_default_write(a, CHR_BANK_1K, v);
         return;
     }
     chr_ram_write(shrunk_chr_bank_offset(a, page_size, page_count, state->chr[slot]), v);
@@ -866,7 +866,7 @@ static uint8_t rambo1_ppu_read(uint16_t a) {
     unsigned slot;
     size_t page_size, page_count;
     if (!shrunk_chr_slot_geometry(a, CHR_BANK_1K, 8, &slot, &page_size, &page_count))
-        return chr_unmapped_read(a);
+        return chr_default_read(a, CHR_BANK_1K);
     return C.chr[shrunk_chr_bank_offset(a, page_size, page_count, rambo1_chr_bank(slot))];
 }
 
@@ -876,7 +876,7 @@ static void rambo1_ppu_write(uint16_t a, uint8_t v) {
     unsigned slot;
     size_t page_size, page_count;
     if (!shrunk_chr_slot_geometry(a, CHR_BANK_1K, 8, &slot, &page_size, &page_count)) {
-        chr_ram_write(a % C.chr_sz, v);
+        chr_default_write(a, CHR_BANK_1K, v);
         return;
     }
     chr_ram_write(shrunk_chr_bank_offset(a, page_size, page_count, rambo1_chr_bank(slot)), v);

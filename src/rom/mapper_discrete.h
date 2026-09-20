@@ -123,14 +123,14 @@ static void cprom_cpu_write(uint16_t a, uint8_t v) {
 static uint8_t cprom_ppu_read(uint16_t a) {
     a &= 0x1FFF;
     size_t page_size = shrunk_chr_page_size(CHR_BANK_4K);
-    if (!page_size) return chr_unmapped_read(a);
+    if (!page_size) return chr_default_read(a, CHR_BANK_4K);
     size_t slot = a / page_size;
     if (slot == 0) return C.chr[a % page_size];
     if (slot == 1 && cprom.chr_bank_mapped) {
         size_t bank = cprom.chr_bank % (C.chr_sz / page_size);
         return C.chr[bank * page_size + (a % page_size)];
     }
-    return chr_unmapped_read(a);
+    return chr_default_read(a, CHR_BANK_4K);
 }
 
 static void cprom_ppu_write(uint16_t a, uint8_t v) {
@@ -144,7 +144,7 @@ static void cprom_ppu_write(uint16_t a, uint8_t v) {
         size_t bank = cprom.chr_bank % (C.chr_sz / page_size);
         chr_ram_write(bank * page_size + (a % page_size), v);
     } else {
-        chr_ram_write(a % C.chr_sz, v);
+        chr_default_write(a, CHR_BANK_4K, v);
     }
 }
 
@@ -303,18 +303,18 @@ static void bandai_cpu_write(uint16_t address, uint8_t value) {
 
 static uint8_t bandai_ppu_read(uint16_t address) {
     address &= 0x1FFFu;
-    if (C.chr_is_ram) return C.chr[address % C.chr_sz];
+    if (C.chr_is_ram) return chr_default_read(address, CHR_BANK_1K);
     if (C.ram.chr_ram || C.ram.chr_nvram) return (uint8_t)address;
     unsigned slot;
     size_t page_size, page_count;
     if (!shrunk_chr_slot_geometry(address, CHR_BANK_1K, 8, &slot, &page_size, &page_count))
-        return chr_unmapped_read(address);
+        return chr_default_read(address, CHR_BANK_1K);
     if (!(bandai.chr_mapped & (1u << slot))) return (uint8_t)address;
     return C.chr[shrunk_chr_bank_offset(address, page_size, page_count, bandai.chr_banks[slot])];
 }
 
 static void bandai_ppu_write(uint16_t address, uint8_t value) {
-    if (C.chr_is_ram) chr_ram_write((address & 0x1FFFu) % C.chr_sz, value);
+    if (C.chr_is_ram) chr_default_write(address, CHR_BANK_1K, value);
 }
 
 static void bandai_clock(int cycles) {
@@ -1217,7 +1217,7 @@ static uint8_t jaleco18_ppu_read(uint16_t a) {
     size_t page_size, page_count;
     if (!shrunk_chr_slot_geometry(a, CHR_BANK_1K, 8, &slot, &page_size, &page_count)
         || !(jaleco18.chr_mapped & (1u << slot)))
-        return chr_unmapped_read(a);
+        return chr_default_read(a, CHR_BANK_1K);
     return C.chr[shrunk_chr_bank_offset(a, page_size, page_count, jaleco18.chr_banks[slot])];
 }
 
@@ -1228,7 +1228,7 @@ static void jaleco18_ppu_write(uint16_t a, uint8_t v) {
     size_t page_size, page_count;
     if (!shrunk_chr_slot_geometry(a, CHR_BANK_1K, 8, &slot, &page_size, &page_count)
         || !(jaleco18.chr_mapped & (1u << slot))) {
-        chr_ram_write(a % C.chr_sz, v);
+        chr_default_write(a, CHR_BANK_1K, v);
         return;
     }
     chr_ram_write(shrunk_chr_bank_offset(a, page_size, page_count, jaleco18.chr_banks[slot]), v);

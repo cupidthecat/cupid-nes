@@ -50,12 +50,12 @@ static void nrom_cpu_write(uint16_t a, uint8_t v) {
 }
 static uint8_t nrom_ppu_read(uint16_t a) {
     a &= 0x1FFFu;
-    if (C.chr_is_ram) return C.chr[a % C.chr_sz];
+    if (C.chr_is_ram) return chr_default_read(a, CHR_BANK_8K);
     size_t mapped = C.chr_sz < CHR_BANK_8K ? C.chr_sz : CHR_BANK_8K;
     return a < mapped ? C.chr[a] : (uint8_t)a;
 }
 static void nrom_ppu_write(uint16_t a, uint8_t v) {
-    chr_ram_write((a & 0x1FFF) % C.chr_sz, v);
+    chr_default_write(a, CHR_BANK_8K, v);
 }
 static Mirroring nrom_mirr(void) { return C.mirr_base; }
 
@@ -189,13 +189,13 @@ static bool mmc1_chr_offset(uint16_t a, size_t *offset) {
 
 static uint8_t mmc1_ppu_read(uint16_t a) {
     size_t offset;
-    return mmc1_chr_offset(a, &offset) ? C.chr[offset] : chr_unmapped_read(a);
+    return mmc1_chr_offset(a, &offset) ? C.chr[offset] : chr_default_read(a, CHR_BANK_4K);
 }
 
 static void mmc1_ppu_write(uint16_t a, uint8_t v) {
     if (!C.chr_is_ram) return;
     size_t offset;
-    chr_ram_write(mmc1_chr_offset(a, &offset) ? offset : ((a & 0x1FFFu) % C.chr_sz), v);
+    chr_ram_write(mmc1_chr_offset(a, &offset) ? offset : chr_default_offset(a, CHR_BANK_4K), v);
 }
 
 static Mirroring mmc1_mirr(void) { return mmc1.mirr; }
@@ -350,15 +350,6 @@ static size_t shrunk_chr_bank_offset(uint16_t address, size_t page_size,
     return (bank % page_count) * page_size + ((address & 0x1FFFu) % page_size);
 }
 
-static size_t shrunk_chr_window_offset(size_t in_window, size_t native_page_size,
-                                       size_t first_bank) {
-    size_t page_size = shrunk_chr_page_size(native_page_size);
-    if (!page_size) return 0;
-    size_t page_count = C.chr_sz / page_size;
-    if (!page_count) return 0;
-    size_t page = first_bank + in_window / page_size;
-    return (page % page_count) * page_size + (in_window % page_size);
-}
 static Mirroring m232_mirr(void) { return C.mirr_base; }
 static void m232_reset(void) { memset(&m232, 0, sizeof(m232)); }
 
@@ -400,11 +391,11 @@ static size_t m96_chr_bank(unsigned slot) {
 static uint8_t m96_ppu_read(uint16_t a) {
     a &= 0x1FFFu;
     if (!C.chr_sz) return (uint8_t)a;
-    if (!m96.chr_banking_active) return chr_unmapped_read(a);
+    if (!m96.chr_banking_active) return chr_default_read(a, CHR_BANK_4K);
     unsigned slot;
     size_t page_size, page_count;
     if (!shrunk_chr_slot_geometry(a, CHR_BANK_4K, 2, &slot, &page_size, &page_count))
-        return chr_unmapped_read(a);
+        return chr_default_read(a, CHR_BANK_4K);
     return C.chr[shrunk_chr_bank_offset(a, page_size, page_count, m96_chr_bank(slot))];
 }
 
@@ -415,7 +406,7 @@ static void m96_ppu_write(uint16_t a, uint8_t v) {
     size_t page_size, page_count;
     if (!m96.chr_banking_active
         || !shrunk_chr_slot_geometry(a, CHR_BANK_4K, 2, &slot, &page_size, &page_count)) {
-        chr_ram_write(a % C.chr_sz, v);
+        chr_default_write(a, CHR_BANK_4K, v);
         return;
     }
     chr_ram_write(shrunk_chr_bank_offset(a, page_size, page_count, m96_chr_bank(slot)), v);
@@ -441,9 +432,7 @@ static uint8_t discrete_prg32_read(uint16_t a, uint8_t bank) {
 static uint8_t discrete_chr8_read(uint16_t a, uint8_t bank) {
     a &= 0x1FFFu;
     if (C.chr_sz < CHR_BANK_8K) {
-        // CHR RAM is mapped across the full pattern-table window before mapper
-        // initialization. A smaller CHR ROM leaves the upper addresses open.
-        if (C.chr_is_ram) return C.chr[a % C.chr_sz];
+        if (C.chr_is_ram) return chr_default_read(a, CHR_BANK_8K);
         return a < C.chr_sz ? C.chr[a] : (uint8_t)a;
     }
     size_t banks = C.chr_sz / CHR_BANK_8K;
@@ -455,7 +444,7 @@ static void discrete_chr8_write(uint16_t a, uint8_t bank, uint8_t value) {
     if (!C.chr_is_ram) return;
     a &= 0x1FFFu;
     if (C.chr_sz < CHR_BANK_8K) {
-        chr_ram_write(a % C.chr_sz, value);
+        chr_default_write(a, CHR_BANK_8K, value);
         return;
     }
     size_t banks = C.chr_sz / CHR_BANK_8K;
@@ -508,7 +497,7 @@ static void cnrom_cpu_write(uint16_t a, uint8_t v) {
 static uint8_t cnrom_ppu_read(uint16_t a) {
     a &= 0x1FFF;
     size_t page_size = shrunk_chr_page_size(CHR_BANK_8K);
-    if (!page_size || a >= page_size) return chr_unmapped_read(a);
+    if (!page_size || a >= page_size) return chr_default_read(a, CHR_BANK_8K);
     size_t bank = cn.chr_bank % (C.chr_sz / page_size);
     return C.chr[bank * page_size + a];
 }
@@ -517,7 +506,7 @@ static void cnrom_ppu_write(uint16_t a, uint8_t v) {
         a &= 0x1FFFu;
         size_t page_size = shrunk_chr_page_size(CHR_BANK_8K);
         if (!page_size || a >= page_size) {
-            chr_ram_write(a % C.chr_sz, v);
+            chr_default_write(a, CHR_BANK_8K, v);
             return;
         }
         size_t bank = cn.chr_bank % (C.chr_sz / page_size);
