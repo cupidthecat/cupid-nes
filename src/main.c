@@ -502,16 +502,18 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "CPU revision must be early-2a03 or late-2a03\n");
                 return 1;
             }
-            if (strcmp(argv[i], "early-2a03") == 0)
+            if (strcmp(argv[i], "early-2a03") == 0) {
                 apu_set_cpu_revision(APU_CPU_REVISION_EARLY_2A03);
-            else if (strcmp(argv[i], "late-2a03") == 0)
+            } else if (strcmp(argv[i], "late-2a03") == 0) {
                 apu_set_cpu_revision(APU_CPU_REVISION_LATE_2A03);
-            else {
+            } else {
                 fprintf(stderr, "CPU revision must be early-2a03 or late-2a03\n");
                 return 1;
             }
         } else if (strcmp(argv[i], "--cpu-test-mode") == 0) {
             cpu_set_test_mode(true);
+        } else if (strcmp(argv[i], "--apu-disable-noise-mode") == 0) {
+            apu_set_disable_noise_mode(true);
         } else if (strcmp(argv[i], "--epsm-adpcm") == 0) {
             if (++i == argc) {
                 fprintf(stderr, "--epsm-adpcm requires an 8 KiB YMF288 ADPCM ROM file\n");
@@ -741,7 +743,7 @@ int main(int argc, char *argv[]) {
     }
     if (!rom_path) {
         printf("Usage: %s [--console MODEL] [--cpu-revision REVISION] "
-               "[--cpu-test-mode] "
+               "[--cpu-test-mode] [--apu-disable-noise-mode] "
                "[--epsm-adpcm FILE] "
                "[--fcns-kanji FILE] "
                "[--game-db FILE] [--no-game-db-overrides] "
@@ -757,7 +759,8 @@ int main(int argc, char *argv[]) {
                "[--expansion DEVICE] [--barcode DIGITS] [--barcode-battler DIGITS] "
                "[--zapper-radius PIXELS] [--vs-dip VALUE] [--tape-play FILE | --tape-record FILE] "
                "[--fds-bios BIOS] [--studybox-bios BIOS] [--fds-side N] "
-               "[--fds-eject] [--fds-write-protect] <rom-file>\n", argv[0]);
+               "[--fds-eject] [--fds-write-protect] <rom-file>\n",
+               argv[0]);
         return 1;
     }
     if (!fds_bios_path && (fds_side_set || fds_start_ejected || fds_start_write_protected)) {
@@ -777,13 +780,15 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     joypad_set_configuration_overrides(input_overrides);
-    
+
     printf("Console: %s\n", nes_console_model_name());
-    printf("CPU revision: %s\n", apu_get_cpu_revision() == APU_CPU_REVISION_EARLY_2A03
-           ? "early-2a03" : "late-2a03");
+    printf("CPU revision: %s\n", apu_get_cpu_revision() == APU_CPU_REVISION_EARLY_2A03 ? "early-2a03" : "late-2a03");
+    printf("APU noise short mode: %s\n", apu_noise_mode_disabled() ? "disabled" : "standard");
     printf("RAM power-on state: %s\n", nes_ram_power_on_state_name());
     printf("Random power-on VBL flag: %s\n", nes_randomize_vblank_enabled() ? "enabled" : "disabled");
-    if (power_on_seed_set) printf("Power-on seed: %llu\n", (unsigned long long)power_on_seed);
+    if (power_on_seed_set) {
+        printf("Power-on seed: %llu\n", (unsigned long long)power_on_seed);
+    }
     printf("PPU revision: %s\n", ppu_revision_name());
     printf("CPU test-register reads: %s\n", cpu_test_mode_enabled() ? "enabled" : "disabled");
     printf("PPU OAM row corruption: %s\n", ppu_oam_row_corruption_worst_case() ? "worst-case" : "compatibility");

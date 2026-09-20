@@ -99,12 +99,18 @@ static void capture_dmc_transient(int rise_cycle, int fall_cycle, float *samples
 
 static float sample_difference(const float *left, const float *right, int count) {
     float difference = 0.0f;
-    for (int i = 0; i < count; ++i) difference += fabsf(left[i] - right[i]);
+    for (int i = 0; i < count; ++i) {
+        difference += fabsf(left[i] - right[i]);
+    }
     return difference;
 }
 
+#include "apu_accuracy_noise_profile.h"
+
 int test_apu_accuracy(void) {
     checks = failures = 0;
+
+    test_apu_noise_profile();
 
     CHECK("DMC CPU revision defaults to early 2A03 behavior", apu_get_cpu_revision() == APU_CPU_REVISION_EARLY_2A03);
     CHECK("later DMC CPU revision is accepted", apu_set_cpu_revision(APU_CPU_REVISION_LATE_2A03));

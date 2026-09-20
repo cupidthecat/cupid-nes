@@ -211,9 +211,12 @@ void apu_audio_pull_stereo(APU *state, float *samples, int frames);
 // Select the DMC CPU timing model. The selection persists across APU resets.
 bool apu_set_cpu_revision(ApuCpuRevision revision);
 ApuCpuRevision apu_get_cpu_revision(void);
+// Optional channel hardware profiles persist across APU resets.
+void apu_set_disable_noise_mode(bool enabled);
+bool apu_noise_mode_disabled(void);
 
 // memory-mapped access
-void    apu_write(uint16_t addr, uint8_t val);
+void apu_write(uint16_t addr, uint8_t val);
 uint8_t apu_read(uint16_t addr);
 // Raw channel DAC values used by the optional CPU diagnostic-read profile.
 uint8_t apu_read_test_output(uint16_t addr);

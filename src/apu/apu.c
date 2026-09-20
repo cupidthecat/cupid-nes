@@ -38,6 +38,8 @@ static APU *const main_apu = &apu;
 static APU *active_apu = &apu;
 #define apu (*active_apu)
 static ApuCpuRevision cpu_revision = APU_CPU_REVISION_EARLY_2A03;
+static bool disable_noise_mode;
+
 enum { APU_RECONSTRUCTION_CAP = 64, APU_RECONSTRUCTION_SCALE = 16384 };
 
 void apu_select_machine(APU *state) {
@@ -409,6 +411,14 @@ ApuCpuRevision apu_get_cpu_revision(void) {
     return cpu_revision;
 }
 
+void apu_set_disable_noise_mode(bool enabled) {
+    disable_noise_mode = enabled;
+}
+
+bool apu_noise_mode_disabled(void) {
+    return disable_noise_mode;
+}
+
 // APU register access.
 static inline void apu_write_4017(APU *a, uint8_t v) {
     a->regs[0x17] = v;
@@ -671,14 +681,17 @@ static inline void clock_triangle(Triangle* t){
     }
 }
 
-static inline void clock_noise(Noise* n){
-    if (n->period == 0) return;
-    
+static inline void clock_noise(Noise *n) {
+    if (n->period == 0) {
+        return;
+    }
+
     if (n->timer == 0) {
         n->timer = n->period - 1;
         // Feedback uses bit 0 and bit 1, or bit 6 in short mode.
+        bool mode = disable_noise_mode ? false : n->mode;
         uint16_t bit0 = n->lfsr & 1;
-        uint16_t bitX = (n->lfsr >> (n->mode ? 6 : 1)) & 1;
+        uint16_t bitX = (n->lfsr >> (mode ? 6 : 1)) & 1;
         uint16_t fb = bit0 ^ bitX;
         n->lfsr = (n->lfsr >> 1) | (fb << 14);
         n->output_level = noise_current_output(n);
