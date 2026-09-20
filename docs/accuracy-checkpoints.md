@@ -159,7 +159,7 @@ Both Windows builds also passed the canonical CPU trace's 8,991 states and all 9
 
 ## VRC7 console reset checkpoint
 
-Revision `1dd63fd97a7228f58f14fc13812bc21ba3a3a055` connects mapper 85 console reset to the FM chip's reset operation. Banking, control, RAM and IRQ state survive, along with the audio address latch, mute state and sample-clock phase. The regression checks all three supported submapper values, an IRQ counter that keeps advancing through the seven CPU reset cycles, the next FM sample boundary, muted writes and a data write through the retained address latch. Before the fix, the sample-boundary assertion failed because the synthesizer kept playing.
+Revision `1dd63fd97a7228f58f14fc13812bc21ba3a3a055` connects mapper 85 console reset to the FM chip's reset operation. Banking, control, RAM, IRQ registers and counter state survive, along with the audio address latch, mute state and sample-clock phase. CPU reset clears an already-pending mapper IRQ before its bus cycles; the retained counter can raise a new IRQ during those cycles. The regression checks all three supported submapper values, an IRQ counter that keeps advancing through the seven CPU reset cycles, the next FM sample boundary, muted writes and a data write through the retained address latch. Before the fix, the sample-boundary assertion failed because the synthesizer kept playing.
 
 The strict Windows build and production hardware suite passed in normal and AddressSanitizer/UndefinedBehaviorSanitizer builds. Each build then passed AccuracyCoin 144/144 with zero skipped and zero unfinished in 4,182 frames, matching the cartridge's tally. The test ROM pin and SHA-256 were unchanged.
 
@@ -170,6 +170,8 @@ Revision `6177689eed717b5c7ed32842226b866c54d92111` clears earlier NMI requests 
 This revision includes the NSF multiplier and VRC7 reset fixes above. Its strict Windows build and production hardware suite passed in normal and AddressSanitizer/UndefinedBehaviorSanitizer builds. Both builds passed the canonical CPU trace's 8,991 states, all 91 pinned diagnostic ROMs, and AccuracyCoin 144/144 with zero skipped or unfinished tests. Each AccuracyCoin run completed in 4,182 frames and matched the cartridge's tally. The ROM revisions, SHA-256 and result requirements were unchanged.
 
 These local results belong to the named implementation revision. Later documentation commits retain that source, and the final pull-request revision must pass its own GCC and Clang sanitizer CI jobs.
+
+Revision `f26b7ee6aa3f298368f646983b389f932763869b` retains that implementation and passed both the [push workflow](https://github.com/cupidthecat/cupid-nes/actions/runs/35502276983) and [pull-request workflow](https://github.com/cupidthecat/cupid-nes/actions/runs/35502278770). Each workflow's GCC and Clang sanitizer jobs passed the production hardware suite, 8,991-state CPU trace, all 91 diagnostic ROMs and AccuracyCoin 144/144 with zero skipped or unfinished tests. The Clang jobs enabled address, undefined-behavior and leak checks. These CI results belong to the named revision.
 
 ## Reproducing a checkpoint
 
