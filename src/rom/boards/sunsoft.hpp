@@ -114,6 +114,7 @@ public:
     }
 
     float AudioOutput() const override { return sunsoft5b_output(&_audio); }
+    unsigned AudioMixChannel() const override { return NES_AUDIO_SUNSOFT5B; }
 };
 
 } // namespace cupid::boards

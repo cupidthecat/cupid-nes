@@ -26,7 +26,8 @@ CORE_SRC = src/system/timing.c src/system/hardware.c src/system/vs_system.c src/
            src/ui/ui_font.c src/ui/desktop_ui.c src/ui/state_frontend.c src/ui/state_runtime.c \
            src/ui/debug_frontend.c src/ui/host_input.c
 CORE_SRC += src/system/execution_policy.c src/replay/rewind.c \
-            src/audio/audio_observer.c src/ui/nsf_player.c src/ui/nsf_player_ui.c \
+            src/audio/audio_observer.c src/audio/audio_mix.c src/video/presentation.c \
+            src/ui/nsf_player.c src/ui/nsf_player_ui.c \
             src/ui/nsf_player_runtime.c \
             src/capture/capture_writer.c src/capture/capture_png.c src/capture/capture_session.c \
             src/ui/capture_frontend.c src/ui/capture_runtime.c \
@@ -86,7 +87,8 @@ TEST_SRC = src/tests/accuracy_test.c src/tests/cpu_accuracy.c \
 TEST_SRC += src/tests/patch_accuracy.c src/tests/media_accuracy.c src/tests/fds_options_accuracy.c \
             src/tests/fds_automation_accuracy.c src/tests/execution_policy_accuracy.c \
             src/tests/nsf_player_accuracy.c src/tests/capture_container_accuracy.c \
-            src/tests/capture_session_accuracy.c src/tests/video_trace_accuracy.c
+            src/tests/capture_session_accuracy.c src/tests/video_trace_accuracy.c \
+            src/tests/video_presentation_accuracy.c src/tests/audio_mix_accuracy.c
 CORE_OBJ = $(CORE_SRC:.c=.o) $(CORE_CXX_SRC:.cpp=.o)
 TEST_OBJ = $(TEST_SRC:.c=.o)
 OBJ = $(CORE_OBJ) $(TEST_OBJ) src/main.o

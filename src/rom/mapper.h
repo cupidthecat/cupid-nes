@@ -30,6 +30,7 @@
 #include <stdbool.h>
 #include "rom.h"
 #include "nsf.h"
+#include "../audio/audio_mix.h"
 
 typedef struct CartridgeBoard CartridgeBoard;
 
@@ -80,6 +81,7 @@ void    cart_set_ppu_fetch_source(CartPpuFetchSource src);
 void    cart_notify_ppu_ctrl_write(uint8_t value);
 // Current cartridge expansion-audio contribution, zero when the board has none.
 float   cart_expansion_audio(void);
+void    cart_expansion_audio_channels(float output[NES_AUDIO_CHANNEL_COUNT]);
 float   cart_audio_gain(void);
 // Scan an EAN-8 or EAN-13 code through the connected Datach reader.
 bool    cart_set_barcode(const char *digits);

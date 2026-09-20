@@ -54,6 +54,7 @@ void board_after_reset(CartridgeBoard *board);
 bool board_irq_pending(const CartridgeBoard *board);
 void board_irq_ack(CartridgeBoard *board);
 float board_audio(const CartridgeBoard *board);
+unsigned board_audio_mix_channel(const CartridgeBoard *board);
 bool board_set_mapper_input(CartridgeBoard *board, unsigned input, bool pressed);
 Mirroring board_mirroring(const CartridgeBoard *board);
 void board_set_mirroring(CartridgeBoard *board, Mirroring mirroring);

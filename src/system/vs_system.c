@@ -331,6 +331,28 @@ void vs_audio_callback(void *userdata, uint8_t *stream, int len) {
     }
 }
 
+void vs_audio_stereo_callback(void *userdata, uint8_t *stream, int len) {
+    if (!vs_dual_system()) {
+        apu_sdl_stereo_callback(userdata, stream, len);
+        return;
+    }
+    if (!stream || len <= 0) return;
+    float *output = (float *)stream;
+    int frames = len / (int)(2 * sizeof(*output));
+    apu_audio_pull_stereo(&apu, output, frames);
+    float secondary[256];
+    for (int offset = 0; offset < frames;) {
+        int chunk = frames - offset;
+        if (chunk > 128) chunk = 128;
+        apu_audio_pull_stereo(&vs.sub_apu, secondary, chunk);
+        for (int i = 0; i < chunk * 2; ++i)
+            output[offset * 2 + i] = 0.5f * (output[offset * 2 + i] + secondary[i]);
+        offset += chunk;
+    }
+    size_t bytes = (size_t)frames * 2 * sizeof(*output);
+    if (bytes < (size_t)len) memset(stream + bytes, 0, (size_t)len - bytes);
+}
+
 uint64_t vs_side_cpu_cycles(unsigned side) {
     if (side == 0) return cpu_total_cycles;
     return vs_dual_system() && side == 1 ? vs.sub_cpu.total_cycles : 0;

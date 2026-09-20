@@ -88,6 +88,7 @@ APU *vs_side_apu(unsigned side);
 PPU *vs_side_ppu(unsigned side);
 void vs_audio_init(int sample_rate);
 void vs_audio_callback(void *userdata, uint8_t *stream, int len);
+void vs_audio_stereo_callback(void *userdata, uint8_t *stream, int len);
 
 void vs_write_4016(uint8_t value);
 uint8_t vs_read_controller_port(unsigned port);

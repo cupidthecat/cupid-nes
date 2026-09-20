@@ -26,6 +26,7 @@
 #include "apu.h"
 #include "epsm.h"
 #include "../audio/audio_observer.h"
+#include "../audio/audio_mix.h"
 #include "../third_party/blip_buf.h"
 #include "../rom/mapper.h"
 #include "../cpu/cpu.h"
@@ -176,6 +177,9 @@ static void apu_init_filter_coeffs(APU *a) {
     a->hp440_prev_out = 0.0f;
     a->lp14k_prev_out = 0.0f;
     a->last_output_sample = 0.0f;
+    a->right_output.hp90_prev_in = a->right_output.hp90_prev_out = 0.0f;
+    a->right_output.hp440_prev_in = a->right_output.hp440_prev_out = 0.0f;
+    a->right_output.lp14k_prev_out = 0.0f;
 }
 
 static inline float apu_post_filter(APU *a, float s) {
@@ -183,6 +187,13 @@ static inline float apu_post_filter(APU *a, float s) {
     s = one_pole_hp(s, a->hp440_alpha, &a->hp440_prev_in, &a->hp440_prev_out);
     s = one_pole_lp(s, a->lp14k_alpha, &a->lp14k_prev_out);
     return s;
+}
+
+static float apu_post_filter_right(APU *a, float sample) {
+    ApuRightOutput *output = &a->right_output;
+    sample = one_pole_hp(sample, a->hp90_alpha, &output->hp90_prev_in, &output->hp90_prev_out);
+    sample = one_pole_hp(sample, a->hp440_alpha, &output->hp440_prev_in, &output->hp440_prev_out);
+    return one_pole_lp(sample, a->lp14k_alpha, &output->lp14k_prev_out);
 }
 
 static void apu_reconstruction_reset(APU *a) {
@@ -193,12 +204,22 @@ static void apu_reconstruction_reset(APU *a) {
     blip_clear(a->reconstruction);
     a->reconstructed_level = 0;
     a->audio_transition_count = 0;
+    if (!a->right_output.reconstruction)
+        a->right_output.reconstruction = blip_new(APU_RECONSTRUCTION_CAP);
+    if (a->right_output.reconstruction) {
+        blip_set_rates(a->right_output.reconstruction, nes_timing()->cpu_hz,
+                       a->sample_rate > 1.0 ? a->sample_rate : 44100.0);
+        blip_clear(a->right_output.reconstruction);
+    }
+    a->right_output.level = 0;
 }
 
 void apu_audio_shutdown_state(APU *a) {
     if (!a) return;
     blip_delete(a->reconstruction);
+    blip_delete(a->right_output.reconstruction);
     a->reconstruction = NULL;
+    memset(&a->right_output, 0, sizeof(a->right_output));
     a->reconstructed_level = 0;
     a->audio_transition_count = 0;
 }
@@ -327,6 +348,7 @@ static void tri_linear_clock(Triangle* t){
 static void apu_reset_state(APU *a, bool soft_reset) {
     double sample_rate = a->sample_rate > 1.0 ? a->sample_rate : 44100.0;
     blip_t *reconstruction = a->reconstruction;
+    blip_t *right_reconstruction = a->right_output.reconstruction;
     bool five_step = soft_reset ? a->five_step : false;
     uint8_t dmc_addr_reg = soft_reset ? a->dmc.sample_addr_reg : 0;
     uint8_t dmc_len_reg = soft_reset ? a->dmc.sample_len_reg : 0;
@@ -336,6 +358,7 @@ static void apu_reset_state(APU *a, bool soft_reset) {
 
     memset(a, 0, sizeof(*a));
     a->reconstruction = reconstruction;
+    a->right_output.reconstruction = right_reconstruction;
     atomic_init(&a->ring_w, 0);
     atomic_init(&a->ring_r, 0);
     a->five_step = five_step;
@@ -776,40 +799,69 @@ static int apu_quantize_mix(float sample) {
     return (int)lrint(scaled);
 }
 
+static float apu_side_mix(const APU *a, const float *expansion, bool right) {
+    const float *gain = nes_audio_mix_side_gains(right);
+    float sample = mix_sample(pulse_out(&a->pulse1) * gain[NES_AUDIO_PULSE1],
+                               pulse_out(&a->pulse2) * gain[NES_AUDIO_PULSE2],
+                               triangle_out(&a->tri) * gain[NES_AUDIO_TRIANGLE],
+                               noise_out(&a->noise) * gain[NES_AUDIO_NOISE],
+                               dmc_out(&a->dmc) * gain[NES_AUDIO_DMC]);
+    for (unsigned channel = NES_AUDIO_FDS; channel < NES_AUDIO_CHANNEL_COUNT; ++channel)
+        sample += expansion[channel] * gain[channel];
+    return sample * cart_audio_gain();
+}
+
 void apu_audio_refresh(APU *a) {
     if (!a) return;
-    float sample = mix_sample(pulse_out(&a->pulse1), pulse_out(&a->pulse2),
-                              triangle_out(&a->tri), noise_out(&a->noise),
-                              dmc_out(&a->dmc));
-    sample += cart_expansion_audio();
-    sample *= cart_audio_gain();
-    int level = apu_quantize_mix(sample);
+    float left, right;
+    if (nes_audio_mix_channels_default()) {
+        left = mix_sample(pulse_out(&a->pulse1), pulse_out(&a->pulse2),
+                           triangle_out(&a->tri), noise_out(&a->noise), dmc_out(&a->dmc));
+        left += cart_expansion_audio();
+        left *= cart_audio_gain();
+        right = left;
+    } else {
+        float expansion[NES_AUDIO_CHANNEL_COUNT];
+        cart_expansion_audio_channels(expansion);
+        left = apu_side_mix(a, expansion, false);
+        right = apu_side_mix(a, expansion, true);
+    }
+    int level = apu_quantize_mix(left);
     int delta = level - a->reconstructed_level;
     if (delta && a->reconstruction) {
         blip_add_delta(a->reconstruction, 0, delta);
         a->audio_transition_count++;
     }
     a->reconstructed_level = level;
+    level = apu_quantize_mix(right);
+    delta = level - a->right_output.level;
+    if (delta && a->right_output.reconstruction)
+        blip_add_delta(a->right_output.reconstruction, 0, delta);
+    a->right_output.level = level;
 }
 
 static void apu_output_reconstructed_samples(APU *a) {
     if (!a->reconstruction) return;
     blip_end_frame(a->reconstruction, 1);
+    if (a->right_output.reconstruction) blip_end_frame(a->right_output.reconstruction, 1);
     while (blip_samples_avail(a->reconstruction) > 0) {
-        short reconstructed = 0;
+        short reconstructed = 0, right_reconstructed = 0;
         if (blip_read_samples(a->reconstruction, &reconstructed, 1, 0) != 1) break;
-        float s = (float)reconstructed / (float)APU_RECONSTRUCTION_SCALE;
-        s = apu_post_filter(a, s);
-
+        if (!a->right_output.reconstruction
+            || blip_read_samples(a->right_output.reconstruction, &right_reconstructed, 1, 0) != 1)
+            right_reconstructed = reconstructed;
+        float left = apu_post_filter(a, (float)reconstructed / (float)APU_RECONSTRUCTION_SCALE);
+        float right = apu_post_filter_right(a, (float)right_reconstructed / (float)APU_RECONSTRUCTION_SCALE);
         float epsm_left = 0.0f, epsm_right = 0.0f;
         if (a == main_apu) epsm_sample_stereo(&epsm_left, &epsm_right);
-        float left = s + epsm_left;
-        float right = s + epsm_right;
+        left += epsm_left * nes_audio_mix_side_gains(false)[NES_AUDIO_EPSM];
+        right += epsm_right * nes_audio_mix_side_gains(true)[NES_AUDIO_EPSM];
         if (left > 1.0f) left = 1.0f;
         if (left < -1.0f) left = -1.0f;
         if (right > 1.0f) right = 1.0f;
         if (right < -1.0f) right = -1.0f;
         nes_audio_observe(a == main_apu ? 0u : 1u, a->sample_rate, left, right);
+        nes_audio_mix_master(&left, &right);
         float middle = (left + right) * 0.5f;
         float side = (left - right) * 0.5f;
         a->last_output_sample = middle;
@@ -949,416 +1001,4 @@ void apu_sdl_stereo_callback(void *userdata, uint8_t *stream, int len) {
     if (bytes < (size_t)len) memset(stream + bytes, 0, (size_t)len - bytes);
 }
 
-static bool apu_state_write_envelope(NesStateWriter *writer, const Envelope *value) {
-    return nes_state_write_bool(writer, value->loop_envelope)
-        && nes_state_write_bool(writer, value->constant_volume)
-        && nes_state_write_u8(writer, value->volume)
-        && nes_state_write_u8(writer, value->divider)
-        && nes_state_write_u8(writer, value->decay)
-        && nes_state_write_bool(writer, value->start_flag);
-}
-
-static bool apu_state_read_envelope(NesStateReader *reader, Envelope *value) {
-    return nes_state_read_bool(reader, &value->loop_envelope)
-        && nes_state_read_bool(reader, &value->constant_volume)
-        && nes_state_read_u8(reader, &value->volume)
-        && nes_state_read_u8(reader, &value->divider)
-        && nes_state_read_u8(reader, &value->decay)
-        && nes_state_read_bool(reader, &value->start_flag);
-}
-
-static bool apu_state_write_sweep(NesStateWriter *writer, const Sweep *value) {
-    return nes_state_write_bool(writer, value->enabled)
-        && nes_state_write_u8(writer, value->period)
-        && nes_state_write_bool(writer, value->negate)
-        && nes_state_write_u8(writer, value->shift)
-        && nes_state_write_u8(writer, value->divider)
-        && nes_state_write_bool(writer, value->reload);
-}
-
-static bool apu_state_read_sweep(NesStateReader *reader, Sweep *value) {
-    return nes_state_read_bool(reader, &value->enabled)
-        && nes_state_read_u8(reader, &value->period)
-        && nes_state_read_bool(reader, &value->negate)
-        && nes_state_read_u8(reader, &value->shift)
-        && nes_state_read_u8(reader, &value->divider)
-        && nes_state_read_bool(reader, &value->reload);
-}
-
-static bool apu_state_write_length(NesStateWriter *writer, const LengthCounter *value) {
-    return nes_state_write_u8(writer, value->length)
-        && nes_state_write_bool(writer, value->halt)
-        && nes_state_write_bool(writer, value->next_halt)
-        && nes_state_write_bool(writer, value->halt_pending)
-        && nes_state_write_u8(writer, value->reload_value)
-        && nes_state_write_u8(writer, value->previous_value);
-}
-
-static bool apu_state_read_length(NesStateReader *reader, LengthCounter *value) {
-    return nes_state_read_u8(reader, &value->length)
-        && nes_state_read_bool(reader, &value->halt)
-        && nes_state_read_bool(reader, &value->next_halt)
-        && nes_state_read_bool(reader, &value->halt_pending)
-        && nes_state_read_u8(reader, &value->reload_value)
-        && nes_state_read_u8(reader, &value->previous_value);
-}
-
-static bool apu_state_write_pulse(NesStateWriter *writer, const Pulse *value) {
-    return apu_state_write_envelope(writer, &value->env)
-        && apu_state_write_sweep(writer, &value->sweep)
-        && apu_state_write_length(writer, &value->lc)
-        && nes_state_write_u16(writer, value->timer)
-        && nes_state_write_u16(writer, value->timer_reload)
-        && nes_state_write_u8(writer, value->duty)
-        && nes_state_write_u8(writer, value->duty_step)
-        && nes_state_write_u8(writer, value->output_level)
-        && nes_state_write_bool(writer, value->enabled);
-}
-
-static bool apu_state_read_pulse(NesStateReader *reader, Pulse *value) {
-    return apu_state_read_envelope(reader, &value->env)
-        && apu_state_read_sweep(reader, &value->sweep)
-        && apu_state_read_length(reader, &value->lc)
-        && nes_state_read_u16(reader, &value->timer)
-        && nes_state_read_u16(reader, &value->timer_reload)
-        && nes_state_read_u8(reader, &value->duty)
-        && nes_state_read_u8(reader, &value->duty_step)
-        && nes_state_read_u8(reader, &value->output_level)
-        && nes_state_read_bool(reader, &value->enabled);
-}
-
-static bool apu_state_write_triangle(NesStateWriter *writer, const Triangle *value) {
-    return apu_state_write_length(writer, &value->lc)
-        && nes_state_write_bool(writer, value->control)
-        && nes_state_write_u8(writer, value->linear_reload_val)
-        && nes_state_write_u8(writer, value->linear_counter)
-        && nes_state_write_bool(writer, value->linear_reload)
-        && nes_state_write_u16(writer, value->timer)
-        && nes_state_write_u16(writer, value->timer_reload)
-        && nes_state_write_u8(writer, value->step)
-        && nes_state_write_u8(writer, value->output_level)
-        && nes_state_write_bool(writer, value->enabled);
-}
-
-static bool apu_state_read_triangle(NesStateReader *reader, Triangle *value) {
-    return apu_state_read_length(reader, &value->lc)
-        && nes_state_read_bool(reader, &value->control)
-        && nes_state_read_u8(reader, &value->linear_reload_val)
-        && nes_state_read_u8(reader, &value->linear_counter)
-        && nes_state_read_bool(reader, &value->linear_reload)
-        && nes_state_read_u16(reader, &value->timer)
-        && nes_state_read_u16(reader, &value->timer_reload)
-        && nes_state_read_u8(reader, &value->step)
-        && nes_state_read_u8(reader, &value->output_level)
-        && nes_state_read_bool(reader, &value->enabled);
-}
-
-static bool apu_state_write_noise(NesStateWriter *writer, const Noise *value) {
-    return apu_state_write_envelope(writer, &value->env)
-        && apu_state_write_length(writer, &value->lc)
-        && nes_state_write_bool(writer, value->mode)
-        && nes_state_write_u16(writer, value->lfsr)
-        && nes_state_write_u16(writer, value->period)
-        && nes_state_write_u8(writer, value->period_idx)
-        && nes_state_write_u16(writer, value->timer)
-        && nes_state_write_u8(writer, value->output_level)
-        && nes_state_write_bool(writer, value->enabled);
-}
-
-static bool apu_state_read_noise(NesStateReader *reader, Noise *value) {
-    return apu_state_read_envelope(reader, &value->env)
-        && apu_state_read_length(reader, &value->lc)
-        && nes_state_read_bool(reader, &value->mode)
-        && nes_state_read_u16(reader, &value->lfsr)
-        && nes_state_read_u16(reader, &value->period)
-        && nes_state_read_u8(reader, &value->period_idx)
-        && nes_state_read_u16(reader, &value->timer)
-        && nes_state_read_u8(reader, &value->output_level)
-        && nes_state_read_bool(reader, &value->enabled);
-}
-
-static bool apu_state_write_dmc(NesStateWriter *writer, const DMC *value) {
-    return nes_state_write_bool(writer, value->enabled)
-        && nes_state_write_bool(writer, value->irq_enable)
-        && nes_state_write_bool(writer, value->irq_flag)
-        && nes_state_write_bool(writer, value->loop)
-        && nes_state_write_u8(writer, value->rate_index)
-        && nes_state_write_u16(writer, value->timer)
-        && nes_state_write_u16(writer, value->timer_reload)
-        && nes_state_write_u8(writer, value->output_level)
-        && nes_state_write_u8(writer, value->sample_addr_reg)
-        && nes_state_write_u8(writer, value->sample_len_reg)
-        && nes_state_write_u16(writer, value->sample_addr)
-        && nes_state_write_u16(writer, value->sample_len)
-        && nes_state_write_u16(writer, value->current_addr)
-        && nes_state_write_u16(writer, value->bytes_remaining)
-        && nes_state_write_u8(writer, value->shift_reg)
-        && nes_state_write_u8(writer, value->bits_remaining)
-        && nes_state_write_bool(writer, value->silence)
-        && nes_state_write_u8(writer, value->sample_buffer)
-        && nes_state_write_bool(writer, value->sample_buffer_empty)
-        && nes_state_write_u8(writer, value->start_delay)
-        && nes_state_write_u8(writer, value->disable_delay)
-        && nes_state_write_bool(writer, value->dma_pending)
-        && nes_state_write_bool(writer, value->dma_halt_started)
-        && nes_state_write_bool(writer, value->dma_abort_requested);
-}
-
-static bool apu_state_read_dmc(NesStateReader *reader, DMC *value) {
-    return nes_state_read_bool(reader, &value->enabled)
-        && nes_state_read_bool(reader, &value->irq_enable)
-        && nes_state_read_bool(reader, &value->irq_flag)
-        && nes_state_read_bool(reader, &value->loop)
-        && nes_state_read_u8(reader, &value->rate_index)
-        && nes_state_read_u16(reader, &value->timer)
-        && nes_state_read_u16(reader, &value->timer_reload)
-        && nes_state_read_u8(reader, &value->output_level)
-        && nes_state_read_u8(reader, &value->sample_addr_reg)
-        && nes_state_read_u8(reader, &value->sample_len_reg)
-        && nes_state_read_u16(reader, &value->sample_addr)
-        && nes_state_read_u16(reader, &value->sample_len)
-        && nes_state_read_u16(reader, &value->current_addr)
-        && nes_state_read_u16(reader, &value->bytes_remaining)
-        && nes_state_read_u8(reader, &value->shift_reg)
-        && nes_state_read_u8(reader, &value->bits_remaining)
-        && nes_state_read_bool(reader, &value->silence)
-        && nes_state_read_u8(reader, &value->sample_buffer)
-        && nes_state_read_bool(reader, &value->sample_buffer_empty)
-        && nes_state_read_u8(reader, &value->start_delay)
-        && nes_state_read_u8(reader, &value->disable_delay)
-        && nes_state_read_bool(reader, &value->dma_pending)
-        && nes_state_read_bool(reader, &value->dma_halt_started)
-        && nes_state_read_bool(reader, &value->dma_abort_requested);
-}
-
-enum { APU_BLIP_STATE_SAMPLES = APU_RECONSTRUCTION_CAP + 18 };
-
-typedef struct {
-    APU state;
-    bool has_reconstruction;
-    BlipStateHeader reconstruction;
-    int32_t reconstruction_samples[APU_BLIP_STATE_SAMPLES];
-} ApuSavedMachine;
-
-static bool apu_state_write_machine(NesStateWriter *writer, const APU *state) {
-    if (!writer || !state
-        || !nes_state_write_u32(writer, state->cycle_in_seq)
-        || !nes_state_write_bool(writer, state->five_step)
-        || !nes_state_write_bool(writer, state->irq_inhibit)
-        || !nes_state_write_bool(writer, state->frame_irq)
-        || !nes_state_write_bool(writer, state->frame_irq_source)
-        || !nes_state_write_u8(writer, state->frame_irq_clear_delay)
-        || !nes_state_write_u8(writer, state->frame_reset_delay)
-        || !nes_state_write_bool(writer, state->frame_reset_pending)
-        || !nes_state_write_bool(writer, state->cpu_cycle_odd)
-        || !nes_state_write_bool(writer, state->frame_next_five_step)
-        || !nes_state_write_u8(writer, state->frame_clock_block)
-        || !apu_state_write_pulse(writer, &state->pulse1)
-        || !apu_state_write_pulse(writer, &state->pulse2)
-        || !apu_state_write_triangle(writer, &state->tri)
-        || !apu_state_write_noise(writer, &state->noise)
-        || !apu_state_write_dmc(writer, &state->dmc)
-        || !nes_state_write_bytes(writer, state->regs, sizeof(state->regs))
-        || !nes_state_write_f64(writer, state->sample_rate)
-        || !nes_state_write_f64(writer, state->cycles_per_sample)
-        || !nes_state_write_f64(writer, state->sample_accum)
-        || !nes_state_write_u32(writer, (uint32_t)state->reconstructed_level)
-        || !nes_state_write_u64(writer, state->audio_transition_count)
-        || !nes_state_write_f32(writer, state->hp90_alpha)
-        || !nes_state_write_f32(writer, state->hp440_alpha)
-        || !nes_state_write_f32(writer, state->lp14k_alpha)
-        || !nes_state_write_f32(writer, state->hp90_prev_in)
-        || !nes_state_write_f32(writer, state->hp90_prev_out)
-        || !nes_state_write_f32(writer, state->hp440_prev_in)
-        || !nes_state_write_f32(writer, state->hp440_prev_out)
-        || !nes_state_write_f32(writer, state->lp14k_prev_out)
-        || !nes_state_write_f32(writer, state->last_output_sample)
-        || !nes_state_write_f32(writer, state->last_read_sample)
-        || !nes_state_write_f32(writer, state->last_read_side)) return false;
-    for (unsigned i = 0; i < APU_RING_CAP; ++i) {
-        if (!nes_state_write_f32(writer, state->ring[i])
-            || !nes_state_write_f32(writer, state->ring_side[i])) return false;
-    }
-    uint32_t ring_w = atomic_load_explicit(&state->ring_w, memory_order_acquire);
-    uint32_t ring_r = atomic_load_explicit(&state->ring_r, memory_order_acquire);
-    if (!nes_state_write_u32(writer, ring_w)
-        || !nes_state_write_u32(writer, ring_r)
-        || !nes_state_write_bool(writer, state->reconstruction != NULL)) return false;
-    if (!state->reconstruction) return true;
-    BlipStateHeader header;
-    int32_t samples[APU_BLIP_STATE_SAMPLES];
-    if (blip_state_sample_count(state->reconstruction) != APU_BLIP_STATE_SAMPLES
-        || !blip_state_export(state->reconstruction, &header, samples,
-                              APU_BLIP_STATE_SAMPLES)
-        || !nes_state_write_u64(writer, header.factor)
-        || !nes_state_write_u64(writer, header.offset)
-        || !nes_state_write_u32(writer, (uint32_t)header.available)
-        || !nes_state_write_u32(writer, (uint32_t)header.size)
-        || !nes_state_write_u32(writer, (uint32_t)header.integrator)) return false;
-    for (unsigned i = 0; i < APU_BLIP_STATE_SAMPLES; ++i)
-        if (!nes_state_write_u32(writer, (uint32_t)samples[i])) return false;
-    return true;
-}
-
-static bool apu_state_read_machine(NesStateReader *reader, ApuSavedMachine *saved) {
-    uint32_t reconstructed, ring_w, ring_r;
-    memset(saved, 0, sizeof(*saved));
-    if (!nes_state_read_u32(reader, &saved->state.cycle_in_seq)
-        || !nes_state_read_bool(reader, &saved->state.five_step)
-        || !nes_state_read_bool(reader, &saved->state.irq_inhibit)
-        || !nes_state_read_bool(reader, &saved->state.frame_irq)
-        || !nes_state_read_bool(reader, &saved->state.frame_irq_source)
-        || !nes_state_read_u8(reader, &saved->state.frame_irq_clear_delay)
-        || !nes_state_read_u8(reader, &saved->state.frame_reset_delay)
-        || !nes_state_read_bool(reader, &saved->state.frame_reset_pending)
-        || !nes_state_read_bool(reader, &saved->state.cpu_cycle_odd)
-        || !nes_state_read_bool(reader, &saved->state.frame_next_five_step)
-        || !nes_state_read_u8(reader, &saved->state.frame_clock_block)
-        || !apu_state_read_pulse(reader, &saved->state.pulse1)
-        || !apu_state_read_pulse(reader, &saved->state.pulse2)
-        || !apu_state_read_triangle(reader, &saved->state.tri)
-        || !apu_state_read_noise(reader, &saved->state.noise)
-        || !apu_state_read_dmc(reader, &saved->state.dmc)
-        || !nes_state_read_bytes(reader, saved->state.regs, sizeof(saved->state.regs))
-        || !nes_state_read_f64(reader, &saved->state.sample_rate)
-        || !nes_state_read_f64(reader, &saved->state.cycles_per_sample)
-        || !nes_state_read_f64(reader, &saved->state.sample_accum)
-        || !nes_state_read_u32(reader, &reconstructed)
-        || !nes_state_read_u64(reader, &saved->state.audio_transition_count)
-        || !nes_state_read_f32(reader, &saved->state.hp90_alpha)
-        || !nes_state_read_f32(reader, &saved->state.hp440_alpha)
-        || !nes_state_read_f32(reader, &saved->state.lp14k_alpha)
-        || !nes_state_read_f32(reader, &saved->state.hp90_prev_in)
-        || !nes_state_read_f32(reader, &saved->state.hp90_prev_out)
-        || !nes_state_read_f32(reader, &saved->state.hp440_prev_in)
-        || !nes_state_read_f32(reader, &saved->state.hp440_prev_out)
-        || !nes_state_read_f32(reader, &saved->state.lp14k_prev_out)
-        || !nes_state_read_f32(reader, &saved->state.last_output_sample)
-        || !nes_state_read_f32(reader, &saved->state.last_read_sample)
-        || !nes_state_read_f32(reader, &saved->state.last_read_side)) return false;
-    saved->state.reconstructed_level = (int32_t)reconstructed;
-    for (unsigned i = 0; i < APU_RING_CAP; ++i) {
-        if (!nes_state_read_f32(reader, &saved->state.ring[i])
-            || !nes_state_read_f32(reader, &saved->state.ring_side[i])) return false;
-    }
-    if (!nes_state_read_u32(reader, &ring_w)
-        || !nes_state_read_u32(reader, &ring_r)
-        || !nes_state_read_bool(reader, &saved->has_reconstruction)
-        || ring_w >= APU_RING_CAP || ring_r >= APU_RING_CAP
-        || !isfinite(saved->state.sample_rate) || saved->state.sample_rate <= 1.0
-        || !isfinite(saved->state.cycles_per_sample)
-        || !isfinite(saved->state.sample_accum)) return false;
-    atomic_init(&saved->state.ring_w, ring_w);
-    atomic_init(&saved->state.ring_r, ring_r);
-    if (saved->has_reconstruction) {
-        uint32_t available, size, integrator;
-        if (!nes_state_read_u64(reader, &saved->reconstruction.factor)
-            || !nes_state_read_u64(reader, &saved->reconstruction.offset)
-            || !nes_state_read_u32(reader, &available)
-            || !nes_state_read_u32(reader, &size)
-            || !nes_state_read_u32(reader, &integrator)) return false;
-        saved->reconstruction.available = (int32_t)available;
-        saved->reconstruction.size = (int32_t)size;
-        saved->reconstruction.integrator = (int32_t)integrator;
-        if (saved->reconstruction.size != APU_RECONSTRUCTION_CAP
-            || saved->reconstruction.available < 0
-            || saved->reconstruction.available > saved->reconstruction.size) return false;
-        for (unsigned i = 0; i < APU_BLIP_STATE_SAMPLES; ++i) {
-            uint32_t sample;
-            if (!nes_state_read_u32(reader, &sample)) return false;
-            saved->reconstruction_samples[i] = (int32_t)sample;
-        }
-    }
-    return true;
-}
-
-static bool apu_state_machine_compatible(const APU *target, const ApuSavedMachine *saved) {
-    if (!target || !saved) return false;
-    if (saved->has_reconstruction) {
-        if (!target->reconstruction
-            || blip_state_sample_count(target->reconstruction) != APU_BLIP_STATE_SAMPLES)
-            return false;
-    }
-    return true;
-}
-
-bool apu_machine_state_capture(NesStateWriter *writer, const APU *state) {
-    return apu_state_write_machine(writer, state);
-}
-
-bool apu_machine_state_validate(const APU *target, NesStateReader *reader) {
-    ApuSavedMachine saved;
-    return reader && apu_state_read_machine(reader, &saved)
-        && nes_state_reader_remaining(reader) == 0
-        && apu_state_machine_compatible(target, &saved);
-}
-
-bool apu_machine_state_apply(APU *target, NesStateReader *reader) {
-    ApuSavedMachine saved;
-    if (!reader || !apu_state_read_machine(reader, &saved)
-        || nes_state_reader_remaining(reader) != 0
-        || !apu_state_machine_compatible(target, &saved)) return false;
-    blip_t *reconstruction = target->reconstruction;
-    uint32_t ring_w = atomic_load_explicit(&saved.state.ring_w, memory_order_relaxed);
-    uint32_t ring_r = atomic_load_explicit(&saved.state.ring_r, memory_order_relaxed);
-    *target = saved.state;
-    target->reconstruction = reconstruction;
-    atomic_store_explicit(&target->ring_w, ring_w, memory_order_relaxed);
-    atomic_store_explicit(&target->ring_r, ring_r, memory_order_relaxed);
-    if (saved.has_reconstruction
-        && !blip_state_import(target->reconstruction, &saved.reconstruction,
-                              saved.reconstruction_samples, APU_BLIP_STATE_SAMPLES)) return false;
-    return true;
-}
-
-bool apu_state_capture(NesStateWriter *writer) {
-    return writer && apu_state_write_machine(writer, main_apu)
-        && nes_state_write_u8(writer, (uint8_t)cpu_revision)
-        && nes_state_write_bool(writer, disable_noise_mode)
-        && nes_state_write_bool(writer, swap_duty_cycles);
-}
-
-static bool apu_state_decode_main(NesStateReader *reader, ApuSavedMachine *saved,
-                                  ApuCpuRevision *revision, bool *disable_noise,
-                                  bool *swap_duty) {
-    uint8_t encoded_revision;
-    if (!apu_state_read_machine(reader, saved)
-        || !nes_state_read_u8(reader, &encoded_revision)
-        || !nes_state_read_bool(reader, disable_noise)
-        || !nes_state_read_bool(reader, swap_duty)
-        || encoded_revision > APU_CPU_REVISION_LATE_2A03
-        || nes_state_reader_remaining(reader) != 0) return false;
-    *revision = (ApuCpuRevision)encoded_revision;
-    return apu_state_machine_compatible(main_apu, saved);
-}
-
-bool apu_state_validate(NesStateReader *reader) {
-    ApuSavedMachine saved;
-    ApuCpuRevision revision;
-    bool disable_noise, swap_duty;
-    return reader && apu_state_decode_main(reader, &saved, &revision,
-                                           &disable_noise, &swap_duty);
-}
-
-bool apu_state_apply(NesStateReader *reader) {
-    ApuSavedMachine saved;
-    ApuCpuRevision revision;
-    bool disable_noise, swap_duty;
-    if (!reader || !apu_state_decode_main(reader, &saved, &revision,
-                                          &disable_noise, &swap_duty)) return false;
-    blip_t *reconstruction = main_apu->reconstruction;
-    uint32_t ring_w = atomic_load_explicit(&saved.state.ring_w, memory_order_relaxed);
-    uint32_t ring_r = atomic_load_explicit(&saved.state.ring_r, memory_order_relaxed);
-    *main_apu = saved.state;
-    main_apu->reconstruction = reconstruction;
-    atomic_store_explicit(&main_apu->ring_w, ring_w, memory_order_relaxed);
-    atomic_store_explicit(&main_apu->ring_r, ring_r, memory_order_relaxed);
-    if (saved.has_reconstruction
-        && !blip_state_import(main_apu->reconstruction, &saved.reconstruction,
-                              saved.reconstruction_samples, APU_BLIP_STATE_SAMPLES)) return false;
-    cpu_revision = revision;
-    disable_noise_mode = disable_noise;
-    swap_duty_cycles = swap_duty;
-    apu_select_machine(NULL);
-    return true;
-}
+#include "apu_state_impl.h"

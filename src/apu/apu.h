@@ -143,6 +143,16 @@ typedef struct {
 } DMC;
 
 typedef struct {
+    blip_t *reconstruction;
+    int32_t level;
+    float hp90_prev_in;
+    float hp90_prev_out;
+    float hp440_prev_in;
+    float hp440_prev_out;
+    float lp14k_prev_out;
+} ApuRightOutput;
+
+typedef struct {
     // Frame sequencer
     uint32_t cycle_in_seq;
     bool five_step;
@@ -172,6 +182,7 @@ typedef struct {
     blip_t  *reconstruction;
     int32_t  reconstructed_level;
     uint64_t audio_transition_count;
+    ApuRightOutput right_output;
 
     // Output filter state/coefs (NES-like analog chain approximation)
     float hp90_alpha;
@@ -249,5 +260,8 @@ bool apu_state_apply(NesStateReader *reader);
 bool apu_machine_state_capture(NesStateWriter *writer, const APU *state);
 bool apu_machine_state_validate(const APU *target, NesStateReader *reader);
 bool apu_machine_state_apply(APU *target, NesStateReader *reader);
+/* Canonical hardware fields exclude listening, reconstruction, and host queues. */
+bool apu_hardware_state_capture(NesStateWriter *writer);
+bool apu_machine_hardware_state_capture(NesStateWriter *writer, const APU *state);
 
 #endif

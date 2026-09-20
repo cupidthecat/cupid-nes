@@ -14,6 +14,7 @@
 #define CUPID_BOARD_RUNTIME_HPP
 
 #include "../board.h"
+#include "../../audio/audio_mix.h"
 #include "state_codec.hpp"
 #include <algorithm>
 #include <array>
@@ -197,6 +198,7 @@ public:
         InternalWriteVram(addr, value);
     }
     virtual float AudioOutput() const { return 0.0f; }
+    virtual unsigned AudioMixChannel() const { return NES_AUDIO_CARTRIDGE_PCM; }
     virtual bool SetMapperInput(unsigned, bool) { return false; }
     virtual uint8_t *CpuRam8K() { return nullptr; }
     virtual bool ReadCpuRegister(uint16_t, uint8_t &) { return false; }

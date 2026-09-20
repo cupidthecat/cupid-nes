@@ -779,6 +779,9 @@ void board_after_reset(CartridgeBoard *board) { if (board) board->instance->OnAf
 bool board_irq_pending(const CartridgeBoard *board) { return board && board->instance->PendingIrq(); }
 void board_irq_ack(CartridgeBoard *board) { if (board) board->instance->AcknowledgeIrq(); }
 float board_audio(const CartridgeBoard *board) { return board ? board->instance->AudioOutput() : 0.0f; }
+unsigned board_audio_mix_channel(const CartridgeBoard *board) {
+    return board ? board->instance->AudioMixChannel() : static_cast<unsigned>(NES_AUDIO_CARTRIDGE_PCM);
+}
 bool board_set_mapper_input(CartridgeBoard *board, unsigned input, bool pressed) {
     return board && board->instance->SetMapperInput(input, pressed);
 }

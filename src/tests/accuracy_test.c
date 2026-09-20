@@ -96,6 +96,8 @@ int test_nsf_player_accuracy(void);
 int test_capture_container_accuracy(void);
 int test_capture_session_accuracy(void);
 int test_video_trace_accuracy(void);
+int test_video_presentation_accuracy(void);
+int test_audio_mix_accuracy(void);
 int test_input_accuracy(void);
 int test_vs_accuracy(void);
 int test_epsm_accuracy(void);
@@ -212,6 +214,8 @@ int main(int argc, char **argv) {
     failures += test_capture_container_accuracy();
     failures += test_capture_session_accuracy();
     failures += test_video_trace_accuracy();
+    failures += test_video_presentation_accuracy();
+    failures += test_audio_mix_accuracy();
     failures += test_input_accuracy();
     failures += test_vs_accuracy();
     failures += test_epsm_accuracy();
