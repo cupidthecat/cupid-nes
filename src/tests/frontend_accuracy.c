@@ -17,6 +17,10 @@
 #include "../ui/frontend_commands.h"
 #include "../ui/machine_actions.h"
 #include "../ui/frontend_panels.h"
+#include "../ui/frontend_session.h"
+#include "../ui/settings.h"
+#include "../util/file_io.h"
+#include <SDL2/SDL.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -220,6 +224,211 @@ static int panel_registry(void) {
     return 0;
 }
 
+static int settings_round_trip(void) {
+    static unsigned serial;
+    char path[128];
+    unsigned token = (unsigned)time(NULL) ^ ++serial;
+    snprintf(path, sizeof(path), ".frontend-settings-%u.ini", token);
+
+    FrontendSettings saved;
+    frontend_settings_defaults(&saved);
+    saved.region_mode = NES_REGION_MODE_PAL;
+    saved.console_model = NES_CONSOLE_HVC101;
+    saved.ntsc_composite = true;
+    saved.speed = 1.25;
+    saved.fast_forward_speed = 5.0;
+    saved.input.adapter = NES_ADAPTER_FOUR_SCORE;
+    saved.input.ports[0] = NES_PORT_GAMEPAD;
+    saved.input.ports[1] = NES_PORT_GAMEPAD;
+    saved.zapper_radius = 7;
+    saved.saved_input_overrides = NES_INPUT_OVERRIDE_ADAPTER;
+    CHECK(frontend_settings_add_profile(&saved, "wasd", "wasd"));
+    CHECK(frontend_settings_select_profile(&saved, "wasd"));
+    strcpy(saved.device_guid[1], "03000000cafef00d");
+
+    FrontendSettingsReport report;
+    CHECK(frontend_settings_save(path, &saved, &report));
+    CHECK(report.file_result == NES_FILE_OK);
+
+    FrontendSettings loaded;
+    CHECK(frontend_settings_load(path, &loaded, &report));
+    CHECK(report.found && !report.migrated && report.unknown_settings == 0);
+    CHECK(loaded.region_mode == saved.region_mode);
+    CHECK(loaded.console_model == saved.console_model);
+    CHECK(loaded.ntsc_composite && loaded.speed == 1.25 && loaded.fast_forward_speed == 5.0);
+    CHECK(loaded.input.adapter == NES_ADAPTER_FOUR_SCORE && loaded.zapper_radius == 7);
+    CHECK(strcmp(loaded.active_profile, "wasd") == 0);
+    CHECK(strcmp(loaded.device_guid[1], "03000000cafef00d") == 0);
+
+    const FrontendBindingProfile *profile = frontend_settings_active_profile_const(&loaded);
+    CHECK(profile != NULL);
+    SDL_KeyboardEvent key;
+    memset(&key, 0, sizeof(key));
+    key.type = SDL_KEYDOWN;
+    key.keysym.scancode = SDL_SCANCODE_J;
+    unsigned player = 99, button = 99;
+    CHECK(frontend_profile_player_key(profile, &key, &player, &button));
+    CHECK(player == 0 && button == BTN_A);
+    CHECK(frontend_profile_player_gamepad(profile, 2, SDL_CONTROLLER_BUTTON_B, &button));
+    CHECK(button == BTN_B);
+
+    key.keysym.scancode = SDL_SCANCODE_P;
+    key.keysym.mod = KMOD_CTRL;
+    FrontendShortcut shortcut = FRONTEND_SHORTCUT_COUNT;
+    CHECK(frontend_profile_shortcut_key(profile, &key, &shortcut));
+    CHECK(shortcut == FRONTEND_SHORTCUT_PAUSE);
+    key.keysym.mod = (SDL_Keymod)(KMOD_CTRL | KMOD_SHIFT);
+    CHECK(!frontend_profile_shortcut_key(profile, &key, &shortcut));
+
+    CHECK(nes_file_remove(path) == NES_FILE_OK);
+    return 0;
+}
+
+static int settings_migration_and_errors(void) {
+    static unsigned serial;
+    char path[128];
+    unsigned token = (unsigned)time(NULL) ^ ++serial;
+    snprintf(path, sizeof(path), ".frontend-settings-migrate-%u.ini", token);
+    const char old_settings[] =
+        "version=1\n"
+        "speed_percent=150\n"
+        "fast_forward_percent=600\n"
+        "unknown_future_setting=kept-for-forward-compatibility\n"
+        "active_profile=default\n";
+    CHECK(nes_file_write_atomic(path, old_settings, sizeof(old_settings) - 1) == NES_FILE_OK);
+    FrontendSettings settings;
+    FrontendSettingsReport report;
+    CHECK(frontend_settings_load(path, &settings, &report));
+    CHECK(report.migrated && report.unknown_settings == 1);
+    CHECK(settings.version == FRONTEND_SETTINGS_VERSION);
+    CHECK(settings.speed == 1.5 && settings.fast_forward_speed == 6.0);
+
+    const char malformed[] = "version=2\nspeed=not-a-number\n";
+    CHECK(nes_file_write_atomic(path, malformed, sizeof(malformed) - 1) == NES_FILE_OK);
+    CHECK(!frontend_settings_load(path, &settings, &report));
+    CHECK(report.line == 2 && strstr(report.message, "speed") != NULL);
+    CHECK(nes_file_remove(path) == NES_FILE_OK);
+    return 0;
+}
+
+static int settings_cli_precedence(void) {
+    NesRegionMode original_region = nes_region_mode();
+    NesConsoleModel original_console = nes_console_model();
+    NesInputConfiguration original_input = {
+        .adapter = joypad_adapter(),
+        .ports = {joypad_port_device(0), joypad_port_device(1)},
+        .expansion = joypad_expansion_device()
+    };
+    unsigned original_radius = joypad_zapper_radius();
+    uint8_t original_overrides = joypad_configuration_overrides();
+
+    CHECK(nes_set_region_mode(NES_REGION_MODE_DENDY));
+    CHECK(nes_set_console_model(NES_CONSOLE_HVC001));
+    CHECK(joypad_set_adapter(NES_ADAPTER_NONE));
+    CHECK(joypad_set_port_device(0, NES_PORT_GAMEPAD));
+    CHECK(joypad_set_port_device(1, NES_PORT_GAMEPAD));
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_NONE));
+    CHECK(joypad_set_zapper_radius(11));
+
+    FrontendSettings settings;
+    frontend_settings_defaults(&settings);
+    settings.region_mode = NES_REGION_MODE_PAL;
+    settings.console_model = NES_CONSOLE_NES101;
+    settings.input.adapter = NES_ADAPTER_FOUR_SCORE;
+    settings.input.ports[0] = NES_PORT_NONE;
+    settings.input.ports[1] = NES_PORT_NONE;
+    settings.zapper_radius = 3;
+    settings.cli_overrides = FRONTEND_OVERRIDE_REGION | FRONTEND_OVERRIDE_CONSOLE
+                           | FRONTEND_OVERRIDE_ADAPTER | FRONTEND_OVERRIDE_ZAPPER_RADIUS;
+    char error[160];
+    CHECK(frontend_settings_apply_core(&settings, error, sizeof(error)));
+    CHECK(nes_region_mode() == NES_REGION_MODE_DENDY);
+    CHECK(nes_console_model() == NES_CONSOLE_HVC001);
+    CHECK(joypad_adapter() == NES_ADAPTER_NONE);
+    CHECK(joypad_port_device(0) == NES_PORT_NONE && joypad_port_device(1) == NES_PORT_NONE);
+    CHECK(joypad_zapper_radius() == 11);
+    CHECK((joypad_configuration_overrides() & NES_INPUT_OVERRIDE_ADAPTER) != 0);
+
+    CHECK(nes_set_region_mode(original_region));
+    CHECK(nes_set_console_model(original_console));
+    CHECK(joypad_apply_configuration(&original_input));
+    CHECK(joypad_set_zapper_radius(original_radius));
+    joypad_set_configuration_overrides(original_overrides);
+    return 0;
+}
+
+typedef struct {
+    unsigned calls;
+    bool fail;
+} SessionProbe;
+
+static bool open_session_probe(void *userdata, const FrontendImageRequest *request,
+                               FrontendImageResult *result,
+                               char *error, size_t error_size) {
+    SessionProbe *probe = (SessionProbe *)userdata;
+    ++probe->calls;
+    if (probe->fail || strstr(request->path, "missing")) {
+        snprintf(error, error_size, "image validation failed");
+        return false;
+    }
+    snprintf(result->title, sizeof(result->title), "Loaded %s", request->archive_member[0]
+             ? request->archive_member : request->path);
+    snprintf(result->save_identity, sizeof(result->save_identity), "%s%s",
+             request->path, request->patch_path[0] ? ".patched" : ".save");
+    return true;
+}
+
+static int session_transitions_and_recents(void) {
+    char oversized[FRONTEND_IMAGE_PATH_MAX + 20];
+    memset(oversized, 'a', sizeof(oversized) - 1);
+    oversized[sizeof(oversized) - 1] = '\0';
+    FrontendImageRequest request;
+    CHECK(!frontend_image_request_init(&request, oversized));
+    CHECK(frontend_image_request_init(&request, "C:/games/Crème 日本 🎮.zip"));
+    CHECK(frontend_image_request_set_member(&request, "collection/ゲーム.nes"));
+    CHECK(frontend_image_request_set_patch(&request, "C:/patches/fix 🎯.bps"));
+    CHECK(frontend_image_request_set_fds_bios(&request, "C:/firmware/disk.bin"));
+    request.fds_write_protected = true;
+
+    SessionProbe probe = {0};
+    FrontendSession session;
+    frontend_session_init(&session, open_session_probe, &probe);
+    char error[160];
+    CHECK(frontend_session_open(&session, &request, error, sizeof(error)));
+    CHECK(session.active && probe.calls == 1 && frontend_session_recent_count(&session) == 1);
+    CHECK(strcmp(session.current.archive_member, "collection/ゲーム.nes") == 0);
+    CHECK(strstr(session.current.save_identity, ".patched") != NULL);
+
+    FrontendImageRequest before = session.current;
+    FrontendImageRequest failed;
+    CHECK(frontend_image_request_init(&failed, "C:/games/missing.nes"));
+    CHECK(!frontend_session_open(&session, &failed, error, sizeof(error)));
+    CHECK(strstr(error, "validation") != NULL);
+    CHECK(memcmp(&session.current, &before, sizeof(before)) == 0);
+    CHECK(frontend_session_recent_count(&session) == 1);
+
+    static unsigned serial;
+    char recent_path[128];
+    unsigned token = (unsigned)time(NULL) ^ ++serial;
+    snprintf(recent_path, sizeof(recent_path), ".frontend-recent-%u.ini", token);
+    CHECK(frontend_session_save_recent(&session, recent_path, error, sizeof(error)));
+
+    FrontendSession restored;
+    frontend_session_init(&restored, open_session_probe, &probe);
+    CHECK(frontend_session_load_recent(&restored, recent_path, error, sizeof(error)));
+    CHECK(frontend_session_recent_count(&restored) == 1);
+    const FrontendImageRequest *recent = frontend_session_recent(&restored, 0);
+    CHECK(recent != NULL);
+    CHECK(strcmp(recent->path, "C:/games/Crème 日本 🎮.zip") == 0);
+    CHECK(strcmp(recent->archive_member, "collection/ゲーム.nes") == 0);
+    CHECK(strcmp(recent->patch_path, "C:/patches/fix 🎯.bps") == 0);
+    CHECK(recent->fds_write_protected);
+    CHECK(frontend_session_open_recent(&restored, 0, error, sizeof(error)));
+    CHECK(restored.active && probe.calls == 3);
+    CHECK(nes_file_remove(recent_path) == NES_FILE_OK);
+    return 0;
+}
+
 int test_frontend_accuracy(void) {
     const NesRegionMode saved_mode = nes_region_mode();
     const NesRegion saved_region = nes_timing()->region;
@@ -230,6 +439,10 @@ int test_frontend_accuracy(void) {
     failures += lifecycle_actions();
     failures += command_registry();
     failures += panel_registry();
+    failures += settings_round_trip();
+    failures += settings_migration_and_errors();
+    failures += settings_cli_precedence();
+    failures += session_transitions_and_recents();
     unload_rom();
     frontend_commands_reset();
     nes_set_region_mode(saved_mode);

@@ -16,6 +16,7 @@ bool frontend_paths_init(const char *data_dir_override, char *error, size_t erro
 void frontend_paths_shutdown(void);
 const char *frontend_paths_data_dir(void);
 const char *frontend_paths_config_file(void);
+const char *frontend_paths_recent_file(void);
 bool frontend_paths_join(char *dst, size_t dst_size, const char *relative);
 
 #endif

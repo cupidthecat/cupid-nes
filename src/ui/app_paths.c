@@ -20,6 +20,7 @@
 
 static char *data_dir;
 static char config_file[4096];
+static char recent_file[4096];
 
 static char *copy_path(const char *path) {
     if (!path || !*path) return NULL;
@@ -53,7 +54,9 @@ bool frontend_paths_init(const char *data_dir_override, char *error, size_t erro
             SDL_free(pref);
         }
     }
-    if (!data_dir || !frontend_paths_join(config_file, sizeof(config_file), "settings.ini")) {
+    if (!data_dir
+        || !frontend_paths_join(config_file, sizeof(config_file), "settings.ini")
+        || !frontend_paths_join(recent_file, sizeof(recent_file), "recent.ini")) {
         if (error && error_size)
             snprintf(error, error_size, "Could not resolve application data directory");
         frontend_paths_shutdown();
@@ -66,6 +69,7 @@ void frontend_paths_shutdown(void) {
     free(data_dir);
     data_dir = NULL;
     config_file[0] = '\0';
+    recent_file[0] = '\0';
 }
 
 const char *frontend_paths_data_dir(void) {
@@ -74,4 +78,8 @@ const char *frontend_paths_data_dir(void) {
 
 const char *frontend_paths_config_file(void) {
     return config_file[0] ? config_file : NULL;
+}
+
+const char *frontend_paths_recent_file(void) {
+    return recent_file[0] ? recent_file : NULL;
 }

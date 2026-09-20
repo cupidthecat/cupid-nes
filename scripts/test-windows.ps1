@@ -60,7 +60,8 @@ $coreSources = @('src/system/timing.c', 'src/system/hardware.c', 'src/system/vs_
                  'src/apu/apu.c', 'src/third_party/blip_buf.c', 'src/video/ntsc_composite.c', 'src/ui/palette_tool.c',
                  'src/ui/nsf_frontend.c', 'src/ui/frontend_commands.c', 'src/ui/execution_control.c',
                  'src/ui/machine_actions.c', 'src/ui/app_paths.c', 'src/ui/frontend_execution.c',
-                 'src/ui/frontend_panels.c', 'src/ui/game_database.c')
+                 'src/ui/frontend_panels.c', 'src/ui/frontend_session.c', 'src/ui/platform_frontend.c',
+                 'src/ui/settings.c', 'src/ui/game_database.c')
 $cppSources = @('src/apu/epsm.cpp', 'src/third_party/ymfm/ymfm_opn.cpp',
                 'src/third_party/ymfm/ymfm_ssg.cpp', 'src/third_party/ymfm/ymfm_adpcm.cpp',
                 'src/rom/game_db.cpp', 'src/rom/boards/runtime.cpp', 'src/rom/boards/factory.cpp')
@@ -113,9 +114,9 @@ try {
     )
     $mainObject = Compile-Source 'src/main.c' $Compiler $flags
     $testObjects = @(foreach ($source in $testSources) { Compile-Source $source $Compiler $flags })
-    & $CxxCompiler @cppFlags @coreObjects $mainObject $sdkLibrary '-o' $application
+    & $CxxCompiler @cppFlags @coreObjects $mainObject $sdkLibrary '-lshell32' '-lcomdlg32' '-o' $application
     if ($LASTEXITCODE -ne 0) { throw 'Emulator build failed' }
-    & $CxxCompiler @cppFlags @coreObjects @testObjects $sdkLibrary '-o' $testProgram
+    & $CxxCompiler @cppFlags @coreObjects @testObjects $sdkLibrary '-lshell32' '-lcomdlg32' '-o' $testProgram
     if ($LASTEXITCODE -ne 0) { throw 'Hardware test build failed' }
     & $testProgram
     if ($LASTEXITCODE -ne 0) { throw 'Hardware regressions failed' }
