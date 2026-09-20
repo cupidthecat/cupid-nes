@@ -44,6 +44,7 @@
 #include <limits.h>
 #include "ui/palette_tool.h"
 #include "ui/nsf_player_runtime.h"
+#include "ui/capture_runtime.h"
 #include "ui/frontend_execution.h"
 #include "ui/app_paths.h"
 #include "ui/game_database.h"
@@ -1039,6 +1040,17 @@ int main(int argc, char *argv[]) {
     }
     unsigned last_music_track = UINT_MAX;
     unsigned last_music_second = UINT_MAX;
+    const char *capture_protected_paths[] = {
+        epsm_adpcm_path, fcns_kanji_path, tape_play_path, tape_record_path, game_db_path
+    };
+    NesCaptureRuntime capture_runtime = {0};
+    if (running && !nes_capture_runtime_init(&capture_runtime, &execution_runtime,
+        &ntsc_composite_active, composite_framebuffer, capture_protected_paths,
+        sizeof(capture_protected_paths) / sizeof(capture_protected_paths[0]))) {
+        fprintf(stderr, "Could not initialize capture controls\n");
+        running = false;
+    }
+    char last_capture_error[256] = {0};
 
     palette_tool_init();
     const double performance_frequency = (double)SDL_GetPerformanceFrequency();
@@ -1046,7 +1058,6 @@ int main(int argc, char *argv[]) {
     
     while (running) {
         Uint32 frameStart = SDL_GetTicks();
-        uint64_t frame_start_cycles = cpu_total_cycles;
     
         while (SDL_PollEvent(&e)) {
             controller_event(&e);
@@ -1110,6 +1121,12 @@ int main(int argc, char *argv[]) {
                 && frontend_execution_handle_shortcut(&execution_runtime, &e.key)) continue;
             if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
                 && e.key.windowID == SDL_GetWindowID(window)) {
+                char capture_error[256] = {0};
+                if (nes_capture_frontend_handle_shortcut(&capture_runtime.frontend, &e.key,
+                                                           capture_error, sizeof(capture_error))) {
+                    if (capture_error[0]) fprintf(stderr, "%s\n", capture_error);
+                    continue;
+                }
                 char music_error[160] = {0};
                 if (nsf_player_handle_shortcut(&music_player, &e.key, music_error, sizeof(music_error))) {
                     if (music_error[0]) fprintf(stderr, "%s\n", music_error);
@@ -1231,7 +1248,17 @@ int main(int argc, char *argv[]) {
         // writable disk media. Do not run another frame after accepting SDL_QUIT.
         if (!running) break;
     
+        if (execution_control_should_run_frame(&execution_runtime.execution))
+            nes_capture_frontend_begin_frame(&capture_runtime.frontend);
+        uint64_t frame_start_cycles = cpu_total_cycles;
         bool ran_frame = frontend_execution_run_frame(&execution_runtime);
+        uint64_t elapsed_cycles = cpu_total_cycles >= frame_start_cycles
+            ? cpu_total_cycles - frame_start_cycles : 0;
+        nes_capture_frontend_end_frame(&capture_runtime.frontend, ran_frame);
+        if (strcmp(last_capture_error, capture_runtime.frontend.session.error)) {
+            snprintf(last_capture_error, sizeof(last_capture_error), "%s", capture_runtime.frontend.session.error);
+            if (last_capture_error[0]) fprintf(stderr, "%s\n", last_capture_error);
+        }
         char music_error[160] = {0};
         (void)nsf_player_poll(&music_player, music_error, sizeof(music_error));
         if (music_error[0]) fprintf(stderr, "%s\n", music_error);
@@ -1269,7 +1296,7 @@ int main(int argc, char *argv[]) {
         palette_tool_tick(frameTime);
         double speed = frontend_execution_speed(&execution_runtime);
         if (ran_frame) {
-            frame_deadline += (double)(cpu_total_cycles - frame_start_cycles)
+            frame_deadline += (double)elapsed_cycles
                             * performance_frequency / (nes_timing()->cpu_hz * speed);
         }
         double current_ticks = (double)SDL_GetPerformanceCounter();
@@ -1285,6 +1312,8 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    bool capture_saved = nes_capture_runtime_shutdown(&capture_runtime) == NES_FILE_OK;
+    if (!capture_saved) fprintf(stderr, "%s\n", capture_runtime.frontend.session.error);
     SDL_DestroyTexture(texture);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
@@ -1305,5 +1334,5 @@ int main(int argc, char *argv[]) {
     }
     SDL_Quit();
     frontend_paths_shutdown();
-    return tape_saved && !tape_failed && peripheral_saved ? 0 : 1;
+    return tape_saved && !tape_failed && peripheral_saved && capture_saved ? 0 : 1;
 }

@@ -68,9 +68,9 @@ static bool command_frame_advance(void *userdata, char *error, size_t error_size
 }
 
 static bool command_soft_reset(void *userdata, char *error, size_t error_size) {
-    (void)error;
-    (void)error_size;
     FrontendExecutionRuntime *runtime = (FrontendExecutionRuntime *)userdata;
+    if (runtime->before_machine_change
+        && !runtime->before_machine_change(runtime->machine_change_context, error, error_size)) return false;
     lock_audio_for_machine_change(runtime);
     bool result = frontend_machine_soft_reset();
     unlock_audio_after_machine_change(runtime);
@@ -79,6 +79,8 @@ static bool command_soft_reset(void *userdata, char *error, size_t error_size) {
 
 static bool command_power_cycle(void *userdata, char *error, size_t error_size) {
     FrontendExecutionRuntime *runtime = (FrontendExecutionRuntime *)userdata;
+    if (runtime->before_machine_change
+        && !runtime->before_machine_change(runtime->machine_change_context, error, error_size)) return false;
     lock_audio_for_machine_change(runtime);
     bool result = frontend_machine_power_cycle();
     unlock_audio_after_machine_change(runtime);
@@ -97,6 +99,8 @@ static bool command_reload(void *userdata, char *error, size_t error_size) {
         set_error(error, error_size, "Peripheral storage could not be saved");
         return false;
     }
+    if (runtime->before_machine_change
+        && !runtime->before_machine_change(runtime->machine_change_context, error, error_size)) return false;
 
     bool was_fds = rom_is_fds();
     bool disk_inserted = was_fds && fds_disk_inserted();

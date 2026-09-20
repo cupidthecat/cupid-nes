@@ -93,6 +93,8 @@ int test_fds_accuracy(void);
 int test_studybox_accuracy(void);
 int test_nsf_accuracy(void);
 int test_nsf_player_accuracy(void);
+int test_capture_container_accuracy(void);
+int test_capture_session_accuracy(void);
 int test_input_accuracy(void);
 int test_vs_accuracy(void);
 int test_epsm_accuracy(void);
@@ -203,6 +205,8 @@ int main(int argc, char **argv) {
     failures += test_studybox_accuracy();
     failures += test_nsf_accuracy();
     failures += test_nsf_player_accuracy();
+    failures += test_capture_container_accuracy();
+    failures += test_capture_session_accuracy();
     failures += test_input_accuracy();
     failures += test_vs_accuracy();
     failures += test_epsm_accuracy();

@@ -39,6 +39,21 @@ NesFileResult nes_file_read_all(const char *path, size_t limit, uint8_t **data, 
 // Write and flush a unique sibling file before replacing the destination.
 // A failure leaves any existing destination in place.
 NesFileResult nes_file_write_atomic(const char *path, const void *data, size_t size);
+// Stream a bounded output into a unique sibling file. Commit flushes the stream
+// and atomically replaces the destination; abort leaves the destination alone.
+// Seeking is limited to bytes already written, which permits container headers
+// to be finalized without creating sparse or uninitialized ranges.
+typedef struct NesFileTransaction NesFileTransaction;
+NesFileResult nes_file_transaction_begin(const char *path, uint64_t limit,
+                                          NesFileTransaction **out);
+NesFileResult nes_file_transaction_write(NesFileTransaction *transaction,
+                                          const void *data, size_t size);
+NesFileResult nes_file_transaction_seek(NesFileTransaction *transaction, uint64_t position);
+uint64_t nes_file_transaction_position(const NesFileTransaction *transaction);
+uint64_t nes_file_transaction_size(const NesFileTransaction *transaction);
+// Commit and abort consume the transaction and clear the caller's pointer.
+NesFileResult nes_file_transaction_commit(NesFileTransaction **transaction);
+void nes_file_transaction_abort(NesFileTransaction **transaction);
 NesFileResult nes_file_remove(const char *path);
 // Compare existing file identities, following links. A missing path returns
 // NES_FILE_NOT_FOUND with *same false; identical valid spellings return true.

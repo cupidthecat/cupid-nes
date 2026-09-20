@@ -21,6 +21,8 @@ CORE_SRC = src/system/timing.c src/system/hardware.c src/system/vs_system.c src/
 CORE_SRC += src/system/execution_policy.c \
             src/audio/audio_observer.c src/ui/nsf_player.c src/ui/nsf_player_ui.c \
             src/ui/nsf_player_runtime.c \
+            src/capture/capture_writer.c src/capture/capture_png.c src/capture/capture_session.c \
+            src/ui/capture_frontend.c src/ui/capture_runtime.c \
             src/media/patch.c src/media/patch_create.c src/media/image_source.c \
             src/media/archive_common.c src/media/archive_zip.c src/media/archive_7z.c \
             src/third_party/miniz/miniz.c src/third_party/lzma/7zArcIn.c \
@@ -65,7 +67,8 @@ TEST_SRC = src/tests/accuracy_test.c src/tests/cpu_accuracy.c \
            src/tests/board_nina_fme7_accuracy.c src/tests/board_state_accuracy.c src/tests/state_accuracy.c src/tests/frontend_accuracy.c
 TEST_SRC += src/tests/patch_accuracy.c src/tests/media_accuracy.c src/tests/fds_options_accuracy.c \
             src/tests/fds_automation_accuracy.c src/tests/execution_policy_accuracy.c \
-            src/tests/nsf_player_accuracy.c
+            src/tests/nsf_player_accuracy.c src/tests/capture_container_accuracy.c \
+            src/tests/capture_session_accuracy.c
 CORE_OBJ = $(CORE_SRC:.c=.o) $(CORE_CXX_SRC:.cpp=.o)
 TEST_OBJ = $(TEST_SRC:.c=.o)
 OBJ = $(CORE_OBJ) $(TEST_OBJ) src/main.o

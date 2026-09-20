@@ -247,31 +247,124 @@ static bool replace_file(const char *temporary, const char *destination) {
 #endif
 }
 
-NesFileResult nes_file_write_atomic(const char *path, const void *data, size_t size) {
-    if (!valid_path(path) || (!data && size)) return NES_FILE_INVALID_ARGUMENT;
+struct NesFileTransaction {
+    FILE *file;
+    char *temporary;
+    char *destination;
+    uint64_t limit;
+    uint64_t position;
+    uint64_t length;
+    NesFileResult error;
+};
+
+NesFileResult nes_file_transaction_begin(const char *path, uint64_t limit,
+                                          NesFileTransaction **out) {
+    if (out) *out = NULL;
+    if (!out || !valid_path(path) || limit > INT64_MAX) return NES_FILE_INVALID_ARGUMENT;
     size_t path_length = strlen(path);
     if (path_length > NES_FILE_PATH_LIMIT - 64) return NES_FILE_INVALID_ARGUMENT;
-    char *temporary = malloc(path_length + 64);
-    if (!temporary) return NES_FILE_OUT_OF_MEMORY;
+    NesFileTransaction *transaction = calloc(1, sizeof(*transaction));
+    if (!transaction) return NES_FILE_OUT_OF_MEMORY;
+    transaction->temporary = malloc(path_length + 64);
+    transaction->destination = malloc(path_length + 1);
+    if (!transaction->temporary || !transaction->destination) {
+        free(transaction->temporary);
+        free(transaction->destination);
+        free(transaction);
+        return NES_FILE_OUT_OF_MEMORY;
+    }
+    memcpy(transaction->destination, path, path_length + 1);
+    transaction->limit = limit;
 #ifdef _WIN32
     unsigned long process_id = (unsigned long)_getpid();
 #else
     unsigned long process_id = (unsigned long)getpid();
 #endif
-    FILE *file = NULL;
     for (unsigned attempt = 0; attempt < 16; ++attempt) {
         uint64_t sequence = atomic_fetch_add_explicit(&temporary_sequence, 1, memory_order_relaxed);
-        snprintf(temporary, path_length + 64, "%s.tmp-%lu-%" PRIu64, path, process_id, sequence);
-        file = create_exclusive(temporary);
-        if (file || errno != EEXIST) break;
+        snprintf(transaction->temporary, path_length + 64, "%s.tmp-%lu-%" PRIu64,
+                 path, process_id, sequence);
+        transaction->file = create_exclusive(transaction->temporary);
+        if (transaction->file || errno != EEXIST) break;
     }
-    if (!file) { NesFileResult result = file_error(); free(temporary); return result; }
-    bool complete = (!size || fwrite(data, 1, size, file) == size) && flush_file(file);
-    if (fclose(file) != 0) complete = false;
-    if (complete) complete = replace_file(temporary, path);
-    if (!complete) (void)nes_file_remove(temporary);
-    free(temporary);
-    return complete ? NES_FILE_OK : NES_FILE_IO_ERROR;
+    if (!transaction->file) {
+        NesFileResult result = file_error();
+        free(transaction->temporary);
+        free(transaction->destination);
+        free(transaction);
+        return result;
+    }
+    *out = transaction;
+    return NES_FILE_OK;
+}
+
+NesFileResult nes_file_transaction_write(NesFileTransaction *transaction,
+                                          const void *data, size_t size) {
+    if (!transaction || !transaction->file) return NES_FILE_INVALID_ARGUMENT;
+    if (transaction->error != NES_FILE_OK) return transaction->error;
+    if (!data && size) return transaction->error = NES_FILE_INVALID_ARGUMENT;
+    if ((uint64_t)size > transaction->limit - transaction->position)
+        return transaction->error = NES_FILE_TOO_LARGE;
+    if (size && fwrite(data, 1, size, transaction->file) != size)
+        return transaction->error = NES_FILE_IO_ERROR;
+    transaction->position += size;
+    if (transaction->position > transaction->length) transaction->length = transaction->position;
+    return NES_FILE_OK;
+}
+
+NesFileResult nes_file_transaction_seek(NesFileTransaction *transaction, uint64_t position) {
+    if (!transaction || !transaction->file) return NES_FILE_INVALID_ARGUMENT;
+    if (transaction->error != NES_FILE_OK) return transaction->error;
+    if (position > transaction->length) return transaction->error = NES_FILE_INVALID_ARGUMENT;
+#ifdef _WIN32
+    int result = _fseeki64(transaction->file, (int64_t)position, SEEK_SET);
+#else
+    int result = fseeko(transaction->file, (off_t)position, SEEK_SET);
+#endif
+    if (result != 0) return transaction->error = NES_FILE_IO_ERROR;
+    transaction->position = position;
+    return NES_FILE_OK;
+}
+
+uint64_t nes_file_transaction_position(const NesFileTransaction *transaction) {
+    return transaction ? transaction->position : 0;
+}
+
+uint64_t nes_file_transaction_size(const NesFileTransaction *transaction) {
+    return transaction ? transaction->length : 0;
+}
+
+void nes_file_transaction_abort(NesFileTransaction **transaction_ptr) {
+    if (!transaction_ptr || !*transaction_ptr) return;
+    NesFileTransaction *transaction = *transaction_ptr;
+    *transaction_ptr = NULL;
+    if (transaction->file) (void)fclose(transaction->file);
+    (void)nes_file_remove(transaction->temporary);
+    free(transaction->temporary);
+    free(transaction->destination);
+    free(transaction);
+}
+
+NesFileResult nes_file_transaction_commit(NesFileTransaction **transaction_ptr) {
+    if (!transaction_ptr || !*transaction_ptr) return NES_FILE_INVALID_ARGUMENT;
+    NesFileTransaction *transaction = *transaction_ptr;
+    NesFileResult result = transaction->error;
+    if (result == NES_FILE_OK && !flush_file(transaction->file)) result = NES_FILE_IO_ERROR;
+    if (fclose(transaction->file) != 0 && result == NES_FILE_OK) result = NES_FILE_IO_ERROR;
+    transaction->file = NULL;
+    if (result == NES_FILE_OK && !replace_file(transaction->temporary, transaction->destination))
+        result = NES_FILE_IO_ERROR;
+    nes_file_transaction_abort(transaction_ptr);
+    return result;
+}
+
+NesFileResult nes_file_write_atomic(const char *path, const void *data, size_t size) {
+    if (!data && size) return NES_FILE_INVALID_ARGUMENT;
+    NesFileTransaction *transaction = NULL;
+    NesFileResult result = nes_file_transaction_begin(path, size, &transaction);
+    if (result != NES_FILE_OK) return result;
+    (void)nes_file_transaction_write(transaction, data, size);
+    return nes_file_transaction_commit(&transaction);
 }
 
 const char *nes_file_result_message(NesFileResult result) {

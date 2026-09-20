@@ -137,6 +137,8 @@ other peripheral combinations.
 | Page Up / Page Down | Next / previous NSF or NSFe track |
 | Ctrl+Space / Ctrl+End / Ctrl+Home | Music play-pause / stop / restart |
 | Ctrl+V | Paste palette text |
+| F12 / Ctrl+F12 / Shift+F12 | Screenshot / audio recording / video recording |
+| Ctrl+Shift+F12 | Stop and finalize a recording |
 
 The keyboard and first SDL game controller both drive player 1. More controllers
 fill the remaining player slots; the selected multiplayer adapter or VS image
@@ -186,6 +188,7 @@ process exits.
 | Look up hardware and test terminology | [Hardware terminology](docs/glossary.md) |
 | Locate saves and use writable media | [Saves and media](docs/saves.md) |
 | Play NSF and NSFe tracks | [Music player](docs/music.md) |
+| Save screenshots, audio, or video | [Screenshots and recordings](docs/capture.md) |
 | Diagnose a build or runtime problem | [Troubleshooting](docs/troubleshooting.md) |
 | Understand the core and source layout | [Architecture](docs/architecture.md) |
 | Run tests or investigate an accuracy failure | [Development and testing](docs/development.md) |

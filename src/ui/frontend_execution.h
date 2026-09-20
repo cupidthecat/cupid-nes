@@ -22,6 +22,8 @@ typedef struct {
     const char *fds_bios_path;
     const char *studybox_bios_path;
     size_t *fds_side;
+    bool (*before_machine_change)(void *context, char *error, size_t error_size);
+    void *machine_change_context;
 } FrontendExecutionRuntime;
 
 void frontend_execution_init(FrontendExecutionRuntime *runtime,
