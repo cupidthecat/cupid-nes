@@ -157,6 +157,12 @@ Before the implementation change, the new reset regression and corrected audio-c
 
 Both Windows builds also passed the canonical CPU trace's 8,991 states and all 91 pinned diagnostic ROMs through `scripts/run-diagnostics.py`.
 
+## VRC7 console reset checkpoint
+
+Revision `1dd63fd97a7228f58f14fc13812bc21ba3a3a055` connects mapper 85 console reset to the FM chip's reset operation. Banking, control, RAM and IRQ state survive, along with the audio address latch, mute state and sample-clock phase. The regression checks all three supported submapper values, an IRQ counter that keeps advancing through the seven CPU reset cycles, the next FM sample boundary, muted writes and a data write through the retained address latch. Before the fix, the sample-boundary assertion failed because the synthesizer kept playing.
+
+The strict Windows build and production hardware suite passed in normal and AddressSanitizer/UndefinedBehaviorSanitizer builds. Each build then passed AccuracyCoin 144/144 with zero skipped and zero unfinished in 4,182 frames, matching the cartridge's tally. The test ROM pin and SHA-256 were unchanged.
+
 ## Reproducing a checkpoint
 
 Check out the listed commit in a separate worktree, prepare SDL2 and the pinned ROM as described in [development and testing](development.md), then run:

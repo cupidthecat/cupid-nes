@@ -49,6 +49,8 @@ record the tested memory and banking fixes.
 
 For NSF and NSFe files that use MMC5, multiplier operands survive soft reset
 and track changes. Loading a music image initializes both operands to zero.
+VRC7 cartridges reset their FM synthesizer on console reset and retain their
+bank and IRQ registers.
 
 Device selection and timing follow the ROM header and
 [command-line options](docs/configuration.md). Supported mapper families can still
