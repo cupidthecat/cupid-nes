@@ -40,6 +40,12 @@ class Bmc12in1 final : public Board {
         }
         UpdateState();
     }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("bmc12in1.regs", _regs)
+            && state.Field("bmc12in1.mode", _mode);
+    }
 };
 
 class Super40in1Ws final : public Board {
@@ -59,6 +65,11 @@ class Super40in1Ws final : public Board {
             SelectPrgPage(1, value | paired);
             SetMirroringType(value & 0x10 ? MirroringType::Horizontal : MirroringType::Vertical);
         }
+    }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("super40in1ws.locked", _locked);
     }
 };
 
@@ -120,6 +131,11 @@ class Mapper487 final : public Board {
     }
 public:
     void Reset(bool) override { _regs.fill(0); UpdateState(); }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("mapper487.regs", _regs);
+    }
 };
 
 class Dance2000 final : public Board {
@@ -160,6 +176,13 @@ public:
         }
         SelectChrPage(0, _lastNt);
     }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("dance2000.prg", _prg)
+            && state.Field("dance2000.mode", _mode)
+            && state.Field("dance2000.lastNt", _lastNt);
+    }
 };
 
 class Eh8813A final : public Board {
@@ -181,6 +204,11 @@ class Eh8813A final : public Board {
     }
 public:
     void Reset(bool) override { WriteRegister(0x8000, 0); _alterRead = false; }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("eh8813a.alterRead", _alterRead);
+    }
 };
 
 class DreamTech01 final : public Board {
@@ -236,6 +264,17 @@ class T230 final : public Board {
     }
 public:
     void ProcessCpuClock() override { if (_irq.Clock()) SetIrq(true); }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && _irq.VisitState(state)
+            && state.Field("t230.prg0", _prg0)
+            && state.Field("t230.prg1", _prg1)
+            && state.Field("t230.mode", _mode)
+            && state.Field("t230.outer", _outer)
+            && state.Field("t230.chrHigh", _chrHigh)
+            && state.Field("t230.chrLow", _chrLow);
+    }
 };
 
 class Ax5705 final : public Board {
@@ -273,6 +312,11 @@ class Ax5705 final : public Board {
                 case 0x8008: SetMirroringType(value & 1 ? MirroringType::Horizontal : MirroringType::Vertical); break;
             }
         }
+    }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("ax5705.chr", _chr);
     }
 };
 

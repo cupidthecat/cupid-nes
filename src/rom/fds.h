@@ -29,12 +29,21 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "rom.h"
+#include "../state/state_io.h"
 
 typedef struct FdsImage FdsImage;
+
+typedef struct {
+    bool insert_automatically;
+    bool fast_forward_loading;
+} FdsAutomationOptions;
 
 FdsImage *fds_image_create(const uint8_t *disk, size_t disk_size,
                            const uint8_t *bios, size_t bios_size,
                            const char *disk_path, bool write_protected);
+FdsImage *fds_image_create_options(const uint8_t *disk, size_t disk_size,
+                                   const uint8_t *bios, size_t bios_size,
+                                   const char *disk_path, const FdsLoadOptions *options);
 void fds_image_destroy(FdsImage *image);
 
 // Takes ownership of a prepared image. Preparation is fallible; activation is not.
@@ -43,6 +52,7 @@ void fds_shutdown(void);
 bool fds_active(void);
 
 uint8_t fds_cpu_read_bus(uint16_t addr, uint8_t open_bus);
+uint8_t fds_cpu_peek_bus(uint16_t addr, uint8_t open_bus);
 void fds_cpu_write(uint16_t addr, uint8_t value);
 uint8_t fds_ppu_read(uint16_t addr);
 void fds_ppu_write(uint16_t addr, uint8_t value);
@@ -61,6 +71,8 @@ float fds_nsf_audio_output(void);
 // Disk persistence leaves the in-memory image dirty if writing or replacement fails.
 bool fds_flush(void);
 bool fds_disk_dirty(void);
+FdsSaveMode fds_save_mode(void);
+const char *fds_save_path(void);
 
 size_t fds_side_count(void);
 bool fds_disk_inserted(void);
@@ -69,5 +81,18 @@ bool fds_insert_disk(size_t side);
 void fds_eject_disk(void);
 void fds_set_write_protected(bool protected_media);
 bool fds_write_protected(void);
+void fds_set_automation_options(FdsAutomationOptions options);
+FdsAutomationOptions fds_automation_options(void);
+bool fds_automatic_insert_active(void);
+bool fds_automatic_insert_ambiguous(void);
+bool fds_loading_fast_forward(void);
+// Called by the disk clock when the PPU reaches a new frame. Repeated calls
+// for the same frame are harmless; no CPU, PPU, or disk cycles are skipped.
+void fds_automation_frame(uint64_t frame);
+
+bool fds_state_capture(NesStateWriter *writer);
+bool fds_hardware_state_capture(NesStateWriter *writer);
+bool fds_state_validate(NesStateReader *reader);
+bool fds_state_apply(NesStateReader *reader);
 
 #endif

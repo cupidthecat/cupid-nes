@@ -1,6 +1,6 @@
 # Contributing to Cupid
 
-Cupid development focuses on NES hardware accuracy and reproducible emulation bugs. Start with the [architecture guide](docs/architecture.md) to locate the device involved, and [development and testing](docs/development.md) to build the production test runner.
+Cupid development covers NES hardware accuracy, emulator features, and the desktop tools used to run and inspect games. Start with the [architecture guide](docs/architecture.md) to locate the relevant subsystem, and [development and testing](docs/development.md) to build the production test runner.
 
 ## Reporting a bug
 
@@ -19,7 +19,7 @@ Provide synthetic or redistributable fixtures when possible. A game name and has
 
 Inspect the current implementation, its callers, and relevant tests before changing it. Work on a branch or isolated worktree, keep unrelated edits intact, and make commits that describe the behavior changed.
 
-Fix the device or bus behavior that causes the failure. Do not add per-game success paths, replace actual output with an expected result, or silently select a different board when metadata is unsupported. Preserve loader validation, save ownership, reset distinctions, and existing copyright notices.
+Fix the device, bus, or application behavior that causes the failure. Do not add per-game success paths, replace actual output with an expected result, or silently select a different board when metadata is unsupported. Preserve loader validation, save ownership, reset distinctions, and existing copyright notices.
 
 Keep the hardware change and the evidence for it together. A new helper, declaration, or test-only path does not implement a device in the application. When a feature needs normal frontend access, verify that inputs and outputs can reach it, as with both screens and both APUs of a dual VS system.
 
@@ -33,9 +33,9 @@ The root `.clang-format` keeps function definitions in separate blocks, expands 
 
 Choose a test that would fail for the original defect and exercise the real implementation. Use production loader tests for metadata and replacement behavior, CPU bus operations for timing and DMA, and save/reload tests for persistent memory. Include boundary and rejected-input cases when they are part of the change.
 
-After each implemented accuracy issue, require the pinned AccuracyCoin suite to pass **144/144 with zero skipped or unfinished tests**. Record the exact tested commit and command. Later integration changes must retain that result.
+After each implemented issue, require the pinned AccuracyCoin suite to pass **144/144 with zero failed, skipped, or unfinished tests**. This also applies to frontend and presentation changes, which must preserve the hardware behavior beneath them. Record the exact tested commit and command. Later integration changes must retain that result.
 
-Before an accuracy patch is ready for review, the final revision needs the production hardware suite, canonical 8,991-state trace, all 91 pinned diagnostic ROMs, full AccuracyCoin, and the strict GCC and Clang-with-sanitizers CI jobs. Preserve ROM revisions, hashes, pass thresholds, result protocols, and explicit setup for legacy diagnostics. The diagnostic script checks files and group counts, not the external checkout's Git revision, and the AccuracyCoin runner does not verify the ROM hash; those pins must be checked separately as shown in the test guide and CI workflow.
+Before an implementation patch is ready for review, the final revision needs the production hardware suite, canonical 8,991-state trace, all 91 pinned diagnostic ROMs, full AccuracyCoin, and the strict GCC and Clang-with-sanitizers CI jobs. Add acceptance checks for the behavior the issue requests: a hardware pass alone does not prove that a menu works, a recording can be replayed, or a network peer can connect. Preserve ROM revisions, hashes, pass thresholds, result protocols, and explicit setup for legacy diagnostics. The diagnostic script checks files and group counts, not the external checkout's Git revision, and the AccuracyCoin runner does not verify the ROM hash; those pins must be checked separately as shown in the test guide and CI workflow.
 
 Report a failed or unfinished check accurately. Do not reduce coverage to make CI pass. The [test guide](docs/development.md) contains commands and the [accuracy notes](docs/accuracy.md) explain what each result establishes.
 

@@ -17,10 +17,14 @@
 #include "vs_system.h"
 #include "../apu/apu.h"
 #include "../cpu/cpu.h"
+#include "../debugger/debugger.h"
 #include "../joypad/joypad.h"
 #include "../ppu/ppu.h"
+#include "../video/frame_snapshot.h"
 #include "timing.h"
 #include "../../include/globals.h"
+#include "../replay/input_event.h"
+#include "execution_policy.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -47,6 +51,7 @@ typedef struct {
 } VsState;
 
 static VsState vs;
+static uint32_t completed_dual_framebuffer[2 * SCREEN_WIDTH * SCREEN_HEIGHT];
 
 static void advance_coin_pulse(unsigned slot) {
     if (slot >= 4 || !vs.coin_frames[slot]) return;
@@ -94,7 +99,7 @@ static bool mapper_supported(int mapper) {
 }
 
 bool vs_decode_header(const iNESHeader *header, int mapper, size_t prg_bytes,
-                      size_t chr_bytes, VsRomConfig *config,
+                      size_t chr_bytes, NesRegion region, VsRomConfig *config,
                       char *reason, size_t reason_size) {
     if (!header || !config) return false;
     (void)chr_bytes;
@@ -173,9 +178,7 @@ bool vs_decode_header(const iNESHeader *header, int mapper, size_t prg_bytes,
         set_reason(reason, reason_size, "unsupported mapper for VS System");
         return false;
     }
-    bool non_ntsc = nes2 ? (header->zero[1] & 3u) == 1u || (header->zero[1] & 3u) == 3u
-                         : (header->flags9 & 1u) != 0;
-    if (non_ntsc) {
+    if (region != NES_REGION_NTSC) {
         set_reason(reason, reason_size, "VS System requires NTSC timing");
         return false;
     }
@@ -201,6 +204,7 @@ static void select_side(unsigned side) {
 }
 
 void vs_commit_config(const VsRomConfig *config) {
+    nes_video_snapshot_reset_all();
     select_side(0);
     apu_audio_shutdown_state(&vs.sub_apu);
     memset(&vs, 0, sizeof(vs));
@@ -209,6 +213,7 @@ void vs_commit_config(const VsRomConfig *config) {
 }
 
 void vs_clear_config(void) {
+    nes_video_snapshot_reset_all();
     select_side(0);
     apu_audio_shutdown_state(&vs.sub_apu);
     memset(&vs, 0, sizeof(vs));
@@ -219,6 +224,15 @@ bool vs_dual_system(void) { return vs.config.enabled && vs.config.dual; }
 VsSystemType vs_system_type(void) { return vs.config.type; }
 VsPpuModel vs_ppu_model(void) { return vs.config.ppu_model; }
 unsigned vs_active_side(void) { return vs.active_side; }
+
+uint8_t vs_debug_peek_memory(unsigned side, bool ppu_space, uint16_t address) {
+    if (side > 1 || (side && !vs_dual_system())) return 0;
+    unsigned previous = vs.active_side;
+    select_side(side);
+    uint8_t value = ppu_space ? debugger_peek_ppu(address) : debugger_peek_cpu(address);
+    select_side(previous);
+    return value;
+}
 
 void vs_power_on_secondary(void) {
     if (!vs_dual_system()) return;
@@ -259,8 +273,9 @@ int vs_cpu_step(void) {
     uint64_t main_frame = ppu.frame_count;
     while ((main_count > vs.sub_cpu.total_cycles && main_count - vs.sub_cpu.total_cycles > 5)
            || main_frame > vs.sub_ppu.state.frame_count) {
+        if (debugger_is_paused()) break;
         select_side(1);
-        cpu_step(&vs.sub_cpu.cpu);
+        if (cpu_step(&vs.sub_cpu.cpu) == 0) break;
     }
     select_side(0);
     return main_cycles;
@@ -286,6 +301,54 @@ const uint32_t *vs_video_framebuffer(void) {
                SCREEN_WIDTH * sizeof(*output));
     }
     return vs.dual_framebuffer;
+}
+
+bool vs_video_copy_frame(uint32_t *out, size_t pixels) {
+    size_t required = (size_t)vs_video_width() * SCREEN_HEIGHT;
+    if (!out || pixels < required) return false;
+    memcpy(out, vs_video_framebuffer(), required * sizeof(*out));
+    return true;
+}
+
+const uint32_t *vs_video_completed_framebuffer(void) {
+    const NesCompletedVideoFrame *main_frame = nes_video_snapshot_frame(0);
+    const uint32_t *main_pixels = main_frame ? main_frame->pixels : framebuffer;
+    if (!vs_dual_system()) return main_pixels;
+    const NesCompletedVideoFrame *sub_frame = nes_video_snapshot_frame(1);
+    const uint32_t *sub_pixels = sub_frame ? sub_frame->pixels : vs.sub_framebuffer;
+    for (size_t row = 0; row < SCREEN_HEIGHT; ++row) {
+        uint32_t *output = completed_dual_framebuffer + row * 2 * SCREEN_WIDTH;
+        memcpy(output, main_pixels + row * SCREEN_WIDTH, SCREEN_WIDTH * sizeof(*output));
+        memcpy(output + SCREEN_WIDTH, sub_pixels + row * SCREEN_WIDTH,
+               SCREEN_WIDTH * sizeof(*output));
+    }
+    return completed_dual_framebuffer;
+}
+
+bool vs_video_copy_completed_frame(uint32_t *out, size_t pixels) {
+    size_t required = (size_t)vs_video_width() * SCREEN_HEIGHT;
+    if (!out || pixels < required) return false;
+    memcpy(out, vs_video_completed_framebuffer(), required * sizeof(*out));
+    return true;
+}
+
+const uint16_t *vs_video_completed_signal(unsigned side, unsigned *phase) {
+    const PPU *state = vs_side_ppu(side);
+    if (!state) {
+        if (phase) *phase = 0;
+        return NULL;
+    }
+    const NesCompletedVideoFrame *frame = nes_video_snapshot_frame(side);
+    if (phase) *phase = frame ? frame->phase : state->completed_video_phase;
+    return frame ? frame->signal : state->pixel_signal;
+}
+
+const NesVideoTraceFrame *vs_video_completed_trace(unsigned side) {
+    if (!vs_side_ppu(side)) return NULL;
+    const NesCompletedVideoFrame *frame = nes_video_snapshot_frame(side);
+    const NesVideoTraceFrame *trace = nes_video_trace_frame(side);
+    return frame && trace && trace->complete && trace->frame_number == frame->frame_number
+        ? trace : NULL;
 }
 
 APU *vs_side_apu(unsigned side) {
@@ -322,6 +385,28 @@ void vs_audio_callback(void *userdata, uint8_t *stream, int len) {
             output[offset + i] = 0.5f * (output[offset + i] + secondary[i]);
         offset += chunk;
     }
+}
+
+void vs_audio_stereo_callback(void *userdata, uint8_t *stream, int len) {
+    if (!vs_dual_system()) {
+        apu_sdl_stereo_callback(userdata, stream, len);
+        return;
+    }
+    if (!stream || len <= 0) return;
+    float *output = (float *)stream;
+    int frames = len / (int)(2 * sizeof(*output));
+    apu_audio_pull_stereo(&apu, output, frames);
+    float secondary[256];
+    for (int offset = 0; offset < frames;) {
+        int chunk = frames - offset;
+        if (chunk > 128) chunk = 128;
+        apu_audio_pull_stereo(&vs.sub_apu, secondary, chunk);
+        for (int i = 0; i < chunk * 2; ++i)
+            output[offset * 2 + i] = 0.5f * (output[offset * 2 + i] + secondary[i]);
+        offset += chunk;
+    }
+    size_t bytes = (size_t)frames * 2 * sizeof(*output);
+    if (bytes < (size_t)len) memset(stream + bytes, 0, (size_t)len - bytes);
 }
 
 uint64_t vs_side_cpu_cycles(unsigned side) {
@@ -423,8 +508,18 @@ uint8_t vs_read_controller_port(unsigned port) {
     return (uint8_t)(bit | (local_dips & 0xFC));
 }
 
+uint8_t vs_debug_peek_controller_port(unsigned port) {
+    if (!vs_enabled() || port > 1) return 0;
+    VsState saved = vs;
+    uint8_t value = vs_read_controller_port(port);
+    vs = saved;
+    return value;
+}
+
 bool vs_set_dip_switches(uint16_t value) {
     if (!vs_enabled()) return false;
+    if (nes_execution_policy() & (NES_EXECUTION_MOVIE_RECORDING | NES_EXECUTION_MOVIE_PLAYBACK
+                                | NES_EXECUTION_NETPLAY)) return false;
     vs.dips = value;
     return true;
 }
@@ -433,6 +528,12 @@ uint16_t vs_dip_switches(void) { return vs.dips; }
 
 bool vs_set_coin(unsigned slot, bool pressed) {
     if (!vs_enabled() || slot >= (vs_dual_system() ? 4u : 2u)) return false;
+    NesInputEvent event = {
+        .type = NES_INPUT_EVENT_VS_COIN,
+        .a = (int32_t)slot,
+        .b = pressed
+    };
+    if (!nes_input_event_submit(&event)) return false;
     if (pressed && !vs.coin_pressed[slot]) {
         unsigned side = slot / 2;
         vs.coin_frames[slot] = 4;
@@ -444,6 +545,12 @@ bool vs_set_coin(unsigned slot, bool pressed) {
 
 bool vs_set_service(unsigned side, bool pressed) {
     if (!vs_enabled() || side >= (vs_dual_system() ? 2u : 1u)) return false;
+    NesInputEvent event = {
+        .type = NES_INPUT_EVENT_VS_SERVICE,
+        .a = (int32_t)side,
+        .b = pressed
+    };
+    if (!nes_input_event_submit(&event)) return false;
     vs.service[side] = pressed;
     return true;
 }
@@ -535,6 +642,20 @@ static const uint8_t rgb_lut[5][64] = {
     {24,3,28,40,46,53,1,23,16,31,42,14,54,55,11,57,37,30,18,52,46,29,6,38,62,27,34,25,4,46,58,33,5,10,7,2,19,20,0,21,12,61,17,15,13,56,45,36,51,32,8,22,63,43,32,60,46,39,35,49,41,50,44,9}
 };
 
+uint8_t vs_ppu_light_sensor_index(uint8_t color) {
+    color &= 0x3F;
+    if (!vs_enabled()) {
+        return color;
+    }
+
+    unsigned palette = 0;
+    if (vs.config.ppu_model >= VS_PPU_2C04_0001 && vs.config.ppu_model <= VS_PPU_2C04_0004) {
+        palette = (unsigned)(vs.config.ppu_model - VS_PPU_2C04_0001) + 1;
+    }
+
+    return rgb_lut[palette][color];
+}
+
 bool vs_ppu_rgb_color(uint8_t color, uint8_t mask, uint32_t *argb) {
     if (!vs_enabled() || !argb) return false;
     color &= 0x3F;
@@ -550,5 +671,234 @@ bool vs_ppu_rgb_color(uint8_t color, uint8_t mask, uint32_t *argb) {
     if (mask & 0x40) result |= 0x0000FF00;
     if (mask & 0x80) result |= 0x000000FF;
     *argb = result;
+    return true;
+}
+
+typedef struct {
+    VsRomConfig config;
+    unsigned active_side;
+    uint16_t dips;
+    uint8_t coin_frames[4];
+    bool coin_pressed[4];
+    uint64_t coin_frame_mark[4];
+    bool service[2];
+    uint8_t shift[2][2];
+    bool strobe[2];
+    uint8_t select_bit[2];
+    unsigned ram_owner;
+    bool main_sub_bit[2];
+    bool external_irq[2];
+    uint8_t protection_counter[2];
+    bool has_subconsole;
+    CpuMachineContext sub_cpu;
+    PpuMachineContext sub_ppu;
+    uint32_t sub_framebuffer[SCREEN_WIDTH * SCREEN_HEIGHT];
+    const uint8_t *sub_apu_data;
+    size_t sub_apu_size;
+} VsSavedState;
+
+/* Save-state validation can run on sanitizer builds with a small Windows
+ * thread stack. The dual-VS framebuffer makes this restore image too large for
+ * an automatic local. State restore is application-thread owned, like the VS
+ * hardware itself, so a reusable decode scratch keeps validation allocation
+ * free and preserves transactional apply behavior. */
+static VsSavedState vs_saved_scratch;
+
+static bool vs_state_write_config(NesStateWriter *writer, const VsRomConfig *config) {
+    return nes_state_write_bool(writer, config->enabled)
+        && nes_state_write_bool(writer, config->dual)
+        && nes_state_write_u8(writer, (uint8_t)config->type)
+        && nes_state_write_u8(writer, (uint8_t)config->ppu_model)
+        && nes_state_write_u8(writer, (uint8_t)config->input_type);
+}
+
+static bool vs_state_read_config(NesStateReader *reader, VsRomConfig *config) {
+    uint8_t type, ppu_model, input_type;
+    if (!nes_state_read_bool(reader, &config->enabled)
+        || !nes_state_read_bool(reader, &config->dual)
+        || !nes_state_read_u8(reader, &type)
+        || !nes_state_read_u8(reader, &ppu_model)
+        || !nes_state_read_u8(reader, &input_type)
+        || type > VS_TYPE_RAID_ON_BUNGELING_BAY
+        || ppu_model > VS_PPU_2C05_05
+        || (config->enabled && (input_type < VS_INPUT_STANDARD || input_type > VS_INPUT_ZAPPER))
+        || (!config->enabled && (config->dual || input_type > VS_INPUT_ZAPPER))) return false;
+    config->type = (VsSystemType)type;
+    config->ppu_model = (VsPpuModel)ppu_model;
+    config->input_type = (VsInputType)input_type;
+    return true;
+}
+
+static bool vs_state_write_nested(NesStateWriter *writer, const NesStateWriter *nested) {
+    return nested->size <= UINT32_MAX
+        && nes_state_write_u32(writer, (uint32_t)nested->size)
+        && nes_state_write_bytes(writer, nested->data, nested->size);
+}
+
+static bool vs_state_read_nested(NesStateReader *reader, NesStateReader *nested) {
+    uint32_t size;
+    return nes_state_read_u32(reader, &size) && nes_state_reader_slice(reader, size, nested);
+}
+
+static bool vs_state_config_matches(const VsRomConfig *config) {
+    return config->enabled == vs.config.enabled && config->dual == vs.config.dual
+        && config->type == vs.config.type && config->ppu_model == vs.config.ppu_model
+        && config->input_type == vs.config.input_type;
+}
+
+static bool vs_state_decode(NesStateReader *reader, VsSavedState *saved) {
+    uint32_t active_side, ram_owner;
+    memset(saved, 0, sizeof(*saved));
+    if (!reader || !vs_state_read_config(reader, &saved->config)
+        || !vs_state_config_matches(&saved->config)
+        || !nes_state_read_u32(reader, &active_side)
+        || !nes_state_read_u16(reader, &saved->dips)
+        || !nes_state_read_bytes(reader, saved->coin_frames, sizeof(saved->coin_frames))) return false;
+    for (unsigned i = 0; i < 4; ++i)
+        if (!nes_state_read_bool(reader, &saved->coin_pressed[i])
+            || !nes_state_read_u64(reader, &saved->coin_frame_mark[i])) return false;
+    for (unsigned side = 0; side < 2; ++side) {
+        if (!nes_state_read_bool(reader, &saved->service[side])
+            || !nes_state_read_bytes(reader, saved->shift[side], 2)
+            || !nes_state_read_bool(reader, &saved->strobe[side])
+            || !nes_state_read_u8(reader, &saved->select_bit[side])
+            || saved->select_bit[side] > 1) return false;
+    }
+    if (!nes_state_read_u32(reader, &ram_owner)) return false;
+    for (unsigned side = 0; side < 2; ++side) {
+        if (!nes_state_read_bool(reader, &saved->main_sub_bit[side])
+            || !nes_state_read_bool(reader, &saved->external_irq[side])
+            || !nes_state_read_u8(reader, &saved->protection_counter[side])) return false;
+    }
+    if (!nes_state_read_bool(reader, &saved->has_subconsole)
+        || active_side > 1 || ram_owner > 1
+        || saved->has_subconsole != saved->config.dual) return false;
+    saved->active_side = active_side;
+    saved->ram_owner = ram_owner;
+    if (!saved->has_subconsole) return nes_state_reader_remaining(reader) == 0;
+
+    NesStateReader nested;
+    if (!vs_state_read_nested(reader, &nested)
+        || !cpu_machine_state_decode(&nested, &saved->sub_cpu)
+        || !vs_state_read_nested(reader, &nested)
+        || !ppu_machine_state_decode(&nested, &saved->sub_ppu, saved->sub_framebuffer)
+        || nes_state_reader_remaining(&nested) != 0
+        || !vs_state_read_nested(reader, &nested)) return false;
+    saved->sub_apu_data = nested.data;
+    saved->sub_apu_size = nested.size;
+    if (!apu_machine_state_validate(&vs.sub_apu, &nested)
+        || nes_state_reader_remaining(reader) != 0) return false;
+    return true;
+}
+
+bool vs_state_capture(NesStateWriter *writer) {
+    if (!writer || vs.active_side != 0 || !vs_state_write_config(writer, &vs.config)
+        || !nes_state_write_u32(writer, vs.active_side)
+        || !nes_state_write_u16(writer, vs.dips)
+        || !nes_state_write_bytes(writer, vs.coin_frames, sizeof(vs.coin_frames))) return false;
+    for (unsigned i = 0; i < 4; ++i)
+        if (!nes_state_write_bool(writer, vs.coin_pressed[i])
+            || !nes_state_write_u64(writer, vs.coin_frame_mark[i])) return false;
+    for (unsigned side = 0; side < 2; ++side) {
+        if (!nes_state_write_bool(writer, vs.service[side])
+            || !nes_state_write_bytes(writer, vs.shift[side], 2)
+            || !nes_state_write_bool(writer, vs.strobe[side])
+            || !nes_state_write_u8(writer, vs.select_bit[side])) return false;
+    }
+    if (!nes_state_write_u32(writer, vs.ram_owner)) return false;
+    for (unsigned side = 0; side < 2; ++side) {
+        if (!nes_state_write_bool(writer, vs.main_sub_bit[side])
+            || !nes_state_write_bool(writer, vs.external_irq[side])
+            || !nes_state_write_u8(writer, vs.protection_counter[side])) return false;
+    }
+    if (!nes_state_write_bool(writer, vs.config.dual) || !vs.config.dual) return true;
+
+    NesStateWriter nested;
+    nes_state_writer_init(&nested, NES_STATE_MAX_SIZE);
+    bool ok = cpu_machine_state_capture(&nested, &vs.sub_cpu) && vs_state_write_nested(writer, &nested);
+    nes_state_writer_destroy(&nested);
+    if (!ok) return false;
+    nes_state_writer_init(&nested, NES_STATE_MAX_SIZE);
+    ok = ppu_machine_state_capture(&nested, &vs.sub_ppu, vs.sub_framebuffer)
+        && vs_state_write_nested(writer, &nested);
+    nes_state_writer_destroy(&nested);
+    if (!ok) return false;
+    nes_state_writer_init(&nested, NES_STATE_MAX_SIZE);
+    ok = apu_machine_state_capture(&nested, &vs.sub_apu) && vs_state_write_nested(writer, &nested);
+    nes_state_writer_destroy(&nested);
+    return ok;
+}
+
+bool vs_hardware_state_capture(NesStateWriter *writer) {
+    if (!writer || vs.active_side != 0 || !vs_state_write_config(writer, &vs.config)
+        || !nes_state_write_u32(writer, vs.active_side)
+        || !nes_state_write_u16(writer, vs.dips)
+        || !nes_state_write_bytes(writer, vs.coin_frames, sizeof(vs.coin_frames))) return false;
+    for (unsigned i = 0; i < 4; ++i)
+        if (!nes_state_write_bool(writer, vs.coin_pressed[i])
+            || !nes_state_write_u64(writer, vs.coin_frame_mark[i])) return false;
+    for (unsigned side = 0; side < 2; ++side) {
+        if (!nes_state_write_bool(writer, vs.service[side])
+            || !nes_state_write_bytes(writer, vs.shift[side], 2)
+            || !nes_state_write_bool(writer, vs.strobe[side])
+            || !nes_state_write_u8(writer, vs.select_bit[side])) return false;
+    }
+    if (!nes_state_write_u32(writer, vs.ram_owner)) return false;
+    for (unsigned side = 0; side < 2; ++side) {
+        if (!nes_state_write_bool(writer, vs.main_sub_bit[side])
+            || !nes_state_write_bool(writer, vs.external_irq[side])
+            || !nes_state_write_u8(writer, vs.protection_counter[side])) return false;
+    }
+    if (!nes_state_write_bool(writer, vs.config.dual) || !vs.config.dual) return true;
+
+    NesStateWriter nested;
+    nes_state_writer_init(&nested, NES_STATE_MAX_SIZE);
+    bool ok = cpu_machine_state_capture(&nested, &vs.sub_cpu) && vs_state_write_nested(writer, &nested);
+    nes_state_writer_destroy(&nested);
+    if (!ok) return false;
+    nes_state_writer_init(&nested, NES_STATE_MAX_SIZE);
+    ok = ppu_machine_hardware_state_capture(&nested, &vs.sub_ppu)
+        && vs_state_write_nested(writer, &nested);
+    nes_state_writer_destroy(&nested);
+    if (!ok) return false;
+    nes_state_writer_init(&nested, NES_STATE_MAX_SIZE);
+    ok = apu_machine_hardware_state_capture(&nested, &vs.sub_apu)
+        && vs_state_write_nested(writer, &nested);
+    nes_state_writer_destroy(&nested);
+    return ok;
+}
+
+bool vs_state_validate(NesStateReader *reader) {
+    return reader && vs_state_decode(reader, &vs_saved_scratch);
+}
+
+bool vs_state_apply(NesStateReader *reader) {
+    VsSavedState *saved = &vs_saved_scratch;
+    if (!reader || !vs_state_decode(reader, saved)) return false;
+    vs.dips = saved->dips;
+    memcpy(vs.coin_frames, saved->coin_frames, sizeof(vs.coin_frames));
+    memcpy(vs.coin_pressed, saved->coin_pressed, sizeof(vs.coin_pressed));
+    memcpy(vs.coin_frame_mark, saved->coin_frame_mark, sizeof(vs.coin_frame_mark));
+    memcpy(vs.service, saved->service, sizeof(vs.service));
+    memcpy(vs.shift, saved->shift, sizeof(vs.shift));
+    memcpy(vs.strobe, saved->strobe, sizeof(vs.strobe));
+    memcpy(vs.select_bit, saved->select_bit, sizeof(vs.select_bit));
+    vs.ram_owner = saved->ram_owner;
+    memcpy(vs.main_sub_bit, saved->main_sub_bit, sizeof(vs.main_sub_bit));
+    memcpy(vs.external_irq, saved->external_irq, sizeof(vs.external_irq));
+    memcpy(vs.protection_counter, saved->protection_counter, sizeof(vs.protection_counter));
+    if (saved->has_subconsole) {
+        vs.sub_cpu = saved->sub_cpu;
+        vs.sub_ppu = saved->sub_ppu;
+        memcpy(vs.sub_framebuffer, saved->sub_framebuffer, sizeof(vs.sub_framebuffer));
+        NesStateReader apu_reader;
+        nes_state_reader_init(&apu_reader, saved->sub_apu_data, saved->sub_apu_size);
+        if (!apu_machine_state_apply(&vs.sub_apu, &apu_reader)) {
+            select_side(0);
+            return false;
+        }
+    }
+    select_side(saved->active_side);
+    if (saved->active_side != 0) select_side(0);
     return true;
 }

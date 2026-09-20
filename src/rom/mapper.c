@@ -43,9 +43,13 @@
 #include "nsf.h"
 #include "../cpu/cpu.h"
 #include "../apu/apu.h"
+#include "../replay/input_event.h"
+#include "../system/execution_policy.h"
 #include "../system/timing.h"
 #include "../system/hardware.h"
 #include "../system/vs_system.h"
+#include "../util/file_io.h"
+#include "../video/video_trace.h"
 
 extern uint64_t cpu_total_cycles;
 extern uint64_t cpu_get_bus_cycle(void);
@@ -86,6 +90,7 @@ static Mapper mapper_namco, mapper_gxrom, mapper_m71, mapper_namco108;
 static Mapper mapper_vs99, mapper_jy, mapper_nina;
 static Mapper mapper_board, mapper_nsf;
 static CartridgeBoard *active_board = NULL;
+static bool cart_debug_peek_mode;
 Mapper *cart = NULL;
 static bool mapper_irq_line = false;
 static uint8_t cart_cpu_bus_input = 0xFF;
@@ -93,9 +98,15 @@ static CartPpuFetchSource cart_ppu_fetch_source = CART_PPU_FETCH_CPU;
 static bool mmc3_revision_a_profile = false;
 static unsigned cart_dip_value = 0;
 static bool cart_cpu_cycle_is_write = false;
+static uint8_t chr_read_byte(size_t offset) {
+    if (nes_video_trace_active)
+        nes_video_trace_chr_read(C.chr, C.chr_sz, offset, C.chr_is_ram);
+    return C.chr[offset];
+}
 static void mmc3_irq_clock(void);
 static float vrc7_expansion_output(void);
 static void vrc7_shutdown(void);
+static void vrc7_console_reset(void);
 static void nsf_reset(bool soft_reset);
 static void nsf_after_reset(void);
 static void build_mapper(Mapper *m,
@@ -326,6 +337,24 @@ static inline void prg_ram_write(uint16_t addr, uint8_t value) {
     if (offset < prg_ram_window_coverage(ram)) ram_write(ram, offset, value);
 }
 
+static size_t chr_nvram_offset(void) {
+    return C.chr_is_ram ? C.ram.chr_ram : 0;
+}
+
+static bool chr_nvram_contains(size_t index) {
+    if (!C.chr_is_ram || !C.ram.chr_nvram) return false;
+    size_t offset = chr_nvram_offset();
+    return index >= offset && index - offset < C.ram.chr_nvram;
+}
+
+static uint8_t *chr_nvram_data(void) {
+    if (chr_save_ram.size) return chr_save_ram.data;
+    if (!C.ram.chr_nvram || !C.chr) return NULL;
+    size_t offset = chr_nvram_offset();
+    if (offset > C.chr_sz || C.ram.chr_nvram > C.chr_sz - offset) return NULL;
+    return C.chr + offset;
+}
+
 static uint8_t prg_ram_internal_read(uint16_t addr) {
     if (addr < 0x6000u || addr > 0x7FFFu) return 0;
     RamBlock *ram = default_prg_ram();
@@ -337,7 +366,7 @@ static uint8_t prg_ram_internal_read(uint16_t addr) {
 static void chr_ram_write(size_t index, uint8_t value) {
     if (!C.chr_is_ram || index >= C.chr_sz || C.chr[index] == value) return;
     C.chr[index] = value;
-    if (index < C.ram.chr_nvram && battery_enabled) chr_ram_dirty = true;
+    if (battery_enabled && chr_nvram_contains(index)) chr_ram_dirty = true;
 }
 
 static char *build_save_path(const char *rom_path, const char *suffix) {
@@ -360,43 +389,39 @@ static char *build_save_path(const char *rom_path, const char *suffix) {
     return save_path;
 }
 
-static void flush_battery(const char *path, const uint8_t *data, size_t size, bool *dirty) {
-    if (!battery_enabled || !path || !size || !*dirty) return;
-    FILE *fp = fopen(path, "wb");
-    if (!fp) {
-        perror("battery save open");
-        return;
+static bool flush_battery(const char *path, const uint8_t *data, size_t size, bool *dirty) {
+    if (!battery_enabled || !path || !size || !*dirty) return true;
+    if (nes_file_write_atomic(path, data, size) != NES_FILE_OK) {
+        fprintf(stderr, "Failed to replace battery save '%s'; changes remain unsaved\n", path);
+        return false;
     }
 
-    size_t written = fwrite(data, 1, size, fp);
-    int close_result = fclose(fp);
-
-    if (written != size || close_result != 0) {
-        fprintf(stderr, "Failed to write battery save '%s' (%zu/%zu bytes)\n",
-                path, written, size);
-        return;
-    }
     *dirty = false;
+    return true;
 }
 
-static void flush_mmc5_battery(void) {
-    if (!battery_enabled || !battery_save_path || (!prg_ram_dirty && !mmc5_exram_dirty)) return;
-    FILE *fp = fopen(battery_save_path, "wb");
-    if (!fp) {
-        perror("battery save open");
-        return;
+static bool flush_battery_with_tail(const uint8_t *tail, size_t tail_size) {
+    if (tail_size > SIZE_MAX - prg_save_ram.size) return false;
+    size_t size = prg_save_ram.size + tail_size;
+    uint8_t *data = (uint8_t *)malloc(size ? size : 1);
+    if (!data) return false;
+    if (prg_save_ram.size) memcpy(data, prg_save_ram.data, prg_save_ram.size);
+    if (tail_size) memcpy(data + prg_save_ram.size, tail, tail_size);
+    bool saved = nes_file_write_atomic(battery_save_path, data, size) == NES_FILE_OK;
+    free(data);
+    if (!saved) {
+        fprintf(stderr, "Failed to replace battery save '%s'; changes remain unsaved\n", battery_save_path);
     }
-    size_t prg_written = prg_save_ram.size
-        ? fwrite(prg_save_ram.data, 1, prg_save_ram.size, fp) : 0;
-    size_t exram_written = fwrite(mmc5_exram, 1, sizeof(mmc5_exram), fp);
-    int close_result = fclose(fp);
-    if (prg_written != prg_save_ram.size || exram_written != sizeof(mmc5_exram)
-        || close_result != 0) {
-        fprintf(stderr, "Failed to write battery save '%s'\n", battery_save_path);
-        return;
-    }
+
+    return saved;
+}
+
+static bool flush_mmc5_battery(void) {
+    if (!battery_enabled || !battery_save_path || (!prg_ram_dirty && !mmc5_exram_dirty)) return true;
+    if (!flush_battery_with_tail(mmc5_exram, sizeof(mmc5_exram))) return false;
     prg_ram_dirty = false;
     mmc5_exram_dirty = false;
+    return true;
 }
 
 static bool namco_has_audio(void) {
@@ -407,81 +432,41 @@ static bool cart_has_flash_storage(void) {
     return cart == &mapper_unrom512 || cart == &mapper_m111;
 }
 
-static void flush_namco_battery(void) {
+static bool flush_namco_battery(void) {
     bool audio = namco_has_audio();
     if (!battery_enabled || !battery_save_path
-        || (!prg_ram_dirty && (!audio || !namco163_audio_dirty))) return;
-    FILE *fp = fopen(battery_save_path, "wb");
-    if (!fp) {
-        perror("battery save open");
-        return;
-    }
-    size_t prg_written = prg_save_ram.size
-        ? fwrite(prg_save_ram.data, 1, prg_save_ram.size, fp) : 0;
-    size_t audio_written = audio
-        ? fwrite(namco163_audio_ram(&namco163_audio), 1, NAMCO163_RAM_SIZE, fp) : 0;
-    int close_result = fclose(fp);
-    if (prg_written != prg_save_ram.size
-        || (audio && audio_written != NAMCO163_RAM_SIZE) || close_result != 0) {
-        fprintf(stderr, "Failed to write battery save '%s'\n", battery_save_path);
-        return;
-    }
+        || (!prg_ram_dirty && (!audio || !namco163_audio_dirty))) return true;
+    if (!flush_battery_with_tail(audio ? namco163_audio_ram(&namco163_audio) : NULL,
+                                audio ? NAMCO163_RAM_SIZE : 0)) return false;
     prg_ram_dirty = false;
     if (audio) namco163_audio_dirty = false;
+    return true;
 }
 
-static void flush_flash_battery(void) {
-    if (!battery_enabled || !flash_save_path || !flash_dirty) return;
-    size_t path_size = strlen(flash_save_path);
-    if (path_size > SIZE_MAX - 32) return;
-    char *temporary = malloc(path_size + 32);
-    if (!temporary) return;
-    static unsigned serial;
-    FILE *file = NULL;
-    for (unsigned attempt = 0; attempt < 100; ++attempt) {
-        snprintf(temporary, path_size + 32, "%s.tmp-%u", flash_save_path, serial++);
-        file = fopen(temporary, "wbx");
-        if (file || errno != EEXIST) break;
-    }
-    if (!file) {
-        fprintf(stderr, "Cannot create temporary flash save for '%s'\n", flash_save_path);
-        free(temporary);
-        return;
-    }
-    size_t written = fwrite(C.prg, 1, C.prg_sz, file);
-    int closed = fclose(file);
-    bool replaced = false;
-    if (written == C.prg_sz && closed == 0) {
-#ifdef _WIN32
-        replaced = MoveFileExA(temporary, flash_save_path,
-                              MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
-#else
-        replaced = rename(temporary, flash_save_path) == 0;
-#endif
-    }
-    if (replaced) flash_dirty = false;
-    else {
-        fprintf(stderr, "Cannot replace flash save '%s'; changes remain unsaved\n", flash_save_path);
-        remove(temporary);
-    }
-    free(temporary);
+static bool flush_flash_battery(void) {
+    return flush_battery(flash_save_path, C.prg, C.prg_sz, &flash_dirty);
 }
 
-void cart_battery_flush(void) {
+bool cart_battery_flush(void) {
+    if (!nes_execution_allows_persistence()) return true;
     if (active_board) {
-        board_battery_flush(active_board);
-        return;
+        return board_battery_flush(active_board);
     }
+
+    bool saved;
     if (cart_has_flash_storage()) {
-        flush_flash_battery();
-        flush_battery(battery_save_path, prg_save_ram.data, prg_save_ram.size, &prg_ram_dirty);
-    } else if (cart == &mapper_mmc5) flush_mmc5_battery();
-    else if (cart == &mapper_namco) flush_namco_battery();
-    else flush_battery(battery_save_path, prg_save_ram.data, prg_save_ram.size, &prg_ram_dirty);
-    flush_battery(chr_save_path, chr_nvram_data(), C.ram.chr_nvram, &chr_ram_dirty);
-    for (unsigned i = 0; i < 2; ++i)
-        flush_battery(eeprom_save_path[i], bandai_eeprom[i].bytes,
-                      bandai_eeprom[i].capacity, &bandai_eeprom[i].dirty);
+        saved = flush_flash_battery();
+        saved = flush_battery(battery_save_path, prg_save_ram.data, prg_save_ram.size, &prg_ram_dirty) && saved;
+    } else if (cart == &mapper_mmc5) saved = flush_mmc5_battery();
+    else if (cart == &mapper_namco) saved = flush_namco_battery();
+    else saved = flush_battery(battery_save_path, prg_save_ram.data, prg_save_ram.size, &prg_ram_dirty);
+    saved = flush_battery(chr_save_path, chr_nvram_data(), C.ram.chr_nvram, &chr_ram_dirty) && saved;
+    for (unsigned i = 0; i < 2; ++i) {
+        saved = flush_battery(eeprom_save_path[i], bandai_eeprom[i].bytes,
+                              bandai_eeprom[i].capacity, &bandai_eeprom[i].dirty) && saved;
+    }
+
+    return saved;
 }
 
 void cart_battery_shutdown(void) {
@@ -508,7 +493,7 @@ void cart_battery_shutdown(void) {
 
 static void load_battery(const char *path, uint8_t *data, size_t size) {
     if (!path || !size) return;
-    FILE *fp = fopen(path, "rb");
+    FILE *fp = nes_file_open(path, "rb");
     if (!fp) return; // first run/no prior save
     // Preserve initialized memory, including trainer bytes beyond a short save.
     size_t bytes_read = fread(data, 1, size, fp);
@@ -520,7 +505,7 @@ static void load_battery(const char *path, uint8_t *data, size_t size) {
 static void load_mmc5_battery(const char *path) {
     memset(mmc5_exram, 0, sizeof(mmc5_exram));
     if (!path) return;
-    FILE *fp = fopen(path, "rb");
+    FILE *fp = nes_file_open(path, "rb");
     if (!fp) return;
     size_t prg_read = prg_save_ram.size
         ? fread(prg_save_ram.data, 1, prg_save_ram.size, fp) : 0;
@@ -535,7 +520,7 @@ static void load_mmc5_battery(const char *path) {
 static void load_namco_battery(const char *path) {
     if (namco_has_audio()) memset(namco163_audio_ram(&namco163_audio), 0, NAMCO163_RAM_SIZE);
     if (!path) return;
-    FILE *fp = fopen(path, "rb");
+    FILE *fp = nes_file_open(path, "rb");
     if (!fp) return;
     size_t prg_read = prg_save_ram.size
         ? fread(prg_save_ram.data, 1, prg_save_ram.size, fp) : 0;
@@ -550,7 +535,7 @@ static void load_namco_battery(const char *path) {
 
 static void load_flash_battery(const char *path) {
     if (!path || !C.prg || !C.prg_sz) return;
-    FILE *fp = fopen(path, "rb");
+    FILE *fp = nes_file_open(path, "rb");
     if (!fp) return;
     size_t bytes_read = fread(C.prg, 1, C.prg_sz, fp);
     if (bytes_read < C.prg_sz && ferror(fp))
@@ -637,6 +622,7 @@ void cart_set_mirroring(Mirroring m) {
 }
 bool cart_set_mmc3_revision_name(const char *name) {
     if (!name) return false;
+    if (!nes_execution_allows_host_configuration()) return false;
     if (strcmp(name, "standard") == 0) {
         mmc3_revision_a_profile = false;
         return true;
@@ -652,6 +638,7 @@ const char *cart_mmc3_revision_name(void) {
 }
 bool cart_set_dip_switches(unsigned value) {
     if (value > 0xFFu) return false;
+    if (!nes_execution_allows_host_configuration()) return false;
     cart_dip_value = value;
     return true;
 }
@@ -733,7 +720,8 @@ static bool mapper_has_shrinking_chr_window(uint16_t mapper_no) {
 
 static size_t shrunk_chr_page_size(size_t native_page_size) {
     if (!C.chr_sz) return 0;
-    return C.chr_sz < native_page_size ? C.chr_sz : native_page_size;
+    size_t page_size = C.chr_sz < native_page_size ? C.chr_sz : native_page_size;
+    return C.chr_is_ram && (page_size & 0xFFu) ? 0 : page_size;
 }
 
 static bool chr_bank_slot_offset(uint16_t address, size_t native_page_size,
@@ -750,9 +738,25 @@ static bool chr_bank_slot_offset(uint16_t address, size_t native_page_size,
     return true;
 }
 
-static uint8_t chr_unmapped_read(uint16_t address) {
+static size_t chr_default_offset(uint16_t address, size_t native_page_size) {
+    if (!C.chr_is_ram) return SIZE_MAX;
+    size_t page_size = shrunk_chr_page_size(native_page_size);
+    if (!page_size) return SIZE_MAX;
     address &= 0x1FFFu;
-    return C.chr_is_ram ? C.chr[address % C.chr_sz] : (uint8_t)address;
+    // Initial RAM mapping repeats complete banks and leaves a partial final window open.
+    size_t coverage = CHR_BANK_8K / page_size * page_size;
+    if (address >= coverage) return SIZE_MAX;
+    size_t page_count = C.chr_sz / page_size;
+    return ((address / page_size) % page_count) * page_size + address % page_size;
+}
+
+static uint8_t chr_default_read(uint16_t address, size_t native_page_size) {
+    size_t offset = chr_default_offset(address, native_page_size);
+    return offset < C.chr_sz ? chr_read_byte(offset) : (uint8_t)address;
+}
+
+static void chr_default_write(uint16_t address, size_t native_page_size, uint8_t value) {
+    chr_ram_write(chr_default_offset(address, native_page_size), value);
 }
 
 static bool small_prg_window_read(uint16_t address, uint8_t *value) {
@@ -768,6 +772,12 @@ static bool small_prg_window_read(uint16_t address, uint8_t *value) {
 
 bool cart_set_karaoke_input(CartKaraokeInput input, bool pressed) {
     if (C.mapper_no != 188 || (unsigned)input >= CART_KARAOKE_INPUT_COUNT) return false;
+    NesInputEvent event = {
+        .type = NES_INPUT_EVENT_CART_KARAOKE,
+        .a = (int32_t)input,
+        .b = pressed
+    };
+    if (!nes_input_event_submit(&event)) return false;
     return board_set_mapper_input(active_board, (unsigned)input, pressed);
 }
 uint8_t cart_cpu_read(uint16_t a) {
@@ -788,6 +798,17 @@ uint8_t cart_cpu_read_bus(uint16_t a, uint8_t open_bus) {
     if (!small_prg_window_read(a, &value)) value = cart->cpu_read(a);
     cart_cpu_bus_input = previous_bus;
     if (cart == &mapper_mmc5 && a == 0x5204) value |= open_bus & 0x3F;
+    return value;
+}
+
+uint8_t cart_cpu_peek_bus(uint16_t a, uint8_t open_bus) {
+    if (!cart) return open_bus;
+    if (active_board) return board_cpu_peek(active_board, a, open_bus);
+    if (cart == &mapper_fds) return fds_cpu_peek_bus(a, open_bus);
+    bool previous_peek = cart_debug_peek_mode;
+    cart_debug_peek_mode = true;
+    uint8_t value = cart_cpu_read_bus(a, open_bus);
+    cart_debug_peek_mode = previous_peek;
     return value;
 }
 bool cart_read_cpu_register(uint16_t address, uint8_t *value) {
@@ -818,6 +839,18 @@ void cart_clock_cpu_cycle(bool write_cycle) {
     cart_cpu_cycle_is_write = false;
 }
 uint8_t cart_ppu_read(uint16_t a) { return cart ? cart->ppu_read(a) : 0x00; }
+static uint8_t mmc5_debug_pattern(uint16_t address);
+uint8_t cart_ppu_peek(uint16_t a) {
+    if (!cart) return 0;
+    if (active_board) return board_ppu_peek(active_board, a);
+    if (cart == &mapper_fds) return fds_ppu_read(a);
+    if (cart == &mapper_mmc5) return mmc5_debug_pattern(a);
+    bool previous_peek = cart_debug_peek_mode;
+    cart_debug_peek_mode = true;
+    uint8_t value = cart->ppu_read(a);
+    cart_debug_peek_mode = previous_peek;
+    return value;
+}
 void cart_ppu_write(uint16_t a, uint8_t v) { if (cart) cart->ppu_write(a, v); }
 void cart_set_ppu_fetch_source(CartPpuFetchSource src) { cart_ppu_fetch_source = src; }
 bool cart_irq_pending(void) {
@@ -831,6 +864,7 @@ void cart_irq_ack(void) {
 }
 void cart_console_reset(bool soft_reset) {
     if (cart == &mapper_nsf) nsf_reset(soft_reset);
+    else if (cart == &mapper_vrc7) vrc7_console_reset();
     else board_reset(active_board, soft_reset);
 }
 void cart_after_console_reset(void) {
@@ -857,3 +891,7 @@ void cart_notify_vblank_start(void) {
 #include "mapper_discrete.h"
 #include "mapper_jaleco_irem.h"
 #include "mapper_factory.h"
+#include "mapper_state_impl.h"
+#include "mapper_debug.h"
+
+bool cart_has_chr_rom(void) { return C.chr && C.chr_sz && !C.chr_is_ram; }

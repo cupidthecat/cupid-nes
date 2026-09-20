@@ -15,6 +15,8 @@
  */
 
 #include "special_peripherals.h"
+#include "../system/execution_policy.h"
+#include "../util/file_io.h"
 #include "joypad.h"
 #include <errno.h>
 #include <stdio.h>
@@ -204,38 +206,11 @@ static char *storage_path(const char *rom_path, const char *suffix) {
 }
 
 static bool atomic_save(const char *path, const uint8_t *data, size_t size) {
-    if (!path || !data) return false;
-    size_t path_len = strlen(path);
-    if (path_len > SIZE_MAX - 40) return false;
-    char *temporary = malloc(path_len + 40);
-    if (!temporary) return false;
-    FILE *file = NULL;
-    for (unsigned serial = 0; serial < 1000 && !file; ++serial) {
-        snprintf(temporary, path_len + 40, "%s.cupid-%u.tmp", path, serial);
-        file = fopen(temporary, "wbx");
-        if (!file && errno != EEXIST) break;
-    }
-    if (!file) {
-        free(temporary);
-        return false;
-    }
-    bool ok = fwrite(data, 1, size, file) == size;
-    if (fclose(file) != 0) ok = false;
-    if (ok) {
-#ifdef _WIN32
-        ok = MoveFileExA(temporary, path,
-                         MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
-#else
-        ok = rename(temporary, path) == 0;
-#endif
-    }
-    if (!ok) remove(temporary);
-    free(temporary);
-    return ok;
+    return nes_file_write_atomic(path, data, size) == NES_FILE_OK;
 }
 
 static bool load_exact(const char *path, uint8_t *output, size_t size) {
-    FILE *file = fopen(path, "rb");
+    FILE *file = nes_file_open(path, "rb");
     if (!file) return errno == ENOENT;
     uint8_t *temporary = malloc(size);
     if (!temporary) {
@@ -277,6 +252,7 @@ void turbo_file_write(uint8_t value) {
 }
 
 bool turbo_file_flush(void) {
+    if (!nes_execution_allows_persistence()) return true;
     if (!turbo_file.dirty) return true;
     if (!turbo_file.save_path || !atomic_save(turbo_file.save_path, turbo_file.data,
                                                sizeof(turbo_file.data))) return false;
@@ -411,6 +387,7 @@ void battle_box_write(uint8_t value) {
 }
 
 bool battle_box_flush(void) {
+    if (!nes_execution_allows_persistence()) return true;
     if (!battle_box.dirty) return true;
     if (!battle_box.save_path || !atomic_save(battle_box.save_path, battle_box.data,
                                                sizeof(battle_box.data))) return false;
@@ -895,4 +872,274 @@ uint8_t oeka_kids_tablet_read(unsigned port) {
     if (port != 1 || !oeka_kids_tablet.strobe) return 0;
     if (!oeka_kids_tablet.shift) return 0x04;
     return (oeka_kids_tablet.state & 0x40000u) ? 0 : 0x08;
+}
+
+typedef struct {
+    uint8_t turbo_data[TURBO_FILE_SIZE];
+    uint16_t turbo_position;
+    uint8_t turbo_last_write;
+    bool turbo_dirty;
+    uint8_t battle_data[512];
+    uint8_t battle_last_write;
+    uint8_t battle_address;
+    bool battle_chip_select;
+    bool battle_output;
+    bool battle_write_enabled;
+    uint8_t battle_input_bit;
+    uint16_t battle_input_data;
+    bool battle_writing;
+    bool battle_reading;
+    bool battle_dirty;
+    SuborKeyboard keyboard;
+    SuborMouse mouse;
+    HoriTrack track;
+    KonamiHyperShot konami;
+    BandaiHyperShot bandai;
+    PartyTap party;
+    Pachinko pachinko;
+    ExcitingBoxing boxing;
+    JissenMahjong mahjong;
+    BarcodeBattler barcode;
+    OekaKidsTablet tablet;
+} SpecialPeripheralSavedState;
+
+static bool special_state_write_bool_array(NesStateWriter *writer, const bool *values,
+                                           size_t count) {
+    for (size_t i = 0; i < count; ++i)
+        if (!nes_state_write_bool(writer, values[i])) return false;
+    return true;
+}
+
+static bool special_state_read_bool_array(NesStateReader *reader, bool *values, size_t count) {
+    for (size_t i = 0; i < count; ++i)
+        if (!nes_state_read_bool(reader, &values[i])) return false;
+    return true;
+}
+
+static bool special_state_write(NesStateWriter *writer, const SpecialPeripheralSavedState *s) {
+    if (!nes_state_write_bytes(writer, s->turbo_data, sizeof(s->turbo_data))
+        || !nes_state_write_u16(writer, s->turbo_position)
+        || !nes_state_write_u8(writer, s->turbo_last_write)
+        || !nes_state_write_bool(writer, s->turbo_dirty)
+        || !nes_state_write_bytes(writer, s->battle_data, sizeof(s->battle_data))
+        || !nes_state_write_u8(writer, s->battle_last_write)
+        || !nes_state_write_u8(writer, s->battle_address)
+        || !nes_state_write_bool(writer, s->battle_chip_select)
+        || !nes_state_write_bool(writer, s->battle_output)
+        || !nes_state_write_bool(writer, s->battle_write_enabled)
+        || !nes_state_write_u8(writer, s->battle_input_bit)
+        || !nes_state_write_u16(writer, s->battle_input_data)
+        || !nes_state_write_bool(writer, s->battle_writing)
+        || !nes_state_write_bool(writer, s->battle_reading)
+        || !nes_state_write_bool(writer, s->battle_dirty)
+        || !special_state_write_bool_array(writer, s->keyboard.pressed, 99)
+        || !nes_state_write_u8(writer, s->keyboard.row)
+        || !nes_state_write_u8(writer, s->keyboard.column)
+        || !nes_state_write_bool(writer, s->keyboard.enabled)
+        || !nes_state_write_bool(writer, s->keyboard.strobe)
+        || !nes_state_write_u32(writer, (uint32_t)(int32_t)s->mouse.dx)
+        || !nes_state_write_u32(writer, (uint32_t)(int32_t)s->mouse.dy)
+        || !nes_state_write_bool(writer, s->mouse.left)
+        || !nes_state_write_bool(writer, s->mouse.right)
+        || !nes_state_write_u8(writer, s->mouse.state)
+        || !nes_state_write_bytes(writer, s->mouse.packet, sizeof(s->mouse.packet))
+        || !nes_state_write_u8(writer, s->mouse.packet_pos)
+        || !nes_state_write_u8(writer, s->mouse.packet_size)
+        || !nes_state_write_bool(writer, s->mouse.strobe)
+        || !nes_state_write_u32(writer, (uint32_t)(int32_t)s->track.dx)
+        || !nes_state_write_u32(writer, (uint32_t)(int32_t)s->track.dy)
+        || !nes_state_write_u32(writer, s->track.state)
+        || !nes_state_write_bool(writer, s->track.strobe)
+        || !nes_state_write_bool(writer, s->konami.enable_p1)
+        || !nes_state_write_bool(writer, s->konami.enable_p2)
+        || !nes_state_write_u8(writer, s->bandai.state)
+        || !nes_state_write_bool(writer, s->bandai.strobe)
+        || !special_state_write_bool_array(writer, s->party.buttons, 6)
+        || !nes_state_write_u8(writer, s->party.state)
+        || !nes_state_write_u8(writer, s->party.read_count)
+        || !nes_state_write_bool(writer, s->party.strobe)
+        || !nes_state_write_u8(writer, s->pachinko.position)
+        || !nes_state_write_u16(writer, s->pachinko.state)
+        || !nes_state_write_bool(writer, s->pachinko.press)
+        || !nes_state_write_bool(writer, s->pachinko.release)
+        || !nes_state_write_bool(writer, s->pachinko.strobe)
+        || !special_state_write_bool_array(writer, s->boxing.sensors, 8)
+        || !nes_state_write_u8(writer, s->boxing.selected)
+        || !special_state_write_bool_array(writer, s->mahjong.keys, 21)
+        || !nes_state_write_u8(writer, s->mahjong.row)
+        || !nes_state_write_u8(writer, s->mahjong.state)
+        || !nes_state_write_bool(writer, s->mahjong.strobe)
+        || !nes_state_write_bytes(writer, s->barcode.stream, sizeof(s->barcode.stream))
+        || !nes_state_write_u64(writer, s->barcode.insert_cycle)
+        || !nes_state_write_bool(writer, s->barcode.active)
+        || !nes_state_write_u32(writer, (uint32_t)(int32_t)s->tablet.x)
+        || !nes_state_write_u32(writer, (uint32_t)(int32_t)s->tablet.y)
+        || !nes_state_write_bool(writer, s->tablet.touch)
+        || !nes_state_write_bool(writer, s->tablet.click)
+        || !nes_state_write_bool(writer, s->tablet.strobe)
+        || !nes_state_write_bool(writer, s->tablet.shift)
+        || !nes_state_write_u32(writer, s->tablet.state)) return false;
+    return true;
+}
+
+static bool special_state_read(NesStateReader *reader, SpecialPeripheralSavedState *s) {
+    uint32_t mouse_dx, mouse_dy, track_dx, track_dy, tablet_x, tablet_y;
+    memset(s, 0, sizeof(*s));
+    if (!nes_state_read_bytes(reader, s->turbo_data, sizeof(s->turbo_data))
+        || !nes_state_read_u16(reader, &s->turbo_position)
+        || !nes_state_read_u8(reader, &s->turbo_last_write)
+        || !nes_state_read_bool(reader, &s->turbo_dirty)
+        || !nes_state_read_bytes(reader, s->battle_data, sizeof(s->battle_data))
+        || !nes_state_read_u8(reader, &s->battle_last_write)
+        || !nes_state_read_u8(reader, &s->battle_address)
+        || !nes_state_read_bool(reader, &s->battle_chip_select)
+        || !nes_state_read_bool(reader, &s->battle_output)
+        || !nes_state_read_bool(reader, &s->battle_write_enabled)
+        || !nes_state_read_u8(reader, &s->battle_input_bit)
+        || !nes_state_read_u16(reader, &s->battle_input_data)
+        || !nes_state_read_bool(reader, &s->battle_writing)
+        || !nes_state_read_bool(reader, &s->battle_reading)
+        || !nes_state_read_bool(reader, &s->battle_dirty)
+        || !special_state_read_bool_array(reader, s->keyboard.pressed, 99)
+        || !nes_state_read_u8(reader, &s->keyboard.row)
+        || !nes_state_read_u8(reader, &s->keyboard.column)
+        || !nes_state_read_bool(reader, &s->keyboard.enabled)
+        || !nes_state_read_bool(reader, &s->keyboard.strobe)
+        || !nes_state_read_u32(reader, &mouse_dx)
+        || !nes_state_read_u32(reader, &mouse_dy)
+        || !nes_state_read_bool(reader, &s->mouse.left)
+        || !nes_state_read_bool(reader, &s->mouse.right)
+        || !nes_state_read_u8(reader, &s->mouse.state)
+        || !nes_state_read_bytes(reader, s->mouse.packet, sizeof(s->mouse.packet))
+        || !nes_state_read_u8(reader, &s->mouse.packet_pos)
+        || !nes_state_read_u8(reader, &s->mouse.packet_size)
+        || !nes_state_read_bool(reader, &s->mouse.strobe)
+        || !nes_state_read_u32(reader, &track_dx)
+        || !nes_state_read_u32(reader, &track_dy)
+        || !nes_state_read_u32(reader, &s->track.state)
+        || !nes_state_read_bool(reader, &s->track.strobe)
+        || !nes_state_read_bool(reader, &s->konami.enable_p1)
+        || !nes_state_read_bool(reader, &s->konami.enable_p2)
+        || !nes_state_read_u8(reader, &s->bandai.state)
+        || !nes_state_read_bool(reader, &s->bandai.strobe)
+        || !special_state_read_bool_array(reader, s->party.buttons, 6)
+        || !nes_state_read_u8(reader, &s->party.state)
+        || !nes_state_read_u8(reader, &s->party.read_count)
+        || !nes_state_read_bool(reader, &s->party.strobe)
+        || !nes_state_read_u8(reader, &s->pachinko.position)
+        || !nes_state_read_u16(reader, &s->pachinko.state)
+        || !nes_state_read_bool(reader, &s->pachinko.press)
+        || !nes_state_read_bool(reader, &s->pachinko.release)
+        || !nes_state_read_bool(reader, &s->pachinko.strobe)
+        || !special_state_read_bool_array(reader, s->boxing.sensors, 8)
+        || !nes_state_read_u8(reader, &s->boxing.selected)
+        || !special_state_read_bool_array(reader, s->mahjong.keys, 21)
+        || !nes_state_read_u8(reader, &s->mahjong.row)
+        || !nes_state_read_u8(reader, &s->mahjong.state)
+        || !nes_state_read_bool(reader, &s->mahjong.strobe)
+        || !nes_state_read_bytes(reader, s->barcode.stream, sizeof(s->barcode.stream))
+        || !nes_state_read_u64(reader, &s->barcode.insert_cycle)
+        || !nes_state_read_bool(reader, &s->barcode.active)
+        || !nes_state_read_u32(reader, &tablet_x)
+        || !nes_state_read_u32(reader, &tablet_y)
+        || !nes_state_read_bool(reader, &s->tablet.touch)
+        || !nes_state_read_bool(reader, &s->tablet.click)
+        || !nes_state_read_bool(reader, &s->tablet.strobe)
+        || !nes_state_read_bool(reader, &s->tablet.shift)
+        || !nes_state_read_u32(reader, &s->tablet.state)
+        || nes_state_reader_remaining(reader) != 0) return false;
+    s->mouse.dx = (int)(int32_t)mouse_dx;
+    s->mouse.dy = (int)(int32_t)mouse_dy;
+    s->track.dx = (int)(int32_t)track_dx;
+    s->track.dy = (int)(int32_t)track_dy;
+    s->tablet.x = (int)(int32_t)tablet_x;
+    s->tablet.y = (int)(int32_t)tablet_y;
+    return s->battle_input_bit < 16
+        && s->keyboard.row < 13 && s->keyboard.column < 8
+        && s->mouse.packet_size >= 1 && s->mouse.packet_size <= 3
+        && s->mouse.packet_pos <= s->mouse.packet_size
+        && s->party.read_count <= 2
+        && s->pachinko.position <= 0x63
+        && s->boxing.selected <= 1
+        && s->mahjong.row <= 3
+        && s->tablet.x >= -1 && s->tablet.x <= 255
+        && s->tablet.y >= -1 && s->tablet.y <= 239;
+}
+
+static bool special_peripherals_capture(NesStateWriter *writer,
+                                        bool include_persistence) {
+    if (!writer) return false;
+    SpecialPeripheralSavedState s = {0};
+    memcpy(s.turbo_data, turbo_file.data, sizeof(s.turbo_data));
+    s.turbo_position = turbo_file.position;
+    s.turbo_last_write = turbo_file.last_write;
+    s.turbo_dirty = include_persistence && turbo_file.dirty;
+    memcpy(s.battle_data, battle_box.data, sizeof(s.battle_data));
+    s.battle_last_write = battle_box.last_write;
+    s.battle_address = battle_box.address;
+    s.battle_chip_select = battle_box.chip_select;
+    s.battle_output = battle_box.output;
+    s.battle_write_enabled = battle_box.write_enabled;
+    s.battle_input_bit = battle_box.input_bit;
+    s.battle_input_data = battle_box.input_data;
+    s.battle_writing = battle_box.writing;
+    s.battle_reading = battle_box.reading;
+    s.battle_dirty = include_persistence && battle_box.dirty;
+    s.keyboard = subor_keyboard;
+    s.mouse = subor_mouse;
+    s.track = hori_track;
+    s.konami = konami_hyper_shot;
+    s.bandai = bandai_hyper_shot;
+    s.party = party_tap;
+    s.pachinko = pachinko;
+    s.boxing = exciting_boxing;
+    s.mahjong = jissen_mahjong;
+    s.barcode = barcode_battler;
+    s.tablet = oeka_kids_tablet;
+    return special_state_write(writer, &s);
+}
+
+bool special_peripherals_state_capture(NesStateWriter *writer) {
+    return special_peripherals_capture(writer, true);
+}
+
+bool special_peripherals_hardware_state_capture(NesStateWriter *writer) {
+    return special_peripherals_capture(writer, false);
+}
+
+bool special_peripherals_state_validate(NesStateReader *reader) {
+    SpecialPeripheralSavedState s;
+    return reader && special_state_read(reader, &s);
+}
+
+bool special_peripherals_state_apply(NesStateReader *reader) {
+    SpecialPeripheralSavedState s;
+    if (!reader || !special_state_read(reader, &s)) return false;
+    memcpy(turbo_file.data, s.turbo_data, sizeof(turbo_file.data));
+    turbo_file.position = s.turbo_position;
+    turbo_file.last_write = s.turbo_last_write;
+    turbo_file.dirty = s.turbo_dirty;
+    memcpy(battle_box.data, s.battle_data, sizeof(battle_box.data));
+    battle_box.last_write = s.battle_last_write;
+    battle_box.address = s.battle_address;
+    battle_box.chip_select = s.battle_chip_select;
+    battle_box.output = s.battle_output;
+    battle_box.write_enabled = s.battle_write_enabled;
+    battle_box.input_bit = s.battle_input_bit;
+    battle_box.input_data = s.battle_input_data;
+    battle_box.writing = s.battle_writing;
+    battle_box.reading = s.battle_reading;
+    battle_box.dirty = s.battle_dirty;
+    subor_keyboard = s.keyboard;
+    subor_mouse = s.mouse;
+    hori_track = s.track;
+    konami_hyper_shot = s.konami;
+    bandai_hyper_shot = s.bandai;
+    party_tap = s.party;
+    pachinko = s.pachinko;
+    exciting_boxing = s.boxing;
+    jissen_mahjong = s.mahjong;
+    barcode_battler = s.barcode;
+    oeka_kids_tablet = s.tablet;
+    return true;
 }

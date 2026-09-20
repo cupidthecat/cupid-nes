@@ -114,6 +114,11 @@ class Mmc3_217 final : public Mmc3 {
                 break;
         }
     }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Mmc3::VisitState(state)
+            && state.Field("mmc3_217.exRegs", _exRegs);
+    }
 };
 
 class Mmc3_219 final : public Mmc3 {
@@ -171,6 +176,11 @@ class Mmc3_219 final : public Mmc3 {
             Mmc3::WriteRegister(address, value);
         }
     }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Mmc3::VisitState(state)
+            && state.Field("mmc3_219.exRegs", _exRegs);
+    }
 };
 
 class Mmc3_224 final : public Mmc3 {
@@ -207,6 +217,11 @@ class Mmc3_224 final : public Mmc3 {
             Mmc3::WriteRegister(address, value);
         }
     }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Mmc3::VisitState(state)
+            && state.Field("mmc3_224.outerBank", _outerBank);
+    }
 };
 
 class Mmc3_238 final : public Mmc3 {
@@ -229,6 +244,11 @@ class Mmc3_238 final : public Mmc3 {
             _exReg = SecurityLut[value & 3];
         else
             Mmc3::WriteRegister(address, value);
+    }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Mmc3::VisitState(state)
+            && state.Field("mmc3_238.exReg", _exReg);
     }
 };
 
@@ -307,6 +327,11 @@ class Mmc3_249 final : public Mmc3 {
             Mmc3::WriteRegister(address, value);
         }
     }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Mmc3::VisitState(state)
+            && state.Field("mmc3_249.exReg", _exReg);
+    }
 };
 
 class Mmc3_250 final : public Mmc3 {
@@ -336,6 +361,11 @@ class Mmc3_254 final : public Mmc3 {
         if (address == 0x8000) _exRegs[0] = 0xFF;
         if (address == 0xA001) _exRegs[1] = value;
         Mmc3::WriteRegister(address, value);
+    }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Mmc3::VisitState(state)
+            && state.Field("mmc3_254.exRegs", _exRegs);
     }
 };
 
@@ -387,6 +417,11 @@ class Unl158B final : public Mmc3 {
             Mmc3::WriteRegister(address, value);
         }
     }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Mmc3::VisitState(state)
+            && state.Field("unl158b.reg", _reg);
+    }
 };
 
 class Mmc3_BmcF15 final : public Mmc3 {
@@ -415,6 +450,11 @@ class Mmc3_BmcF15 final : public Mmc3 {
         } else {
             Mmc3::WriteRegister(address, value);
         }
+    }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Mmc3::VisitState(state)
+            && state.Field("mmc3_bmcf15.exReg", _exReg);
     }
 };
 
@@ -507,6 +547,12 @@ class BmcHpxx final : public Mmc3 {
             Mmc3::WriteRegister(address, value);
         }
     }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Mmc3::VisitState(state)
+            && state.Field("bmchpxx.exRegs", _exRegs)
+            && state.Field("bmchpxx.locked", _locked);
+    }
 };
 
 class Mmc3_StreetHeroes final : public Mmc3 {
@@ -553,6 +599,12 @@ class Mmc3_StreetHeroes final : public Mmc3 {
         } else {
             Mmc3::WriteRegister(address, value);
         }
+    }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Mmc3::VisitState(state)
+            && state.Field("mmc3_streetheroes.exReg", _exReg)
+            && state.Field("mmc3_streetheroes.resetSwitch", _resetSwitch);
     }
 };
 

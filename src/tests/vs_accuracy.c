@@ -1040,6 +1040,8 @@ static int test_vs_dual_video_and_audio(void) {
     return 0;
 }
 
+#include "vs_zapper_palette_accuracy.h"
+
 int test_vs_accuracy(void) {
     static int (*const tests[])(void) = {
         test_vs_metadata_transaction,
@@ -1052,6 +1054,9 @@ int test_vs_accuracy(void) {
         test_vs_coin_pulses,
         test_vs_zapper_serial,
         test_vs_zapper_cpu_port,
+        test_vs_zapper_palette_levels,
+        test_vs_zapper_palette_beam,
+        test_vs_zapper_palette_isolation,
         test_mapper99_banks,
         test_vs_dual_execution,
         test_vs_irq_reset_and_control_edges,

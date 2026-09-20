@@ -216,8 +216,8 @@ static uint8_t irem32_ppu_read(uint16_t a) {
     size_t page_size, page_count;
     if (!shrunk_chr_slot_geometry(a, CHR_BANK_1K, 8, &slot, &page_size, &page_count)
         || !(irem32.chr_mapped & (1u << slot)))
-        return chr_unmapped_read(a);
-    return C.chr[shrunk_chr_bank_offset(a, page_size, page_count, irem32.chr_banks[slot])];
+        return chr_default_read(a, CHR_BANK_1K);
+    return chr_read_byte(shrunk_chr_bank_offset(a, page_size, page_count, irem32.chr_banks[slot]));
 }
 
 static void irem32_ppu_write(uint16_t a, uint8_t v) {
@@ -227,7 +227,7 @@ static void irem32_ppu_write(uint16_t a, uint8_t v) {
     size_t page_size, page_count;
     if (!shrunk_chr_slot_geometry(a, CHR_BANK_1K, 8, &slot, &page_size, &page_count)
         || !(irem32.chr_mapped & (1u << slot))) {
-        chr_ram_write(a % C.chr_sz, v);
+        chr_default_write(a, CHR_BANK_1K, v);
         return;
     }
     chr_ram_write(shrunk_chr_bank_offset(a, page_size, page_count, irem32.chr_banks[slot]), v);
@@ -298,8 +298,8 @@ static uint8_t irem65_ppu_read(uint16_t a) {
     size_t page_size, page_count;
     if (!shrunk_chr_slot_geometry(a, CHR_BANK_1K, 8, &slot, &page_size, &page_count)
         || !(irem65.chr_mapped & (1u << slot)))
-        return chr_unmapped_read(a);
-    return C.chr[shrunk_chr_bank_offset(a, page_size, page_count, irem65.chr_banks[slot])];
+        return chr_default_read(a, CHR_BANK_1K);
+    return chr_read_byte(shrunk_chr_bank_offset(a, page_size, page_count, irem65.chr_banks[slot]));
 }
 
 static void irem65_ppu_write(uint16_t a, uint8_t v) {
@@ -309,7 +309,7 @@ static void irem65_ppu_write(uint16_t a, uint8_t v) {
     size_t page_size, page_count;
     if (!shrunk_chr_slot_geometry(a, CHR_BANK_1K, 8, &slot, &page_size, &page_count)
         || !(irem65.chr_mapped & (1u << slot))) {
-        chr_ram_write(a % C.chr_sz, v);
+        chr_default_write(a, CHR_BANK_1K, v);
         return;
     }
     chr_ram_write(shrunk_chr_bank_offset(a, page_size, page_count, irem65.chr_banks[slot]), v);
@@ -508,9 +508,9 @@ static uint8_t vrc24_ppu_read(uint16_t a) {
     unsigned slot;
     size_t page_size, page_count;
     if (!shrunk_chr_slot_geometry(a, CHR_BANK_1K, 8, &slot, &page_size, &page_count))
-        return chr_unmapped_read(a);
+        return chr_default_read(a, CHR_BANK_1K);
     size_t bank = vrc24_chr_bank(slot, page_count);
-    return C.chr[bank * page_size + (a % page_size)];
+    return chr_read_byte(bank * page_size + (a % page_size));
 }
 
 static void vrc24_ppu_write(uint16_t a, uint8_t value) {
@@ -519,7 +519,7 @@ static void vrc24_ppu_write(uint16_t a, uint8_t value) {
     unsigned slot;
     size_t page_size, page_count;
     if (!shrunk_chr_slot_geometry(a, CHR_BANK_1K, 8, &slot, &page_size, &page_count)) {
-        chr_ram_write(a % C.chr_sz, value);
+        chr_default_write(a, CHR_BANK_1K, value);
         return;
     }
     size_t bank = vrc24_chr_bank(slot, page_count);
@@ -653,8 +653,8 @@ static uint8_t vrc7_ppu_read(uint16_t addr) {
     size_t page_size, page_count;
     if (!shrunk_chr_slot_geometry(addr, CHR_BANK_1K, 8, &slot, &page_size, &page_count)
         || !vrc7.chr_selected[slot])
-        return chr_unmapped_read(addr);
-    return C.chr[shrunk_chr_bank_offset(addr, page_size, page_count, vrc7.chr[slot])];
+        return chr_default_read(addr, CHR_BANK_1K);
+    return chr_read_byte(shrunk_chr_bank_offset(addr, page_size, page_count, vrc7.chr[slot]));
 }
 
 static void vrc7_ppu_write(uint16_t addr, uint8_t value) {
@@ -664,7 +664,7 @@ static void vrc7_ppu_write(uint16_t addr, uint8_t value) {
     size_t page_size, page_count;
     if (!shrunk_chr_slot_geometry(addr, CHR_BANK_1K, 8, &slot, &page_size, &page_count)
         || !vrc7.chr_selected[slot]) {
-        chr_ram_write(addr % C.chr_sz, value);
+        chr_default_write(addr, CHR_BANK_1K, value);
         return;
     }
     chr_ram_write(shrunk_chr_bank_offset(addr, page_size, page_count, vrc7.chr[slot]), value);
@@ -680,6 +680,8 @@ static Mirroring vrc7_mirr(void) { return vrc7.mirr; }
 static float vrc7_expansion_output(void) { return vrc7_fm_output(&vrc7.fm); }
 
 static void vrc7_shutdown(void) { vrc7_fm_destroy(&vrc7.fm); }
+
+static void vrc7_console_reset(void) { vrc7_fm_reset_chip(&vrc7.fm); }
 
 static void vrc7_reset(void) {
     Vrc7Fm fm = vrc7.fm;
@@ -731,7 +733,7 @@ static uint8_t m99_ppu_read(uint16_t addr) {
     size_t pages = C.chr_sz / page_size;
     bank %= pages;
     if (!C.chr_is_ram && addr >= page_size) return (uint8_t)addr;
-    return C.chr[bank * page_size + (addr % page_size)];
+    return chr_read_byte(bank * page_size + (addr % page_size));
 }
 
 static void m99_ppu_write(uint16_t addr, uint8_t value) {

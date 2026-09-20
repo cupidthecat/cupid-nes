@@ -92,6 +92,12 @@ class TaitoX1005 final : public Board {
 
 public:
     explicit TaitoX1005(bool alternateMirroring) : _alternateMirroring(alternateMirroring) {}
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.InvariantBool("taito_x1005.alternate_mirroring", _alternateMirroring)
+            && state.Field("taito_x1005.ram_permission", _ramPermission);
+    }
 };
 
 class TaitoX1017 final : public Board {
@@ -147,6 +153,14 @@ class TaitoX1017 final : public Board {
                 | ((value & 2) << 3) | ((value & 1) << 5);
             SelectPrgPage(address - 0x7EFA, page);
         }
+    }
+
+public:
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("taito_x1017.chr_mode", _chrMode, 1)
+            && state.Field("taito_x1017.chr_regs", _chrRegs)
+            && state.Field("taito_x1017.ram_permission", _ramPermission);
     }
 };
 

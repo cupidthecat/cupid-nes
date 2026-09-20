@@ -29,8 +29,11 @@
 #include "../rom/mapper.h"
 #include "../cpu/cpu.h"
 #include "../system/hardware.h"
+#include "../system/execution_policy.h"
 #include "../system/timing.h"
 #include "../system/vs_system.h"
+#include "../video/video_trace.h"
+#include "../video/frame_snapshot.h"
 #include "../ui/palette_tool.h"
 #include <stdbool.h>
 #include <stdio.h>
@@ -79,6 +82,10 @@ static bool oam_row_corruption_worst_case = false;
 static bool startup_write_restriction = false;
 static bool oam_decay = false;
 static bool reset_suppression = false;
+static bool sprite_eval_wrap_bug = false;
+static bool oamdata_read_disabled = false;
+static bool palette_readback_disabled = false;
+
 static const char *const ppu_revision_names[] = {"2c02-pre-e", "2c02e-plus"};
 
 PpuRevision ppu_revision(void) {
@@ -87,6 +94,7 @@ PpuRevision ppu_revision(void) {
 
 bool ppu_set_revision(PpuRevision revision) {
     if ((unsigned)revision > PPU_REVISION_2C02_E_PLUS) return false;
+    if (!nes_execution_allows_host_configuration()) return false;
     active_ppu_revision = revision;
     return true;
 }
@@ -109,6 +117,7 @@ bool ppu_oam_row_corruption_worst_case(void) {
 }
 
 void ppu_set_oam_row_corruption_worst_case(bool enabled) {
+    if (!nes_execution_allows_host_configuration()) return;
     oam_row_corruption_worst_case = enabled;
 }
 
@@ -117,6 +126,7 @@ bool ppu_startup_write_restriction_enabled(void) {
 }
 
 void ppu_set_startup_write_restriction(bool enabled) {
+    if (!nes_execution_allows_host_configuration()) return;
     startup_write_restriction = enabled;
     if (!enabled) ppu.startup_writes_restricted = false;
 }
@@ -130,7 +140,26 @@ bool ppu_oam_decay_enabled(void) {
 }
 
 void ppu_set_oam_decay(bool enabled) {
+    if (!nes_execution_allows_host_configuration()) return;
     oam_decay = enabled;
+}
+
+bool ppu_oamdata_read_disabled(void) {
+    return oamdata_read_disabled;
+}
+
+void ppu_set_oamdata_read_disabled(bool disabled) {
+    if (!nes_execution_allows_host_configuration()) return;
+    oamdata_read_disabled = disabled;
+}
+
+bool ppu_palette_readback_disabled(void) {
+    return palette_readback_disabled;
+}
+
+void ppu_set_palette_readback_disabled(bool disabled) {
+    if (!nes_execution_allows_host_configuration()) return;
+    palette_readback_disabled = disabled;
 }
 
 bool ppu_reset_suppression_enabled(void) {
@@ -138,7 +167,17 @@ bool ppu_reset_suppression_enabled(void) {
 }
 
 void ppu_set_reset_suppression(bool enabled) {
+    if (!nes_execution_allows_host_configuration()) return;
     reset_suppression = enabled;
+}
+
+bool ppu_sprite_eval_wrap_bug_enabled(void) {
+    return sprite_eval_wrap_bug;
+}
+
+void ppu_set_sprite_eval_wrap_bug(bool enabled) {
+    if (!nes_execution_allows_host_configuration()) return;
+    sprite_eval_wrap_bug = enabled;
 }
 
 static bool rendering_line(void) {
@@ -167,6 +206,7 @@ static uint8_t ppu_bus_read_phase(uint16_t par_address, CartPpuFetchSource sourc
     uint16_t address = (par_address & 0x3F00) | ppu.vram_address_latch;
     uint8_t value;
     cart_set_ppu_fetch_source(source);
+    if (nes_video_trace_active) nes_video_trace_begin_read(vs_active_side());
     if (address < 0x2000) {
         value = cart_ppu_read(address);
     } else {
@@ -329,6 +369,49 @@ uint8_t ppu_read(uint16_t addr) {
     return ppu_bus_read(addr, CART_PPU_FETCH_CPU);
 }
 
+uint8_t ppu_debug_peek(uint16_t addr) {
+    addr &= 0x3FFF;
+    if (addr >= 0x3F00) {
+        uint16_t palette_addr = addr & 0x1F;
+        if ((palette_addr & 3) == 0) palette_addr &= 0x0F;
+        return active_ppu_palette[palette_addr];
+    }
+    if (addr < 0x2000) return cart_ppu_peek(addr);
+    return cart_nt_peek(addr, active_ppu_vram);
+}
+
+bool ppu_debug_write(uint16_t addr, uint8_t value) {
+    addr &= 0x3FFF;
+    if (addr >= 0x3F00) {
+        ppu_write(addr, value); /* Palette RAM never drives the external bus. */
+        return true;
+    }
+    return cart_debug_write_ppu(addr, value, active_ppu_vram);
+}
+
+uint8_t ppu_debug_peek_register(uint16_t reg) {
+    switch (reg & 7u) {
+        case 0: return ppu.ctrl;
+        case 1: return ppu.mask;
+        case 2: return (uint8_t)((ppu.status & 0xE0) | (ppu.open_bus & 0x1F));
+        case 3: return ppu.oam_addr;
+        case 4: {
+            uint8_t value = ppu.oam[ppu.oam_addr];
+            if ((ppu.oam_addr & 3u) == 2u) value &= 0xE3;
+            return value;
+        }
+        case 7: {
+            uint16_t addr = ppu.bus_address & 0x3FFF;
+            if (addr >= 0x3F00 && !palette_readback_disabled) {
+                uint8_t mask = (ppu.mask & 1) ? 0x30 : 0x3F;
+                return (uint8_t)((ppu_debug_peek(addr) & mask) | (ppu.open_bus & 0xC0));
+            }
+            return ppu.ppudata_buffer;
+        }
+        default: return ppu.open_bus;
+    }
+}
+
 void ppu_write(uint16_t addr, uint8_t value) {
     addr &= 0x3FFF;
     if (addr >= 0x3F00) {
@@ -372,6 +455,10 @@ uint8_t ppu_reg_read(uint16_t reg) {
             return value;
         }
         case 4: {
+            if (oamdata_read_disabled) {
+                return get_open_bus();
+            }
+
             uint8_t value;
             if (rendering_active()) {
                 if (ppu.dot == 0 || ppu.dot >= 257)
@@ -390,7 +477,7 @@ uint8_t ppu_reg_read(uint16_t reg) {
             if (ppu.data_read_cooldown) return get_open_bus();
             uint16_t addr = ppu.bus_address;
             uint8_t value;
-            if (addr >= 0x3F00) {
+            if (addr >= 0x3F00 && !palette_readback_disabled) {
                 uint8_t mask = (ppu.mask & 1) ? 0x30 : 0x3F;
                 value = (ppu_read(addr) & mask) | (get_open_bus() & 0xC0);
                 set_open_bus_masked(value, 0x3F);
@@ -422,6 +509,10 @@ uint8_t ppu_reg_read_finish(uint16_t reg, uint8_t value) {
             }
             return value;
         case 4:
+            if (oamdata_read_disabled) {
+                return value;
+            }
+
             if (rendering_active()) value = ppu.oam_read_latch;
             set_open_bus(value);
             return value;
@@ -601,6 +692,8 @@ void start_frame(void) {
 }
 
 void ppu_power_on(PPU *state) {
+    nes_video_snapshot_reset(vs_active_side());
+    if (nes_video_trace_active) nes_video_trace_reset_side(vs_active_side());
     memset(state, 0, sizeof(*state));
     memset(state->pixel_indices, 0x0F, sizeof(state->pixel_indices));
     for (unsigned pixel = 0; pixel < 256u * 240u; ++pixel) state->pixel_signal[pixel] = 0x0F;
@@ -719,15 +812,22 @@ static void ppu_evaluate_sprites(void) {
     uint8_t m = ppu.oam_addr & 3;
     int height = (ppu.ctrl & 0x20) ? 16 : 8;
     bool in_range = ppu.scanline >= ppu.oam_bus && ppu.scanline < ppu.oam_bus + height;
-    if (ppu.eval_done) {
+    if (ppu.eval_done && !sprite_eval_wrap_bug) {
         n = (n + 1) & 63;
         ppu.oam_bus = ppu.secondary_oam[ppu.secondary_index & 31];
     } else {
-        if (in_range) ppu.eval_in_range = true;
+        // Early PPUs keep copying Y after wrapping, but stop qualifying new
+        // sprites. The next slot retains its cleared tile, attributes and X.
+        if (!ppu.eval_in_range && in_range) {
+            ppu.eval_in_range = !ppu.eval_done;
+        }
+
         if (!ppu.secondary_oam_full) {
             ppu.secondary_oam[ppu.secondary_index] = ppu.oam_bus;
             if (ppu.eval_in_range) {
-                if (ppu.dot == 66) ppu.secondary_sprite_zero = true;
+                if (ppu.dot == 66) {
+                    ppu.secondary_sprite_zero = true;
+                }
                 m++;
                 uint8_t old_secondary = ppu.secondary_index;
                 ppu.secondary_index = (uint8_t)((ppu.secondary_index + 1) & 0x1F);
@@ -751,14 +851,18 @@ static void ppu_evaluate_sprites(void) {
             }
         } else {
             ppu.oam_bus = ppu.secondary_oam[ppu.secondary_index & 31];
-            if (ppu.eval_in_range) {
+            if (ppu.eval_done) {
+                n = (n + 1) & 63;
+                m = 0;
+            } else if (ppu.eval_in_range) {
                 ppu.sprite_status_pending |= 0x20;
                 if (++m == 4) {
                     m = 0;
                     n = (n + 1) & 63;
                 }
-                if (!ppu.overflow_count) ppu.overflow_count = 3;
-                else if (--ppu.overflow_count == 0) {
+                if (!ppu.overflow_count) {
+                    ppu.overflow_count = 3;
+                } else if (--ppu.overflow_count == 0) {
                     ppu.eval_done = true;
                     m = 0;
                 }
@@ -773,6 +877,8 @@ static void ppu_evaluate_sprites(void) {
     }
     ppu.oam_addr = (n << 2) | m;
 }
+
+#include "ppu_video_trace.h"
 
 static void ppu_fetch_sprite(void) {
     int index = (ppu.dot - 257) / 8;
@@ -825,11 +931,13 @@ static void ppu_fetch_sprite(void) {
     } else if (phase == 5) {
         uint8_t value = ppu_bus_read_phase(ppu.sprite_fetch_addr, CART_PPU_FETCH_SPRITE);
         ppu.sprite_pattern_lo[index] = ppu.sprite_fetch_valid ? value : 0;
+        if (nes_video_trace_active) ppu_trace_pattern(true, (unsigned)index, false, value);
     } else if (phase == 6) {
         ppu_bus_address_phase(ppu.sprite_fetch_addr + 8);
     } else if (phase == 7) {
         uint8_t value = ppu_bus_read_phase(ppu.sprite_fetch_addr + 8, CART_PPU_FETCH_SPRITE);
         ppu.sprite_pattern_hi[index] = ppu.sprite_fetch_valid ? value : 0;
+        if (nes_video_trace_active) ppu_trace_pattern(true, (unsigned)index, true, value);
     }
 }
 
@@ -861,23 +969,27 @@ static void ppu_fetch_background(void) {
             break;
         case 6:
             ppu.pt_lo = ppu_bus_read_phase(ppu.bg_tile_addr, source);
+            if (nes_video_trace_active) ppu_trace_pattern(false, 0, false, ppu.pt_lo);
             break;
         case 7:
             ppu_bus_address_phase(ppu.bg_tile_addr + 8);
             break;
         case 0:
             ppu.pt_hi = ppu_bus_read_phase(ppu.bg_tile_addr + 8, source);
+            if (nes_video_trace_active) ppu_trace_pattern(false, 0, true, ppu.pt_hi);
             break;
         default:
             break;
     }
     if (ppu.scanline < 240 || ppu.dot >= 321) {
+        if (nes_video_trace_active) ppu_trace_shift_background();
         ppu.bg_shift_lo <<= 1;
         ppu.bg_shift_hi = (uint16_t)((ppu.bg_shift_hi << 1) | 1);
         ppu.at_shift_lo <<= 1;
         ppu.at_shift_hi <<= 1;
     }
     if ((ppu.dot & 7) == 0) {
+        if (nes_video_trace_active) ppu_trace_load_background();
         ppu.bg_shift_lo = (ppu.bg_shift_lo & 0xFF00) | ppu.pt_lo;
         ppu.bg_shift_hi = (ppu.bg_shift_hi & 0xFF00) | ppu.pt_hi;
         ppu.at_shift_lo = (ppu.at_shift_lo & 0xFF00) | ((ppu.at_byte & 1) ? 0xFF : 0);
@@ -908,16 +1020,22 @@ static void ppu_render_dot(int x, int y) {
         background = ((ppu.bg_shift_lo & bit) ? 1 : 0) | ((ppu.bg_shift_hi & bit) ? 2 : 0);
         background_palette = ((ppu.at_shift_lo & bit) ? 1 : 0) | ((ppu.at_shift_hi & bit) ? 2 : 0);
     }
+    NesVideoPixel *presentation = nes_video_trace_active
+        ? ppu_trace_begin_pixel(x, y, background, background_palette) : NULL;
     if (ppu.fetches_enabled) {
         uint8_t active = ppu.sprite_skip_clocks ? ppu.sprite_valid_mask : ppu.sprite_active_mask;
         bool show_sprites = (ppu.mask & 0x10) && (x >= 8 || (ppu.mask & 4));
         for (unsigned i = 0; i < 8; ++i) {
             uint8_t slot = (uint8_t)(1u << i);
-            if (!(active & slot)) continue;
+            if (!(active & slot)) {
+                if (presentation) ppu_trace_blank_sprite(presentation, i, x, show_sprites);
+                continue;
+            }
             uint8_t attr = ppu.sprite_attributes[i];
             int bit = (attr & 0x40) ? 0 : 7;
             uint8_t pixel = ((ppu.sprite_pattern_lo[i] >> bit) & 1)
                           | (((ppu.sprite_pattern_hi[i] >> bit) & 1) << 1);
+            if (presentation) ppu_trace_sprite_pixel(presentation, i, pixel, show_sprites);
             if (attr & 0x40) {
                 ppu.sprite_pattern_lo[i] >>= 1;
                 ppu.sprite_pattern_hi[i] >>= 1;
@@ -948,6 +1066,18 @@ static void ppu_render_dot(int x, int y) {
     if (ppu.mask & 0x80u) signal |= 0x100u;
     ppu.pixel_signal[y * 256 + x] = signal;
     active_framebuffer[y * 256 + x] = get_color(color);
+    if (presentation) {
+        presentation->original_rgb = active_framebuffer[y * 256 + x];
+        presentation->original_signal = signal;
+        presentation->selected_sprite_index = sprite;
+        presentation->selected_sprite_color = active_ppu_palette[0x10u + sprite_palette * 4u + sprite];
+        presentation->selected_sprite_rgb = get_color(presentation->selected_sprite_color);
+        presentation->selected_sprite_attributes = sprite_behind ? 0x20 : 0;
+        if (!ppu.rendering_enabled) {
+            presentation->backdrop = color;
+            presentation->backdrop_rgb = presentation->original_rgb;
+        }
+    }
 }
 
 void ppu_step_dots(int ppu_cycles) {
@@ -1107,6 +1237,10 @@ void ppu_step_dots(int ppu_cycles) {
                 ppu.odd_frame = !ppu.odd_frame;
                 ppu.frame_complete = true;
                 ppu.frame_count++;
+                nes_video_snapshot_complete(vs_active_side(), active_framebuffer,
+                                             ppu.pixel_signal, ppu.completed_video_phase,
+                                             ppu.frame_count);
+                if (nes_video_trace_active) nes_video_trace_complete(vs_active_side(), ppu.frame_count);
             }
             if (ppu.startup_writes_restricted
                 && ppu.scanline == (int)nes_timing()->scanlines - 1)
@@ -1125,18 +1259,20 @@ void ppu_step(int cpu_cycles) {
     }
 }
 
+#include "ppu_state_impl.h"
+
 uint16_t ppu_pixel_brightness(unsigned x, unsigned y) {
-    // Fixed RGB-sum approximation for the light sensor. Display palette edits
-    // do not change the emulated signal, and emphasis is not resolved here.
-    static const uint16_t brightness[64] = {
-        306, 178, 205, 223, 218, 174, 114, 115, 104, 83, 82, 87, 141, 0, 0, 0,
-        519, 333, 385, 410, 390, 336, 262, 231, 216, 191, 159, 193, 265, 0, 0, 0,
-        764, 531, 545, 571, 604, 568, 495, 426, 378, 352, 368, 423, 499, 237, 0, 0,
-        764, 670, 676, 687, 700, 684, 655, 628, 605, 596, 604, 626, 658, 552, 0, 0
-    };
-    if (x >= 256 || y >= 240) return 0;
+    // The sensor uses a fixed RGB-sum approximation after the PPU's palette
+    // remap. Display palette edits and emphasis do not change that signal.
+    static const uint16_t brightness[64] = {306, 178, 205, 223, 218, 174, 114, 115, 104, 83,  82,  87,  141, 0,   0, 0,
+                                            519, 333, 385, 410, 390, 336, 262, 231, 216, 191, 159, 193, 265, 0,   0, 0,
+                                            764, 531, 545, 571, 604, 568, 495, 426, 378, 352, 368, 423, 499, 237, 0, 0,
+                                            764, 670, 676, 687, 700, 684, 655, 628, 605, 596, 604, 626, 658, 552, 0, 0};
+    if (x >= 256 || y >= 240) {
+        return 0;
+    }
     uint8_t color = ppu.pixel_indices[y * 256 + x] & ((ppu.mask & 1u) ? 0x30 : 0x3F);
-    return brightness[color];
+    return brightness[vs_ppu_light_sensor_index(color)];
 }
 
 uint32_t get_color(uint8_t idx) {

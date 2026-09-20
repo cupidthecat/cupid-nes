@@ -291,6 +291,7 @@ static void prepare_overlap(int x) {
 
 #include "ppu_accuracy_registers.h"
 #include "ppu_accuracy_video.h"
+#include "ppu_accuracy_sprite_wrap.h"
 
 int test_ppu_accuracy(void) {
     checks = failures = 0;
@@ -635,11 +636,14 @@ int test_ppu_accuracy(void) {
     test_oam_row_corruption_profiles();
     test_startup_register_restriction();
     test_oam_decay_refresh();
+    test_oamdata_read_profile();
+    test_palette_readback_profile();
     test_regional_video();
     test_video_reset();
     test_reset_suppression();
     test_power_on_ram_profiles();
     test_sprite_shifters();
+    test_sprite_evaluation_wrap_profile();
     test_late_register_reads();
     test_ntsc_composite_video();
     printf("PPU: %d checks, %d failures\n", checks, failures);

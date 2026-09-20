@@ -27,6 +27,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "../state/state_io.h"
 
 // PPU Memory Sizes
 #define NT_RAM_SIZE 0x1000    // 4KB nametable RAM (supports four-screen; normal carts use 2KB)
@@ -181,6 +182,9 @@ static const uint32_t nes_palette[64] = {
 
 // Function prototypes
 uint8_t ppu_read(uint16_t addr);
+uint8_t ppu_debug_peek(uint16_t addr);
+bool ppu_debug_write(uint16_t addr, uint8_t value);
+uint8_t ppu_debug_peek_register(uint16_t reg);
 void ppu_write(uint16_t addr, uint8_t value);
 void ppu_reset(PPU* ppu);
 void ppu_power_on(PPU* ppu);
@@ -207,8 +211,14 @@ void ppu_set_startup_write_restriction(bool enabled);
 bool ppu_startup_writes_restricted(void);
 bool ppu_oam_decay_enabled(void);
 void ppu_set_oam_decay(bool enabled);
+bool ppu_oamdata_read_disabled(void);
+void ppu_set_oamdata_read_disabled(bool disabled);
+bool ppu_palette_readback_disabled(void);
+void ppu_set_palette_readback_disabled(bool disabled);
 bool ppu_reset_suppression_enabled(void);
 void ppu_set_reset_suppression(bool enabled);
+bool ppu_sprite_eval_wrap_bug_enabled(void);
+void ppu_set_sprite_eval_wrap_bug(bool enabled);
 void ppu_oam_dma(uint8_t page);
 void ppu_begin_vblank(void);
 void ppu_end_vblank(void);
@@ -217,5 +227,16 @@ extern uint8_t bg_opaque[256 * 240];
 // Cycle-stepped API
 void ppu_step(int cpu_cycles);
 void ppu_step_dots(int ppu_cycles);
+
+bool ppu_state_capture(NesStateWriter *writer);
+bool ppu_state_validate(NesStateReader *reader);
+bool ppu_state_apply(NesStateReader *reader);
+bool ppu_hardware_state_capture(NesStateWriter *writer);
+bool ppu_machine_state_capture(NesStateWriter *writer, const PpuMachineContext *context,
+                               const uint32_t *framebuffer_data);
+bool ppu_machine_hardware_state_capture(NesStateWriter *writer,
+                                        const PpuMachineContext *context);
+bool ppu_machine_state_decode(NesStateReader *reader, PpuMachineContext *context,
+                              uint32_t *framebuffer_data);
 
 #endif // PPU_H

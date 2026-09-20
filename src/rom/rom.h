@@ -91,18 +91,39 @@ extern uint8_t   *chr_rom;
 
 int load_rom(const char *filename);
 bool rom_set_fcns_kanji_firmware(const char *path);
+typedef enum {
+    FDS_SAVE_IN_PLACE,
+    FDS_SAVE_OVERLAY
+} FdsSaveMode;
+
+typedef struct {
+    FdsSaveMode mode;
+    const char *overlay_path; // NULL derives an IPS path from the image identity.
+    bool write_protected;
+} FdsLoadOptions;
+
 int load_fds(const char *disk_path, const char *bios_path, bool write_protected);
+int load_fds_with_options(const char *disk_path, const char *bios_path,
+                           const FdsLoadOptions *options);
 int load_studybox(const char *media_path, const char *bios_path);
-// Eject the cartridge and release loader-owned buffers; false preserves dirty FDS media
-// when its pending disk image cannot be flushed.
+// Eject the cartridge and release loader-owned buffers. A failed persistent
+// write leaves the active machine loaded so the caller can retry.
 bool unload_rom(void);
+// Flush cartridge, disk, and input-device data before replacing a session.
+// A failure keeps the active machine and any unwritten data available.
+bool rom_flush_persistent(void);
 // Load an iNES image without a disk file or battery save path; copies its bytes.
 // Failed loads preserve the currently inserted cartridge.
 int load_rom_memory(const uint8_t *data, size_t size);
+// Load prepared cartridge/music bytes with a separate persistence identity.
+int load_rom_image(const uint8_t *data, size_t size, const char *save_path);
 // Test and embedding entry point. Failed validation leaves the active machine untouched.
 int load_fds_memory(const uint8_t *disk, size_t disk_size,
                     const uint8_t *bios, size_t bios_size,
                     const char *disk_path, bool write_protected);
+int load_fds_memory_options(const uint8_t *disk, size_t disk_size,
+                             const uint8_t *bios, size_t bios_size,
+                             const char *disk_path, const FdsLoadOptions *options);
 int load_studybox_memory(const uint8_t *media, size_t media_size,
                          const uint8_t *bios, size_t bios_size);
 bool rom_is_fds(void);
@@ -111,6 +132,7 @@ bool rom_is_nsf(void);
 bool rom_nsf_select_track(unsigned track);
 unsigned rom_nsf_current_track(void);
 const NsfMetadata *rom_nsf_metadata(void);
+double rom_nsf_elapsed_seconds(void);
 int rom_mapper_number(const iNESHeader *header);
 bool rom_database_load_file(const char *path);
 bool rom_database_load_memory(const char *text, size_t size);

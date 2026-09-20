@@ -19,6 +19,9 @@
 #include "../apu/apu.h"
 #include "../ppu/ppu.h"
 #include "../rom/rom.h"
+#include "../state/state_io.h"
+#include "../video/video_trace.h"
+#include "timing.h"
 
 typedef enum {
     VS_TYPE_DEFAULT = 0,
@@ -59,7 +62,7 @@ typedef struct {
 } VsRomConfig;
 
 bool vs_decode_header(const iNESHeader *header, int mapper, size_t prg_bytes,
-                      size_t chr_bytes, VsRomConfig *config,
+                      size_t chr_bytes, NesRegion region, VsRomConfig *config,
                       char *reason, size_t reason_size);
 void vs_commit_config(const VsRomConfig *config);
 void vs_clear_config(void);
@@ -68,6 +71,7 @@ bool vs_dual_system(void);
 VsSystemType vs_system_type(void);
 VsPpuModel vs_ppu_model(void);
 unsigned vs_active_side(void);
+uint8_t vs_debug_peek_memory(unsigned side, bool ppu_space, uint16_t address);
 
 void vs_power_on_secondary(void);
 // Called after resetting the main CPU/PPU/APU.
@@ -78,13 +82,26 @@ uint64_t vs_side_cpu_cycles(unsigned side);
 uint64_t vs_side_frame_count(unsigned side);
 unsigned vs_video_width(void);
 const uint32_t *vs_video_framebuffer(void);
+/* Host presentation helpers. These buffers are intentionally outside hardware
+ * identity; run-ahead uses them to keep the speculative picture after the
+ * authoritative machine snapshot is restored. */
+bool vs_video_copy_frame(uint32_t *out, size_t pixels);
+/* Display pixels, signals and optional tile observations from the same completed
+ * frame. After a state restore, pixels/signals fall back to the restored raw
+ * buffers and the trace stays unavailable until a complete frame is observed. */
+const uint32_t *vs_video_completed_framebuffer(void);
+bool vs_video_copy_completed_frame(uint32_t *out, size_t pixels);
+const uint16_t *vs_video_completed_signal(unsigned side, unsigned *phase);
+const NesVideoTraceFrame *vs_video_completed_trace(unsigned side);
 APU *vs_side_apu(unsigned side);
 PPU *vs_side_ppu(unsigned side);
 void vs_audio_init(int sample_rate);
 void vs_audio_callback(void *userdata, uint8_t *stream, int len);
+void vs_audio_stereo_callback(void *userdata, uint8_t *stream, int len);
 
 void vs_write_4016(uint8_t value);
 uint8_t vs_read_controller_port(unsigned port);
+uint8_t vs_debug_peek_controller_port(unsigned port);
 bool vs_protection_read(uint16_t address, uint8_t *value);
 uint8_t vs_prg_chr_select_bit(void);
 bool vs_shared_ram_access_allowed(void);
@@ -100,5 +117,11 @@ bool vs_set_service(unsigned side, bool pressed);
 bool vs_ppu_is_2c05(void);
 bool vs_ppu_status_signature(uint8_t *signature);
 bool vs_ppu_rgb_color(uint8_t color, uint8_t mask, uint32_t *argb);
+uint8_t vs_ppu_light_sensor_index(uint8_t color);
+
+bool vs_state_capture(NesStateWriter *writer);
+bool vs_hardware_state_capture(NesStateWriter *writer);
+bool vs_state_validate(NesStateReader *reader);
+bool vs_state_apply(NesStateReader *reader);
 
 #endif

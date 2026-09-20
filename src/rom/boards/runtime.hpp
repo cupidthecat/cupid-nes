@@ -14,6 +14,8 @@
 #define CUPID_BOARD_RUNTIME_HPP
 
 #include "../board.h"
+#include "../../audio/audio_mix.h"
+#include "state_codec.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -100,6 +102,8 @@ protected:
     virtual bool EnableVramAddressHook() { return false; }
     virtual bool EnableCustomVramRead() { return false; }
     virtual bool EnableCustomRamRead() { return false; }
+    virtual bool StatePrgRomContentsMutable() const { return false; }
+    virtual bool StateChrRomContentsMutable() const { return false; }
     virtual uint16_t RegisterStartAddress() { return 0x8000; }
     virtual uint16_t RegisterEndAddress() { return 0xFFFF; }
     virtual uint8_t ReadRegister(uint16_t) { return 0; }
@@ -173,10 +177,11 @@ protected:
     void ReadBattery(const char *suffix, uint8_t *bytes, uint32_t size);
     bool WriteBattery(const char *suffix, const uint8_t *bytes, uint32_t size);
     virtual void LoadBattery();
-    virtual void SaveBattery();
+    virtual bool SaveBattery();
 
 public:
     virtual ~Board() = default;
+    virtual bool VisitState(BoardStateVisitor &state);
     void Initialize(const iNESHeader &header, uint8_t *prg, size_t prgBytes,
                      uint8_t *chr, size_t chrBytes,
                      const RomDatabaseInfo *database = nullptr);
@@ -193,13 +198,17 @@ public:
         InternalWriteVram(addr, value);
     }
     virtual float AudioOutput() const { return 0.0f; }
+    virtual unsigned AudioMixChannel() const { return NES_AUDIO_CARTRIDGE_PCM; }
     virtual bool SetMapperInput(unsigned, bool) { return false; }
     virtual uint8_t *CpuRam8K() { return nullptr; }
     virtual bool ReadCpuRegister(uint16_t, uint8_t &) { return false; }
     virtual void ObserveCpuWrite(uint16_t, uint8_t) {}
     uint8_t ReadCpu(uint16_t addr, uint8_t openBus);
+    uint8_t PeekCpu(uint16_t addr, uint8_t openBus) const;
     void WriteCpu(uint16_t addr, uint8_t value);
     uint8_t ReadPpu(uint16_t addr, unsigned fetchSource);
+    uint8_t PeekPpu(uint16_t addr) const;
+    bool DebugWritePpu(uint16_t addr, uint8_t value);
     void ClockCpu(bool writeCycle);
     void NotifyPpu(uint16_t addr, uint64_t cycle);
     bool PendingIrq() const { return _irq; }
@@ -208,7 +217,7 @@ public:
     void SetMirroring(Mirroring type) { SetMirroringType(static_cast<MirroringType>(type)); }
     void ApplyTrainer(const uint8_t trainer[512]);
     void ConfigureBattery(const char *romPath);
-    void FlushBattery();
+    bool FlushBattery();
 };
 
 std::unique_ptr<Board> CreateBoard(unsigned mapper);

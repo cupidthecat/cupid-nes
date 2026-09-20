@@ -174,6 +174,24 @@ static size_t vrc6_nt_chr_bank(unsigned nt) {
     }
 }
 
+static void vrc6_update_nametables(void) {
+    bool chr_source = (vrc6.banking_mode & 0x10u) != 0;
+    size_t page_size = chr_source ? shrunk_chr_page_size(CHR_BANK_1K) : CHR_BANK_1K;
+    if (!page_size || (page_size & 0xFFu)) return;
+    size_t page_count = chr_source ? C.chr_sz / page_size : 2;
+    size_t coverage = CHR_BANK_1K / page_size * page_size;
+    for (unsigned nt = 0; nt < 4; ++nt) {
+        size_t first_page = chr_source ? vrc6_nt_chr_bank(nt) : vrc6_ciram_page(nt);
+        // A partial source page must leave the preceding mapping in place.
+        for (size_t in = 0; in < coverage; in += 0x100u) {
+            size_t chunk = nt * 4u + in / 0x100u;
+            size_t page = (first_page + in / page_size) % page_count;
+            vrc6.nt_chr[chunk] = chr_source;
+            vrc6.nt_offsets[chunk] = page * page_size + in % page_size;
+        }
+    }
+}
+
 static uint8_t vrc6_cpu_read(uint16_t addr) {
     if (addr >= 0x6000 && addr < 0x8000) {
         return (!vrc6.ppu_initialized || (vrc6.banking_mode & 0x80u))
@@ -216,6 +234,7 @@ static void vrc6_cpu_write(uint16_t addr, uint8_t value) {
         case 0xB003:
             vrc6.banking_mode = value;
             vrc6.ppu_initialized = true;
+            vrc6_update_nametables();
             break;
         case 0xC000: case 0xC001: case 0xC002: case 0xC003:
             vrc6.prg8_bank = value & 0x1Fu;
@@ -224,10 +243,12 @@ static void vrc6_cpu_write(uint16_t addr, uint8_t value) {
         case 0xD000: case 0xD001: case 0xD002: case 0xD003:
             vrc6.chr_regs[addr & 3u] = value;
             vrc6.ppu_initialized = true;
+            vrc6_update_nametables();
             break;
         case 0xE000: case 0xE001: case 0xE002: case 0xE003:
             vrc6.chr_regs[4u + (addr & 3u)] = value;
             vrc6.ppu_initialized = true;
+            vrc6_update_nametables();
             break;
         case 0xF000:
             vrc6.irq.reload = value;
@@ -247,8 +268,8 @@ static uint8_t vrc6_ppu_read(uint16_t addr) {
     size_t page_size, page_count;
     if (!vrc6.ppu_initialized
         || !shrunk_chr_slot_geometry(addr, CHR_BANK_1K, 8, &slot, &page_size, &page_count))
-        return chr_unmapped_read(addr);
-    return C.chr[shrunk_chr_bank_offset(addr, page_size, page_count, vrc6_chr_bank(slot))];
+        return chr_default_read(addr, CHR_BANK_1K);
+    return chr_read_byte(shrunk_chr_bank_offset(addr, page_size, page_count, vrc6_chr_bank(slot)));
 }
 
 static void vrc6_ppu_write(uint16_t addr, uint8_t value) {
@@ -258,7 +279,7 @@ static void vrc6_ppu_write(uint16_t addr, uint8_t value) {
     size_t page_size, page_count;
     if (!vrc6.ppu_initialized
         || !shrunk_chr_slot_geometry(addr, CHR_BANK_1K, 8, &slot, &page_size, &page_count)) {
-        chr_ram_write(addr % C.chr_sz, value);
+        chr_default_write(addr, CHR_BANK_1K, value);
         return;
     }
     chr_ram_write(shrunk_chr_bank_offset(addr, page_size, page_count, vrc6_chr_bank(slot)), value);
@@ -279,6 +300,18 @@ static void vrc6_reset(void) {
     bool variant_b = vrc6.variant_b;
     memset(&vrc6, 0, sizeof(vrc6));
     vrc6.variant_b = variant_b;
+    for (unsigned nt = 0; nt < 4; ++nt) {
+        unsigned page;
+        switch (C.mirr_base) {
+            case MIRROR_VERTICAL: page = nt & 1u; break;
+            case MIRROR_SINGLE0: page = 0; break;
+            case MIRROR_SINGLE1: page = 1; break;
+            case MIRROR_FOUR: page = nt; break;
+            default: page = nt >> 1; break;
+        }
+        for (unsigned chunk = 0; chunk < 4; ++chunk)
+            vrc6.nt_offsets[nt * 4u + chunk] = page * CHR_BANK_1K + chunk * 0x100u;
+    }
     vrc6.pulse[0].frequency = vrc6.pulse[1].frequency = 1;
     vrc6.pulse[0].timer = vrc6.pulse[1].timer = 1;
     vrc6.saw.frequency = 1;
@@ -307,7 +340,7 @@ uint8_t cart_nt_read(uint16_t addr, uint8_t *nt_ram) {
                 || (jy.nt_low[slot] & 0x80u) != (jy.nt_ram_select_bit & 0x80u))) {
             size_t page = (size_t)jy.nt_low[slot] | ((size_t)jy.nt_high[slot] << 8);
             size_t offset = page * CHR_BANK_1K + in;
-            return !C.chr_is_ram && offset < C.chr_sz ? C.chr[offset] : 0;
+            return !C.chr_is_ram && offset < C.chr_sz ? chr_read_byte(offset) : 0;
         }
         return nt_ram[(size_t)jy_ciram_page(slot) * CHR_BANK_1K + in];
     }
@@ -317,26 +350,19 @@ uint8_t cart_nt_read(uint16_t addr, uint8_t *nt_ram) {
     }
     if (cart == &mapper_unrom512 && unrom512_four_screen_chr) {
         size_t offset = 0x6000u + ((addr - 0x2000u) & 0x1FFFu);
-        if (C.chr_is_ram) return C.chr[offset];
+        if (C.chr_is_ram) return chr_read_byte(offset);
         RamBlock *ram = chr_save_ram.size ? &chr_save_ram : &chr_work_ram;
         return ram->data[offset];
     }
     if (cart == &mapper_vrc6 && vrc6.ppu_initialized) {
         uint16_t off = (uint16_t)((addr - 0x2000u) & 0x0FFFu);
-        unsigned nt = (off >> 10) & 3u;
-        size_t in = off & 0x03FFu;
-        if (vrc6.banking_mode & 0x10u) {
-            size_t offset = shrunk_chr_window_offset(in, CHR_BANK_1K, vrc6_nt_chr_bank(nt));
-            return C.chr[offset];
-        }
-        return nt_ram[(size_t)vrc6_ciram_page(nt) * 0x400u + in];
+        unsigned chunk = off >> 8;
+        size_t offset = vrc6.nt_offsets[chunk] + (off & 0xFFu);
+        return vrc6.nt_chr[chunk] ? chr_read_byte(offset) : nt_ram[offset];
     }
     if (cart == &mapper_sunsoft4 && sunsoft4.use_chr_nt) {
-        uint16_t off = (uint16_t)((addr - 0x2000u) & 0x0FFFu);
-        unsigned nt = (off >> 10) & 3u;
-        size_t base = ((size_t)sunsoft4.nt[sunsoft4_nt_reg(nt)] * CHR_BANK_1K) % C.chr_sz;
-        size_t in = off & 0x03FFu;
-        return base + in < C.chr_sz ? C.chr[base + in] : (uint8_t)addr;
+        size_t offset = sunsoft4_nt_chr_offset(addr);
+        return offset < C.chr_sz ? chr_read_byte(offset) : (uint8_t)addr;
     }
     if (cart == &mapper_mmc5) {
         mmc5_begin_ppu_read(addr);
@@ -368,7 +394,7 @@ uint8_t cart_nt_read(uint16_t addr, uint8_t *nt_ram) {
             if (namco_ppu_source[chunk] == NAMCO_PPU_CIRAM)
                 return nt_ram[offset & 0x07FFu];
             if (namco_ppu_source[chunk] == NAMCO_PPU_CHR)
-                return offset < C.chr_sz ? C.chr[offset] : (uint8_t)addr;
+                return offset < C.chr_sz ? chr_read_byte(offset) : (uint8_t)addr;
         }
     }
     if (cart == &mapper_namco108 && C.mapper_no == 95 && namco108.nametables_selected) {
@@ -386,6 +412,28 @@ uint8_t cart_nt_read(uint16_t addr, uint8_t *nt_ram) {
     }
 
     return nt_ram[base_nt_index(addr)];
+}
+
+uint8_t cart_nt_peek(uint16_t addr, uint8_t *nt_ram) {
+    if (active_board) return board_ppu_peek(active_board, addr);
+    if (cart == &mapper_jy) {
+        uint8_t saved_source = jy.irq_source;
+        jy.irq_source = JY_IRQ_CPU_CLOCK;
+        uint8_t value = cart_nt_read(addr, nt_ram);
+        jy.irq_source = saved_source;
+        return value;
+    }
+    if (cart == &mapper_mmc5) {
+        unsigned char saved[sizeof(mmc5)];
+        bool saved_irq = mapper_irq_line;
+        memcpy(saved, &mmc5, sizeof(mmc5));
+        mmc5.in_frame = false; /* Inspect mapped memory, not a transient fetch phase. */
+        uint8_t value = cart_nt_read(addr, nt_ram);
+        memcpy(&mmc5, saved, sizeof(mmc5));
+        mapper_irq_line = saved_irq;
+        return value;
+    }
+    return cart_nt_read(addr, nt_ram);
 }
 
 void cart_nt_write(uint16_t addr, uint8_t v, uint8_t *nt_ram) {
@@ -427,24 +475,15 @@ void cart_nt_write(uint16_t addr, uint8_t v, uint8_t *nt_ram) {
     }
     if (cart == &mapper_vrc6 && vrc6.ppu_initialized) {
         uint16_t off = (uint16_t)((addr - 0x2000u) & 0x0FFFu);
-        unsigned nt = (off >> 10) & 3u;
-        size_t in = off & 0x03FFu;
-        if (vrc6.banking_mode & 0x10u) {
-            if (!C.chr_is_ram) return;
-            size_t offset = shrunk_chr_window_offset(in, CHR_BANK_1K, vrc6_nt_chr_bank(nt));
-            chr_ram_write(offset, v);
-            return;
-        }
-        nt_ram[(size_t)vrc6_ciram_page(nt) * 0x400u + in] = v;
+        unsigned chunk = off >> 8;
+        size_t offset = vrc6.nt_offsets[chunk] + (off & 0xFFu);
+        if (vrc6.nt_chr[chunk]) chr_ram_write(offset, v);
+        else nt_ram[offset] = v;
         return;
     }
     if (cart == &mapper_sunsoft4 && sunsoft4.use_chr_nt) {
         if (!C.chr_is_ram) return;
-        uint16_t off = (uint16_t)((addr - 0x2000u) & 0x0FFFu);
-        unsigned nt = (off >> 10) & 3u;
-        size_t base = ((size_t)sunsoft4.nt[sunsoft4_nt_reg(nt)] * CHR_BANK_1K) % C.chr_sz;
-        size_t in = off & 0x03FFu;
-        if (base + in < C.chr_sz) chr_ram_write(base + in, v);
+        chr_ram_write(sunsoft4_nt_chr_offset(addr), v);
         return;
     }
     if (cart == &mapper_mmc5) {
@@ -599,10 +638,10 @@ static uint8_t mmc2_ppu_read(uint16_t a) {
     a &= 0x1FFF;
     size_t page_size = shrunk_chr_page_size(CHR_BANK_4K);
     size_t slot = page_size ? a / page_size : 2;
-    uint8_t val = chr_unmapped_read(a);
+    uint8_t val = chr_default_read(a, CHR_BANK_4K);
     if (slot < 2 && mmc2.chr_mapped[slot]) {
         size_t bank = mmc2.selected_chr_bank[slot] % (C.chr_sz / page_size);
-        val = C.chr[bank * page_size + (a % page_size)];
+        val = chr_read_byte(bank * page_size + (a % page_size));
     }
     return val;
 }
@@ -612,7 +651,7 @@ static void mmc2_ppu_write(uint16_t a, uint8_t v) {
     a &= 0x1FFF;
     size_t page_size = shrunk_chr_page_size(CHR_BANK_4K);
     size_t slot = page_size ? a / page_size : 2;
-    if (slot >= 2 || !mmc2.chr_mapped[slot]) { chr_ram_write(a % C.chr_sz, v); return; }
+    if (slot >= 2 || !mmc2.chr_mapped[slot]) { chr_default_write(a, CHR_BANK_4K, v); return; }
     size_t bank = mmc2.selected_chr_bank[slot] % (C.chr_sz / page_size);
     chr_ram_write(bank * page_size + (a % page_size), v);
 }
@@ -691,10 +730,10 @@ static uint8_t mmc4_ppu_read(uint16_t a) {
     a &= 0x1FFF;
     size_t page_size = shrunk_chr_page_size(CHR_BANK_4K);
     size_t slot = page_size ? a / page_size : 2;
-    uint8_t val = chr_unmapped_read(a);
+    uint8_t val = chr_default_read(a, CHR_BANK_4K);
     if (slot < 2 && mmc4.chr_mapped[slot]) {
         size_t bank = mmc4.selected_chr_bank[slot] % (C.chr_sz / page_size);
-        val = C.chr[bank * page_size + (a % page_size)];
+        val = chr_read_byte(bank * page_size + (a % page_size));
     }
     return val;
 }
@@ -704,7 +743,7 @@ static void mmc4_ppu_write(uint16_t a, uint8_t v) {
     a &= 0x1FFF;
     size_t page_size = shrunk_chr_page_size(CHR_BANK_4K);
     size_t slot = page_size ? a / page_size : 2;
-    if (slot >= 2 || !mmc4.chr_mapped[slot]) { chr_ram_write(a % C.chr_sz, v); return; }
+    if (slot >= 2 || !mmc4.chr_mapped[slot]) { chr_default_write(a, CHR_BANK_4K, v); return; }
     size_t bank = mmc4.selected_chr_bank[slot] % (C.chr_sz / page_size);
     chr_ram_write(bank * page_size + (a % page_size), v);
 }
@@ -770,8 +809,10 @@ static bool namco_ram_read_allowed(void) {
 
 static uint8_t namco_cpu_read(uint16_t address) {
     uint16_t reg = address & 0xF800u;
-    if (reg == 0x4800u && namco.variant == NAMCO_VARIANT_163)
+    if (reg == 0x4800u && namco.variant == NAMCO_VARIANT_163) {
+        if (cart_debug_peek_mode) return namco163_audio.ram[namco163_audio.ram_position];
         return namco163_audio_read_data(&namco163_audio);
+    }
     if (reg == 0x5000u && namco.variant == NAMCO_VARIANT_163)
         return (uint8_t)namco.irq_counter;
     if (reg == 0x5800u && namco.variant == NAMCO_VARIANT_163)
@@ -897,8 +938,8 @@ static uint8_t namco_ppu_read(uint16_t address) {
     if (namco_ppu_source[chunk] == NAMCO_PPU_CIRAM)
         return ppu_vram[offset & 0x07FFu];
     if (namco_ppu_source[chunk] == NAMCO_PPU_CHR)
-        return offset < C.chr_sz ? C.chr[offset] : (uint8_t)address;
-    return chr_unmapped_read(address);
+        return offset < C.chr_sz ? chr_read_byte(offset) : (uint8_t)address;
+    return chr_default_read(address, CHR_BANK_1K);
 }
 
 static void namco_ppu_write(uint16_t address, uint8_t value) {
@@ -913,7 +954,7 @@ static void namco_ppu_write(uint16_t address, uint8_t value) {
         if (C.chr_is_ram && offset < C.chr_sz) chr_ram_write(offset, value);
         return;
     }
-    if (C.chr_is_ram) chr_ram_write(address % C.chr_sz, value);
+    if (C.chr_is_ram) chr_default_write(address, CHR_BANK_1K, value);
 }
 
 static Mirroring namco_mirr(void) { return namco.mirr; }
@@ -1084,10 +1125,10 @@ static uint8_t namco108_ppu_read(uint16_t address) {
     unsigned slot_count = C.mapper_no == 76 ? 4u : 8u;
     size_t page_size = shrunk_chr_page_size(native_page);
     unsigned slot = page_size ? (unsigned)(address / page_size) : slot_count;
-    if (slot >= slot_count) return chr_unmapped_read(address);
+    if (slot >= slot_count) return chr_default_read(address, native_page);
     size_t banks = C.chr_sz / page_size;
     size_t bank = namco108_chr_bank_slot(slot) % banks;
-    return C.chr[bank * page_size + (address % page_size)];
+    return chr_read_byte(bank * page_size + (address % page_size));
 }
 
 static void namco108_ppu_write(uint16_t address, uint8_t value) {
@@ -1097,7 +1138,7 @@ static void namco108_ppu_write(uint16_t address, uint8_t value) {
     unsigned slot_count = C.mapper_no == 76 ? 4u : 8u;
     size_t page_size = shrunk_chr_page_size(native_page);
     unsigned slot = page_size ? (unsigned)(address / page_size) : slot_count;
-    size_t offset = address % C.chr_sz;
+    size_t offset = chr_default_offset(address, native_page);
     if (slot < slot_count) {
         size_t banks = C.chr_sz / page_size;
         size_t bank = namco108_chr_bank_slot(slot) % banks;
@@ -1129,4 +1170,3 @@ static void namco108_reset(void) {
 }
 
 #endif // MAPPER_EXPANSION_H
-

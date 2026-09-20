@@ -12,6 +12,7 @@
  */
 #ifndef CUPID_BOARDS_A12_WATCHER_HPP
 #define CUPID_BOARDS_A12_WATCHER_HPP
+#include "state_codec.hpp"
 #include <cstdint>
 
 namespace cupid::boards {
@@ -20,6 +21,11 @@ class A12Watcher {
     uint32_t _lastCycle = 0, _cyclesDown = 0;
 
 public:
+    bool VisitState(BoardStateVisitor &state) {
+        return state.Field("a12.last_cycle", _lastCycle)
+            && state.Field("a12.cycles_down", _cyclesDown);
+    }
+
     bool Rising(uint16_t address, uint32_t frameCycle) {
         if (_cyclesDown) {
             _cyclesDown += _lastCycle > frameCycle

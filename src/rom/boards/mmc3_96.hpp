@@ -85,6 +85,11 @@ class Mmc3_126 final : public Mmc3 {
             Mmc3::WriteRegister(address, value);
         }
     }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Mmc3::VisitState(state)
+            && state.Field("mmc3_126.exRegs", _exRegs);
+    }
 };
 
 class Mmc3_134 final : public Mmc3 {
@@ -120,6 +125,11 @@ class Mmc3_134 final : public Mmc3 {
             Mmc3::WriteRegister(address, value);
         }
     }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Mmc3::VisitState(state)
+            && state.Field("mmc3_134.exReg", _exReg);
+    }
 };
 
 class Mmc3_165 final : public Mmc3 {
@@ -152,6 +162,12 @@ public:
                 _needUpdate = true;
                 break;
         }
+    }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Mmc3::VisitState(state)
+            && state.Field("mmc3_165.chrLatch", _chrLatch)
+            && state.Field("mmc3_165.needUpdate", _needUpdate);
     }
 };
 
@@ -252,6 +268,11 @@ class Mmc3_187 final : public Mmc3 {
             Mmc3::WriteRegister(address, value);
         }
     }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Mmc3::VisitState(state)
+            && state.Field("mmc3_187.exRegs", _exRegs);
+    }
 };
 
 class Mmc3_196 final : public Mmc3 {
@@ -283,6 +304,11 @@ class Mmc3_196 final : public Mmc3 {
             address = (address & 0xFFFE) | ((address >> 2) & 1)
                     | ((address >> 3) & 1) | ((address >> 1) & 1);
         Mmc3::WriteRegister(address, value);
+    }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Mmc3::VisitState(state)
+            && state.Field("mmc3_196.exRegs", _exRegs);
     }
 };
 
@@ -342,6 +368,11 @@ class Mmc3_198 final : public Mmc3 {
             Mmc3::UpdateChrMapping();
         }
     }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Mmc3::VisitState(state)
+            && state.Field("mmc3_198.exRegs", _exRegs);
+    }
 };
 
 class Mmc3_199 final : public Mmc3 {
@@ -396,6 +427,11 @@ class Mmc3_199 final : public Mmc3 {
         Mmc3::SelectChrPage(3, _exRegs[3],
                             _exRegs[3] < 8 ? ChrMemoryType::ChrRam : ChrMemoryType::ChrRom);
     }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Mmc3::VisitState(state)
+            && state.Field("mmc3_199.exRegs", _exRegs);
+    }
 };
 
 class Mmc3_205 final : public Mmc3 {
@@ -427,6 +463,11 @@ class Mmc3_205 final : public Mmc3 {
         } else {
             Mmc3::WriteRegister(address, value);
         }
+    }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Mmc3::VisitState(state)
+            && state.Field("mmc3_205.selectedBlock", _selectedBlock);
     }
 };
 
@@ -483,6 +524,11 @@ class Mmc3_208 final : public Mmc3 {
         } else {
             Mmc3::WriteRegister(address, value);
         }
+    }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Mmc3::VisitState(state)
+            && state.Field("mmc3_208.exRegs", _exRegs);
     }
 };
 
@@ -576,6 +622,11 @@ protected:
         if (lutValue == 0)
             value = (value & 0xC0) | LutReg[_exRegs[2]][value & 7];
         Mmc3::WriteRegister(address, value);
+    }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Mmc3::VisitState(state)
+            && state.Field("mmc3_215.exRegs", _exRegs);
     }
 };
 

@@ -25,6 +25,8 @@
 #include "joypad.h"
 #include "family_basic.h"
 #include "special_peripherals.h"
+#include "../replay/input_event.h"
+#include "../system/execution_policy.h"
 #include "../system/hardware.h"
 #include "../system/timing.h"
 #include "../ppu/ppu.h"
@@ -45,6 +47,23 @@ static const char *const adapter_names[] = {
 };
 static NesPortDevice port_devices[2];
 static NesExpansionDevice expansion_device;
+
+static bool deterministic_input_owned(void) {
+    uint32_t policy = nes_execution_policy();
+    return (policy & (NES_EXECUTION_MOVIE_RECORDING | NES_EXECUTION_MOVIE_PLAYBACK
+                    | NES_EXECUTION_NETPLAY)) != 0;
+}
+
+static bool submit_host_input(NesInputEventType type, int32_t a, int32_t b,
+                              int32_t c, int32_t d, const char *text) {
+    NesInputEvent event = {.type = type, .a = a, .b = b, .c = c, .d = d};
+    if (text) {
+        size_t size = strlen(text);
+        if (size >= sizeof(event.text)) return false;
+        memcpy(event.text, text, size + 1);
+    }
+    return nes_input_event_submit(&event);
+}
 
 static const char *const port_device_names[] = {
     "pad", "none", "arkanoid", "power-pad-a", "power-pad-b", "zapper", "subor-mouse",
@@ -475,6 +494,21 @@ uint8_t joypad_read_port(Joypad *jp, unsigned port) {
     return value;
 }
 
+uint8_t joypad_debug_peek_port(const Joypad *jp, unsigned port) {
+    if (!jp || port > 1) return 0;
+    /* The common pad path is read directly so inspection never advances its
+       serial register. More complex devices fall back to a conservative
+       non-driving value instead of invoking their stateful read callbacks. */
+    if (input_adapter == NES_ADAPTER_NONE && port_devices[port] == NES_PORT_GAMEPAD
+        && expansion_device == NES_EXPANSION_NONE) {
+        uint8_t value = jp->strobe ? jp->buttons : jp->shift;
+        return value & 1u;
+    }
+    if (input_adapter == NES_ADAPTER_NONE && port_devices[port] == NES_PORT_NONE
+        && expansion_device == NES_EXPANSION_NONE) return 0;
+    return 0;
+}
+
 uint8_t joypad_open_bus_mask(unsigned port) {
     if (port != 0) return 0xE0;
     switch (nes_console_model()) {
@@ -491,6 +525,7 @@ bool joypad_clocks_adjacent_reads(void) {
 }
 
 void joypad_set_microphone(bool active) {
+    if (!submit_host_input(NES_INPUT_EVENT_MICROPHONE, active, 0, 0, 0, NULL)) return;
     microphone_active = active;
 }
 
@@ -503,6 +538,8 @@ Joypad *joypad_player(unsigned player) {
 bool joypad_set_player(unsigned player, int button, bool pressed) {
     Joypad *pad = joypad_player(player);
     if (!pad || (unsigned)button > BTN_RIGHT) return false;
+    if (!submit_host_input(NES_INPUT_EVENT_PLAYER_BUTTON, (int32_t)player, button,
+                           pressed, 0, NULL)) return false;
     joypad_set(pad, button, pressed);
     return true;
 }
@@ -562,6 +599,7 @@ NesInputAdapter joypad_adapter(void) {
 
 bool joypad_set_adapter(NesInputAdapter adapter) {
     if ((unsigned)adapter > NES_ADAPTER_FAMICOM_FOUR) return false;
+    if (deterministic_input_owned()) return false;
     input_adapter = adapter;
     adapter_strobe = 0;
     memset(adapter_remaining, 0, sizeof(adapter_remaining));
@@ -589,6 +627,7 @@ NesPortDevice joypad_port_device(unsigned port) {
 bool joypad_set_port_device(unsigned port, NesPortDevice device) {
     if (port >= 2 || (unsigned)device > NES_PORT_VIRTUAL_BOY) return false;
     if (device == NES_PORT_SUBOR_MOUSE && port != 1) return false;
+    if (deterministic_input_owned()) return false;
     port_devices[port] = device;
     joypad_player(port)->buttons = 0;
     paddles[port].strobe = paddles[port].shift = 0;
@@ -620,6 +659,7 @@ NesExpansionDevice joypad_expansion_device(void) {
 
 bool joypad_set_expansion_device(NesExpansionDevice device) {
     if ((unsigned)device > NES_EXPANSION_FCNS_CONTROLLER) return false;
+    if (deterministic_input_owned()) return false;
     expansion_device = device;
     paddles[2].strobe = paddles[2].shift = 0;
     family_trainer_rows = 0;
@@ -661,6 +701,7 @@ bool joypad_configuration_valid(void) {
 }
 
 void joypad_set_configuration_overrides(uint8_t mask) {
+    if (deterministic_input_owned()) return;
     configuration_overrides = mask & (NES_INPUT_OVERRIDE_ADAPTER | NES_INPUT_OVERRIDE_PORT1
                                     | NES_INPUT_OVERRIDE_PORT2 | NES_INPUT_OVERRIDE_EXPANSION);
 }
@@ -768,6 +809,8 @@ bool joypad_set_paddle(unsigned slot, int position, bool fire) {
     if (slot >= 3) return false;
     if (position < 0x54) position = 0x54;
     if (position > 0xF4) position = 0xF4;
+    if (!submit_host_input(NES_INPUT_EVENT_PADDLE, (int32_t)slot, position,
+                           fire, 0, NULL)) return false;
     paddles[slot].position = (uint8_t)position;
     paddles[slot].fire = fire;
     return true;
@@ -775,6 +818,8 @@ bool joypad_set_paddle(unsigned slot, int position, bool fire) {
 
 bool joypad_set_mat_pad(unsigned slot, unsigned pad, bool pressed) {
     if (slot >= 3 || pad >= 12) return false;
+    if (!submit_host_input(NES_INPUT_EVENT_MAT, (int32_t)slot, (int32_t)pad,
+                           pressed, 0, NULL)) return false;
     if (pressed) mats[slot].buttons |= (uint16_t)(1u << pad);
     else mats[slot].buttons &= (uint16_t)~(1u << pad);
     return true;
@@ -782,6 +827,8 @@ bool joypad_set_mat_pad(unsigned slot, unsigned pad, bool pressed) {
 
 bool joypad_set_zapper(unsigned slot, int x, int y, bool trigger) {
     if (slot >= 3) return false;
+    if (!submit_host_input(NES_INPUT_EVENT_ZAPPER, (int32_t)slot, x, y,
+                           trigger, NULL)) return false;
     zappers[slot] = (Zapper){x, y, trigger};
     return true;
 }
@@ -799,22 +846,30 @@ unsigned joypad_zapper_radius(void) {
 
 bool joypad_set_zapper_radius(unsigned radius) {
     if (radius > NES_ZAPPER_MAX_RADIUS) return false;
+    if (deterministic_input_owned()) return false;
     zapper_radius = radius;
     return true;
 }
 
 bool joypad_set_subor_key(SuborKey key, bool pressed) {
+    if ((unsigned)key >= SUBOR_KEY_COUNT) return false;
+    if (!submit_host_input(NES_INPUT_EVENT_SUBOR_KEY, (int32_t)key, pressed,
+                           0, 0, NULL)) return false;
     return subor_keyboard_set_key((unsigned)key, pressed);
 }
 
 bool joypad_add_subor_mouse_motion(int dx, int dy) {
     if (port_devices[1] != NES_PORT_SUBOR_MOUSE) return false;
+    if (!submit_host_input(NES_INPUT_EVENT_SUBOR_MOUSE_MOTION, dx, dy, 0, 0, NULL))
+        return false;
     subor_mouse_add_motion(dx, dy);
     return true;
 }
 
 bool joypad_set_subor_mouse_buttons(bool left, bool right) {
     if (port_devices[1] != NES_PORT_SUBOR_MOUSE) return false;
+    if (!submit_host_input(NES_INPUT_EVENT_SUBOR_MOUSE_BUTTONS, left, right,
+                           0, 0, NULL)) return false;
     subor_mouse_set_buttons(left, right);
     return true;
 }
@@ -823,6 +878,8 @@ bool joypad_set_snes_button(unsigned port, SnesButton button, bool is_pressed) {
     if (port >= 2 || (unsigned)button >= SNES_BUTTON_COUNT) return false;
     if (port_devices[port] != NES_PORT_SNES_CONTROLLER && port_devices[port] != NES_PORT_NTT_KEYPAD)
         return false;
+    if (!submit_host_input(NES_INPUT_EVENT_SNES_BUTTON, (int32_t)port,
+                           (int32_t)button, is_pressed, 0, NULL)) return false;
     int nes_button = -1;
     switch (button) {
         case SNES_BUTTON_A: nes_button = BTN_A; break;
@@ -835,7 +892,12 @@ bool joypad_set_snes_button(unsigned port, SnesButton button, bool is_pressed) {
         case SNES_BUTTON_RIGHT: nes_button = BTN_RIGHT; break;
         default: break;
     }
-    if (nes_button >= 0) return joypad_set_player(port, nes_button, is_pressed);
+    if (nes_button >= 0) {
+        nes_input_event_suppress_begin();
+        bool ok = joypad_set_player(port, nes_button, is_pressed);
+        nes_input_event_suppress_end();
+        return ok;
+    }
     uint16_t mask = (uint16_t)(1u << button);
     if (is_pressed) extended_pads[port].extra_buttons |= mask;
     else extended_pads[port].extra_buttons &= (uint16_t)~mask;
@@ -844,6 +906,8 @@ bool joypad_set_snes_button(unsigned port, SnesButton button, bool is_pressed) {
 
 bool joypad_add_snes_mouse_motion(unsigned port, int dx, int dy) {
     if (port >= 2 || port_devices[port] != NES_PORT_SNES_MOUSE) return false;
+    if (!submit_host_input(NES_INPUT_EVENT_SNES_MOUSE_MOTION, (int32_t)port,
+                           dx, dy, 0, NULL)) return false;
     SnesMouseState *mouse = &snes_mice[port];
     if ((dx > 0 && mouse->dx > INT_MAX - dx) || (dx < 0 && mouse->dx < INT_MIN - dx))
         mouse->dx = dx > 0 ? INT_MAX : INT_MIN;
@@ -858,6 +922,8 @@ bool joypad_add_snes_mouse_motion(unsigned port, int dx, int dy) {
 
 bool joypad_set_snes_mouse_buttons(unsigned port, bool left, bool right) {
     if (port >= 2 || port_devices[port] != NES_PORT_SNES_MOUSE) return false;
+    if (!submit_host_input(NES_INPUT_EVENT_SNES_MOUSE_BUTTONS, (int32_t)port,
+                           left, right, 0, NULL)) return false;
     snes_mice[port].left = left;
     snes_mice[port].right = right;
     return true;
@@ -866,6 +932,8 @@ bool joypad_set_snes_mouse_buttons(unsigned port, bool left, bool right) {
 bool joypad_set_ntt_key(unsigned port, NttKey key, bool is_pressed) {
     if (port >= 2 || port_devices[port] != NES_PORT_NTT_KEYPAD || (unsigned)key >= NTT_KEY_COUNT)
         return false;
+    if (!submit_host_input(NES_INPUT_EVENT_NTT_KEY, (int32_t)port,
+                           (int32_t)key, is_pressed, 0, NULL)) return false;
     uint32_t mask = 1u << key;
     if (is_pressed) ntt_keys[port] |= mask;
     else ntt_keys[port] &= ~mask;
@@ -875,6 +943,8 @@ bool joypad_set_ntt_key(unsigned port, NttKey key, bool is_pressed) {
 bool joypad_set_fcns_key(FcnsKey key, bool is_pressed) {
     if (expansion_device != NES_EXPANSION_FCNS_CONTROLLER || (unsigned)key >= FCNS_KEY_COUNT)
         return false;
+    if (!submit_host_input(NES_INPUT_EVENT_FCNS_KEY, (int32_t)key,
+                           is_pressed, 0, 0, NULL)) return false;
     uint16_t mask = (uint16_t)(1u << key);
     if (is_pressed) fcns_keys |= mask;
     else fcns_keys &= (uint16_t)~mask;
@@ -884,6 +954,8 @@ bool joypad_set_fcns_key(FcnsKey key, bool is_pressed) {
 bool joypad_set_virtual_boy_button(unsigned port, VirtualBoyButton button, bool is_pressed) {
     if (port >= 2 || port_devices[port] != NES_PORT_VIRTUAL_BOY || (unsigned)button >= VB_BUTTON_COUNT)
         return false;
+    if (!submit_host_input(NES_INPUT_EVENT_VIRTUAL_BOY_BUTTON, (int32_t)port,
+                           (int32_t)button, is_pressed, 0, NULL)) return false;
     int nes_button = -1;
     switch (button) {
         case VB_BUTTON_SELECT: nes_button = BTN_SELECT; break;
@@ -896,7 +968,12 @@ bool joypad_set_virtual_boy_button(unsigned port, VirtualBoyButton button, bool 
         case VB_BUTTON_A: nes_button = BTN_A; break;
         default: break;
     }
-    if (nes_button >= 0) return joypad_set_player(port, nes_button, is_pressed);
+    if (nes_button >= 0) {
+        nes_input_event_suppress_begin();
+        bool ok = joypad_set_player(port, nes_button, is_pressed);
+        nes_input_event_suppress_end();
+        return ok;
+    }
     uint16_t mask = (uint16_t)(1u << button);
     if (is_pressed) virtual_boy_extra[port] |= mask;
     else virtual_boy_extra[port] &= (uint16_t)~mask;
@@ -905,38 +982,52 @@ bool joypad_set_virtual_boy_button(unsigned port, VirtualBoyButton button, bool 
 
 bool joypad_add_hori_track_motion(int dx, int dy) {
     if (expansion_device != NES_EXPANSION_HORI_TRACK) return false;
+    if (!submit_host_input(NES_INPUT_EVENT_HORI_TRACK_MOTION, dx, dy, 0, 0, NULL))
+        return false;
     hori_track_add_motion(dx, dy);
     return true;
 }
 
 bool joypad_set_party_tap_button(unsigned button, bool pressed) {
     if (expansion_device != NES_EXPANSION_PARTY_TAP) return false;
+    if (!submit_host_input(NES_INPUT_EVENT_PARTY_TAP, (int32_t)button, pressed,
+                           0, 0, NULL)) return false;
     return party_tap_set_button(button, pressed);
 }
 
 bool joypad_set_pachinko_controls(bool press, bool release) {
     if (expansion_device != NES_EXPANSION_PACHINKO) return false;
+    if (!submit_host_input(NES_INPUT_EVENT_PACHINKO, press, release, 0, 0, NULL))
+        return false;
     pachinko_set_controls(press, release);
     return true;
 }
 
 bool joypad_set_boxing_sensor(unsigned sensor, bool pressed) {
     if (expansion_device != NES_EXPANSION_EXCITING_BOXING) return false;
+    if (!submit_host_input(NES_INPUT_EVENT_BOXING, (int32_t)sensor, pressed,
+                           0, 0, NULL)) return false;
     return exciting_boxing_set_sensor(sensor, pressed);
 }
 
 bool joypad_set_jissen_key(JissenKey key, bool pressed) {
     if (expansion_device != NES_EXPANSION_JISSEN_MAHJONG) return false;
+    if (!submit_host_input(NES_INPUT_EVENT_JISSEN, (int32_t)key, pressed,
+                           0, 0, NULL)) return false;
     return jissen_mahjong_set_key((unsigned)key, pressed);
 }
 
 bool joypad_scan_barcode_battler(const char *digits) {
     if (expansion_device != NES_EXPANSION_BARCODE_BATTLER) return false;
+    if (!digits || !submit_host_input(NES_INPUT_EVENT_BARCODE_BATTLER, 0, 0, 0, 0,
+                                      digits)) return false;
     return barcode_battler_scan(digits, cpu_total_cycles);
 }
 
 bool joypad_set_oeka_kids_tablet(int x, int y, bool touch, bool click) {
     if (expansion_device != NES_EXPANSION_OEKA_KIDS_TABLET) return false;
+    if (!submit_host_input(NES_INPUT_EVENT_OEKA_KIDS, x, y, touch, click, NULL))
+        return false;
     oeka_kids_tablet_set_state(x, y, touch, click);
     return true;
 }
@@ -957,4 +1048,236 @@ bool joypad_persistent_shutdown(void) {
     bool turbo_ok = turbo_file_shutdown();
     bool battle_ok = battle_box_shutdown();
     return turbo_ok && battle_ok;
+}
+
+typedef struct {
+    Joypad pads[NES_INPUT_PLAYERS];
+    bool microphone;
+    NesInputAdapter adapter;
+    uint8_t configuration_overrides;
+    uint8_t adapter_strobe;
+    uint8_t adapter_remaining[2];
+    uint8_t adapter_signature[2];
+    NesPortDevice port_devices[2];
+    NesExpansionDevice expansion_device;
+    Zapper zappers[3];
+    unsigned zapper_radius;
+    ExtendedSerialPad extended_pads[2];
+    uint32_t ntt_keys[2];
+    uint16_t virtual_boy_extra[2];
+    SnesMouseState snes_mice[2];
+    uint16_t fcns_keys;
+    uint32_t fcns_shift;
+    bool fcns_strobe;
+    Mat mats[3];
+    uint8_t family_trainer_rows;
+    Paddle paddles[3];
+} JoypadSavedState;
+
+static bool joypad_state_write_pad(NesStateWriter *writer, const Joypad *pad) {
+    return nes_state_write_u8(writer, pad->buttons)
+        && nes_state_write_u8(writer, pad->shift)
+        && nes_state_write_u8(writer, pad->strobe);
+}
+
+static bool joypad_state_read_pad(NesStateReader *reader, Joypad *pad) {
+    return nes_state_read_u8(reader, &pad->buttons)
+        && nes_state_read_u8(reader, &pad->shift)
+        && nes_state_read_u8(reader, &pad->strobe)
+        && pad->strobe <= 1;
+}
+
+static bool joypad_state_write(NesStateWriter *writer, const JoypadSavedState *saved) {
+    for (unsigned i = 0; i < NES_INPUT_PLAYERS; ++i)
+        if (!joypad_state_write_pad(writer, &saved->pads[i])) return false;
+    if (!nes_state_write_bool(writer, saved->microphone)
+        || !nes_state_write_u8(writer, (uint8_t)saved->adapter)
+        || !nes_state_write_u8(writer, saved->configuration_overrides)
+        || !nes_state_write_u8(writer, saved->adapter_strobe)
+        || !nes_state_write_bytes(writer, saved->adapter_remaining, sizeof(saved->adapter_remaining))
+        || !nes_state_write_bytes(writer, saved->adapter_signature, sizeof(saved->adapter_signature))
+        || !nes_state_write_u8(writer, (uint8_t)saved->port_devices[0])
+        || !nes_state_write_u8(writer, (uint8_t)saved->port_devices[1])
+        || !nes_state_write_u8(writer, (uint8_t)saved->expansion_device)) return false;
+    for (unsigned i = 0; i < 3; ++i) {
+        if (!nes_state_write_u32(writer, (uint32_t)(int32_t)saved->zappers[i].x)
+            || !nes_state_write_u32(writer, (uint32_t)(int32_t)saved->zappers[i].y)
+            || !nes_state_write_bool(writer, saved->zappers[i].trigger)) return false;
+    }
+    if (!nes_state_write_u32(writer, saved->zapper_radius)) return false;
+    for (unsigned i = 0; i < 2; ++i) {
+        if (!nes_state_write_u16(writer, saved->extended_pads[i].extra_buttons)
+            || !nes_state_write_u32(writer, saved->extended_pads[i].shift)
+            || !nes_state_write_bool(writer, saved->extended_pads[i].strobe)
+            || !nes_state_write_u32(writer, saved->ntt_keys[i])
+            || !nes_state_write_u16(writer, saved->virtual_boy_extra[i])
+            || !nes_state_write_u32(writer, saved->snes_mice[i].shift)
+            || !nes_state_write_u32(writer, (uint32_t)(int32_t)saved->snes_mice[i].dx)
+            || !nes_state_write_u32(writer, (uint32_t)(int32_t)saved->snes_mice[i].dy)
+            || !nes_state_write_bool(writer, saved->snes_mice[i].left)
+            || !nes_state_write_bool(writer, saved->snes_mice[i].right)
+            || !nes_state_write_bool(writer, saved->snes_mice[i].strobe)
+            || !nes_state_write_u8(writer, saved->snes_mice[i].sensitivity)
+            || !nes_state_write_u8(writer, saved->snes_mice[i].up_flag)
+            || !nes_state_write_u8(writer, saved->snes_mice[i].left_flag)) return false;
+    }
+    if (!nes_state_write_u16(writer, saved->fcns_keys)
+        || !nes_state_write_u32(writer, saved->fcns_shift)
+        || !nes_state_write_bool(writer, saved->fcns_strobe)) return false;
+    for (unsigned i = 0; i < 3; ++i) {
+        if (!nes_state_write_u16(writer, saved->mats[i].buttons)
+            || !nes_state_write_u8(writer, saved->mats[i].low)
+            || !nes_state_write_u8(writer, saved->mats[i].high)
+            || !nes_state_write_u8(writer, saved->mats[i].strobe)) return false;
+    }
+    if (!nes_state_write_u8(writer, saved->family_trainer_rows)) return false;
+    for (unsigned i = 0; i < 3; ++i) {
+        if (!nes_state_write_u8(writer, saved->paddles[i].position)
+            || !nes_state_write_u8(writer, saved->paddles[i].shift)
+            || !nes_state_write_u8(writer, saved->paddles[i].strobe)
+            || !nes_state_write_bool(writer, saved->paddles[i].fire)) return false;
+    }
+    return true;
+}
+
+static bool joypad_state_decode(NesStateReader *reader, JoypadSavedState *saved) {
+    uint8_t adapter, port0, port1, expansion;
+    memset(saved, 0, sizeof(*saved));
+    for (unsigned i = 0; i < NES_INPUT_PLAYERS; ++i)
+        if (!joypad_state_read_pad(reader, &saved->pads[i])) return false;
+    if (!nes_state_read_bool(reader, &saved->microphone)
+        || !nes_state_read_u8(reader, &adapter)
+        || !nes_state_read_u8(reader, &saved->configuration_overrides)
+        || !nes_state_read_u8(reader, &saved->adapter_strobe)
+        || !nes_state_read_bytes(reader, saved->adapter_remaining, sizeof(saved->adapter_remaining))
+        || !nes_state_read_bytes(reader, saved->adapter_signature, sizeof(saved->adapter_signature))
+        || !nes_state_read_u8(reader, &port0)
+        || !nes_state_read_u8(reader, &port1)
+        || !nes_state_read_u8(reader, &expansion)
+        || adapter > NES_ADAPTER_FAMICOM_FOUR || port0 > NES_PORT_VIRTUAL_BOY
+        || port1 > NES_PORT_VIRTUAL_BOY || expansion > NES_EXPANSION_FCNS_CONTROLLER
+        || saved->adapter_strobe > 1) return false;
+    saved->adapter = (NesInputAdapter)adapter;
+    saved->port_devices[0] = (NesPortDevice)port0;
+    saved->port_devices[1] = (NesPortDevice)port1;
+    saved->expansion_device = (NesExpansionDevice)expansion;
+    for (unsigned i = 0; i < 3; ++i) {
+        uint32_t x, y;
+        if (!nes_state_read_u32(reader, &x) || !nes_state_read_u32(reader, &y)
+            || !nes_state_read_bool(reader, &saved->zappers[i].trigger)) return false;
+        saved->zappers[i].x = (int)(int32_t)x;
+        saved->zappers[i].y = (int)(int32_t)y;
+    }
+    if (!nes_state_read_u32(reader, &saved->zapper_radius)
+        || saved->zapper_radius > NES_ZAPPER_MAX_RADIUS) return false;
+    for (unsigned i = 0; i < 2; ++i) {
+        uint32_t dx, dy;
+        if (!nes_state_read_u16(reader, &saved->extended_pads[i].extra_buttons)
+            || !nes_state_read_u32(reader, &saved->extended_pads[i].shift)
+            || !nes_state_read_bool(reader, &saved->extended_pads[i].strobe)
+            || !nes_state_read_u32(reader, &saved->ntt_keys[i])
+            || !nes_state_read_u16(reader, &saved->virtual_boy_extra[i])
+            || !nes_state_read_u32(reader, &saved->snes_mice[i].shift)
+            || !nes_state_read_u32(reader, &dx)
+            || !nes_state_read_u32(reader, &dy)
+            || !nes_state_read_bool(reader, &saved->snes_mice[i].left)
+            || !nes_state_read_bool(reader, &saved->snes_mice[i].right)
+            || !nes_state_read_bool(reader, &saved->snes_mice[i].strobe)
+            || !nes_state_read_u8(reader, &saved->snes_mice[i].sensitivity)
+            || !nes_state_read_u8(reader, &saved->snes_mice[i].up_flag)
+            || !nes_state_read_u8(reader, &saved->snes_mice[i].left_flag)
+            || saved->snes_mice[i].sensitivity > 2) return false;
+        saved->snes_mice[i].dx = (int)(int32_t)dx;
+        saved->snes_mice[i].dy = (int)(int32_t)dy;
+    }
+    if (!nes_state_read_u16(reader, &saved->fcns_keys)
+        || !nes_state_read_u32(reader, &saved->fcns_shift)
+        || !nes_state_read_bool(reader, &saved->fcns_strobe)) return false;
+    for (unsigned i = 0; i < 3; ++i) {
+        if (!nes_state_read_u16(reader, &saved->mats[i].buttons)
+            || !nes_state_read_u8(reader, &saved->mats[i].low)
+            || !nes_state_read_u8(reader, &saved->mats[i].high)
+            || !nes_state_read_u8(reader, &saved->mats[i].strobe)
+            || saved->mats[i].strobe > 1) return false;
+    }
+    if (!nes_state_read_u8(reader, &saved->family_trainer_rows)) return false;
+    for (unsigned i = 0; i < 3; ++i) {
+        if (!nes_state_read_u8(reader, &saved->paddles[i].position)
+            || !nes_state_read_u8(reader, &saved->paddles[i].shift)
+            || !nes_state_read_u8(reader, &saved->paddles[i].strobe)
+            || !nes_state_read_bool(reader, &saved->paddles[i].fire)
+            || saved->paddles[i].strobe > 1) return false;
+    }
+    return nes_state_reader_remaining(reader) == 0;
+}
+
+static bool joypad_capture(NesStateWriter *writer, bool include_host_configuration) {
+    JoypadSavedState saved = {0};
+    if (!writer) return false;
+    saved.pads[0] = pad1;
+    saved.pads[1] = pad2;
+    memcpy(saved.pads + 2, expansion_pads, sizeof(expansion_pads));
+    saved.microphone = microphone_active;
+    saved.adapter = input_adapter;
+    saved.configuration_overrides = include_host_configuration ? configuration_overrides : 0;
+    saved.adapter_strobe = adapter_strobe;
+    memcpy(saved.adapter_remaining, adapter_remaining, sizeof(adapter_remaining));
+    memcpy(saved.adapter_signature, adapter_signature, sizeof(adapter_signature));
+    memcpy(saved.port_devices, port_devices, sizeof(port_devices));
+    saved.expansion_device = expansion_device;
+    memcpy(saved.zappers, zappers, sizeof(zappers));
+    saved.zapper_radius = zapper_radius;
+    memcpy(saved.extended_pads, extended_pads, sizeof(extended_pads));
+    memcpy(saved.ntt_keys, ntt_keys, sizeof(ntt_keys));
+    memcpy(saved.virtual_boy_extra, virtual_boy_extra, sizeof(virtual_boy_extra));
+    memcpy(saved.snes_mice, snes_mice, sizeof(snes_mice));
+    saved.fcns_keys = fcns_keys;
+    saved.fcns_shift = fcns_shift;
+    saved.fcns_strobe = fcns_strobe;
+    memcpy(saved.mats, mats, sizeof(mats));
+    saved.family_trainer_rows = family_trainer_rows;
+    memcpy(saved.paddles, paddles, sizeof(paddles));
+    return joypad_state_write(writer, &saved);
+}
+
+bool joypad_state_capture(NesStateWriter *writer) {
+    return joypad_capture(writer, true);
+}
+
+bool joypad_hardware_state_capture(NesStateWriter *writer) {
+    return joypad_capture(writer, false);
+}
+
+bool joypad_state_validate(NesStateReader *reader) {
+    JoypadSavedState saved;
+    return reader && joypad_state_decode(reader, &saved);
+}
+
+bool joypad_state_apply(NesStateReader *reader) {
+    JoypadSavedState saved;
+    if (!reader || !joypad_state_decode(reader, &saved)) return false;
+    pad1 = saved.pads[0];
+    pad2 = saved.pads[1];
+    memcpy(expansion_pads, saved.pads + 2, sizeof(expansion_pads));
+    microphone_active = saved.microphone;
+    input_adapter = saved.adapter;
+    configuration_overrides = saved.configuration_overrides;
+    adapter_strobe = saved.adapter_strobe;
+    memcpy(adapter_remaining, saved.adapter_remaining, sizeof(adapter_remaining));
+    memcpy(adapter_signature, saved.adapter_signature, sizeof(adapter_signature));
+    memcpy(port_devices, saved.port_devices, sizeof(port_devices));
+    expansion_device = saved.expansion_device;
+    memcpy(zappers, saved.zappers, sizeof(zappers));
+    zapper_radius = saved.zapper_radius;
+    memcpy(extended_pads, saved.extended_pads, sizeof(extended_pads));
+    memcpy(ntt_keys, saved.ntt_keys, sizeof(ntt_keys));
+    memcpy(virtual_boy_extra, saved.virtual_boy_extra, sizeof(virtual_boy_extra));
+    memcpy(snes_mice, saved.snes_mice, sizeof(snes_mice));
+    fcns_keys = saved.fcns_keys;
+    fcns_shift = saved.fcns_shift;
+    fcns_strobe = saved.fcns_strobe;
+    memcpy(mats, saved.mats, sizeof(mats));
+    family_trainer_rows = saved.family_trainer_rows;
+    memcpy(paddles, saved.paddles, sizeof(paddles));
+    return true;
 }

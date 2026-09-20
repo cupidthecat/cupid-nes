@@ -16,14 +16,16 @@
  */
 #include "game_db.h"
 #include "unif.h"
+#include "../util/file_io.h"
 
 #include <cerrno>
 #include <climits>
 #include <cstdlib>
 #include <cstring>
-#include <fstream>
 #include <limits>
+#include <new>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -215,25 +217,27 @@ int32_t unif_board_mapper_id(const char *board_name) {
 }
 
 bool game_db_load_file(const char *path) {
-    if (!path) return false;
-    std::ifstream file(path, std::ios::binary);
-    if (!file) return false;
-    std::ostringstream buffer;
-    buffer << file.rdbuf();
-    if (file.bad()) return false;
-    std::unordered_map<uint32_t, GameDbEntry> parsed;
-    if (!parse_database(buffer.str(), parsed)) return false;
-    entries.swap(parsed);
-    return true;
+    uint8_t *data = nullptr;
+    size_t size = 0;
+    if (nes_file_read_all(path, GAME_DB_MAX_FILE_BYTES, &data, &size) != NES_FILE_OK) return false;
+    bool loaded = game_db_load_memory(reinterpret_cast<const char *>(data), size);
+    std::free(data);
+    return loaded;
 }
 
 bool game_db_load_memory(const char *text, size_t size) {
-    if (!text && size) return false;
-    std::string input(text ? text : "", size);
-    std::unordered_map<uint32_t, GameDbEntry> parsed;
-    if (!parse_database(input, parsed)) return false;
-    entries.swap(parsed);
-    return true;
+    if ((!text && size) || size > GAME_DB_MAX_FILE_BYTES) return false;
+    try {
+        std::string input(text ? text : "", size);
+        std::unordered_map<uint32_t, GameDbEntry> parsed;
+        if (!parse_database(input, parsed)) return false;
+        entries.swap(parsed);
+        return true;
+    } catch (const std::bad_alloc &) {
+        return false;
+    } catch (const std::length_error &) {
+        return false;
+    }
 }
 
 void game_db_clear(void) { entries.clear(); }

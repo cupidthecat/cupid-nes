@@ -29,12 +29,19 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "../joypad/joypad.h"
+#include "../state/state_io.h"
 #include "../system/timing.h"
 
 typedef struct {
     uint8_t cpu_offset;
     uint8_t ppu_phase;
 } CpuStartupAlignment;
+
+typedef enum {
+    CPU_STARTUP_ALIGNMENT_DEFAULT,
+    CPU_STARTUP_ALIGNMENT_EXPLICIT,
+    CPU_STARTUP_ALIGNMENT_SEEDED
+} CpuStartupAlignmentMode;
 
 typedef struct { 
     uint8_t a;         // Accumulator
@@ -100,6 +107,9 @@ bool cpu_set_startup_alignment(unsigned cpu_offset, unsigned ppu_phase);
 void cpu_seed_startup_alignment(uint32_t seed);
 bool cpu_startup_alignment_valid(NesRegion region);
 CpuStartupAlignment cpu_get_startup_alignment(void);
+CpuStartupAlignmentMode cpu_get_startup_alignment_mode(void);
+CpuStartupAlignment cpu_get_configured_startup_alignment(void);
+uint32_t cpu_get_startup_alignment_seed(void);
 void cpu_set_test_mode(bool enabled);
 bool cpu_test_mode_enabled(void);
 bool cpu_power_on(CPU* cpu);
@@ -111,6 +121,7 @@ void cpu_select_machine(CpuMachineContext *context);
 uint8_t read_mem(uint16_t addr);
 void write_mem(uint16_t addr, uint8_t value);
 uint8_t cpu_peek_internal_ram(uint16_t addr);
+uint8_t cpu_debug_peek(uint16_t addr);
 // Timestamp of the current CPU bus cycle.
 uint64_t cpu_get_bus_cycle(void);
 void execute(CPU* cpu, uint8_t opcode);
@@ -121,5 +132,11 @@ void cpu_set_nmi_line(bool asserted);
 // Inject an already-latched NMI for tests; hardware uses cpu_set_nmi_line.
 void cpu_request_nmi(void);
 void cpu_irq(CPU *cpu);
+
+bool cpu_state_capture(NesStateWriter *writer);
+bool cpu_state_validate(NesStateReader *reader);
+bool cpu_state_apply(NesStateReader *reader);
+bool cpu_machine_state_capture(NesStateWriter *writer, const CpuMachineContext *context);
+bool cpu_machine_state_decode(NesStateReader *reader, CpuMachineContext *context);
 
 #endif // CPU_H

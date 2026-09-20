@@ -55,6 +55,13 @@ class Txc22000 final : public Board {
         _txc.Write(address, static_cast<uint8_t>((value >> 4) & 0x03));
         UpdateState();
     }
+
+public:
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && _txc.VisitState(state)
+            && state.Field("txc22000.chr_bank", _chrBank);
+    }
 };
 
 class TxcMapper61 final : public Board {
@@ -117,6 +124,11 @@ protected:
         _txc.Write(address, value & 0x0F);
         UpdateState();
     }
+
+public:
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state) && _txc.VisitState(state);
+    }
 };
 
 class Txc22211B final : public Board {
@@ -160,6 +172,11 @@ class Txc22211B final : public Board {
         _txc.Write(address, ConvertValue(value));
         if (address >= 0x8000) UpdateState();
     }
+
+public:
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state) && _txc.VisitState(state);
+    }
 };
 
 class Txc22211C final : public Txc22211A {
@@ -198,6 +215,11 @@ class Mmc3_189 final : public Mmc3 {
         } else {
             Mmc3::WriteRegister(address, value);
         }
+    }
+
+public:
+    bool VisitState(BoardStateVisitor &state) override {
+        return Mmc3::VisitState(state) && state.Field("mmc3_189.prg_reg", _prgReg);
     }
 };
 

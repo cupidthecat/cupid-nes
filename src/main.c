@@ -40,9 +40,34 @@
 #include "apu/epsm.h"
 #include <time.h>
 #include "rom/mapper.h"
+#include "debugger/debugger.h"
 #include <math.h>
+#include <limits.h>
 #include "ui/palette_tool.h"
-#include "ui/nsf_frontend.h"
+#include "ui/nsf_player_runtime.h"
+#include "ui/capture_runtime.h"
+#include "ui/audio_runtime.h"
+#include "ui/frontend_execution.h"
+#include "ui/netplay_frontend.h"
+#include "ui/app_paths.h"
+#include "ui/game_database.h"
+#include "ui/platform_frontend.h"
+#include "ui/settings.h"
+#include "ui/frontend_session.h"
+#include "ui/idle_frontend.h"
+#include "ui/image_open.h"
+#include "ui/session_actions.h"
+#include "ui/host_input.h"
+#include "ui/peripheral_input.h"
+#include "ui/desktop_ui.h"
+#include "ui/device_frontend.h"
+#include "ui/storage_frontend.h"
+#include "ui/state_runtime.h"
+#include "ui/debug_frontend.h"
+#include "ui/cheat_frontend.h"
+#include "ui/video_runtime.h"
+#include "ui/frontend_commands.h"
+#include "ui/frontend_panels.h"
 #include "system/timing.h"
 #include "system/hardware.h"
 #include "system/vs_system.h"
@@ -53,419 +78,43 @@
 
 // SDL presents the framebuffer that the PPU fills.
 uint32_t framebuffer[SCREEN_WIDTH * SCREEN_HEIGHT];
-static uint32_t composite_framebuffer[NTSC_COMPOSITE_WIDTH * NTSC_COMPOSITE_HEIGHT];
 
 Joypad pad1 = {0}, pad2 = {0};
 
-static void nsf_audio_lock(void *context) {
-    SDL_AudioDeviceID device = *(SDL_AudioDeviceID *)context;
-    if (device) SDL_LockAudioDevice(device);
+typedef struct {
+    NsfPlayer *music;
+    DebugFrontend *debug;
+    CheatFrontend *cheats;
+    NesCaptureRuntime *capture;
+    FrontendDeviceRuntime *devices;
+    FrontendVideoRuntime *video;
+    bool image_changed;
+} LiveFrontend;
+
+static void live_image_changed(void *context) {
+    LiveFrontend *live = context;
+    if (!live) return;
+    if (live->devices) frontend_devices_session_changed(live->devices);
+    if (live->music) nsf_player_image_changed(live->music);
+    if (live->debug) debug_frontend_image_changed(live->debug);
+    if (live->cheats) cheat_frontend_image_changed(live->cheats, rom_file_crc32());
+    if (live->capture) nes_capture_frontend_refresh(&live->capture->frontend);
+    live->image_changed = true;
 }
 
-static void nsf_audio_unlock(void *context) {
-    SDL_AudioDeviceID device = *(SDL_AudioDeviceID *)context;
-    if (device) SDL_UnlockAudioDevice(device);
+static void live_state_restored(void *context) {
+    LiveFrontend *live = context;
+    if (!live) return;
+    if (live->video) nes_hd_runtime_reset_audio(live->video->hd);
+    if (live->devices) frontend_devices_session_changed(live->devices);
+    if (live->music) nsf_player_image_changed(live->music);
+    if (live->capture) nes_capture_frontend_refresh(&live->capture->frontend);
 }
 
-static SDL_GameController *controllers[NES_INPUT_PLAYERS];
-static void open_controller(int device) {
-    if (!SDL_IsGameController(device)) return;
-    SDL_JoystickID id = SDL_JoystickGetDeviceInstanceID(device);
-    for (unsigned player = 0; player < NES_INPUT_PLAYERS; ++player) {
-        if (controllers[player] &&
-            SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controllers[player])) == id)
-            return;
-    }
-    for (unsigned player = 0; player < NES_INPUT_PLAYERS; ++player) {
-        if (!controllers[player]) {
-            controllers[player] = SDL_GameControllerOpen(device);
-            return;
-        }
-    }
-}
-
-static void controller_event(const SDL_Event *event) {
-    if (event->type == SDL_CONTROLLERDEVICEADDED) {
-        open_controller(event->cdevice.which);
-        return;
-    }
-    for (unsigned player = 0; player < NES_INPUT_PLAYERS; ++player) {
-        if (!controllers[player]) continue;
-        SDL_JoystickID id = SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controllers[player]));
-        if (event->type == SDL_CONTROLLERDEVICEREMOVED && event->cdevice.which == id) {
-            SDL_GameControllerClose(controllers[player]);
-            controllers[player] = NULL;
-            joypad_player(player)->buttons = 0;
-            if (player == 0) {
-                (void)cart_set_karaoke_input(CART_KARAOKE_A, false);
-                (void)cart_set_karaoke_input(CART_KARAOKE_B, false);
-            }
-            if (player < 2) {
-                NesPortDevice device = joypad_port_device(player);
-                if (device == NES_PORT_SNES_CONTROLLER || device == NES_PORT_NTT_KEYPAD) {
-                    joypad_set_snes_button(player, SNES_BUTTON_X, false);
-                    joypad_set_snes_button(player, SNES_BUTTON_Y, false);
-                    joypad_set_snes_button(player, SNES_BUTTON_L, false);
-                    joypad_set_snes_button(player, SNES_BUTTON_R, false);
-                } else if (device == NES_PORT_VIRTUAL_BOY) {
-                    joypad_set_virtual_boy_button(player, VB_BUTTON_DOWN1, false);
-                    joypad_set_virtual_boy_button(player, VB_BUTTON_LEFT1, false);
-                    joypad_set_virtual_boy_button(player, VB_BUTTON_RIGHT1, false);
-                    joypad_set_virtual_boy_button(player, VB_BUTTON_UP1, false);
-                    joypad_set_virtual_boy_button(player, VB_BUTTON_L, false);
-                    joypad_set_virtual_boy_button(player, VB_BUTTON_R, false);
-                }
-            }
-        } else if ((event->type == SDL_CONTROLLERBUTTONDOWN || event->type == SDL_CONTROLLERBUTTONUP)
-                   && event->cbutton.which == id) {
-            bool down = event->type == SDL_CONTROLLERBUTTONDOWN;
-            int button = -1;
-            switch (event->cbutton.button) {
-                case SDL_CONTROLLER_BUTTON_A: button = BTN_A; break;
-                case SDL_CONTROLLER_BUTTON_B: button = BTN_B; break;
-                case SDL_CONTROLLER_BUTTON_BACK: button = BTN_SELECT; break;
-                case SDL_CONTROLLER_BUTTON_START: button = BTN_START; break;
-                case SDL_CONTROLLER_BUTTON_DPAD_UP: button = BTN_UP; break;
-                case SDL_CONTROLLER_BUTTON_DPAD_DOWN: button = BTN_DOWN; break;
-                case SDL_CONTROLLER_BUTTON_DPAD_LEFT: button = BTN_LEFT; break;
-                case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: button = BTN_RIGHT; break;
-                default: break;
-            }
-            if (button >= 0) {
-                joypad_set_player(player, button, down);
-                if (player == 0 && button == BTN_A)
-                    (void)cart_set_karaoke_input(CART_KARAOKE_A, down);
-                else if (player == 0 && button == BTN_B)
-                    (void)cart_set_karaoke_input(CART_KARAOKE_B, down);
-            }
-            if (player < 2) {
-                NesPortDevice device = joypad_port_device(player);
-                if (device == NES_PORT_SNES_CONTROLLER || device == NES_PORT_NTT_KEYPAD) {
-                    if (event->cbutton.button == SDL_CONTROLLER_BUTTON_X)
-                        joypad_set_snes_button(player, SNES_BUTTON_X, down);
-                    else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_Y)
-                        joypad_set_snes_button(player, SNES_BUTTON_Y, down);
-                    else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER)
-                        joypad_set_snes_button(player, SNES_BUTTON_L, down);
-                    else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)
-                        joypad_set_snes_button(player, SNES_BUTTON_R, down);
-                } else if (device == NES_PORT_VIRTUAL_BOY) {
-                    if (event->cbutton.button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER)
-                        joypad_set_virtual_boy_button(player, VB_BUTTON_L, down);
-                    else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)
-                        joypad_set_virtual_boy_button(player, VB_BUTTON_R, down);
-                }
-            }
-        } else if (event->type == SDL_CONTROLLERAXISMOTION && event->caxis.which == id
-                   && player < 2 && joypad_port_device(player) == NES_PORT_VIRTUAL_BOY) {
-            const int deadzone = 16000;
-            if (event->caxis.axis == SDL_CONTROLLER_AXIS_RIGHTX) {
-                joypad_set_virtual_boy_button(player, VB_BUTTON_LEFT1, event->caxis.value < -deadzone);
-                joypad_set_virtual_boy_button(player, VB_BUTTON_RIGHT1, event->caxis.value > deadzone);
-            } else if (event->caxis.axis == SDL_CONTROLLER_AXIS_RIGHTY) {
-                joypad_set_virtual_boy_button(player, VB_BUTTON_UP1, event->caxis.value < -deadzone);
-                joypad_set_virtual_boy_button(player, VB_BUTTON_DOWN1, event->caxis.value > deadzone);
-            }
-        }
-    }
-}
-
-static bool extended_port_key_event(const SDL_KeyboardEvent *event) {
-    if (!event) return false;
-    bool down = event->type == SDL_KEYDOWN;
-    NesPortDevice device = joypad_port_device(0);
-    NttKey keypad_key;
-    bool keypad_event = true;
-    switch (event->keysym.scancode) {
-        case SDL_SCANCODE_KP_0: keypad_key = NTT_KEY_0; break;
-        case SDL_SCANCODE_KP_1: keypad_key = NTT_KEY_1; break;
-        case SDL_SCANCODE_KP_2: keypad_key = NTT_KEY_2; break;
-        case SDL_SCANCODE_KP_3: keypad_key = NTT_KEY_3; break;
-        case SDL_SCANCODE_KP_4: keypad_key = NTT_KEY_4; break;
-        case SDL_SCANCODE_KP_5: keypad_key = NTT_KEY_5; break;
-        case SDL_SCANCODE_KP_6: keypad_key = NTT_KEY_6; break;
-        case SDL_SCANCODE_KP_7: keypad_key = NTT_KEY_7; break;
-        case SDL_SCANCODE_KP_8: keypad_key = NTT_KEY_8; break;
-        case SDL_SCANCODE_KP_9: keypad_key = NTT_KEY_9; break;
-        case SDL_SCANCODE_KP_MULTIPLY: keypad_key = NTT_KEY_STAR; break;
-        case SDL_SCANCODE_KP_DIVIDE: keypad_key = NTT_KEY_POUND; break;
-        case SDL_SCANCODE_KP_PERIOD: keypad_key = NTT_KEY_PERIOD; break;
-        case SDL_SCANCODE_C: keypad_key = NTT_KEY_C; break;
-        case SDL_SCANCODE_E: keypad_key = NTT_KEY_END; break;
-        default: keypad_event = false; break;
-    }
-    if (keypad_event) {
-        bool handled = false;
-        if (joypad_expansion_device() == NES_EXPANSION_FCNS_CONTROLLER)
-            handled |= joypad_set_fcns_key((FcnsKey)keypad_key, down);
-        for (unsigned port = 0; port < 2; ++port) {
-            if (joypad_port_device(port) == NES_PORT_NTT_KEYPAD) {
-                handled |= joypad_set_ntt_key(port, keypad_key, down);
-            }
-        }
-        if (handled) return true;
-    }
-
-    if (device == NES_PORT_SNES_CONTROLLER || device == NES_PORT_NTT_KEYPAD) {
-        SnesButton button;
-        switch (event->keysym.scancode) {
-            case SDL_SCANCODE_A: button = SNES_BUTTON_Y; break;
-            case SDL_SCANCODE_S: button = SNES_BUTTON_X; break;
-            case SDL_SCANCODE_Q: button = SNES_BUTTON_L; break;
-            case SDL_SCANCODE_W: button = SNES_BUTTON_R; break;
-            default: return false;
-        }
-        return joypad_set_snes_button(0, button, down);
-    }
-    if (device == NES_PORT_VIRTUAL_BOY) {
-        VirtualBoyButton button;
-        switch (event->keysym.scancode) {
-            case SDL_SCANCODE_I: button = VB_BUTTON_UP1; break;
-            case SDL_SCANCODE_K: button = VB_BUTTON_DOWN1; break;
-            case SDL_SCANCODE_J: button = VB_BUTTON_LEFT1; break;
-            case SDL_SCANCODE_L: button = VB_BUTTON_RIGHT1; break;
-            case SDL_SCANCODE_Q: button = VB_BUTTON_L; break;
-            case SDL_SCANCODE_E: button = VB_BUTTON_R; break;
-            default: return false;
-        }
-        return joypad_set_virtual_boy_button(0, button, down);
-    }
-    return false;
-}
-
-static bool mat_key_event(const SDL_KeyboardEvent *event) {
-    static const SDL_Keycode keys[] = {
-        SDLK_1, SDLK_2, SDLK_3, SDLK_4,
-        SDLK_q, SDLK_w, SDLK_e, SDLK_r,
-        SDLK_a, SDLK_s, SDLK_d, SDLK_f
-    };
-    bool handled = false;
-    for (unsigned pad = 0; pad < 12; ++pad) {
-        if (event->keysym.sym != keys[pad]) continue;
-        for (unsigned slot = 0; slot < 3; ++slot) {
-            bool active = slot == 2
-                ? joypad_expansion_device() == NES_EXPANSION_FAMILY_TRAINER_A
-                    || joypad_expansion_device() == NES_EXPANSION_FAMILY_TRAINER_B
-                : joypad_port_device(slot) == NES_PORT_POWER_PAD_A
-                    || joypad_port_device(slot) == NES_PORT_POWER_PAD_B;
-            if (active) {
-                joypad_set_mat_pad(slot, pad, event->type == SDL_KEYDOWN);
-                handled = true;
-            }
-        }
-        break;
-    }
-    return handled;
-}
-
-static bool tape_capture_pending;
-
-static bool finish_tape_capture(const char *path) {
-    family_basic_tape_stop();
-    if (!tape_capture_pending) return true;
-    if (!path || !family_basic_tape_save_file(path)) {
-        fprintf(stderr, "Could not save tape; the captured signal remains in memory\n");
-        return false;
-    }
-    tape_capture_pending = false;
-    return true;
-}
-
-static bool family_basic_key_event(const SDL_KeyboardEvent *event,
-                                   const char *play_path, const char *record_path) {
-    if (joypad_expansion_device() != NES_EXPANSION_FAMILY_BASIC) return false;
-    static const SDL_Scancode keys[] = {
-        SDL_SCANCODE_F8, SDL_SCANCODE_RETURN, SDL_SCANCODE_LEFTBRACKET, SDL_SCANCODE_RIGHTBRACKET,
-        SDL_SCANCODE_RALT, SDL_SCANCODE_RSHIFT, SDL_SCANCODE_BACKSLASH, SDL_SCANCODE_F12,
-        SDL_SCANCODE_F7, SDL_SCANCODE_GRAVE, SDL_SCANCODE_APOSTROPHE, SDL_SCANCODE_SEMICOLON,
-        SDL_SCANCODE_F9, SDL_SCANCODE_SLASH, SDL_SCANCODE_MINUS, SDL_SCANCODE_EQUALS,
-        SDL_SCANCODE_F6, SDL_SCANCODE_O, SDL_SCANCODE_L, SDL_SCANCODE_K,
-        SDL_SCANCODE_PERIOD, SDL_SCANCODE_COMMA, SDL_SCANCODE_P, SDL_SCANCODE_0,
-        SDL_SCANCODE_F5, SDL_SCANCODE_I, SDL_SCANCODE_U, SDL_SCANCODE_J,
-        SDL_SCANCODE_M, SDL_SCANCODE_N, SDL_SCANCODE_9, SDL_SCANCODE_8,
-        SDL_SCANCODE_F4, SDL_SCANCODE_Y, SDL_SCANCODE_G, SDL_SCANCODE_H,
-        SDL_SCANCODE_B, SDL_SCANCODE_V, SDL_SCANCODE_7, SDL_SCANCODE_6,
-        SDL_SCANCODE_F3, SDL_SCANCODE_T, SDL_SCANCODE_R, SDL_SCANCODE_D,
-        SDL_SCANCODE_F, SDL_SCANCODE_C, SDL_SCANCODE_5, SDL_SCANCODE_4,
-        SDL_SCANCODE_F2, SDL_SCANCODE_W, SDL_SCANCODE_S, SDL_SCANCODE_A,
-        SDL_SCANCODE_X, SDL_SCANCODE_Z, SDL_SCANCODE_E, SDL_SCANCODE_3,
-        SDL_SCANCODE_F1, SDL_SCANCODE_ESCAPE, SDL_SCANCODE_Q, SDL_SCANCODE_LCTRL,
-        SDL_SCANCODE_LSHIFT, SDL_SCANCODE_LALT, SDL_SCANCODE_1, SDL_SCANCODE_2,
-        SDL_SCANCODE_HOME, SDL_SCANCODE_UP, SDL_SCANCODE_RIGHT, SDL_SCANCODE_LEFT,
-        SDL_SCANCODE_DOWN, SDL_SCANCODE_SPACE, SDL_SCANCODE_DELETE, SDL_SCANCODE_INSERT
-    };
-    _Static_assert(sizeof(keys) / sizeof(keys[0]) == FB_KEY_COUNT, "Complete keyboard matrix");
-    bool down = event->type == SDL_KEYDOWN;
-    if (event->keysym.scancode == SDL_SCANCODE_F10 && down && !event->repeat) {
-        if (record_path) {
-            if (family_basic_tape_mode() != FB_TAPE_RECORDING && finish_tape_capture(record_path)) {
-                family_basic_tape_record(cpu_total_cycles);
-                tape_capture_pending = true;
-            }
-        } else if (play_path) {
-            family_basic_tape_play(cpu_total_cycles);
-        }
-    } else if (event->keysym.scancode == SDL_SCANCODE_F11 && down && !event->repeat) {
-        finish_tape_capture(record_path);
-    } else if (event->keysym.scancode == SDL_SCANCODE_BACKSPACE) {
-        family_basic_set_key(FB_KEY_DELETE, down);
-    } else {
-        for (unsigned key = 0; key < FB_KEY_COUNT; ++key) {
-            if (event->keysym.scancode == keys[key]) {
-                family_basic_set_key((FamilyBasicKey)key, down);
-                break;
-            }
-        }
-    }
-    return true;
-}
-
-static bool subor_modifier_event(SDL_Scancode scancode, bool down) {
-    static bool sides[3][2];
-    static const SuborKey keys[] = {SUBOR_KEY_CTRL, SUBOR_KEY_SHIFT, SUBOR_KEY_ALT};
-    unsigned key;
-    unsigned side;
-    switch (scancode) {
-        case SDL_SCANCODE_LCTRL: key = 0; side = 0; break;
-        case SDL_SCANCODE_RCTRL: key = 0; side = 1; break;
-        case SDL_SCANCODE_LSHIFT: key = 1; side = 0; break;
-        case SDL_SCANCODE_RSHIFT: key = 1; side = 1; break;
-        case SDL_SCANCODE_LALT: key = 2; side = 0; break;
-        case SDL_SCANCODE_RALT: key = 2; side = 1; break;
-        default: return false;
-    }
-    sides[key][side] = down;
-    joypad_set_subor_key(keys[key], sides[key][0] || sides[key][1]);
-    return true;
-}
-
-static bool subor_key_event(const SDL_KeyboardEvent *event) {
-    if (!event || joypad_expansion_device() != NES_EXPANSION_SUBOR_KEYBOARD) return false;
-    static const SDL_Scancode keys[SUBOR_KEY_COUNT] = {
-        [SUBOR_KEY_A] = SDL_SCANCODE_A, [SUBOR_KEY_B] = SDL_SCANCODE_B,
-        [SUBOR_KEY_C] = SDL_SCANCODE_C, [SUBOR_KEY_D] = SDL_SCANCODE_D,
-        [SUBOR_KEY_E] = SDL_SCANCODE_E, [SUBOR_KEY_F] = SDL_SCANCODE_F,
-        [SUBOR_KEY_G] = SDL_SCANCODE_G, [SUBOR_KEY_H] = SDL_SCANCODE_H,
-        [SUBOR_KEY_I] = SDL_SCANCODE_I, [SUBOR_KEY_J] = SDL_SCANCODE_J,
-        [SUBOR_KEY_K] = SDL_SCANCODE_K, [SUBOR_KEY_L] = SDL_SCANCODE_L,
-        [SUBOR_KEY_M] = SDL_SCANCODE_M, [SUBOR_KEY_N] = SDL_SCANCODE_N,
-        [SUBOR_KEY_O] = SDL_SCANCODE_O, [SUBOR_KEY_P] = SDL_SCANCODE_P,
-        [SUBOR_KEY_Q] = SDL_SCANCODE_Q, [SUBOR_KEY_R] = SDL_SCANCODE_R,
-        [SUBOR_KEY_S] = SDL_SCANCODE_S, [SUBOR_KEY_T] = SDL_SCANCODE_T,
-        [SUBOR_KEY_U] = SDL_SCANCODE_U, [SUBOR_KEY_V] = SDL_SCANCODE_V,
-        [SUBOR_KEY_W] = SDL_SCANCODE_W, [SUBOR_KEY_X] = SDL_SCANCODE_X,
-        [SUBOR_KEY_Y] = SDL_SCANCODE_Y, [SUBOR_KEY_Z] = SDL_SCANCODE_Z,
-        [SUBOR_KEY_0] = SDL_SCANCODE_0, [SUBOR_KEY_1] = SDL_SCANCODE_1,
-        [SUBOR_KEY_2] = SDL_SCANCODE_2, [SUBOR_KEY_3] = SDL_SCANCODE_3,
-        [SUBOR_KEY_4] = SDL_SCANCODE_4, [SUBOR_KEY_5] = SDL_SCANCODE_5,
-        [SUBOR_KEY_6] = SDL_SCANCODE_6, [SUBOR_KEY_7] = SDL_SCANCODE_7,
-        [SUBOR_KEY_8] = SDL_SCANCODE_8, [SUBOR_KEY_9] = SDL_SCANCODE_9,
-        [SUBOR_KEY_F1] = SDL_SCANCODE_F1, [SUBOR_KEY_F2] = SDL_SCANCODE_F2,
-        [SUBOR_KEY_F3] = SDL_SCANCODE_F3, [SUBOR_KEY_F4] = SDL_SCANCODE_F4,
-        [SUBOR_KEY_F5] = SDL_SCANCODE_F5, [SUBOR_KEY_F6] = SDL_SCANCODE_F6,
-        [SUBOR_KEY_F7] = SDL_SCANCODE_F7, [SUBOR_KEY_F8] = SDL_SCANCODE_F8,
-        [SUBOR_KEY_F9] = SDL_SCANCODE_F9, [SUBOR_KEY_F10] = SDL_SCANCODE_F10,
-        [SUBOR_KEY_F11] = SDL_SCANCODE_F11, [SUBOR_KEY_F12] = SDL_SCANCODE_F12,
-        [SUBOR_KEY_KP0] = SDL_SCANCODE_KP_0, [SUBOR_KEY_KP1] = SDL_SCANCODE_KP_1,
-        [SUBOR_KEY_KP2] = SDL_SCANCODE_KP_2, [SUBOR_KEY_KP3] = SDL_SCANCODE_KP_3,
-        [SUBOR_KEY_KP4] = SDL_SCANCODE_KP_4, [SUBOR_KEY_KP5] = SDL_SCANCODE_KP_5,
-        [SUBOR_KEY_KP6] = SDL_SCANCODE_KP_6, [SUBOR_KEY_KP7] = SDL_SCANCODE_KP_7,
-        [SUBOR_KEY_KP8] = SDL_SCANCODE_KP_8, [SUBOR_KEY_KP9] = SDL_SCANCODE_KP_9,
-        [SUBOR_KEY_KP_ENTER] = SDL_SCANCODE_KP_ENTER, [SUBOR_KEY_KP_DOT] = SDL_SCANCODE_KP_PERIOD,
-        [SUBOR_KEY_KP_PLUS] = SDL_SCANCODE_KP_PLUS,
-        [SUBOR_KEY_KP_MULTIPLY] = SDL_SCANCODE_KP_MULTIPLY,
-        [SUBOR_KEY_KP_DIVIDE] = SDL_SCANCODE_KP_DIVIDE,
-        [SUBOR_KEY_KP_MINUS] = SDL_SCANCODE_KP_MINUS,
-        [SUBOR_KEY_NUMLOCK] = SDL_SCANCODE_NUMLOCKCLEAR,
-        [SUBOR_KEY_COMMA] = SDL_SCANCODE_COMMA, [SUBOR_KEY_DOT] = SDL_SCANCODE_PERIOD,
-        [SUBOR_KEY_SEMICOLON] = SDL_SCANCODE_SEMICOLON,
-        [SUBOR_KEY_APOSTROPHE] = SDL_SCANCODE_APOSTROPHE,
-        [SUBOR_KEY_SLASH] = SDL_SCANCODE_SLASH, [SUBOR_KEY_BACKSLASH] = SDL_SCANCODE_BACKSLASH,
-        [SUBOR_KEY_EQUAL] = SDL_SCANCODE_EQUALS, [SUBOR_KEY_MINUS] = SDL_SCANCODE_MINUS,
-        [SUBOR_KEY_GRAVE] = SDL_SCANCODE_GRAVE,
-        [SUBOR_KEY_LEFT_BRACKET] = SDL_SCANCODE_LEFTBRACKET,
-        [SUBOR_KEY_RIGHT_BRACKET] = SDL_SCANCODE_RIGHTBRACKET,
-        [SUBOR_KEY_CAPSLOCK] = SDL_SCANCODE_CAPSLOCK, [SUBOR_KEY_PAUSE] = SDL_SCANCODE_PAUSE,
-        [SUBOR_KEY_SPACE] = SDL_SCANCODE_SPACE,
-        [SUBOR_KEY_BACKSPACE] = SDL_SCANCODE_BACKSPACE, [SUBOR_KEY_TAB] = SDL_SCANCODE_TAB,
-        [SUBOR_KEY_ESCAPE] = SDL_SCANCODE_ESCAPE, [SUBOR_KEY_ENTER] = SDL_SCANCODE_RETURN,
-        [SUBOR_KEY_END] = SDL_SCANCODE_END, [SUBOR_KEY_HOME] = SDL_SCANCODE_HOME,
-        [SUBOR_KEY_INSERT] = SDL_SCANCODE_INSERT, [SUBOR_KEY_DELETE] = SDL_SCANCODE_DELETE,
-        [SUBOR_KEY_PAGEUP] = SDL_SCANCODE_PAGEUP, [SUBOR_KEY_PAGEDOWN] = SDL_SCANCODE_PAGEDOWN,
-        [SUBOR_KEY_UP] = SDL_SCANCODE_UP, [SUBOR_KEY_DOWN] = SDL_SCANCODE_DOWN,
-        [SUBOR_KEY_LEFT] = SDL_SCANCODE_LEFT, [SUBOR_KEY_RIGHT] = SDL_SCANCODE_RIGHT
-    };
-    bool down = event->type == SDL_KEYDOWN;
-    if (subor_modifier_event(event->keysym.scancode, down)) return true;
-    for (unsigned key = 0; key < SUBOR_KEY_COUNT; ++key) {
-        if (keys[key] != SDL_SCANCODE_UNKNOWN && event->keysym.scancode == keys[key]) {
-            joypad_set_subor_key((SuborKey)key, down);
-            return true;
-        }
-    }
-    return false;
-}
-
-static bool party_tap_key_event(const SDL_KeyboardEvent *event) {
-    if (!event || joypad_expansion_device() != NES_EXPANSION_PARTY_TAP) return false;
-    static const SDL_Keycode keys[] = {SDLK_1, SDLK_2, SDLK_3, SDLK_4, SDLK_5, SDLK_6};
-    for (unsigned button = 0; button < 6; ++button) {
-        if (event->keysym.sym == keys[button]) {
-            joypad_set_party_tap_button(button, event->type == SDL_KEYDOWN);
-            return true;
-        }
-    }
-    return false;
-}
-
-static bool boxing_key_event(const SDL_KeyboardEvent *event) {
-    if (!event || joypad_expansion_device() != NES_EXPANSION_EXCITING_BOXING) return false;
-    static const SDL_Keycode keys[] = {
-        SDLK_1, SDLK_2, SDLK_3, SDLK_4, SDLK_5, SDLK_6, SDLK_7, SDLK_8
-    };
-    for (unsigned sensor = 0; sensor < 8; ++sensor) {
-        if (event->keysym.sym == keys[sensor]) {
-            joypad_set_boxing_sensor(sensor, event->type == SDL_KEYDOWN);
-            return true;
-        }
-    }
-    return false;
-}
-
-static bool jissen_key_event(const SDL_KeyboardEvent *event) {
-    if (!event || joypad_expansion_device() != NES_EXPANSION_JISSEN_MAHJONG) return false;
-    JissenKey key;
-    if (event->keysym.sym >= SDLK_a && event->keysym.sym <= SDLK_n) {
-        key = (JissenKey)(JISSEN_KEY_A + (event->keysym.sym - SDLK_a));
-    } else {
-        switch (event->keysym.sym) {
-            case SDLK_RSHIFT: key = JISSEN_KEY_SELECT; break;
-            case SDLK_RETURN: key = JISSEN_KEY_START; break;
-            case SDLK_1: key = JISSEN_KEY_KAN; break;
-            case SDLK_2: key = JISSEN_KEY_PON; break;
-            case SDLK_3: key = JISSEN_KEY_CHII; break;
-            case SDLK_4: key = JISSEN_KEY_RIICHI; break;
-            case SDLK_5: key = JISSEN_KEY_RON; break;
-            default: return false;
-        }
-    }
-    joypad_set_jissen_key(key, event->type == SDL_KEYDOWN);
-    return true;
-}
-
-static void oeka_kids_pointer_event(int pointer_x, int pointer_y, bool pointer_on_screen,
-                                    uint32_t buttons) {
-    if (joypad_expansion_device() != NES_EXPANSION_OEKA_KIDS_TABLET) return;
-    bool click = (buttons & SDL_BUTTON_LMASK) != 0;
-    bool touch = click || (pointer_on_screen && pointer_y >= 48);
-    joypad_set_oeka_kids_tablet(pointer_x, pointer_y, touch, click);
-}
-
-int main(int argc, char *argv[]) {
-    SDL_AudioSpec want;
+static int application_main(int argc, char *argv[]) {
     SDL_AudioSpec have;
-    SDL_AudioDeviceID audio_dev = 0;
-
+    SDL_AudioDeviceID audio_dev = 0; SDL_Window *window = NULL;
+    SDL_Renderer *renderer = NULL;
     const char *rom_path = NULL;
     const char *barcode = NULL;
     const char *barcode_battler = NULL;
@@ -477,6 +126,7 @@ int main(int argc, char *argv[]) {
     bool fds_side_set = false;
     bool fds_start_ejected = false;
     bool fds_start_write_protected = false;
+    bool fds_write_protect_cli = false;
     bool vs_dip_set = false;
     uint16_t vs_dips = 0;
     uint8_t input_overrides = 0;
@@ -489,29 +139,45 @@ int main(int argc, char *argv[]) {
     const char *epsm_adpcm_path = NULL;
     const char *fcns_kanji_path = NULL;
     const char *game_db_path = NULL;
+    const char *data_dir_override = NULL;
     bool disable_game_db_overrides = false;
     bool ntsc_composite_requested = false;
+    uint32_t frontend_cli_overrides = 0;
     for (int i = 1; i < argc; ++i) {
-        if (strcmp(argv[i], "--console") == 0) {
+        if (strcmp(argv[i], "--region") == 0) {
+            if (++i == argc || !nes_set_region_mode_name(argv[i])) {
+                fprintf(stderr, "Region must be auto, ntsc, pal, or dendy\n");
+                return 1;
+            }
+            frontend_cli_overrides |= FRONTEND_OVERRIDE_REGION;
+        } else if (strcmp(argv[i], "--console") == 0) {
             if (++i == argc || !nes_set_console_model_name(argv[i])) {
                 fprintf(stderr, "Console must be nes-001, nes-101, famicom, or av-famicom\n");
                 return 1;
             }
+            frontend_cli_overrides |= FRONTEND_OVERRIDE_CONSOLE;
         } else if (strcmp(argv[i], "--cpu-revision") == 0) {
             if (++i == argc) {
                 fprintf(stderr, "CPU revision must be early-2a03 or late-2a03\n");
                 return 1;
             }
-            if (strcmp(argv[i], "early-2a03") == 0)
+            if (strcmp(argv[i], "early-2a03") == 0) {
                 apu_set_cpu_revision(APU_CPU_REVISION_EARLY_2A03);
-            else if (strcmp(argv[i], "late-2a03") == 0)
+            } else if (strcmp(argv[i], "late-2a03") == 0) {
                 apu_set_cpu_revision(APU_CPU_REVISION_LATE_2A03);
-            else {
+            } else {
                 fprintf(stderr, "CPU revision must be early-2a03 or late-2a03\n");
                 return 1;
             }
+            frontend_cli_overrides |= FRONTEND_OVERRIDE_CPU_REVISION;
         } else if (strcmp(argv[i], "--cpu-test-mode") == 0) {
             cpu_set_test_mode(true);
+        } else if (strcmp(argv[i], "--apu-disable-noise-mode") == 0) {
+            apu_set_disable_noise_mode(true);
+            frontend_cli_overrides |= FRONTEND_OVERRIDE_APU_NOISE_MODE;
+        } else if (strcmp(argv[i], "--apu-swap-duty-cycles") == 0) {
+            apu_set_swap_duty_cycles(true);
+            frontend_cli_overrides |= FRONTEND_OVERRIDE_APU_DUTY;
         } else if (strcmp(argv[i], "--epsm-adpcm") == 0) {
             if (++i == argc) {
                 fprintf(stderr, "--epsm-adpcm requires an 8 KiB YMF288 ADPCM ROM file\n");
@@ -530,8 +196,16 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             game_db_path = argv[i];
+            frontend_cli_overrides |= FRONTEND_OVERRIDE_DATABASE;
+        } else if (strcmp(argv[i], "--data-dir") == 0) {
+            if (++i == argc || !argv[i][0]) {
+                fprintf(stderr, "--data-dir requires a directory\n");
+                return 1;
+            }
+            data_dir_override = argv[i];
         } else if (strcmp(argv[i], "--no-game-db-overrides") == 0) {
             disable_game_db_overrides = true;
+            frontend_cli_overrides |= FRONTEND_OVERRIDE_DATABASE_CORRECTIONS;
         } else if (strcmp(argv[i], "--startup-phase") == 0) {
             if (++i == argc || startup_phase_set || startup_seed_set) {
                 fprintf(stderr, "Choose one startup phase CPU:PPU or startup seed\n");
@@ -553,6 +227,7 @@ int main(int argc, char *argv[]) {
             }
             startup_cpu_offset = (unsigned)cpu_offset;
             startup_ppu_phase = (unsigned)ppu_phase;
+            frontend_cli_overrides |= FRONTEND_OVERRIDE_STARTUP;
             startup_phase_set = true;
         } else if (strcmp(argv[i], "--startup-seed") == 0) {
             if (++i == argc || startup_phase_set || startup_seed_set) {
@@ -567,12 +242,14 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             startup_seed = (uint32_t)seed;
+            frontend_cli_overrides |= FRONTEND_OVERRIDE_STARTUP;
             startup_seed_set = true;
         } else if (strcmp(argv[i], "--ram-power-on") == 0) {
             if (++i == argc || !nes_set_ram_power_on_state_name(argv[i])) {
                 fprintf(stderr, "RAM power-on state must be default, zero, ones, or random\n");
                 return 1;
             }
+            frontend_cli_overrides |= FRONTEND_OVERRIDE_RAM_POWER;
         } else if (strcmp(argv[i], "--power-on-seed") == 0) {
             if (++i == argc || power_on_seed_set) {
                 fprintf(stderr, "Power-on seed must be an integer from 0 to 4294967295\n");
@@ -586,22 +263,38 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             power_on_seed = (uint32_t)seed;
+            frontend_cli_overrides |= FRONTEND_OVERRIDE_POWER_SEED;
             power_on_seed_set = true;
         } else if (strcmp(argv[i], "--random-vblank") == 0) {
             nes_set_randomize_vblank(true);
+            frontend_cli_overrides |= FRONTEND_OVERRIDE_RANDOM_VBLANK;
         } else if (strcmp(argv[i], "--ppu-revision") == 0) {
             if (++i == argc || !ppu_set_revision_name(argv[i])) {
                 fprintf(stderr, "PPU revision must be 2c02-pre-e or 2c02e-plus\n");
                 return 1;
             }
+            frontend_cli_overrides |= FRONTEND_OVERRIDE_PPU_REVISION;
         } else if (strcmp(argv[i], "--ppu-oam-row-corruption") == 0) {
             ppu_set_oam_row_corruption_worst_case(true);
+            frontend_cli_overrides |= FRONTEND_OVERRIDE_PPU_OAM_ROW;
         } else if (strcmp(argv[i], "--ppu-startup-restriction") == 0) {
             ppu_set_startup_write_restriction(true);
+            frontend_cli_overrides |= FRONTEND_OVERRIDE_PPU_STARTUP;
         } else if (strcmp(argv[i], "--ppu-oam-decay") == 0) {
             ppu_set_oam_decay(true);
+            frontend_cli_overrides |= FRONTEND_OVERRIDE_PPU_OAM_DECAY;
+        } else if (strcmp(argv[i], "--ppu-sprite-eval-wrap-bug") == 0) {
+            ppu_set_sprite_eval_wrap_bug(true);
+            frontend_cli_overrides |= FRONTEND_OVERRIDE_PPU_SPRITE_WRAP;
+        } else if (strcmp(argv[i], "--ppu-disable-oamdata-read") == 0) {
+            ppu_set_oamdata_read_disabled(true);
+            frontend_cli_overrides |= FRONTEND_OVERRIDE_PPU_OAMDATA;
+        } else if (strcmp(argv[i], "--ppu-disable-palette-readback") == 0) {
+            ppu_set_palette_readback_disabled(true);
+            frontend_cli_overrides |= FRONTEND_OVERRIDE_PPU_PALETTE;
         } else if (strcmp(argv[i], "--ppu-reset-suppression") == 0) {
             ppu_set_reset_suppression(true);
+            frontend_cli_overrides |= FRONTEND_OVERRIDE_PPU_RESET;
         } else if (strcmp(argv[i], "--video-filter") == 0) {
             if (++i == argc) {
                 fprintf(stderr, "Video filter must be direct or ntsc-composite\n");
@@ -615,16 +308,19 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "Video filter must be direct or ntsc-composite\n");
                 return 1;
             }
+            frontend_cli_overrides |= FRONTEND_OVERRIDE_VIDEO_FILTER;
         } else if (strcmp(argv[i], "--mmc3-revision") == 0) {
             if (++i == argc || !cart_set_mmc3_revision_name(argv[i])) {
                 fprintf(stderr, "MMC3 revision must be standard or a\n");
                 return 1;
             }
+            frontend_cli_overrides |= FRONTEND_OVERRIDE_MMC3_REVISION;
         } else if (strcmp(argv[i], "--cart-dip") == 0) {
             if (++i == argc) {
                 fprintf(stderr, "Cartridge DIP value must be an integer from 0 to 255\n");
                 return 1;
             }
+            frontend_cli_overrides |= FRONTEND_OVERRIDE_CART_DIPS;
             char *end = NULL;
             errno = 0;
             unsigned long value = strtoul(argv[i], &end, 0);
@@ -639,6 +335,7 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             input_overrides |= NES_INPUT_OVERRIDE_ADAPTER;
+            frontend_cli_overrides |= FRONTEND_OVERRIDE_ADAPTER;
         } else if (strcmp(argv[i], "--port1") == 0 || strcmp(argv[i], "--port2") == 0) {
             unsigned port = argv[i][6] == '2' ? 1 : 0;
             if (++i == argc || !joypad_set_port_device_name(port, argv[i])) {
@@ -646,17 +343,20 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             input_overrides |= port ? NES_INPUT_OVERRIDE_PORT2 : NES_INPUT_OVERRIDE_PORT1;
+            frontend_cli_overrides |= port ? FRONTEND_OVERRIDE_PORT2 : FRONTEND_OVERRIDE_PORT1;
         } else if (strcmp(argv[i], "--expansion") == 0) {
             if (++i == argc || !joypad_set_expansion_device_name(argv[i])) {
                 fprintf(stderr, "Expansion device must be none, arkanoid, family-trainer-a, family-trainer-b, zapper, family-basic, turbo-file, battle-box, subor-keyboard, hori-track, konami-hyper-shot, bandai-hyper-shot, party-tap, pachinko, exciting-boxing, jissen-mahjong, barcode-battler, oeka-kids-tablet, or fcns\n");
                 return 1;
             }
             input_overrides |= NES_INPUT_OVERRIDE_EXPANSION;
+            frontend_cli_overrides |= FRONTEND_OVERRIDE_EXPANSION;
         } else if (strcmp(argv[i], "--zapper-radius") == 0) {
             if (++i == argc) {
                 fprintf(stderr, "Zapper radius must be an integer from 0 to 255\n");
                 return 1;
             }
+            frontend_cli_overrides |= FRONTEND_OVERRIDE_ZAPPER_RADIUS;
             char *end;
             unsigned long radius = strtoul(argv[i], &end, 10);
             if (end == argv[i] || *end || radius > NES_ZAPPER_MAX_RADIUS
@@ -676,6 +376,7 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             vs_dips = (uint16_t)value;
+            frontend_cli_overrides |= FRONTEND_OVERRIDE_VS_DIPS;
             vs_dip_set = true;
         } else if (strcmp(argv[i], "--barcode") == 0) {
             if (++i == argc) {
@@ -726,6 +427,7 @@ int main(int argc, char *argv[]) {
             fds_start_ejected = true;
         } else if (strcmp(argv[i], "--fds-write-protect") == 0) {
             fds_start_write_protected = true;
+            fds_write_protect_cli = true;
         } else if (argv[i][0] == '-' || rom_path) {
             fprintf(stderr, "Unexpected argument: %s\n", argv[i]);
             return 1;
@@ -733,61 +435,162 @@ int main(int argc, char *argv[]) {
             rom_path = argv[i];
         }
     }
-    if (!rom_path) {
-        printf("Usage: %s [--console MODEL] [--cpu-revision REVISION] "
-               "[--cpu-test-mode] "
-               "[--epsm-adpcm FILE] "
-               "[--fcns-kanji FILE] "
-               "[--game-db FILE] [--no-game-db-overrides] "
-               "[--startup-phase CPU:PPU | --startup-seed SEED] "
-               "[--ram-power-on STATE] [--power-on-seed SEED] [--random-vblank] "
-               "[--ppu-revision REVISION] [--ppu-oam-row-corruption] "
-               "[--ppu-startup-restriction] [--ppu-oam-decay] [--ppu-reset-suppression] "
-               "[--video-filter direct|ntsc-composite] "
-               "[--mmc3-revision REVISION] [--cart-dip VALUE] "
-               "[--adapter TYPE] [--port1 DEVICE] [--port2 DEVICE] "
-               "[--expansion DEVICE] [--barcode DIGITS] [--barcode-battler DIGITS] "
-               "[--zapper-radius PIXELS] [--vs-dip VALUE] [--tape-play FILE | --tape-record FILE] "
-               "[--fds-bios BIOS] [--studybox-bios BIOS] [--fds-side N] "
-               "[--fds-eject] [--fds-write-protect] <rom-file>\n", argv[0]);
+    joypad_set_configuration_overrides(input_overrides);
+
+    char path_error[160];
+    if (!frontend_paths_init(data_dir_override, path_error, sizeof(path_error))) {
+        fprintf(stderr, "%s\n", path_error);
         return 1;
     }
+
+    FrontendSettings frontend_settings;
+    FrontendSettingsReport settings_report;
+    frontend_settings_defaults(&frontend_settings);
+    const char *settings_path = frontend_paths_config_file();
+    if (!frontend_settings_load(settings_path, &frontend_settings, &settings_report)) {
+        fprintf(stderr, "%s; using default application settings\n",
+                settings_report.message[0] ? settings_report.message : "Could not load settings");
+        frontend_settings_defaults(&frontend_settings);
+    } else if (settings_report.migrated || settings_report.unknown_settings) {
+        fprintf(stderr, "%s\n", settings_report.message);
+    }
+    frontend_settings.cli_overrides = frontend_cli_overrides;
+    if (!(frontend_cli_overrides & FRONTEND_OVERRIDE_VIDEO_FILTER))
+        ntsc_composite_requested = frontend_settings.ntsc_composite;
+    frontend_settings.audio_mix.muted = frontend_settings.muted;
+    if (!epsm_adpcm_path && frontend_settings.epsm_adpcm_path[0])
+        epsm_adpcm_path = frontend_settings.epsm_adpcm_path;
+    if (!fcns_kanji_path && frontend_settings.fcns_kanji_path[0])
+        fcns_kanji_path = frontend_settings.fcns_kanji_path;
+    if (!tape_play_path && !tape_record_path) {
+        if (frontend_settings.tape_play_path[0]) tape_play_path = frontend_settings.tape_play_path;
+        else if (frontend_settings.tape_record_path[0]) tape_record_path = frontend_settings.tape_record_path;
+    }
+    if (!startup_phase_set && !startup_seed_set) {
+        startup_phase_set = frontend_settings.startup_phase_set;
+        startup_seed_set = frontend_settings.startup_seed_set;
+        startup_cpu_offset = frontend_settings.startup_cpu_offset;
+        startup_ppu_phase = frontend_settings.startup_ppu_phase;
+        startup_seed = frontend_settings.startup_seed;
+    }
+    if (!power_on_seed_set && frontend_settings.power_on_seed_set) {
+        power_on_seed_set = true;
+        power_on_seed = frontend_settings.power_on_seed;
+    }
+    if (!frontend_settings_validate(&frontend_settings, path_error, sizeof(path_error))) {
+        fprintf(stderr, "%s\n", path_error[0] ? path_error : "Saved settings are invalid");
+        frontend_paths_shutdown();
+        return 1;
+    }
+    if (!frontend_settings_apply_core(&frontend_settings, path_error, sizeof(path_error))) {
+        fprintf(stderr, "%s\n", path_error[0] ? path_error : "Saved settings are invalid");
+        frontend_paths_shutdown();
+        return 1;
+    }
+
+    FrontendSession frontend_session;
+    frontend_session_init(&frontend_session, frontend_image_open, NULL);
+    const char *recent_path = frontend_paths_recent_file();
+    if (!frontend_session_load_recent(&frontend_session, recent_path,
+                                      path_error, sizeof(path_error))) {
+        fprintf(stderr, "%s; recent images will start empty\n",
+                path_error[0] ? path_error : "Could not load recent images");
+    }
+    frontend_session_trim_recent(&frontend_session, frontend_settings.recent_file_limit);
+
+    FrontendImageRequest startup_request;
+    bool startup_request_ready = false;
+    if (rom_path) {
+        if (!frontend_image_request_init(&startup_request, rom_path)) {
+            fprintf(stderr, "Image path is too long\n");
+            frontend_paths_shutdown();
+            return 1;
+        }
+        startup_request_ready = true;
+    } else {
+        FrontendIdleResult idle = frontend_desktop_idle_open(
+            &frontend_settings, &frontend_session, settings_path, &startup_request,
+            &window, &renderer, path_error, sizeof(path_error));
+        if (idle != FRONTEND_IDLE_OPEN) {
+            if (path_error[0]) fprintf(stderr, "%s\n", path_error);
+            if (idle == FRONTEND_IDLE_QUIT) {
+                (void)frontend_settings_save(settings_path, &frontend_settings, &settings_report);
+            }
+            frontend_paths_shutdown();
+            return idle == FRONTEND_IDLE_ERROR || path_error[0] ? 1 : 0;
+        }
+        startup_request_ready = true;
+        rom_path = startup_request.path;
+        if (!fds_bios_path && startup_request.fds_bios_path[0])
+            fds_bios_path = startup_request.fds_bios_path;
+        if (!studybox_bios_path && startup_request.studybox_bios_path[0])
+            studybox_bios_path = startup_request.studybox_bios_path;
+        if (startup_request.fds_write_protected) fds_start_write_protected = true;
+    }
+    if (startup_request_ready) {
+        if (!startup_request.save_identity[0])
+            frontend_image_request_apply_settings(&startup_request, &frontend_settings);
+        if (fds_bios_path
+            && !frontend_image_request_set_fds_bios(&startup_request, fds_bios_path)) {
+            fprintf(stderr, "FDS BIOS path is too long\n");
+            frontend_paths_shutdown();
+            return 1;
+        }
+        if (studybox_bios_path
+            && !frontend_image_request_set_studybox_bios(&startup_request, studybox_bios_path)) {
+            fprintf(stderr, "StudyBox BIOS path is too long\n");
+            frontend_paths_shutdown();
+            return 1;
+        }
+        if (fds_write_protect_cli) startup_request.fds_write_protected = true;
+    }
+
     if (!fds_bios_path && (fds_side_set || fds_start_ejected || fds_start_write_protected)) {
         fprintf(stderr, "FDS media options require --fds-bios\n");
+        frontend_paths_shutdown();
         return 1;
     }
     if (fds_bios_path && studybox_bios_path) {
         fprintf(stderr, "Choose either FDS or StudyBox firmware for the image\n");
+        frontend_paths_shutdown();
         return 1;
     }
     if (!joypad_configuration_valid()) {
         fprintf(stderr, "An adapter and another device cannot share the same connector\n");
+        frontend_paths_shutdown();
         return 1;
     }
-    if ((tape_play_path || tape_record_path) && joypad_expansion_device() != NES_EXPANSION_FAMILY_BASIC) {
+    if ((tape_play_path || tape_record_path)
+        && joypad_expansion_device() != NES_EXPANSION_FAMILY_BASIC) {
         fprintf(stderr, "Tape input requires --expansion family-basic\n");
+        frontend_paths_shutdown();
         return 1;
     }
-    joypad_set_configuration_overrides(input_overrides);
-    
+
     printf("Console: %s\n", nes_console_model_name());
-    printf("CPU revision: %s\n", apu_get_cpu_revision() == APU_CPU_REVISION_EARLY_2A03
-           ? "early-2a03" : "late-2a03");
+    printf("CPU revision: %s\n", apu_get_cpu_revision() == APU_CPU_REVISION_EARLY_2A03 ? "early-2a03" : "late-2a03");
+    printf("APU noise short mode: %s\n", apu_noise_mode_disabled() ? "disabled" : "standard");
+    printf("APU pulse duty mapping: %s\n", apu_swap_duty_cycles_enabled() ? "swapped" : "standard");
     printf("RAM power-on state: %s\n", nes_ram_power_on_state_name());
     printf("Random power-on VBL flag: %s\n", nes_randomize_vblank_enabled() ? "enabled" : "disabled");
-    if (power_on_seed_set) printf("Power-on seed: %llu\n", (unsigned long long)power_on_seed);
+    if (power_on_seed_set) {
+        printf("Power-on seed: %llu\n", (unsigned long long)power_on_seed);
+    }
     printf("PPU revision: %s\n", ppu_revision_name());
     printf("CPU test-register reads: %s\n", cpu_test_mode_enabled() ? "enabled" : "disabled");
-    printf("PPU OAM row corruption: %s\n",
-           ppu_oam_row_corruption_worst_case() ? "worst-case" : "compatibility");
+    printf("PPU OAM row corruption: %s\n", ppu_oam_row_corruption_worst_case() ? "worst-case" : "compatibility");
     printf("PPU startup write restriction: %s\n",
            ppu_startup_write_restriction_enabled() ? "enabled" : "compatibility");
     printf("PPU OAM decay: %s\n", ppu_oam_decay_enabled() ? "enabled" : "compatibility");
+    printf("PPU sprite-evaluation wrap bug: %s\n", ppu_sprite_eval_wrap_bug_enabled() ? "enabled" : "disabled");
+    printf("PPU OAMDATA reads: %s\n",
+           ppu_oamdata_read_disabled() ? "open-bus only" : "enabled");
+    printf("PPU palette readback: %s\n",
+           ppu_palette_readback_disabled() ? "buffered" : "enabled");
     printf("PPU soft-reset suppression: %s\n",
            ppu_reset_suppression_enabled() ? "enabled" : "disabled");
     printf("MMC3 revision: %s\n", cart_mmc3_revision_name());
     printf("Input adapter: %s\n", joypad_adapter_name());
-    printf("Loading ROM: %s\n", rom_path);
     if (epsm_adpcm_path && !epsm_load_adpcm_file(epsm_adpcm_path)) {
         fprintf(stderr, "Could not load the 8 KiB YMF288 ADPCM ROM: %s\n", epsm_adpcm_path);
         return 1;
@@ -796,21 +599,38 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Could not load the 256 KiB FCNS Kanji ROM: %s\n", fcns_kanji_path);
         return 1;
     }
+    if (!game_db_path && frontend_settings.game_database_path[0])game_db_path=frontend_settings.game_database_path;
+    if (!(frontend_cli_overrides&FRONTEND_OVERRIDE_DATABASE_CORRECTIONS))disable_game_db_overrides=frontend_settings.disable_database_corrections;
     rom_database_set_overrides(!disable_game_db_overrides);
-    if (game_db_path && !rom_database_load_file(game_db_path)) {
-        fprintf(stderr, "Could not load the game database: %s\n", game_db_path);
+    FrontendDatabaseStatus database_status;
+    if (!frontend_database_load(game_db_path, frontend_paths_data_dir(), &database_status)) {
+        fprintf(stderr, "Game database: %s: %s\n", database_status.path, database_status.message);
+        frontend_paths_shutdown();
         return 1;
     }
+    printf("Game database: %s: %s\n", database_status.path, database_status.message);
     if (power_on_seed_set) nes_seed_power_on_random(power_on_seed);
-    int load_result = fds_bios_path
-        ? load_fds(rom_path, fds_bios_path, fds_start_write_protected)
-        : studybox_bios_path ? load_studybox(rom_path, studybox_bios_path)
-        : load_rom(rom_path);
-    if(load_result != 0) {
-        fprintf(stderr, "Failed to load ROM\n");
-        return 1;
+    printf("Loading ROM: %s\n", rom_path);
+    while (!frontend_session_open(&frontend_session, &startup_request,
+                                   path_error, sizeof(path_error))) {
+        fprintf(stderr, "Failed to load image: %s\n",path_error[0]?path_error:"unknown image error");
+        if (!window) {frontend_paths_shutdown();return 1;}
+        bool reopen=frontend_settings.reopen_last_image;
+        frontend_settings.reopen_last_image=false;
+        FrontendIdleResult idle=frontend_desktop_idle_open(&frontend_settings,&frontend_session,
+            settings_path,&startup_request,&window,&renderer,path_error,sizeof(path_error));
+        frontend_settings.reopen_last_image=reopen;
+        if(idle!=FRONTEND_IDLE_OPEN){frontend_paths_shutdown();return idle==FRONTEND_IDLE_ERROR?1:0;}
+        if(!startup_request.save_identity[0])frontend_image_request_apply_settings(&startup_request,&frontend_settings);
     }
+    rom_path = frontend_session.current.path;
+    fds_bios_path = frontend_session.current.fds_bios_path[0]
+        ? frontend_session.current.fds_bios_path : NULL;
+    studybox_bios_path = frontend_session.current.studybox_bios_path[0]
+        ? frontend_session.current.studybox_bios_path : NULL;
     printf("Metadata source: %s\n", rom_metadata_source_name());
+    printf("Timing region: %s (selection: %s)\n",
+           nes_region_name(nes_timing()->region), nes_region_mode_name());
     if (!rom_is_fds() && !rom_is_studybox()) {
         printf("File CRC32: %08X\n", (unsigned)rom_file_crc32());
         printf("PRG CRC32: %08X\n", (unsigned)rom_prg_crc32());
@@ -834,11 +654,14 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     if (startup_seed_set) cpu_seed_startup_alignment(startup_seed);
-    if (!joypad_persistent_configure(rom_path)) {
+    const char *storage_identity = frontend_session.current_result.save_identity[0]
+        ? frontend_session.current_result.save_identity : rom_path;
+    if (!joypad_persistent_configure(storage_identity)) {
         fprintf(stderr, "Failed to load expansion-device storage\n");
         unload_rom();
         return 1;
     }
+    if (!vs_dip_set && vs_enabled()) (void)vs_set_dip_switches(frontend_settings.vs_dips);
     if (vs_dip_set && !vs_set_dip_switches(vs_dips)) {
         fprintf(stderr, "--vs-dip requires a VS System image\n");
         unload_rom();
@@ -925,6 +748,10 @@ int main(int argc, char *argv[]) {
     }
     if (tape_play_path || tape_record_path)
         printf("Family BASIC tape: F10 starts the tape; F11 stops and saves a recording\n");
+    if (!frontend_session_save_recent(&frontend_session, recent_path,
+                                      path_error, sizeof(path_error))) {
+        fprintf(stderr, "%s\n", path_error);
+    }
     printf("CPU state after reset:\n");
     printf("  PC: 0x%04X\n", cpu.pc);
     printf("  SP: 0x%02X\n", cpu.sp);
@@ -937,65 +764,204 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "SDL_Init Error: %s\n", SDL_GetError());
         return 1;
     }
-    for (int device = 0; device < SDL_NumJoysticks(); ++device) open_controller(device);
-
-    // Configure audio before starting the main loop.
-    memset(&want, 0, sizeof want);
-    memset(&have, 0, sizeof have);
-    want.freq = AUDIO_SAMPLE_RATE;
-    want.format = AUDIO_F32;
-    want.channels = epsm_enabled() ? 2 : 1;
-    want.samples = AUDIO_BUFFER_SAMPLES;
-    want.callback = epsm_enabled() ? apu_sdl_stereo_callback : vs_audio_callback;
-
-    audio_dev = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
-    if (!audio_dev) {
-        fprintf(stderr, "Warning: audio disabled (%s)\n", SDL_GetError());
-    } else {
+    if (!nes_audio_mix_set(&frontend_settings.audio_mix, path_error, sizeof(path_error))) {
+        fprintf(stderr, "%s\n", path_error[0] ? path_error : "Saved audio settings are invalid");
+        frontend_paths_shutdown();
+        return 1;
+    }
+    frontend_host_input_open_controllers(&frontend_settings);
+    FrontendAudioRuntime audio_runtime;
+    frontend_audio_runtime_bind(&audio_runtime, &audio_dev, &have);
+    char audio_error[320] = {0};
+    if (!frontend_audio_runtime_apply(&audio_runtime, &frontend_settings, true,
+                                      audio_error, sizeof(audio_error))) {
+        fprintf(stderr, "Warning: audio disabled (%s)\n",
+                audio_error[0] ? audio_error : SDL_GetError());
+    }
+    if (audio_dev) {
         printf("=== Audio Info ===\n");
-        printf("Requested: %d Hz, Got: %d Hz\n", want.freq, have.freq);
-        printf("Requested: %d samples buffer, Got: %d samples\n", want.samples, have.samples);
+        printf("Requested: %u Hz, Got: %d Hz\n", frontend_settings.audio_sample_rate, have.freq);
+        printf("Requested: %u samples buffer, Got: %d samples\n",
+               frontend_settings.audio_buffer_samples, have.samples);
         printf("Cycles per sample: %.6f\n", nes_timing()->cpu_hz / have.freq);
         printf("==================\n");
-        vs_audio_init(have.freq);
-        SDL_PauseAudioDevice(audio_dev, 0);
     }
-
-    int video_width = ntsc_composite_active ? NTSC_COMPOSITE_WIDTH : (int)vs_video_width();
-    int video_height = ntsc_composite_active ? NTSC_COMPOSITE_HEIGHT : SCREEN_HEIGHT;
-    int window_width = (int)vs_video_width() * 2;
-    int window_height = SCREEN_HEIGHT * 2;
-    SDL_Window *window = SDL_CreateWindow("Cupid NES Emulator",
-        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, window_width, window_height, SDL_WINDOW_SHOWN);
-    if(!window) {
-        fprintf(stderr, "SDL_CreateWindow Error: %s\n", SDL_GetError());
+    if (!window) window = SDL_CreateWindow("Cupid NES Emulator",
+        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+        (int)frontend_settings.window_width, (int)frontend_settings.window_height,
+        SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+    if (!window) { fprintf(stderr, "SDL_CreateWindow Error: %s\n", SDL_GetError()); return 1; }
+    if (!renderer) renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+    if (!renderer) { fprintf(stderr, "SDL_CreateRenderer Error: %s\n", SDL_GetError()); return 1; }
+    if (frontend_settings.fullscreen)
+        (void)SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
+    FrontendVideoRuntime video_runtime;
+    if (!frontend_video_runtime_init(&video_runtime, renderer, &frontend_settings,
+                                     ntsc_composite_requested,
+                                     path_error, sizeof(path_error))) {
+        fprintf(stderr, "Video output: %s\n", path_error[0] ? path_error : SDL_GetError());
         return 1;
     }
-    SDL_Renderer *renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
-    if(!renderer) {
-        fprintf(stderr, "SDL_CreateRenderer Error: %s\n", SDL_GetError());
-        return 1;
-    }
-    SDL_Texture *texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
-        SDL_TEXTUREACCESS_STREAMING, video_width, video_height);
-    if(!texture) {
-        fprintf(stderr, "SDL_CreateTexture Error: %s\n", SDL_GetError());
-        return 1;
-    }
-
+    unsigned display_width = 0, display_height = 0;
+    frontend_video_runtime_display_size(&video_runtime, &display_width, &display_height);
+    int video_width = (int)display_width;
+    int video_height = (int)display_height;
     bool running = true;
     SDL_Event e;
-
+    FrontendExecutionRuntime execution_runtime;
+    frontend_execution_init(&execution_runtime, &audio_dev,
+                            audio_dev ? have.freq : (int)frontend_settings.audio_sample_rate,
+                            rom_path, fds_bios_path, studybox_bios_path,
+                            &fds_frontend_side);
+    execution_runtime.settings = &frontend_settings;
+    if(frontend_settings.movie_file_path[0])
+        (void)frontend_execution_movie_set_path(&execution_runtime,frontend_settings.movie_file_path,path_error,sizeof(path_error));
+    frontend_audio_runtime_set_execution(&audio_runtime, &execution_runtime);
+    if (!frontend_execution_set_speeds(&execution_runtime, frontend_settings.speed,
+                                       frontend_settings.fast_forward_speed)) {
+        fprintf(stderr, "Saved emulation speed settings are invalid\n");
+        running = false;
+    }
+    frontend_execution_set_muted(&execution_runtime, frontend_settings.muted);
+    frontend_panels_reset();
+    if (!frontend_execution_register_commands(&execution_runtime)) {
+        fprintf(stderr, "Could not initialize frontend commands\n");
+        running = false;
+    }
+    FrontendSessionActions session_actions;
+    frontend_session_actions_init(&session_actions, &frontend_session,
+                                  &frontend_settings, recent_path);
+    frontend_session_actions_set_execution(&session_actions, &execution_runtime);
+    frontend_execution_set_open_handler(&execution_runtime, frontend_session_action_open,
+                                        &session_actions);
+    frontend_execution_set_reload_handler(&execution_runtime, frontend_session_action_reload,
+                                          &session_actions);
+    FrontendDesktopUi desktop_ui;
+    frontend_desktop_init(&desktop_ui, window, renderer, &frontend_settings,
+                          &execution_runtime, &session_actions, settings_path);
+    desktop_ui.native_windows = true;
+    frontend_desktop_set_runtime(&desktop_ui, &audio_runtime, &video_runtime);
+    if (running && !frontend_desktop_register_commands(&desktop_ui)) {
+        fprintf(stderr, "Could not initialize desktop commands\n");
+        running = false;
+    }
+    FrontendDeviceRuntime device_runtime;
+    frontend_devices_init(&device_runtime, &execution_runtime, &frontend_settings, &fds_frontend_side);
+    if (!frontend_devices_set_tape_paths(&device_runtime,
+        tape_play_path ? tape_play_path : frontend_settings.tape_play_path,
+        tape_record_path ? tape_record_path : frontend_settings.tape_record_path,
+                                          path_error, sizeof(path_error))
+        || !frontend_devices_register(&device_runtime)) {
+        frontend_desktop_set_status(&desktop_ui, path_error);
+        running = false;
+    }
+    FrontendStorage storage_runtime;
+    if(!frontend_storage_register(&storage_runtime,&session_actions,&execution_runtime,game_db_path))running=false;
+    StateRuntime state_runtime;
+    state_runtime_init(&state_runtime, &frontend_settings, frontend_paths_data_dir(),
+                       &execution_runtime);
+    if (running && !state_runtime_register_ui(&state_runtime)) {
+        fprintf(stderr, "Could not initialize save-state controls\n");
+        running = false;
+    }
+    DebugFrontend *debug_frontend = debug_frontend_create(&execution_runtime);
+    if (running && (!debug_frontend || !debug_frontend_register_ui(debug_frontend))) {
+        fprintf(stderr, "Could not initialize debugger controls\n");
+        running = false;
+    }
+    CheatFrontend *cheat_frontend = cheat_frontend_create(frontend_paths_data_dir());
+    if (running && (!cheat_frontend || !cheat_frontend_register_ui(cheat_frontend))) {
+        fprintf(stderr, "Could not initialize cheat controls\n"); running = false;
+    }
+    if (cheat_frontend) cheat_frontend_image_changed(cheat_frontend, rom_file_crc32());
+    NsfPlayer music_player = {0};
+    if (running && !nsf_player_bind_frontend(&music_player, &execution_runtime, SDL_GetTicks())) {
+        fprintf(stderr, "Could not initialize the music player\n");
+        running = false;
+    }
+    if (running && !nsf_player_set_options(&music_player, &frontend_settings.nsf_player)) {
+        fprintf(stderr, "Saved music-player settings are invalid\n");
+        running = false;
+    }
+    unsigned last_music_track = UINT_MAX;
+    unsigned last_music_second = UINT_MAX;
+    const char *capture_protected_paths[] = {
+        epsm_adpcm_path, fcns_kanji_path, tape_play_path, tape_record_path, game_db_path
+    };
+    state_runtime_set_protected_paths(&state_runtime, capture_protected_paths,
+                                      sizeof(capture_protected_paths) / sizeof(capture_protected_paths[0]));
+    NesCaptureRuntime capture_runtime = {0};
+    if (running && !nes_capture_runtime_init(&capture_runtime, &execution_runtime,
+        NULL, NULL, capture_protected_paths,
+        sizeof(capture_protected_paths) / sizeof(capture_protected_paths[0]))) {
+        fprintf(stderr, "Could not initialize capture controls\n");
+        running = false;
+    }
+    capture_runtime.devices = &device_runtime;
+    storage_runtime.capture = &capture_runtime.frontend;
+    desktop_ui.capture = &capture_runtime.frontend;
+    desktop_ui.devices = &device_runtime;
+    desktop_ui.music = &music_player;
+    const char *device_protected_paths[] = {epsm_adpcm_path, fcns_kanji_path, game_db_path,
+        frontend_settings.state_file_path, frontend_settings.capture_paths[0],
+        frontend_settings.capture_paths[1], frontend_settings.capture_paths[2]};
+    frontend_devices_set_protected_paths(&device_runtime, device_protected_paths,
+        sizeof(device_protected_paths) / sizeof(device_protected_paths[0]));
+    nes_capture_runtime_set_video(&capture_runtime, &video_runtime);
+    if (running) {
+        capture_runtime.frontend.options = frontend_settings.capture;
+        for (unsigned i = 0; i < 3; ++i) {
+            char capture_path_error[160] = {0};
+            if (frontend_settings.capture_paths[i][0]
+                && !nes_capture_frontend_set_path(&capture_runtime.frontend,
+                    (FrontendSaveFileType)i, frontend_settings.capture_paths[i],
+                    capture_path_error, sizeof(capture_path_error))) {
+                fprintf(stderr, "%s\n", capture_path_error);
+            }
+        }
+    }
+    if (running && !frontend_video_runtime_attach_hd(&video_runtime, &frontend_session,
+                                                     path_error, sizeof(path_error))) {
+        frontend_desktop_set_status(&desktop_ui, path_error);
+    }
+    nes_hd_frontend_bind_execution(video_runtime.hd_frontend, &execution_runtime);
+    LiveFrontend live = {
+        .music = &music_player, .debug = debug_frontend, .cheats = cheat_frontend,
+        .capture = &capture_runtime, .devices = &device_runtime, .video = &video_runtime
+    };
+    frontend_session_actions_set_image_changed(&session_actions, live_image_changed, &live);
+    state_runtime_set_restored(&state_runtime, live_state_restored, &live);
+    frontend_execution_set_restore_handler(&execution_runtime, live_state_restored, &live);
+    frontend_command_set_session_active(frontend_session.active);
+    frontend_panel_set_session_active(frontend_session.active);
+    char last_capture_error[256] = {0};
     palette_tool_init();
     const double performance_frequency = (double)SDL_GetPerformanceFrequency();
     double frame_deadline = (double)SDL_GetPerformanceCounter();
-    
+    double fps_started = frame_deadline;
+    unsigned fps_frames = 0;
+    uint64_t timing_revision = UINT64_MAX;
+    double paced_speed = 0;
+    int active_vsync = -1;
     while (running) {
-        Uint32 frameStart = SDL_GetTicks();
-        uint64_t frame_start_cycles = cpu_total_cycles;
-    
         while (SDL_PollEvent(&e)) {
-            controller_event(&e);
+            if (!frontend_desktop_input_captured(&desktop_ui) ||
+                e.type == SDL_CONTROLLERDEVICEADDED || e.type == SDL_CONTROLLERDEVICEREMOVED)
+                frontend_host_input_event(&e, &frontend_settings, &execution_runtime);
+            if (e.type == SDL_WINDOWEVENT
+                && e.window.windowID == SDL_GetWindowID(window)
+                && e.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
+                frontend_host_input_release_all();
+                frontend_execution_release_host_input(&execution_runtime);
+            }
+            bool was_captured = frontend_desktop_input_captured(&desktop_ui);
+            if (frontend_desktop_handle_event(&desktop_ui, &e)) {
+                if (!was_captured && frontend_desktop_input_captured(&desktop_ui)) {
+                    frontend_host_input_release_all();
+                    frontend_execution_release_host_input(&execution_runtime);
+                }
+                continue;
+            }
             bool main_mouse_event = e.type == SDL_MOUSEMOTION
                 ? e.motion.windowID == SDL_GetWindowID(window)
                 : (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP)
@@ -1004,12 +970,27 @@ int main(int argc, char *argv[]) {
                 int mouse_x, mouse_y, window_width, window_height;
                 uint32_t buttons = SDL_GetMouseState(&mouse_x, &mouse_y);
                 SDL_GetWindowSize(window, &window_width, &window_height);
-                int position = window_width > 0 ? 0x54 + 160 * mouse_x / window_width : 0x54;
-                bool pointer_on_screen = mouse_x >= 0 && mouse_y >= 0 && mouse_x < window_width
-                    && mouse_y < window_height;
+                SDL_Rect game_rect;
+                frontend_desktop_game_rect(&desktop_ui, window_width, window_height,
+                    video_width, video_height, frontend_settings.integer_scaling, &game_rect);
+                bool pointer_on_screen = mouse_x >= game_rect.x && mouse_y >= game_rect.y
+                    && mouse_x < game_rect.x + game_rect.w && mouse_y < game_rect.y + game_rect.h;
+                int local_x = pointer_on_screen ? mouse_x - game_rect.x : 0;
+                int local_y = pointer_on_screen ? mouse_y - game_rect.y : 0;
+                int presented_x = pointer_on_screen && game_rect.w > 0
+                    ? (int)video_runtime.frame.width * local_x / game_rect.w : -1;
+                int presented_y = pointer_on_screen && game_rect.h > 0
+                    ? (int)video_runtime.frame.height * local_y / game_rect.h : -1;
+                unsigned pointer_side = 0;
+                int pointer_x = -1, pointer_y = -1;
+                if (pointer_on_screen && !frontend_video_runtime_aim(&video_runtime,
+                        presented_x, presented_y, &pointer_side, &pointer_x, &pointer_y)) {
+                    pointer_on_screen = false;
+                    pointer_x = pointer_y = -1;
+                }
+                (void)pointer_side;
+                int position = pointer_x >= 0 ? 0x54 + 160 * pointer_x / SCREEN_WIDTH : 0x54;
                 bool zapper_on_screen = pointer_on_screen && !(buttons & SDL_BUTTON_RMASK);
-                int pointer_x = pointer_on_screen ? 256 * mouse_x / window_width : -1;
-                int pointer_y = pointer_on_screen ? 240 * mouse_y / window_height : -1;
                 int aim_x = zapper_on_screen ? pointer_x : -1;
                 int aim_y = zapper_on_screen ? pointer_y : -1;
                 bool trigger = (buttons & (SDL_BUTTON_LMASK | SDL_BUTTON_RMASK)) != 0;
@@ -1039,21 +1020,32 @@ int main(int argc, char *argv[]) {
                 oeka_kids_pointer_event(pointer_x, pointer_y, pointer_on_screen, buttons);
             }
             if (e.type == SDL_QUIT) {
-                if (rom_is_fds() && !fds_flush()) {
-                    fprintf(stderr, "Failed to save modified FDS media; keeping the emulator open\n");
-                    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "FDS Save Error",
-                        "The modified disk image could not be saved. The emulator will remain open so the media changes are not discarded.", window);
-                } else if (!joypad_persistent_flush()) {
-                    fprintf(stderr, "Failed to save expansion-device storage; keeping the emulator open\n");
-                    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Peripheral Save Error",
-                        "Expansion-device storage could not be saved. The emulator will remain open so the changes are not discarded.", window);
+                NesFileResult capture_result = nes_capture_session_stop(&capture_runtime.frontend.session);
+                nes_capture_frontend_refresh(&capture_runtime.frontend);
+                if (capture_result != NES_FILE_OK) {
+                    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Capture Save Error",
+                        capture_runtime.frontend.session.error, window);
+                } else if (!frontend_devices_finish(&device_runtime, path_error, sizeof(path_error))) {
+                    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Tape Save Error",
+                        "The tape recording could not be saved. The emulator will remain open.", window);
+                } else if (!rom_flush_persistent()) {
+                    fprintf(stderr, "Failed to save persistent data; keeping the emulator open\n");
+                    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Save Error",
+                        "Cartridge, disk, or peripheral data could not be saved. The emulator will remain open so the changes are not discarded.", window);
                 } else {
                     running = false;
                 }
             }
             if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
                 && e.key.windowID == SDL_GetWindowID(window)
-                && family_basic_key_event(&e.key, tape_play_path, tape_record_path)) continue;
+                && frontend_devices_handle_tape_key(&device_runtime, &e.key, path_error, sizeof(path_error))) {
+                if (path_error[0]) frontend_desktop_set_status(&desktop_ui, path_error);
+                continue;
+            }
+            if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
+                && e.key.windowID == SDL_GetWindowID(window)
+                && family_basic_key_event(&e.key, NULL, NULL,
+                                          cpu_total_cycles)) continue;
             if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
                 && e.key.windowID == SDL_GetWindowID(window)
                 && subor_key_event(&e.key)) continue;
@@ -1069,31 +1061,35 @@ int main(int argc, char *argv[]) {
             if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
                 && e.key.windowID == SDL_GetWindowID(window)
                 && extended_port_key_event(&e.key)) continue;
-            palette_tool_handle_event(&e, renderer);
+            if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
+                && e.key.windowID == SDL_GetWindowID(window)
+                && mat_key_event(&e.key)) continue;
+            if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
+                && e.key.windowID == SDL_GetWindowID(window)) {
+                char capture_error[256] = {0};
+                if (nes_capture_frontend_handle_shortcut(&capture_runtime.frontend, &e.key,
+                                                         capture_error, sizeof(capture_error))) {
+                    if (capture_error[0]) fprintf(stderr, "%s\n", capture_error);
+                    continue;
+                }
+            }
+            if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
+                && e.key.windowID == SDL_GetWindowID(window)) {
+                char music_error[160] = {0};
+                if (nsf_player_handle_shortcut(&music_player, &e.key,
+                                               music_error, sizeof(music_error))) {
+                    if (music_error[0]) fprintf(stderr, "%s\n", music_error);
+                    continue;
+                }
+            }
+            if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP) &&
+                e.key.windowID == SDL_GetWindowID(window) && frontend_host_input_bound_player_key(
+                    frontend_settings_active_profile_const(&frontend_settings), &e.key)) continue;
             
             if (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP) {
-                if (mat_key_event(&e.key)) continue;
                 int down = (e.type == SDL_KEYDOWN);
     
                 switch (e.key.keysym.sym) {
-                    case SDLK_PAGEUP:
-                    case SDLK_PAGEDOWN:
-                        if (down && !e.key.repeat && rom_is_nsf()) {
-                            const NsfMetadata *music = rom_nsf_metadata();
-                            unsigned track = 0;
-                            if (music && music->total_songs) {
-                                int direction = e.key.keysym.sym == SDLK_PAGEUP ? 1 : -1;
-                                bool changed = nsf_frontend_step_track(direction,
-                                    nsf_audio_lock, nsf_audio_unlock, &audio_dev, &track);
-                                if (changed) {
-                                    printf("Music track: %u/%u", track + 1u,
-                                           (unsigned)music->total_songs);
-                                    if (music->track_names[track][0]) printf(" - %s", music->track_names[track]);
-                                    printf("\n");
-                                }
-                            }
-                        }
-                        break;
                     case SDLK_F10:
                         if (down && rom_is_fds()) fds_set_write_protected(!fds_write_protected());
                         break;
@@ -1116,17 +1112,7 @@ int main(int argc, char *argv[]) {
                         if (down) { palette_tool_toggle_overlay(); }
                         break;
                     case SDLK_F6:
-                        if (down) { ppu_palette_reset_default(); palette_tool_flash(true); }
-                        break;
-                    case SDLK_r:
-                        if (down) {
-                            if (audio_dev) SDL_LockAudioDevice(audio_dev);
-                            ppu_soft_reset(&ppu);
-                            apu_soft_reset(&apu);
-                            cpu_soft_reset(&cpu);
-                            vs_soft_reset();
-                            if (audio_dev) SDL_UnlockAudioDevice(audio_dev);
-                        }
+                        if (down) { ppu_palette_reset_default(); frontend_desktop_set_status(&desktop_ui,"Palette reset"); }
                         break;
                     case SDLK_5: if (vs_enabled()) vs_set_coin(0, down != 0); break;
                     case SDLK_6: if (vs_enabled()) vs_set_coin(1, down != 0); break;
@@ -1134,20 +1120,6 @@ int main(int argc, char *argv[]) {
                     case SDLK_8: if (vs_dual_system()) vs_set_coin(3, down != 0); break;
                     case SDLK_F1: if (vs_enabled()) vs_set_service(0, down != 0); break;
                     case SDLK_F2: if (vs_dual_system()) vs_set_service(1, down != 0); break;
-                    case SDLK_z:
-                        joypad_set_player(0, BTN_A, down);
-                        (void)cart_set_karaoke_input(CART_KARAOKE_A, down);
-                        break;
-                    case SDLK_x:
-                        joypad_set_player(0, BTN_B, down);
-                        (void)cart_set_karaoke_input(CART_KARAOKE_B, down);
-                        break;
-                    case SDLK_RSHIFT:   joypad_set_player(0, BTN_SELECT, down); break;
-                    case SDLK_RETURN:   joypad_set_player(0, BTN_START,  down); break;
-                    case SDLK_UP:       joypad_set_player(0, BTN_UP,     down); break;
-                    case SDLK_DOWN:     joypad_set_player(0, BTN_DOWN,   down); break;
-                    case SDLK_LEFT:     joypad_set_player(0, BTN_LEFT,   down); break;
-                    case SDLK_RIGHT:    joypad_set_player(0, BTN_RIGHT,  down); break;
                     case SDLK_m:
                         joypad_set_microphone(down != 0);
                         (void)cart_set_karaoke_input(CART_KARAOKE_MICROPHONE, down);
@@ -1163,7 +1135,7 @@ int main(int argc, char *argv[]) {
                             char *txt = SDL_GetClipboardText();
                             if (txt) {
                                 int rc = ppu_palette_load_hex_string(txt);
-                                palette_tool_flash(rc == 0);
+                                frontend_desktop_set_status(&desktop_ui,rc==0?"Palette loaded":"Invalid palette");
                                 SDL_free(txt);
                                 if (rc != 0) {
                                     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "Palette Paste Error",
@@ -1175,15 +1147,25 @@ int main(int argc, char *argv[]) {
                 }
             }
 
-            // Dropped .pal files use the same validation as explicit palette loads.
             if (e.type == SDL_DROPFILE) {
                 char *dropped_f = e.drop.file;
                 if (dropped_f) {
-                    int rc = ppu_palette_load_pal_file(dropped_f);
-                    palette_tool_flash(rc == 0);
-                    if (rc != 0) {
-                        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Palette Load Error",
-                            "Failed to load .pal file. Expected 192 or 1536 bytes.", NULL);
+                    const char *dot = strrchr(dropped_f, '.');
+                    if (dot && SDL_strcasecmp(dot, ".pal") == 0) {
+                        int rc = ppu_palette_load_pal_file(dropped_f);
+                        frontend_desktop_set_status(&desktop_ui,rc==0?"Palette loaded":"Invalid palette");
+                        if (rc != 0)
+                            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Palette Load Error",
+                                "Failed to load .pal file. Expected 192 or 1536 bytes.", window);
+                    } else {
+                        char drop_error[256] = {0};
+                        if (!frontend_session_action_open_path(
+                                &session_actions, dropped_f, drop_error, sizeof(drop_error))) {
+                            frontend_desktop_set_status(&desktop_ui, drop_error);
+                            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Open Image Error",
+                                drop_error[0] ? drop_error : "The dropped file could not be opened.",
+                                window);
+                        }
                     }
                     SDL_free(dropped_f);
                 }
@@ -1193,50 +1175,158 @@ int main(int argc, char *argv[]) {
         // A successful quit flush must be the last chance for emulation to mutate
         // writable disk media. Do not run another frame after accepting SDL_QUIT.
         if (!running) break;
+
+        if (live.image_changed) {
+            live.image_changed = false;
+            if (!frontend_video_runtime_attach_hd(&video_runtime, &frontend_session,
+                                                  path_error, sizeof(path_error)))
+                frontend_desktop_set_status(&desktop_ui, path_error);
+            if (!frontend_audio_runtime_apply(&audio_runtime, &frontend_settings, true,
+                                              path_error, sizeof(path_error))) {
+                fprintf(stderr, "Audio output: %s\n", path_error);
+                running = false;
+                break;
+            }
+            if (!frontend_video_runtime_refresh(&video_runtime, path_error, sizeof(path_error))) {
+                fprintf(stderr, "Video output: %s\n", path_error[0] ? path_error : "frame unavailable");
+                running = false;
+                break;
+            }
+            frontend_video_runtime_display_size(&video_runtime, &display_width, &display_height);
+            video_width = (int)display_width;
+            video_height = (int)display_height;
+            (void)frontend_execution_set_speeds(&execution_runtime, frontend_settings.speed,
+                                                frontend_settings.fast_forward_speed);
+            frontend_execution_set_muted(&execution_runtime, frontend_settings.muted);
+            SDL_SetWindowTitle(window, frontend_session.current_result.title[0]
+                ? frontend_session.current_result.title : "Cupid NES Emulator");
+        }
     
-        // Run CPU steps until the PPU completes the current frame.
-        vs_start_frame();
-        while (!ppu.frame_complete) {
-            vs_cpu_step();
+        frontend_desktop_update_activity(&desktop_ui);
+        double loop_speed = frontend_execution_speed(&execution_runtime);
+        double loop_now = (double)SDL_GetPerformanceCounter();
+        if (timing_revision != execution_runtime.timing_revision || paced_speed != loop_speed ||
+            loop_now - frame_deadline > performance_frequency * 0.050) {
+            frame_deadline = loop_now;
+            timing_revision = execution_runtime.timing_revision;
+            paced_speed = loop_speed;
+        }
+        int wanted_vsync = frontend_settings.vsync && loop_speed == 1.0;
+        if (active_vsync != wanted_vsync) {
+            (void)SDL_RenderSetVSync(renderer, wanted_vsync);
+            active_vsync = wanted_vsync;
+        }
+        if (!execution_runtime.suspend_reasons && !execution_runtime.rewind_held &&
+            execution_control_should_run_frame(&execution_runtime.execution))
+            nes_capture_frontend_begin_frame(&capture_runtime.frontend);
+        uint64_t frame_start_cycles = cpu_total_cycles;
+        bool ran_frame = frontend_execution_run_frame(&execution_runtime);
+        if (ran_frame) frontend_devices_frame_complete(&device_runtime);
+        uint64_t frame_elapsed_cycles = ran_frame && cpu_total_cycles >= frame_start_cycles
+            ? cpu_total_cycles - frame_start_cycles : 0;
+        char video_error[192] = {0};
+        bool video_ready = frontend_video_runtime_refresh(&video_runtime,
+                                                          video_error, sizeof(video_error));
+        nes_capture_frontend_end_frame(&capture_runtime.frontend, ran_frame && video_ready);
+        if (!video_ready) {
+            fprintf(stderr, "Video output: %s\n",
+                    video_error[0] ? video_error : "frame unavailable");
+            running = false;
+            break;
+        }
+        if (strcmp(last_capture_error, capture_runtime.frontend.session.error)) {
+            snprintf(last_capture_error, sizeof(last_capture_error), "%s", capture_runtime.frontend.session.error);
+            if (last_capture_error[0]) fprintf(stderr, "%s\n", last_capture_error);
+        }
+        char music_error[160] = {0};
+        (void)nsf_player_poll(&music_player, music_error, sizeof(music_error));
+        if (music_error[0]) fprintf(stderr, "%s\n", music_error);
+        NsfPlayerInfo music_info;
+        if (nsf_player_info(&music_player, &music_info)) {
+            unsigned seconds = music_info.position_seconds > UINT_MAX
+                ? UINT_MAX : (unsigned)music_info.position_seconds;
+            if (music_info.track != last_music_track || seconds != last_music_second) {
+                char title[512];
+                snprintf(title, sizeof(title), "Cupid NES | %s | Track %u/%u | %u:%02u",
+                         music_info.metadata->title, music_info.track + 1u,
+                         (unsigned)music_info.metadata->total_songs, seconds / 60u, seconds % 60u);
+                SDL_SetWindowTitle(window, title);
+                last_music_track = music_info.track;
+                last_music_second = seconds;
+            }
         }
 
-        // Presentation filters consume captured PPU signal data after emulation has
-        // finished the frame, so they cannot change beam timing or light-sensor input.
-        const uint32_t *presented_frame = vs_video_framebuffer();
-        if (ntsc_composite_active) {
-            ntsc_composite_filter_frame(ppu.pixel_signal, ppu.completed_video_phase,
-                                        composite_framebuffer);
-            presented_frame = composite_framebuffer;
-        }
-        SDL_UpdateTexture(texture, NULL, presented_frame, video_width * sizeof(uint32_t));
+        frontend_video_runtime_display_size(&video_runtime, &display_width, &display_height);
+        video_width = (int)display_width;
+        video_height = (int)display_height;
         SDL_RenderClear(renderer);
-        SDL_RenderCopy(renderer, texture, NULL, NULL);
-        int ww = 0, hh = 0; SDL_GetRendererOutputSize(renderer, &ww, &hh);
-        if (palette_tool_is_visible()) { palette_tool_draw(renderer, ww, hh); }
+        int ww = 0, hh = 0;
+        SDL_GetWindowSize(window, &ww, &hh);
+        SDL_Rect game_rect;
+        frontend_desktop_game_rect(&desktop_ui, ww, hh, video_width, video_height,
+                                           frontend_settings.integer_scaling, &game_rect);
+        SDL_RenderCopy(renderer, frontend_video_runtime_texture(&video_runtime), NULL, &game_rect);
+        frontend_desktop_render(&desktop_ui, video_width, video_height,
+            frontend_session.current_result.title,
+            nes_region_name(nes_timing()->region),
+            nes_netplay_mode(execution_runtime.netplay) == NES_NETPLAY_CONNECTED
+                || nes_netplay_mode(execution_runtime.netplay) == NES_NETPLAY_LISTENING
+                ? frontend_netplay_status(execution_runtime.network)
+                : execution_runtime.rewind_held ? "Rewinding"
+                : frontend_execution_paused(&execution_runtime) ? "Paused" : "Running");
         SDL_RenderPresent(renderer);
     
-        Uint32 frameTime = SDL_GetTicks() - frameStart;
-        palette_tool_tick(frameTime);
-        frame_deadline += (double)(cpu_total_cycles - frame_start_cycles)
-                        * performance_frequency / nes_timing()->cpu_hz;
+        double fps_now = (double)SDL_GetPerformanceCounter();
+        if (ran_frame) ++fps_frames;
+        if (fps_now - fps_started >= performance_frequency * 0.5) {
+            frontend_desktop_set_fps(&desktop_ui, fps_frames * performance_frequency / (fps_now - fps_started));
+            fps_frames = 0; fps_started = fps_now;
+        }
+        double speed = frontend_execution_speed(&execution_runtime);
+        if (ran_frame) {
+            frame_deadline += (double)frame_elapsed_cycles
+                            * performance_frequency / (nes_timing()->cpu_hz * speed);
+        }
         double current_ticks = (double)SDL_GetPerformanceCounter();
-        if (frame_deadline > current_ticks) {
+        if (!ran_frame) {
+            frame_deadline = current_ticks;
+            double rewind_wait = performance_frequency / nes_timing()->fps - (current_ticks - loop_now);
+            if (execution_runtime.rewind_held) {
+                if (rewind_wait > 0) SDL_Delay((Uint32)(rewind_wait * 1000.0 / performance_frequency));
+            } else SDL_Delay(8);
+        } else if (frame_deadline > current_ticks) {
             // Carry fractional milliseconds into the next deadline instead of
             // running every frame early after truncating SDL's delay argument.
             SDL_Delay((Uint32)((frame_deadline - current_ticks) * 1000.0 / performance_frequency));
-        } else if (current_ticks - frame_deadline > performance_frequency * 0.25) {
+        } else if (current_ticks - frame_deadline > performance_frequency * 0.050) {
             frame_deadline = current_ticks;
         }
     }
-
-    SDL_DestroyTexture(texture);
+    frontend_desktop_update_window_settings(&desktop_ui);
+    bool capture_saved = nes_capture_runtime_shutdown(&capture_runtime) == NES_FILE_OK;
+    if (!capture_saved) fprintf(stderr, "%s\n", capture_runtime.frontend.session.error);
+    frontend_settings.nsf_player = music_player.options;
+    frontend_settings.capture = capture_runtime.frontend.options;
+    memcpy(frontend_settings.capture_paths,capture_runtime.frontend.paths,sizeof(frontend_settings.capture_paths));
+    snprintf(frontend_settings.tape_play_path,sizeof(frontend_settings.tape_play_path),"%s",device_runtime.tape_input);
+    snprintf(frontend_settings.tape_record_path,sizeof(frontend_settings.tape_record_path),"%s",device_runtime.tape_output);
+    snprintf(frontend_settings.movie_file_path,sizeof(frontend_settings.movie_file_path),"%s",execution_runtime.movie_path);
+    bool tape_saved = frontend_devices_finish(&device_runtime, path_error, sizeof(path_error));
+    frontend_devices_unregister();
+    frontend_storage_unregister();
+    state_runtime_shutdown(&state_runtime);
+    frontend_execution_shutdown(&execution_runtime);
+    cheat_frontend_destroy(cheat_frontend);
+    debug_frontend_destroy(debug_frontend);
+    nsf_player_shutdown(&music_player);
+    frontend_desktop_shutdown(&desktop_ui);
+    debugger_shutdown();
+    frontend_video_runtime_shutdown(&video_runtime);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
-    if (audio_dev) SDL_CloseAudioDevice(audio_dev);
+    frontend_audio_runtime_shutdown(&audio_runtime);
     apu_audio_shutdown_state(&apu);
-    for (unsigned player = 0; player < NES_INPUT_PLAYERS; ++player)
-        if (controllers[player]) SDL_GameControllerClose(controllers[player]);
-    bool tape_saved = finish_tape_capture(tape_record_path);
+    frontend_host_input_shutdown();
     bool tape_failed = family_basic_tape_failed();
     bool peripheral_saved = joypad_persistent_shutdown();
     if (tape_failed) fprintf(stderr, "Tape recording stopped because the capture buffer could not grow\n");
@@ -1247,5 +1337,13 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     SDL_Quit();
-    return tape_saved && !tape_failed && peripheral_saved ? 0 : 1;
+    bool settings_saved = frontend_settings_save(settings_path, &frontend_settings,
+                                                 &settings_report);
+    if (!settings_saved) fprintf(stderr, "%s\n", settings_report.message);
+    frontend_paths_shutdown();
+    return tape_saved && !tape_failed && peripheral_saved && capture_saved && settings_saved ? 0 : 1;
+}
+
+int main(int argc, char *argv[]) {
+    return frontend_application_entry_utf8(argc, argv, application_main);
 }

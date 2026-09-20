@@ -1214,6 +1214,27 @@ void OPLL_forceRefresh(OPLL *opll) {
   }
 }
 
+void OPLL_rebindState(OPLL *opll) {
+  int i;
+
+  if (opll == NULL)
+    return;
+
+  for (i = 0; i < 9; i++) {
+    int32_t num = opll->patch_number[i];
+    if (num < 0 || num > 18)
+      return;
+    MOD(opll, i)->patch = &opll->patch[num * 2 + 0];
+    CAR(opll, i)->patch = &opll->patch[num * 2 + 1];
+  }
+
+  for (i = 0; i < 18; i++) {
+    if (opll->slot[i].patch == NULL || opll->slot[i].patch->WS > 1)
+      return;
+    opll->slot[i].wave_table = wave_table_map[opll->slot[i].patch->WS];
+  }
+}
+
 void OPLL_setRate(OPLL *opll, uint32_t rate) {
   opll->rate = rate;
   reset_rate_conversion_params(opll);

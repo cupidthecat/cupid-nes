@@ -16,6 +16,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "../state/state_io.h"
 
 void turbo_file_reset_protocol(void);
 uint8_t turbo_file_read(unsigned port);
@@ -83,5 +84,10 @@ void oeka_kids_tablet_reset(void);
 void oeka_kids_tablet_set_state(int x, int y, bool touch, bool click);
 void oeka_kids_tablet_write(uint8_t value);
 uint8_t oeka_kids_tablet_read(unsigned port);
+
+bool special_peripherals_state_capture(NesStateWriter *writer);
+bool special_peripherals_hardware_state_capture(NesStateWriter *writer);
+bool special_peripherals_state_validate(NesStateReader *reader);
+bool special_peripherals_state_apply(NesStateReader *reader);
 
 #endif

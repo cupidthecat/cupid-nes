@@ -30,6 +30,7 @@
 #include <stdbool.h>
 #include "rom.h"
 #include "nsf.h"
+#include "../audio/audio_mix.h"
 
 typedef struct CartridgeBoard CartridgeBoard;
 
@@ -52,6 +53,7 @@ typedef struct FdsImage FdsImage;
 
 // Global “inserted” cart
 extern Mapper *cart;
+bool cart_has_chr_rom(void);
 
 typedef enum {
     CART_PPU_FETCH_CPU = 0,
@@ -65,6 +67,7 @@ uint8_t *cart_cpu_ram_8k(void);
 uint8_t cart_cpu_read (uint16_t addr);
 // Resolve floating data lines against the CPU latch, without a data-byte sentinel.
 uint8_t cart_cpu_read_bus(uint16_t addr, uint8_t open_bus);
+uint8_t cart_cpu_peek_bus(uint16_t addr, uint8_t open_bus);
 void    cart_cpu_write(uint16_t addr, uint8_t v);
 bool cart_read_cpu_register(uint16_t address, uint8_t *value);
 void cart_observe_cpu_write(uint16_t address, uint8_t value);
@@ -72,15 +75,23 @@ void cart_observe_cpu_write(uint16_t address, uint8_t value);
 // whose counters can select CPU-write cycles as their clock source.
 void    cart_clock_cpu_cycle(bool write_cycle);
 uint8_t cart_ppu_read (uint16_t addr);
+uint8_t cart_ppu_peek(uint16_t addr);
+/* Debug-only reads of the selected pattern bank and a background tile row. */
+uint8_t cart_debug_chr(uint16_t addr, CartPpuFetchSource source);
+void cart_debug_bg_row(uint16_t nt_addr, uint16_t pattern_addr, unsigned row,
+                       uint8_t *low, uint8_t *high, uint8_t *palette);
+bool cart_debug_write_ppu(uint16_t addr, uint8_t value, uint8_t *nt_ram);
 void    cart_ppu_write(uint16_t addr, uint8_t v);
 void    cart_set_ppu_fetch_source(CartPpuFetchSource src);
 // Notify an exact CPU write to $2000. MMC5 does not observe PPU register mirrors.
 void    cart_notify_ppu_ctrl_write(uint8_t value);
 // Current cartridge expansion-audio contribution, zero when the board has none.
 float   cart_expansion_audio(void);
+void    cart_expansion_audio_channels(float output[NES_AUDIO_CHANNEL_COUNT]);
 float   cart_audio_gain(void);
 // Scan an EAN-8 or EAN-13 code through the connected Datach reader.
 bool    cart_set_barcode(const char *digits);
+bool    cart_barcode_supported(void);
 
 // Select the MMC3 IRQ counter revision used by compatible MMC3-family boards.
 // MMC6 and MC-ACC keep their board-specific IRQ behavior.
@@ -100,6 +111,7 @@ bool cart_set_karaoke_input(CartKaraokeInput input, bool pressed);
 
 // Mapper-aware nametable access ($2000-$2FFF decoded by PPU)
 uint8_t cart_nt_read (uint16_t addr, uint8_t *nt_ram);
+uint8_t cart_nt_peek(uint16_t addr, uint8_t *nt_ram);
 void    cart_nt_write(uint16_t addr, uint8_t v, uint8_t *nt_ram);
 
 // Mapper IRQ line helpers (for IRQ-capable mappers such as MMC3)
@@ -113,6 +125,7 @@ int mapper_init_nsf(const NsfImage *image, uint8_t *program, size_t program_size
 bool cart_nsf_select_track(unsigned track);
 bool cart_nsf_active(void);
 unsigned cart_nsf_current_track(void);
+uint64_t cart_nsf_elapsed_cycles(void);
 
 // Notify physical PPU bus address changes using monotonic NTSC PPU cycles.
 // MMC3 qualifies A12 after three CPU clocks low; palette RAM is internal.
@@ -126,7 +139,7 @@ void cart_notify_vblank_start(void);
 
 // Persist nonvolatile PRG, CHR and serial EEPROM chips in separate save images.
 void cart_battery_configure(const char *rom_path, bool has_battery);
-void cart_battery_flush(void);
+bool cart_battery_flush(void);
 void cart_battery_shutdown(void);
 // Initialize the trainer window after PRG-RAM and battery data have been loaded.
 void cart_apply_trainer(const uint8_t trainer[512]);

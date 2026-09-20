@@ -6,11 +6,19 @@ Cupid has an SDL application for running games and music and a separate executab
 
 | Guide | Contents |
 | --- | --- |
+| [Desktop interface](desktop.md) | Menus, settings, feature panels, storage paths, and rendered examples |
 | [Getting started](getting-started.md) | Linux and Windows builds, output paths, opening cartridges, disks, and VS images |
 | [Configuration](configuration.md) | Application options, device selection, startup phases, diagnostic reads, EPSM firmware, and valid combinations |
 | [Controls and peripherals](controls.md) | Gamepads, adapters, paddles, light guns, mats, keyboards, Subor mouse, Hori Track, Oeka tablet, and specialty expansion controls |
 | [Hardware and compatibility](hardware.md) | Supported systems and mappers, RAM/register behavior, expansion sound, ROM metadata, and implementation limits |
 | [Saves and media](saves.md) | Cartridge saves, EEPROM and flash, Turbo File/BattleBox storage, disk images, tapes, and save failures |
+| [States and replay](replay.md) | State slots and files, rewind, run-ahead, deterministic input movies, and isolated save ownership |
+| [Netplay](netplay.md) | Host and guest setup, slot assignment, synchronization, and disconnect behavior |
+| [HD packs](hd-packs.md) | Replacement graphics and audio, installation, selection, export, and capture |
+| [Music player](music.md) | NSF/NSFe track selection, pause and stop, metadata, fades, silence detection, repeat, and shuffle |
+| [Screenshots and recordings](capture.md) | PNG screenshots, stereo WAV and AVI recording, capture timing, output paths, and file limits |
+| [Debugger and Lua](debugging.md) | Breakpoints, stepping, side-effect-free hardware inspection, Lua callbacks, and overlays |
+| [Cheat codes](cheats.md) | Supported code formats, compare behavior, saved per-game lists, and deterministic-session policy |
 | [Troubleshooting](troubleshooting.md) | Common error messages and the information needed for a reproducible report |
 
 ## Working on the core

@@ -24,13 +24,20 @@
  */
 
 #include "fds.h"
+#include "../replay/input_event.h"
+#include "../system/hardware.h"
+#include "../system/execution_policy.h"
+#include "../video/video_trace.h"
+#include "../cpu/cpu.h"
+#include "../ppu/ppu.h"
+#include "../media/patch.h"
+#include "../util/file_io.h"
+#include "game_db.h"
+#include <inttypes.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#ifdef _WIN32
-#include <windows.h>
-#endif
 
 #define FDS_BIOS_SIZE 0x2000u
 #define FDS_WORK_RAM_SIZE 0x8000u
@@ -46,6 +53,7 @@ typedef struct {
     uint8_t *drive;
     size_t drive_size;
     bool dirty;
+    uint8_t identity_header[10];
 } FdsSide;
 
 typedef struct {
@@ -91,7 +99,22 @@ struct FdsImage {
     uint8_t header[16];
     char *disk_path;
     bool write_protected;
+    FdsSaveMode save_mode;
+    uint8_t *original_disk;
+    size_t original_disk_size;
 };
+
+typedef struct {
+    uint64_t last_frame;
+    uint64_t last_check_frame;
+    uint32_t successive_checks;
+    int32_t eject_frames;
+    int32_t switch_frames;
+    int32_t retry_frames;
+    size_t previous_side;
+    bool game_started;
+    bool ambiguous;
+} FdsAutomationState;
 
 typedef struct {
     FdsImage *image;
@@ -127,9 +150,12 @@ typedef struct {
     bool dirty;
     Mirroring mirroring;
     FdsAudio audio;
+    FdsAutomationState automation;
 } FdsState;
 
 static FdsState fds;
+
+#include "fds_automation.h"
 
 typedef struct {
     uint8_t *data;
@@ -227,9 +253,9 @@ static void free_side(FdsSide *side) {
     memset(side, 0, sizeof(*side));
 }
 
-FdsImage *fds_image_create(const uint8_t *disk, size_t disk_size,
-                           const uint8_t *bios, size_t bios_size,
-                           const char *disk_path, bool write_protected) {
+static FdsImage *fds_image_create_data(const uint8_t *disk, size_t disk_size,
+                                       const uint8_t *bios, size_t bios_size,
+                                       const char *disk_path, bool write_protected) {
     if (!disk || !bios || bios_size != FDS_BIOS_SIZE) return NULL;
 
     bool headered = disk_size >= 16 && memcmp(disk, "FDS\x1A", 4) == 0;
@@ -277,6 +303,8 @@ FdsImage *fds_image_create(const uint8_t *disk, size_t disk_size,
         image->sides[side].raw = (uint8_t *)malloc(side_capacity);
         if (!image->sides[side].raw) { fds_image_destroy(image); return NULL; }
         memcpy(image->sides[side].raw, disk + offset + side * side_capacity, side_capacity);
+        memcpy(image->sides[side].identity_header, image->sides[side].raw + 14,
+               sizeof(image->sides[side].identity_header));
         if (!build_drive_side(&image->sides[side], side_capacity, qd_format)) {
             fds_image_destroy(image);
             return NULL;
@@ -290,8 +318,11 @@ void fds_image_destroy(FdsImage *image) {
     for (size_t i = 0; i < image->side_count; ++i) free_side(&image->sides[i]);
     free(image->sides);
     free(image->disk_path);
+    free(image->original_disk);
     free(image);
 }
+
+#include "fds_image_options.h"
 
 static void envelope_reset_timer(FdsEnvelope *channel) {
     channel->timer = 8u * ((uint32_t)channel->speed + 1u) * ((uint32_t)channel->master_speed + 1u);
@@ -478,6 +509,11 @@ void fds_activate(FdsImage *image) {
     fds_shutdown();
     memset(&fds, 0, sizeof(fds));
     fds.image = image;
+    if (image) {
+        nes_initialize_power_on_ram(fds.work_ram, sizeof(fds.work_ram), 0);
+        nes_initialize_power_on_ram(fds.chr_ram, sizeof(fds.chr_ram), 0);
+    }
+
     fds.current_side = image && image->side_count ? 0 : FDS_NO_SIDE;
     fds.mirroring = MIRROR_VERTICAL;
     fds.disk_regs_enabled = true;
@@ -488,6 +524,7 @@ void fds_activate(FdsImage *image) {
     fds.ext_connector = 0;
     fds.gap_ended = true;
     audio_reset(&fds.audio);
+    fds_automation_reset();
 }
 
 bool fds_active(void) { return fds.image != NULL; }
@@ -550,37 +587,8 @@ static bool rebuild_side(const FdsImage *image, const FdsSide *side, uint8_t *ou
     return true;
 }
 
-static bool atomic_replace(const char *path, const uint8_t *data, size_t size) {
-    size_t path_len = strlen(path);
-    const char suffix[] = ".cupid-fds.tmp";
-    if (path_len > SIZE_MAX - sizeof(suffix)) return false;
-    char *temp = (char *)malloc(path_len + sizeof(suffix));
-    if (!temp) return false;
-    memcpy(temp, path, path_len);
-    memcpy(temp + path_len, suffix, sizeof(suffix));
-
-    FILE *fp = fopen(temp, "wbx");
-    if (!fp) { free(temp); return false; }
-    size_t written = fwrite(data, 1, size, fp);
-    int close_result = fclose(fp);
-    if (written != size || close_result != 0) {
-        remove(temp);
-        free(temp);
-        return false;
-    }
-
-    bool replaced;
-#ifdef _WIN32
-    replaced = MoveFileExA(temp, path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
-#else
-    replaced = rename(temp, path) == 0;
-#endif
-    if (!replaced) remove(temp);
-    free(temp);
-    return replaced;
-}
-
 bool fds_flush(void) {
+    if (!nes_execution_allows_persistence()) return true;
     if (!fds.image || !fds.dirty) return true;
     if (fds.image->write_protected || !fds.image->disk_path) return false;
     size_t prefix = fds.image->headered ? 16u : 0u;
@@ -596,7 +604,20 @@ bool fds_flush(void) {
             return false;
         }
     }
-    bool ok = atomic_replace(fds.image->disk_path, output, size);
+    bool ok;
+    if (fds.image->save_mode == FDS_SAVE_OVERLAY) {
+        uint8_t *patch = NULL;
+        size_t patch_size = 0;
+        NesPatchResult patched = nes_patch_create_ips(fds.image->original_disk,
+                                                       fds.image->original_disk_size,
+                                                       output, size, 32u * 1024u * 1024u,
+                                                       &patch, &patch_size);
+        ok = patched == NES_PATCH_OK
+            && nes_file_write_atomic(fds.image->disk_path, patch, patch_size) == NES_FILE_OK;
+        free(patch);
+    } else {
+        ok = nes_file_write_atomic(fds.image->disk_path, output, size) == NES_FILE_OK;
+    }
     if (ok) {
         for (size_t side = 0; side < fds.image->side_count; ++side) {
             FdsSide *disk_side = &fds.image->sides[side];
@@ -621,12 +642,17 @@ void fds_shutdown(void) {
 }
 
 bool fds_disk_dirty(void) { return fds.dirty; }
+FdsSaveMode fds_save_mode(void) { return fds.image ? fds.image->save_mode : FDS_SAVE_IN_PLACE; }
+const char *fds_save_path(void) { return fds.image ? fds.image->disk_path : NULL; }
 size_t fds_side_count(void) { return fds.image ? fds.image->side_count : 0; }
 bool fds_disk_inserted(void) { return fds.image && fds.current_side < fds.image->side_count; }
 size_t fds_current_side(void) { return fds_disk_inserted() ? fds.current_side : FDS_NO_SIDE; }
 
 bool fds_insert_disk(size_t side) {
     if (!fds.image || side >= fds.image->side_count) return false;
+    if (side > INT32_MAX) return false;
+    NesInputEvent event = {.type = NES_INPUT_EVENT_FDS_INSERT, .a = (int32_t)side};
+    if (!nes_input_event_submit(&event)) return false;
     fds.current_side = side;
     fds.end_of_head = true;
     fds.scanning = false;
@@ -635,10 +661,15 @@ bool fds_insert_disk(size_t side) {
 }
 
 void fds_eject_disk(void) {
+    NesInputEvent event = {.type = NES_INPUT_EVENT_FDS_EJECT};
+    if (!nes_input_event_submit(&event)) return;
     fds.current_side = FDS_NO_SIDE;
 }
 
 void fds_set_write_protected(bool protected_media) {
+    uint32_t policy = nes_execution_policy();
+    if (policy & (NES_EXECUTION_MOVIE_RECORDING | NES_EXECUTION_MOVIE_PLAYBACK
+                  | NES_EXECUTION_NETPLAY)) return;
     if (fds.image) fds.image->write_protected = protected_media;
 }
 
@@ -683,6 +714,7 @@ static void clock_disk(void) {
     if (!fds_disk_inserted() || !fds.motor_on) {
         fds.end_of_head = true;
         fds.scanning = false;
+        if (fds.automation.eject_frames < 0) fds.automation.eject_frames = 77;
         return;
     }
     if (fds.reset_transfer && !fds.scanning) return;
@@ -699,6 +731,8 @@ static void clock_disk(void) {
     }
 
     fds.scanning = true;
+    fds.automation.eject_frames = -1;
+    fds.automation.switch_frames = -1;
     uint8_t data = 0;
     bool need_irq = fds.transfer_irq_enabled;
     if (fds.read_mode) {
@@ -753,6 +787,7 @@ static void clock_disk(void) {
 
 void fds_clock_cpu(int cpu_cycles) {
     for (int cycle = 0; cycle < cpu_cycles; ++cycle) {
+        fds_automation_frame(ppu.frame_count);
         clock_timer();
         audio_clock(&fds.audio);
         clock_disk();
@@ -782,6 +817,8 @@ void fds_nsf_audio_write(uint16_t addr, uint8_t value) { audio_write(&fds.audio,
 float fds_nsf_audio_output(void) { return -(float)fds.audio.output * (20.0f / 5000.0f); }
 
 uint8_t fds_ppu_read(uint16_t addr) {
+    if (nes_video_trace_active)
+        nes_video_trace_chr_read(fds.chr_ram, sizeof(fds.chr_ram), addr & 0x1FFFu, true);
     return fds.chr_ram[addr & 0x1FFF];
 }
 
@@ -792,7 +829,10 @@ void fds_ppu_write(uint16_t addr, uint8_t value) {
 uint8_t fds_cpu_read_bus(uint16_t addr, uint8_t open_bus) {
     if (!fds.image) return open_bus;
     if (addr >= 0x6000 && addr <= 0xDFFF) return fds.work_ram[addr - 0x6000];
-    if (addr >= 0xE000) return fds.image->bios[addr - 0xE000];
+    if (addr >= 0xE000) {
+        fds_automation_bios_read(addr);
+        return fds.image->bios[addr - 0xE000];
+    }
     if (addr >= 0x4040 && addr <= 0x4097) return audio_read(&fds.audio, addr, open_bus);
     switch (addr) {
         case 0x4030: {
@@ -813,12 +853,45 @@ uint8_t fds_cpu_read_bus(uint16_t addr, uint8_t open_bus) {
             if (!fds_disk_inserted()) value |= 0x01;
             if (!fds_disk_inserted() || !fds.scanning) value |= 0x02;
             if (!fds_disk_inserted() || fds.image->write_protected) value |= 0x04;
+            fds_automation_status_read();
             return value;
         }
         case 0x4033:
             return (uint8_t)(fds.ext_connector | (fds.motor_on ? 0x80 : 0));
         default:
             return open_bus;
+    }
+}
+
+uint8_t fds_cpu_peek_bus(uint16_t addr, uint8_t open_bus) {
+    if (!fds.image) return open_bus;
+    if (addr >= 0x6000 && addr <= 0xDFFF) return fds.work_ram[addr - 0x6000];
+    if (addr >= 0xE000) return fds.image->bios[addr - 0xE000];
+    if (addr >= 0x4040 && addr <= 0x4097) {
+        FdsAudio saved = fds.audio;
+        uint8_t value = audio_read(&fds.audio, addr, open_bus);
+        fds.audio = saved;
+        return value;
+    }
+    switch (addr) {
+        case 0x4030: {
+            uint8_t value = open_bus & 0x24;
+            if (fds.timer_irq) value |= 0x01;
+            if (fds.mirroring == MIRROR_HORIZONTAL) value |= 0x08;
+            if (fds.image->qd_format && fds.bad_crc) value |= 0x10;
+            if (fds.transfer_complete) value |= 0x80;
+            return value;
+        }
+        case 0x4031: return fds.read_data;
+        case 0x4032: {
+            uint8_t value = open_bus & 0xF8;
+            if (!fds_disk_inserted()) value |= 0x01;
+            if (!fds_disk_inserted() || !fds.scanning) value |= 0x02;
+            if (!fds_disk_inserted() || fds.image->write_protected) value |= 0x04;
+            return value;
+        }
+        case 0x4033: return (uint8_t)(fds.ext_connector | (fds.motor_on ? 0x80 : 0));
+        default: return open_bus;
     }
 }
 
@@ -888,3 +961,5 @@ void fds_cpu_write(uint16_t addr, uint8_t value) {
             break;
     }
 }
+
+#include "fds_state_impl.h"

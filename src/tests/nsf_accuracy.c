@@ -426,6 +426,13 @@ static size_t make_nsfe(uint8_t *out, size_t capacity, const uint8_t *program,
     return off;
 }
 
+static size_t make_nsfe_region(uint8_t *out, size_t capacity, const uint8_t *program,
+                               size_t program_size, uint8_t region) {
+    size_t size = make_nsfe(out, capacity, program, program_size, false);
+    if (size) out[4 + 8 + 6] = region; /* INFO is the first chunk. */
+    return size;
+}
+
 static int test_nsfe_metadata_and_required_chunks(void) {
     cpu_use_default_startup_alignment();
     uint8_t program[0x100];
@@ -453,6 +460,166 @@ static int test_nsfe_metadata_and_required_chunks(void) {
     CHECK(size != 0 && !nsf_parse_image(file, size, &parsed));
     return 0;
 }
+
+static bool nsf_play_calls_match_cycles(uint32_t expected_cycles) {
+    uint8_t previous = cart_cpu_read(0x6001);
+    if (previous != 0 || !expected_cycles) return false;
+
+    uint64_t start = cpu_total_cycles;
+    uint64_t play_cycle[2] = {0};
+    unsigned calls = 0;
+    uint64_t deadline = start + (uint64_t)expected_cycles * 3u + 256u;
+    while (calls < 2 && cpu_total_cycles < deadline) {
+        (void)cpu_step(&cpu);
+        uint8_t current = cart_cpu_read(0x6001);
+        if (current == previous) continue;
+        if (current != (uint8_t)(previous + 1u)) return false;
+        previous = current;
+        play_cycle[calls++] = cpu_total_cycles;
+    }
+    if (calls != 2) return false;
+
+    uint64_t first = play_cycle[0] - start;
+    uint64_t interval = play_cycle[1] - play_cycle[0];
+    return first + 64u >= expected_cycles && first <= (uint64_t)expected_cycles + 64u
+        && interval + 16u >= expected_cycles && interval <= (uint64_t)expected_cycles + 16u;
+}
+
+typedef struct {
+    bool nsfe;
+    NesRegionMode mode;
+    const char *mode_name;
+    uint8_t metadata_region;
+    NesRegion effective_region;
+    const char *effective_name;
+    uint32_t play_cycles;
+} NsfRegionCase;
+
+#define REGION_CHECK(condition) do { \
+    if (!(condition)) { \
+        fprintf(stderr, "%s:%d: %s\n", __func__, __LINE__, #condition); \
+        failed = 1; \
+        goto cleanup; \
+    } \
+} while (0)
+
+static int test_nsf_region_modes(void) {
+    static const NsfRegionCase cases[] = {
+        {false, NES_REGION_MODE_AUTO,  "auto",  1, NES_REGION_PAL,   "PAL",   3330},
+        {false, NES_REGION_MODE_NTSC,  "ntsc",  1, NES_REGION_NTSC,  "NTSC",  1795},
+        {false, NES_REGION_MODE_PAL,   "pal",   0, NES_REGION_PAL,   "PAL",   3330},
+        {false, NES_REGION_MODE_DENDY, "dendy", 0, NES_REGION_DENDY, "Dendy", 3552},
+        {true,  NES_REGION_MODE_AUTO,  "auto",  1, NES_REGION_PAL,   "PAL",   33247},
+        {true,  NES_REGION_MODE_NTSC,  "ntsc",  1, NES_REGION_NTSC,  "NTSC",  29780},
+        {true,  NES_REGION_MODE_PAL,   "pal",   0, NES_REGION_PAL,   "PAL",   33247},
+        {true,  NES_REGION_MODE_DENDY, "dendy", 0, NES_REGION_DENDY, "Dendy", 35463}
+    };
+    const uint16_t nsf_ntsc_speed = 1003;
+    const uint16_t nsf_pal_speed = 2003;
+    NesRegionMode saved_mode = nes_region_mode();
+    NesRegion saved_region = nes_timing()->region;
+    uint8_t program[0x100];
+    uint8_t file[0x500];
+    uint8_t invalid[0x500];
+    int failed = 0;
+
+    cpu_use_default_startup_alignment();
+    make_play_program(program, sizeof(program));
+
+    for (size_t index = 0; index < sizeof(cases) / sizeof(cases[0]); ++index) {
+        const NsfRegionCase *test = &cases[index];
+        REGION_CHECK(nes_set_region_mode(test->mode));
+        REGION_CHECK(nes_region_mode() == test->mode);
+        REGION_CHECK(strcmp(nes_region_mode_name(), test->mode_name) == 0);
+        REGION_CHECK(nes_set_region_mode_name(test->mode_name));
+        REGION_CHECK(nes_region_mode() == test->mode);
+
+        size_t size = test->nsfe
+            ? make_nsfe_region(file, sizeof(file), program, sizeof(program), test->metadata_region)
+            : make_nsf(file, sizeof(file), test->metadata_region, 0,
+                       nsf_ntsc_speed, nsf_pal_speed, 1, program, sizeof(program));
+        REGION_CHECK(size != 0 && load_rom_memory(file, size) == 0);
+        REGION_CHECK(nes_timing()->region == test->effective_region);
+        REGION_CHECK(strcmp(nes_region_name(nes_timing()->region), test->effective_name) == 0);
+
+        const NsfMetadata *metadata = rom_nsf_metadata();
+        REGION_CHECK(metadata != NULL);
+        REGION_CHECK(metadata->nsfe == test->nsfe);
+        REGION_CHECK(metadata->region_flags == test->metadata_region);
+        REGION_CHECK(metadata->total_songs == 2 && metadata->starting_song == 0);
+        if (test->nsfe) {
+            REGION_CHECK(metadata->play_speed_ntsc == 16639);
+            REGION_CHECK(metadata->play_speed_pal == 19997);
+        } else {
+            REGION_CHECK(metadata->play_speed_ntsc == nsf_ntsc_speed);
+            REGION_CHECK(metadata->play_speed_pal == nsf_pal_speed);
+        }
+
+        REGION_CHECK(power_music() == 0 && run_until_init(0) == 0);
+        uint8_t expected_x = test->effective_region == NES_REGION_PAL ? 1u : 0u;
+        REGION_CHECK(cart_cpu_read(0x6002) == expected_x);
+        REGION_CHECK(nsf_play_calls_match_cycles(test->play_cycles));
+
+        NesRegion loaded_region = nes_timing()->region;
+        ppu_soft_reset(&ppu);
+        apu_soft_reset(&apu);
+        cpu_soft_reset(&cpu);
+        REGION_CHECK(nes_timing()->region == loaded_region);
+        REGION_CHECK(run_until_init(0) == 0);
+        REGION_CHECK(cart_cpu_read(0x6002) == expected_x);
+
+        REGION_CHECK(rom_nsf_select_track(1));
+        REGION_CHECK(nes_timing()->region == loaded_region);
+        REGION_CHECK(run_until_init(1) == 0);
+        REGION_CHECK(cart_cpu_read(0x6002) == expected_x);
+        metadata = rom_nsf_metadata();
+        REGION_CHECK(metadata != NULL && metadata->region_flags == test->metadata_region);
+        REGION_CHECK(nsf_play_calls_match_cycles(test->play_cycles));
+    }
+
+    REGION_CHECK(nes_set_region_mode(NES_REGION_MODE_DENDY));
+    size_t active_size = make_nsf(file, sizeof(file), 1, 0,
+                                  nsf_ntsc_speed, nsf_pal_speed, 1,
+                                  program, sizeof(program));
+    REGION_CHECK(active_size != 0 && load_rom_memory(file, active_size) == 0);
+    REGION_CHECK(nes_timing()->region == NES_REGION_DENDY);
+    REGION_CHECK(power_music() == 0 && run_until_init(0) == 0);
+    REGION_CHECK(cart_cpu_read(0x6002) == 0);
+    Mapper *active_cart = cart;
+    uint32_t active_crc = rom_file_crc32();
+
+    REGION_CHECK(nes_set_region_mode_name("pal"));
+    REGION_CHECK(nes_region_mode() == NES_REGION_MODE_PAL);
+    REGION_CHECK(nes_timing()->region == NES_REGION_DENDY);
+    memcpy(invalid, file, active_size);
+    put16(invalid + 8, 0x5000);
+    REGION_CHECK(load_rom_memory(invalid, active_size) == -1);
+    REGION_CHECK(cart == active_cart && rom_is_nsf() && rom_file_crc32() == active_crc);
+    REGION_CHECK(nes_timing()->region == NES_REGION_DENDY);
+    const NsfMetadata *active_metadata = rom_nsf_metadata();
+    REGION_CHECK(active_metadata != NULL && !active_metadata->nsfe && active_metadata->region_flags == 1);
+
+    size_t next_size = make_nsfe_region(file, sizeof(file), program, sizeof(program), 0);
+    REGION_CHECK(next_size != 0 && load_rom_memory(file, next_size) == 0);
+    REGION_CHECK(nes_timing()->region == NES_REGION_PAL);
+    REGION_CHECK(nes_region_mode() == NES_REGION_MODE_PAL);
+    const NsfMetadata *next_metadata = rom_nsf_metadata();
+    REGION_CHECK(next_metadata != NULL && next_metadata->nsfe && next_metadata->region_flags == 0);
+    REGION_CHECK(power_music() == 0 && run_until_init(0) == 0);
+    REGION_CHECK(cart_cpu_read(0x6002) == 1);
+    REGION_CHECK(nsf_play_calls_match_cycles(33247));
+
+cleanup:
+    unload_rom();
+    nes_set_region(saved_region);
+    if (!nes_set_region_mode(saved_mode)) {
+        fprintf(stderr, "%s:%d: failed to restore saved region mode\n", __func__, __LINE__);
+        failed = 1;
+    }
+    return failed;
+}
+
+#undef REGION_CHECK
 
 static int load_audio_nsf(uint8_t sound_chip) {
     uint8_t payload[0x100];
@@ -530,6 +697,52 @@ static int test_nsf_expansion_audio(void) {
     return 0;
 }
 
+static int test_nsf_mmc5_multiplier_reset(void) {
+    cpu_use_default_startup_alignment();
+    static const uint8_t program[] = {
+        0x8D, 0x00, 0x60, /* STA $6000: selected song */
+        0xAD, 0x05, 0x52, /* LDA $5205 */
+        0x8D, 0x03, 0x60, /* STA $6003: product low byte */
+        0xAD, 0x06, 0x52, /* LDA $5206 */
+        0x8D, 0x04, 0x60, /* STA $6004: product high byte */
+        0x60,             /* INIT: RTS */
+        0x60              /* PLAY: RTS */
+    };
+    uint8_t image[0x80 + sizeof(program)];
+    size_t size = make_nsf(image, sizeof(image), 0, NSF_SOUND_MMC5,
+                           1000, 1000, 1, program, sizeof(program));
+    CHECK(size != 0 && load_rom_memory(image, size) == 0);
+    CHECK(power_music() == 0 && run_until_init(0) == 0);
+    CHECK(read_mem(0x6003) == 0 && read_mem(0x6004) == 0);
+
+    write_mem(0x5205, 0xFE);
+    write_mem(0x5206, 0xFD);
+    CHECK(read_mem(0x5205) == 0x06 && read_mem(0x5206) == 0xFB);
+    ppu_soft_reset(&ppu);
+    apu_soft_reset(&apu);
+    cpu_soft_reset(&cpu);
+    CHECK(run_until_init(0) == 0);
+    CHECK(read_mem(0x6003) == 0x06 && read_mem(0x6004) == 0xFB);
+
+    write_mem(0x5205, 7);
+    CHECK(rom_nsf_select_track(1) && run_until_init(1) == 0);
+    CHECK(read_mem(0x6003) == 0xEB && read_mem(0x6004) == 0x06);
+    write_mem(0x5206, 3);
+    CHECK(read_mem(0x5205) == 21 && read_mem(0x5206) == 0);
+
+    CHECK(load_rom_memory(image, size) == 0);
+    CHECK(power_music() == 0 && run_until_init(0) == 0);
+    CHECK(read_mem(0x6003) == 0 && read_mem(0x6004) == 0);
+    write_mem(0x5205, 0xFF);
+    CHECK(read_mem(0x5205) == 0 && read_mem(0x5206) == 0);
+
+    CHECK(load_rom_memory(image, size) == 0);
+    CHECK(power_music() == 0 && run_until_init(0) == 0);
+    write_mem(0x5206, 0xFF);
+    CHECK(read_mem(0x5205) == 0 && read_mem(0x5206) == 0);
+    return 0;
+}
+
 static void configure_nsf_audio(uint8_t chips) {
     if (chips & NSF_SOUND_MMC5) write_mem(0x5011, 0x20);
     if (chips & NSF_SOUND_FDS) {
@@ -599,7 +812,7 @@ static int test_nsf_expansion_combinations_and_reset(void) {
         CHECK(rom_nsf_select_track(1));
         CHECK(fabsf(cart_expansion_audio()) < 0.000001f);
         if (mask & NSF_SOUND_MMC5)
-            CHECK(read_mem(0x5205) == 0 && read_mem(0x5206) == 0);
+            CHECK(read_mem(0x5205) == 91 && read_mem(0x5206) == 0);
         if (mask & NSF_SOUND_NAMCO163) {
             write_mem(0xF800, 0x00);
             CHECK(read_mem(0x4800) == 0);
@@ -760,12 +973,14 @@ int test_nsf_accuracy(void) {
     failures += test_nsf_zero_reload_and_irq_mask();
     failures += test_nsf_ppu_clock_only_and_restore();
     failures += test_nsfe_metadata_and_required_chunks();
+    failures += test_nsf_region_modes();
     failures += test_nsf_expansion_audio();
+    failures += test_nsf_mmc5_multiplier_reset();
     failures += test_nsf_expansion_combinations_and_reset();
     failures += test_nsfe_fade_and_replacement();
     failures += test_nsf_metadata_string_boundaries();
     failures += test_nsf_invalid_images();
     unload_rom();
-    printf("NSF/NSFe accuracy: 11 groups, %d failures\n", failures);
+    printf("NSF/NSFe accuracy: 13 groups, %d failures\n", failures);
     return failures;
 }

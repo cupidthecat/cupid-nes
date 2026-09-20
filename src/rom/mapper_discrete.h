@@ -123,14 +123,14 @@ static void cprom_cpu_write(uint16_t a, uint8_t v) {
 static uint8_t cprom_ppu_read(uint16_t a) {
     a &= 0x1FFF;
     size_t page_size = shrunk_chr_page_size(CHR_BANK_4K);
-    if (!page_size) return chr_unmapped_read(a);
+    if (!page_size) return chr_default_read(a, CHR_BANK_4K);
     size_t slot = a / page_size;
-    if (slot == 0) return C.chr[a % page_size];
+    if (slot == 0) return chr_read_byte(a % page_size);
     if (slot == 1 && cprom.chr_bank_mapped) {
         size_t bank = cprom.chr_bank % (C.chr_sz / page_size);
-        return C.chr[bank * page_size + (a % page_size)];
+        return chr_read_byte(bank * page_size + (a % page_size));
     }
-    return chr_unmapped_read(a);
+    return chr_default_read(a, CHR_BANK_4K);
 }
 
 static void cprom_ppu_write(uint16_t a, uint8_t v) {
@@ -144,7 +144,7 @@ static void cprom_ppu_write(uint16_t a, uint8_t v) {
         size_t bank = cprom.chr_bank % (C.chr_sz / page_size);
         chr_ram_write(bank * page_size + (a % page_size), v);
     } else {
-        chr_ram_write(a % C.chr_sz, v);
+        chr_default_write(a, CHR_BANK_4K, v);
     }
 }
 
@@ -303,18 +303,18 @@ static void bandai_cpu_write(uint16_t address, uint8_t value) {
 
 static uint8_t bandai_ppu_read(uint16_t address) {
     address &= 0x1FFFu;
-    if (C.chr_is_ram) return C.chr[address % C.chr_sz];
+    if (C.chr_is_ram) return chr_default_read(address, CHR_BANK_1K);
     if (C.ram.chr_ram || C.ram.chr_nvram) return (uint8_t)address;
     unsigned slot;
     size_t page_size, page_count;
     if (!shrunk_chr_slot_geometry(address, CHR_BANK_1K, 8, &slot, &page_size, &page_count))
-        return chr_unmapped_read(address);
+        return chr_default_read(address, CHR_BANK_1K);
     if (!(bandai.chr_mapped & (1u << slot))) return (uint8_t)address;
-    return C.chr[shrunk_chr_bank_offset(address, page_size, page_count, bandai.chr_banks[slot])];
+    return chr_read_byte(shrunk_chr_bank_offset(address, page_size, page_count, bandai.chr_banks[slot]));
 }
 
 static void bandai_ppu_write(uint16_t address, uint8_t value) {
-    if (C.chr_is_ram) chr_ram_write((address & 0x1FFFu) % C.chr_sz, value);
+    if (C.chr_is_ram) chr_default_write(address, CHR_BANK_1K, value);
 }
 
 static void bandai_clock(int cycles) {
@@ -513,7 +513,6 @@ static void nsf_clock(int cpu_cycles) {
 static void nsf_reset(bool soft_reset) {
     if (!soft_reset) nsf_player.song = nsf_player.metadata.starting_song;
     nsf_player.play_counter = 0;
-    nsf_player.mmc5_multiplier[0] = nsf_player.mmc5_multiplier[1] = 0;
     mapper_irq_line = false;
     if (nsf_player.metadata.sound_chips & NSF_SOUND_MMC5) mmc5_reset();
     if (nsf_player.metadata.sound_chips & NSF_SOUND_VRC6) { vrc6.variant_b = false; vrc6_reset(); }
@@ -554,13 +553,13 @@ static void nsf_after_reset(void) {
         nsf_player.lower_program[1] = true;
     }
     cpu.a = nsf_player.song;
-    cpu.x = nes_timing()->region == NES_REGION_NTSC ? 0 : 1;
+    cpu.x = nes_timing()->region == NES_REGION_PAL ? 1 : 0;
     cpu.y = 0;
     cpu.sp = 0xFD;
     nsf_player.track_start_cycle = cpu_total_cycles;
 }
 
-static uint8_t nsf_ppu_read(uint16_t address) { return C.chr[address & 0x1FFFu]; }
+static uint8_t nsf_ppu_read(uint16_t address) { return chr_read_byte(address & 0x1FFFu); }
 static void nsf_ppu_write(uint16_t address, uint8_t value) { C.chr[address & 0x1FFFu] = value; }
 static Mirroring nsf_mirroring(void) { return MIRROR_HORIZONTAL; }
 
@@ -603,6 +602,11 @@ int mapper_init_nsf(const NsfImage *image, uint8_t *program, size_t program_size
 
 bool cart_nsf_active(void) { return cart == &mapper_nsf; }
 unsigned cart_nsf_current_track(void) { return cart == &mapper_nsf ? nsf_player.song : 0; }
+uint64_t cart_nsf_elapsed_cycles(void) {
+    return cart == &mapper_nsf && cpu_total_cycles >= nsf_player.track_start_cycle
+        ? cpu_total_cycles - nsf_player.track_start_cycle : 0;
+}
+
 bool cart_nsf_select_track(unsigned track) {
     if (cart != &mapper_nsf || track >= nsf_player.metadata.total_songs) return false;
     nsf_player.song = (uint8_t)track;
@@ -623,6 +627,9 @@ bool cart_set_barcode(const char *digits) {
     if (count != 8 && count != 13) return false;
     for (size_t i = 0; i < count; ++i)
         if (digits[i] < '0' || digits[i] > '9') return false;
+    NesInputEvent event = {.type = NES_INPUT_EVENT_CART_BARCODE};
+    memcpy(event.text, digits, count + 1);
+    if (!nes_input_event_submit(&event)) return false;
     static const uint8_t left[] = {0x0D, 0x19, 0x13, 0x3D, 0x23, 0x31, 0x2F, 0x3B, 0x37, 0x0B};
     static const uint8_t parity[] = {0x3F, 0x34, 0x32, 0x31, 0x2C, 0x26, 0x23, 0x2A, 0x29, 0x25};
     uint8_t bits[160];
@@ -655,6 +662,10 @@ bool cart_set_barcode(const char *digits) {
     bandai.barcode_length = length;
     bandai.barcode_cycles = 0;
     return true;
+}
+
+bool cart_barcode_supported(void) {
+    return cart == &mapper_bandai && bandai.mapper == 157;
 }
 
 // Mapper 28: Action 53.
@@ -1218,8 +1229,8 @@ static uint8_t jaleco18_ppu_read(uint16_t a) {
     size_t page_size, page_count;
     if (!shrunk_chr_slot_geometry(a, CHR_BANK_1K, 8, &slot, &page_size, &page_count)
         || !(jaleco18.chr_mapped & (1u << slot)))
-        return chr_unmapped_read(a);
-    return C.chr[shrunk_chr_bank_offset(a, page_size, page_count, jaleco18.chr_banks[slot])];
+        return chr_default_read(a, CHR_BANK_1K);
+    return chr_read_byte(shrunk_chr_bank_offset(a, page_size, page_count, jaleco18.chr_banks[slot]));
 }
 
 static void jaleco18_ppu_write(uint16_t a, uint8_t v) {
@@ -1229,7 +1240,7 @@ static void jaleco18_ppu_write(uint16_t a, uint8_t v) {
     size_t page_size, page_count;
     if (!shrunk_chr_slot_geometry(a, CHR_BANK_1K, 8, &slot, &page_size, &page_count)
         || !(jaleco18.chr_mapped & (1u << slot))) {
-        chr_ram_write(a % C.chr_sz, v);
+        chr_default_write(a, CHR_BANK_1K, v);
         return;
     }
     chr_ram_write(shrunk_chr_bank_offset(a, page_size, page_count, jaleco18.chr_banks[slot]), v);

@@ -91,6 +91,13 @@ public:
             _counter = 0;
         }
     }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("mapper222.counter", _counter)
+            && state.Field("mapper222.lastFrameCycle", _lastFrameCycle)
+            && state.Field("mapper222.cyclesDown", _cyclesDown);
+    }
 };
 
 class Mapper225 final : public Board {
@@ -127,6 +134,11 @@ protected:
 public:
     void Reset(bool soft) override {
         if (soft) { _regs.fill(0); SelectPrgPage2x(0, 0); SelectChrPage(0, 0); }
+    }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("mapper226.regs", _regs);
     }
 };
 
@@ -198,6 +210,11 @@ public:
         SelectPrgPage(1, _contraMode ? 7 : 9);
         SetMirroringType(_contraMode ? MirroringType::Vertical : MirroringType::Horizontal);
     }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("mapper230.contraMode", _contraMode);
+    }
 };
 
 class Mapper231 final : public Board {
@@ -222,6 +239,11 @@ public:
         Mapper226::Reset(soft);
         if (soft) { _reset ^= 1; UpdatePrg(); }
         else _reset = 0;
+    }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Mapper226::VisitState(state)
+            && state.Field("mapper233.reset", _reset);
     }
 };
 

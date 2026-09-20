@@ -37,6 +37,12 @@ class GoldenFive final : public Board {
             SelectPrgPage(1, ((value << 4) & 0x70) | 15);
         }
     }
+
+public:
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("golden_five.prg_register", _prgRegister);
+    }
 };
 
 } // namespace cupid::boards

@@ -28,6 +28,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdatomic.h>
+#include "../state/state_io.h"
 typedef struct blip_t blip_t;
 // NTSC APU frame-sequencer constants (CPU cycles)
 #define APU_4STEP_PERIOD 29830u
@@ -142,6 +143,16 @@ typedef struct {
 } DMC;
 
 typedef struct {
+    blip_t *reconstruction;
+    int32_t level;
+    float hp90_prev_in;
+    float hp90_prev_out;
+    float hp440_prev_in;
+    float hp440_prev_out;
+    float lp14k_prev_out;
+} ApuRightOutput;
+
+typedef struct {
     // Frame sequencer
     uint32_t cycle_in_seq;
     bool five_step;
@@ -171,6 +182,7 @@ typedef struct {
     blip_t  *reconstruction;
     int32_t  reconstructed_level;
     uint64_t audio_transition_count;
+    ApuRightOutput right_output;
 
     // Output filter state/coefs (NES-like analog chain approximation)
     float hp90_alpha;
@@ -211,10 +223,16 @@ void apu_audio_pull_stereo(APU *state, float *samples, int frames);
 // Select the DMC CPU timing model. The selection persists across APU resets.
 bool apu_set_cpu_revision(ApuCpuRevision revision);
 ApuCpuRevision apu_get_cpu_revision(void);
+// Optional channel hardware profiles persist across APU resets.
+void apu_set_disable_noise_mode(bool enabled);
+bool apu_noise_mode_disabled(void);
+void apu_set_swap_duty_cycles(bool enabled);
+bool apu_swap_duty_cycles_enabled(void);
 
 // memory-mapped access
-void    apu_write(uint16_t addr, uint8_t val);
+void apu_write(uint16_t addr, uint8_t val);
 uint8_t apu_read(uint16_t addr);
+uint8_t apu_debug_peek_status(void);
 // Raw channel DAC values used by the optional CPU diagnostic-read profile.
 uint8_t apu_read_test_output(uint16_t addr);
 
@@ -235,5 +253,15 @@ void apu_dmc_dma_complete(APU *a, uint8_t value);
 // SDL glue
 void apu_sdl_audio_callback(void *userdata, uint8_t *stream, int len);
 void apu_sdl_stereo_callback(void *userdata, uint8_t *stream, int len);
+
+bool apu_state_capture(NesStateWriter *writer);
+bool apu_state_validate(NesStateReader *reader);
+bool apu_state_apply(NesStateReader *reader);
+bool apu_machine_state_capture(NesStateWriter *writer, const APU *state);
+bool apu_machine_state_validate(const APU *target, NesStateReader *reader);
+bool apu_machine_state_apply(APU *target, NesStateReader *reader);
+/* Canonical hardware fields exclude listening, reconstruction, and host queues. */
+bool apu_hardware_state_capture(NesStateWriter *writer);
+bool apu_machine_hardware_state_capture(NesStateWriter *writer, const APU *state);
 
 #endif

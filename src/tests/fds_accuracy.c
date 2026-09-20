@@ -40,6 +40,7 @@
 #include "../cpu/cpu.h"
 #include "../ppu/ppu.h"
 #include "../apu/apu.h"
+#include "../system/hardware.h"
 #include "../system/timing.h"
 #include "../system/vs_system.h"
 #include "../../include/globals.h"
@@ -231,6 +232,105 @@ static int test_fds_loader_and_memory(void) {
     CHECK(rom_is_fds() && cart == fds_mapper && fds_side_count() == 2);
     free(unsupported);
     return 0;
+}
+
+static void read_fds_ram(uint8_t snapshot[0xA000]) {
+    for (unsigned offset = 0; offset < 0x8000; ++offset) {
+        snapshot[offset] = cart_cpu_read((uint16_t)(0x6000 + offset));
+    }
+
+    for (unsigned offset = 0; offset < 0x2000; ++offset) {
+        snapshot[0x8000 + offset] = cart_ppu_read((uint16_t)offset);
+    }
+}
+
+static int check_fds_power_on_ram(void) {
+    static const NesRamPowerOnState profiles[] = {
+        NES_RAM_POWER_DEFAULT, NES_RAM_POWER_ZERO, NES_RAM_POWER_ONES
+    };
+    uint8_t snapshot[0xA000];
+    uint8_t repeated[0xA000];
+    for (size_t profile = 0; profile < sizeof(profiles) / sizeof(profiles[0]); ++profile) {
+        CHECK(nes_set_ram_power_on_state(profiles[profile]));
+        CHECK(load_fixture(1, true, NULL, true) == 0);
+        read_fds_ram(snapshot);
+        uint8_t expected = profiles[profile] == NES_RAM_POWER_ONES ? 0xFF : 0;
+        for (size_t offset = 0; offset < sizeof(snapshot); ++offset) {
+            CHECK(snapshot[offset] == expected);
+        }
+
+        CHECK(cart_cpu_read(0xE000) == 0xEA);
+        CHECK((cart_cpu_read_bus(0x4032, 0) & 7) == 6);
+    }
+
+    CHECK(nes_set_ram_power_on_state(NES_RAM_POWER_RANDOM));
+    nes_seed_power_on_random(0x12345678u);
+    CHECK(load_fixture(1, true, NULL, false) == 0);
+    read_fds_ram(snapshot);
+    bool work_varies = false, chr_varies = false;
+    for (size_t offset = 1; offset < 0x8000; ++offset) {
+        work_varies |= snapshot[offset] != snapshot[0];
+    }
+
+    for (size_t offset = 0x8001; offset < sizeof(snapshot); ++offset) {
+        chr_varies |= snapshot[offset] != snapshot[0x8000];
+    }
+
+    CHECK(work_varies && chr_varies);
+    nes_seed_power_on_random(0x12345678u);
+    CHECK(load_fixture(1, true, NULL, false) == 0);
+    read_fds_ram(repeated);
+    CHECK(memcmp(snapshot, repeated, sizeof(snapshot)) == 0);
+    nes_seed_power_on_random(0x87654321u);
+    CHECK(load_fixture(1, true, NULL, false) == 0);
+    read_fds_ram(repeated);
+    CHECK(memcmp(snapshot, repeated, 0x8000) != 0);
+    CHECK(memcmp(snapshot + 0x8000, repeated + 0x8000, 0x2000) != 0);
+
+    // Starting the CPU and pressing reset must preserve the disk adapter's RAM.
+    CHECK(nes_set_ram_power_on_state(NES_RAM_POWER_ZERO));
+    cart_cpu_write(0x6000, 0xA5);
+    cart_cpu_write(0xDFFF, 0x5A);
+    cart_ppu_write(0x0000, 0x3C);
+    cart_ppu_write(0x1FFF, 0xC3);
+    read_fds_ram(snapshot);
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    CHECK(cpu_power_on(&cpu));
+    cpu_soft_reset(&cpu);
+    read_fds_ram(repeated);
+    CHECK(memcmp(snapshot, repeated, sizeof(snapshot)) == 0);
+
+    // A rejected image must neither replace RAM nor consume its next random pattern.
+    CHECK(nes_set_ram_power_on_state(NES_RAM_POWER_RANDOM));
+    uint8_t expected_random[64], actual_random[64];
+    nes_seed_power_on_random(0x2468ACE0u);
+    nes_initialize_power_on_ram(expected_random, sizeof(expected_random), 0);
+    nes_seed_power_on_random(0x2468ACE0u);
+    uint8_t invalid_image[16] = {0};
+    CHECK(load_fds_memory(invalid_image, sizeof(invalid_image), invalid_image,
+                          sizeof(invalid_image), NULL, false) == -1);
+    CHECK(rom_is_fds() && fds_current_side() == 0);
+    read_fds_ram(repeated);
+    CHECK(memcmp(snapshot, repeated, sizeof(snapshot)) == 0);
+    nes_initialize_power_on_ram(actual_random, sizeof(actual_random), 0);
+    CHECK(memcmp(expected_random, actual_random, sizeof(expected_random)) == 0);
+
+    CHECK(nes_set_ram_power_on_state(NES_RAM_POWER_ZERO));
+    CHECK(load_fixture(1, false, NULL, false) == 0);
+    read_fds_ram(snapshot);
+    for (size_t offset = 0; offset < sizeof(snapshot); ++offset) {
+        CHECK(snapshot[offset] == 0);
+    }
+
+    return 0;
+}
+
+static int test_fds_power_on_ram(void) {
+    NesRamPowerOnState previous = nes_ram_power_on_state();
+    int result = check_fds_power_on_ram();
+    nes_set_ram_power_on_state(previous);
+    return result;
 }
 
 static int test_fds_timer_irq(void) {
@@ -562,7 +662,7 @@ static int test_fds_persistence(void) {
     fds_clock_cpu(150);
     CHECK(!fds_disk_dirty() && read_file_byte(paths.disk, 17) == 0xA5);
 
-    // Exclusive temp creation must preserve a stale temp file and the dirty active disk.
+    // A legacy temporary file remains untouched and does not block a new save.
     CHECK(load_fds_memory(disk, disk_size, bios, sizeof(bios), paths.disk, false) == 0);
     cart_cpu_write(0x4025, 0xC5);
     CHECK(wait_for_disk_irq(700000));
@@ -575,7 +675,30 @@ static int test_fds_persistence(void) {
     snprintf(stale_temp, sizeof(stale_temp), "%s.cupid-fds.tmp", paths.disk);
     const uint8_t sentinel = 0x7B;
     CHECK(write_disk_file(stale_temp, &sentinel, 1) == 0);
-    CHECK(!fds_flush() && fds_disk_dirty() && read_file_byte(stale_temp, 0) == sentinel);
+    CHECK(fds_flush() && !fds_disk_dirty() && read_file_byte(stale_temp, 0) == sentinel);
+    CHECK(read_file_byte(paths.disk, 17) == 0x33);
+
+    CHECK(fds_insert_disk(0));
+    cart_cpu_write(0x4025, 0xC5);
+    CHECK(wait_for_disk_irq(700000));
+    CHECK(cart_cpu_read_bus(0x4031, 0) == 1);
+    cart_cpu_write(0x4024, 0x44);
+    cart_cpu_write(0x4025, 0x41);
+    fds_clock_cpu(150);
+    CHECK(fds_disk_dirty());
+
+    // Force a real destination-replacement failure after the temporary write.
+    char backup[160], blocked_child[160];
+    snprintf(backup, sizeof(backup), "%s.retained", paths.disk);
+    snprintf(blocked_child, sizeof(blocked_child), "%s/retained.bin", paths.disk);
+    CHECK(rename(paths.disk, backup) == 0);
+#ifdef _WIN32
+    CHECK(_mkdir(paths.disk) == 0);
+#else
+    CHECK(mkdir(paths.disk, 0700) == 0);
+#endif
+    CHECK(write_disk_file(blocked_child, &sentinel, 1) == 0);
+    CHECK(!fds_flush() && fds_disk_dirty());
 
     // Unload is transactional too: failed persistence keeps the active machine intact.
     CHECK(!unload_rom());
@@ -588,8 +711,18 @@ static int test_fds_persistence(void) {
     CHECK(load_rom_memory(nrom, nrom_size) == -1);
     CHECK(rom_is_fds() && fds_disk_dirty() && cart_cpu_read(0xE000) == bios[0]);
     CHECK(read_file_byte(stale_temp, 0) == sentinel);
+    CHECK(read_file_byte(blocked_child, 0) == sentinel);
+    CHECK(read_file_byte(backup, 17) == 0x33);
     CHECK(remove(stale_temp) == 0);
+    CHECK(remove(blocked_child) == 0);
+#ifdef _WIN32
+    CHECK(_rmdir(paths.disk) == 0);
+#else
+    CHECK(rmdir(paths.disk) == 0);
+#endif
+    CHECK(rename(backup, paths.disk) == 0);
     CHECK(fds_flush() && !fds_disk_dirty());
+    CHECK(read_file_byte(paths.disk, 17) == 0x44);
     CHECK(load_rom_memory(nrom, nrom_size) == 0);
     free(nrom);
     free(disk);
@@ -700,6 +833,7 @@ static int test_fds_cpu_bios_irq(void) {
 int test_fds_accuracy(void) {
     static int (*const tests[])(void) = {
         test_fds_loader_and_memory,
+        test_fds_power_on_ram,
         test_fds_timer_irq,
         test_fds_cpu_reset_irq_sources,
         test_fds_disk_transfer,

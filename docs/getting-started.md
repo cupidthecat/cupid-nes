@@ -70,9 +70,13 @@ build/windows/SDL2.dll
 ./cupid-nes "games/game.nes"
 ```
 
-On Windows, use `.\build\windows\cupid-nes.exe` in place of `./cupid-nes`. Cupid reads unpacked iNES, NES 2.0, and supported UNIF cartridge images, as well as NSF and NSFe music files. Extract ZIP or other archive formats before launching the emulator.
+On Windows, use `.\build\windows\cupid-nes.exe` in place of `./cupid-nes`. Cupid reads iNES, NES 2.0, and supported UNIF cartridge images, NSF and NSFe music files, and supported images inside ZIP and 7z archives. An archive containing several supported images opens a member-selection dialog. The selected image is read in memory; Cupid does not extract the archive over files in your game folder.
 
-The application accepts one image path per launch. Paths with spaces need quotes. Starting `cupid-nes` without an image prints its usage and exits with status 1; there is no `--help` switch. Command-line hardware selection is covered in [configuration](configuration.md).
+Starting `cupid-nes` without an image opens a desktop with an **Open** button and recent games. Use **File > Open Game** or Ctrl+O to load a game or switch to another one. The command line accepts one initial image path; quote paths containing spaces. Hardware selection is covered in [configuration](configuration.md).
+
+Windows file dialogs and command-line paths use Unicode. On Linux, the file dialog uses Zenity or KDialog when installed. When neither is available, the dialog reports that requirement; a command-line image path remains usable. Install `zenity` on Ubuntu to use the native file picker.
+
+Open and recent-image actions retain the previous machine when validation or saving fails. An archive selection can be cancelled without changing the game. IPS, UPS, and BPS patches are validated before loading the resulting image, and patched or archived games receive separate save identities. A palette drop affects the palette rather than replacing the cartridge.
 
 The startup log prints the selected console and CPU/PPU profiles, cartridge metadata, mapper information, and audio device details. Cartridge metadata chooses NTSC, PAL, or Dendy timing. The supported boards and current hardware limits are listed in [hardware](hardware.md) and [accuracy](accuracy.md).
 
@@ -96,7 +100,7 @@ Music files use the same image argument and do not need a BIOS:
 ./cupid-nes "music/album.nsfe"
 ```
 
-Playback begins at the file's initial track and regional rate. Page Up selects the next track and Page Down selects the previous one, wrapping at the ends. A track change resets the music program and its sound chips. The playback window has no game rendering; track numbers and available names appear in the terminal.
+Playback begins at the file's initial track using the selected timing region. The default `--region auto` uses the file's regional rate. Open the music-player panel for track names, transport, duration, repeat, and shuffle. Page Up selects the next track. Page Down restarts the current track after its first two seconds, or selects the previous track near the beginning. A track change resets the music program and its audio channels. See the [music guide](music.md).
 
 StudyBox tape media uses a separate firmware option: `--studybox-bios "StudyBox.bin" "lesson.stbx"`. The BIOS must be exactly 256 KiB. See [StudyBox configuration](configuration.md#studybox-media) for the supported tape container and audio format.
 
@@ -108,7 +112,7 @@ Disk-system loading requires an 8 KiB BIOS file:
 ./cupid-nes --fds-bios "games/disksys.rom" --fds-write-protect "games/game.fds"
 ```
 
-This example starts the disk write-protected. If a game must write to disk, make a working copy of the image and omit `--fds-write-protect`. Cupid writes modified media back to the launched image during normal quit, unload, or replacement.
+This example starts the disk write-protected. Omit `--fds-write-protect` when a game needs to save. The desktop defaults to a separate disk overlay; in-place saving can be selected explicitly. Overlay mode leaves the original FDS or QD file unchanged. Both modes retain unsaved data when the destination cannot be written.
 
 F8 ejects or reinserts the selected side, F9 advances to the next side, and F10 toggles write protection. Use `--fds-side N` to choose another initial side. The image may use normal 65,500-byte FDS sides or 65,536-byte QD sides, with or without a valid FDS header. See [saves and media](saves.md) before using writable media.
 

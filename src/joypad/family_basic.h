@@ -12,6 +12,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "../state/state.h"
+#include "../state/state_io.h"
 
 /* Keys follow the keyboard's nine scan rows, low half before high half. */
 typedef enum {
@@ -57,5 +59,14 @@ void family_basic_tape_record(uint64_t cpu_cycles);
 void family_basic_tape_stop(void);
 FamilyBasicTapeMode family_basic_tape_mode(void);
 bool family_basic_tape_failed(void);
+
+bool family_basic_state_capture(NesStateWriter *writer);
+bool family_basic_state_validate(NesStateReader *reader);
+bool family_basic_state_apply(NesStateReader *reader);
+
+typedef struct FamilyBasicStateRestore FamilyBasicStateRestore;
+NesStateResult family_basic_state_prepare(NesStateReader *reader, FamilyBasicStateRestore **out_restore);
+void family_basic_state_apply_prepared(FamilyBasicStateRestore *restore);
+void family_basic_state_restore_free(FamilyBasicStateRestore *restore);
 
 #endif

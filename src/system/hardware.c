@@ -22,6 +22,7 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 #include "hardware.h"
+#include "execution_policy.h"
 #include <string.h>
 
 static NesConsoleModel console_model = NES_CONSOLE_NES001;
@@ -41,6 +42,7 @@ NesConsoleModel nes_console_model(void) {
 
 bool nes_set_console_model(NesConsoleModel model) {
     if ((unsigned)model > NES_CONSOLE_HVC101) return false;
+    if (!nes_execution_allows_host_configuration()) return false;
     console_model = model;
     return true;
 }
@@ -64,6 +66,7 @@ NesRamPowerOnState nes_ram_power_on_state(void) {
 
 bool nes_set_ram_power_on_state(NesRamPowerOnState state) {
     if ((unsigned)state > NES_RAM_POWER_RANDOM) return false;
+    if (!nes_execution_allows_host_configuration()) return false;
     ram_power_on_state = state;
     return true;
 }
@@ -82,7 +85,12 @@ const char *nes_ram_power_on_state_name(void) {
 }
 
 void nes_seed_power_on_random(uint32_t seed) {
+    if (!nes_execution_allows_host_configuration()) return;
     power_on_random_state = seed;
+}
+
+uint32_t nes_power_on_random_state(void) {
+    return power_on_random_state;
 }
 
 static uint32_t next_power_on_random(void) {
@@ -123,9 +131,57 @@ bool nes_power_on_random_bool(void) {
 }
 
 void nes_set_randomize_vblank(bool enabled) {
+    if (!nes_execution_allows_host_configuration()) return;
     randomize_vblank = enabled;
 }
 
 bool nes_randomize_vblank_enabled(void) {
     return randomize_vblank;
+}
+
+static bool hardware_state_decode(NesStateReader *reader, NesConsoleModel *model,
+                                  NesRamPowerOnState *power_state, uint32_t *random_state,
+                                  bool *random_vblank) {
+    uint8_t encoded_model, encoded_power;
+    if (!nes_state_read_u8(reader, &encoded_model)
+        || !nes_state_read_u8(reader, &encoded_power)
+        || !nes_state_read_u32(reader, random_state)
+        || !nes_state_read_bool(reader, random_vblank)
+        || encoded_model > NES_CONSOLE_HVC101
+        || encoded_power > NES_RAM_POWER_RANDOM
+        || nes_state_reader_remaining(reader) != 0) return false;
+    *model = (NesConsoleModel)encoded_model;
+    *power_state = (NesRamPowerOnState)encoded_power;
+    return true;
+}
+
+bool hardware_state_capture(NesStateWriter *writer) {
+    return writer
+        && nes_state_write_u8(writer, (uint8_t)console_model)
+        && nes_state_write_u8(writer, (uint8_t)ram_power_on_state)
+        && nes_state_write_u32(writer, power_on_random_state)
+        && nes_state_write_bool(writer, randomize_vblank);
+}
+
+bool hardware_state_validate(NesStateReader *reader) {
+    NesConsoleModel model;
+    NesRamPowerOnState power_state;
+    uint32_t random_state;
+    bool random_vblank;
+    return reader && hardware_state_decode(reader, &model, &power_state,
+                                           &random_state, &random_vblank);
+}
+
+bool hardware_state_apply(NesStateReader *reader) {
+    NesConsoleModel model;
+    NesRamPowerOnState power_state;
+    uint32_t random_state;
+    bool random_vblank;
+    if (!reader || !hardware_state_decode(reader, &model, &power_state,
+                                          &random_state, &random_vblank)) return false;
+    console_model = model;
+    ram_power_on_state = power_state;
+    power_on_random_state = random_state;
+    randomize_vblank = random_vblank;
+    return true;
 }

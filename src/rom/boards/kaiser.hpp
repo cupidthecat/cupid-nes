@@ -79,6 +79,16 @@ public:
             SetIrq(true);
         }
     }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("kaiser202.reload", _reload)
+            && state.Field("kaiser202.counter", _counter)
+            && state.Field("kaiser202.control", _control)
+            && state.Field("kaiser202.selected", _selected)
+            && state.Field("kaiser202.prg", _prg)
+            && state.Field("kaiser202.useRom", _useRom);
+    }
 };
 
 class Kaiser7012 final : public Board {
@@ -133,6 +143,11 @@ class Kaiser7016 final : public Board {
                 UpdateState();
                 break;
         }
+    }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("kaiser7016.prg", _prg);
     }
 };
 
@@ -190,6 +205,21 @@ public:
             SetIrq(true);
         }
     }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        uint8_t pendingMirroringValue = static_cast<uint8_t>(_pendingMirroring);
+        bool ok =
+            Board::VisitState(state)
+            && state.Field("kaiser7017.prg", _prg)
+            && state.ValueU8("kaiser7017.pendingMirroring", pendingMirroringValue, static_cast<uint8_t>(MirroringType::FourScreens))
+            && state.Field("kaiser7017.counter", _counter)
+            && state.Field("kaiser7017.enabled", _enabled);
+        if (!ok) return false;
+        if (state.GetMode() == BoardStateVisitor::Mode::Apply) {
+            _pendingMirroring = static_cast<MirroringType>(pendingMirroringValue);
+        }
+        return true;
+    }
 };
 
 class Kaiser7022 final : public Board {
@@ -218,6 +248,11 @@ public:
         _reg = 0;
         ReadRegister(0xFFFC);
     }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("kaiser7022.reg", _reg);
+    }
 };
 
 class Kaiser7031 final : public Board {
@@ -238,6 +273,11 @@ class Kaiser7031 final : public Board {
     void WriteRegister(uint16_t address, uint8_t value) override {
         _regs[(address >> 11) & 3] = value;
         UpdateState();
+    }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("kaiser7031.regs", _regs);
     }
 };
 
@@ -272,6 +312,12 @@ class Kaiser7037 final : public Board {
                 UpdateState();
                 break;
         }
+    }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("kaiser7037.current", _current)
+            && state.Field("kaiser7037.regs", _regs);
     }
 };
 
@@ -313,6 +359,11 @@ class Kaiser7057 final : public Board {
         _regs[slot] = address & 1 ? (_regs[slot] & 0x0F) | ((value << 4) & 0xF0)
                                   : (_regs[slot] & 0xF0) | (value & 0x0F);
         UpdateState();
+    }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("kaiser7057.regs", _regs);
     }
 };
 

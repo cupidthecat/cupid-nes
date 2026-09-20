@@ -49,6 +49,13 @@ class FaridSlrom final : public Mmc1Board {
             UpdateState();
         }
     }
+
+public:
+    bool VisitState(BoardStateVisitor &state) override {
+        return Mmc1Board::VisitState(state)
+            && state.Field("farid_slrom.outer_bank", _outerBank)
+            && state.Field("farid_slrom.locked", _locked);
+    }
 };
 
 class FaridUnrom final : public Board {
@@ -74,6 +81,11 @@ class FaridUnrom final : public Board {
         uint8_t outer = (_reg & 0x70) >> 1;
         SelectPrgPage(0, (_reg & 7) | outer);
         SelectPrgPage(1, 7 | outer);
+    }
+
+public:
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state) && state.Field("farid_unrom.reg", _reg);
     }
 };
 

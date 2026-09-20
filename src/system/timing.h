@@ -24,11 +24,21 @@
 #ifndef NES_TIMING_H
 #define NES_TIMING_H
 
+#include <stdbool.h>
+#include "../state/state_io.h"
+
 typedef enum {
     NES_REGION_NTSC,
     NES_REGION_PAL,
     NES_REGION_DENDY
 } NesRegion;
+
+typedef enum {
+    NES_REGION_MODE_AUTO,
+    NES_REGION_MODE_NTSC,
+    NES_REGION_MODE_PAL,
+    NES_REGION_MODE_DENDY
+} NesRegionMode;
 
 typedef struct {
     NesRegion region;
@@ -44,5 +54,18 @@ const NesTiming *nes_timing(void);
 const NesTiming *nes_timing_for_region(NesRegion region);
 // Select the region before powering on or resetting the emulated hardware.
 void nes_set_region(NesRegion region);
+
+// The selection applies to the next successful image load. It does not retime
+// an active machine or replace the timing recorded in the image metadata.
+NesRegionMode nes_region_mode(void);
+bool nes_set_region_mode(NesRegionMode mode);
+bool nes_set_region_mode_name(const char *name);
+const char *nes_region_mode_name(void);
+const char *nes_region_name(NesRegion region);
+NesRegion nes_resolve_region(NesRegion detected_region);
+
+bool timing_state_capture(NesStateWriter *writer);
+bool timing_state_validate(NesStateReader *reader);
+bool timing_state_apply(NesStateReader *reader);
 
 #endif

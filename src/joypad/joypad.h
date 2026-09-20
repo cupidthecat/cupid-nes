@@ -27,6 +27,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "../state/state_io.h"
 
 typedef struct {
     uint8_t buttons;   // bit0..bit7 = A,B,Select,Start,Up,Down,Left,Right
@@ -191,6 +192,7 @@ void    joypad_write_strobe(Joypad* jp, uint8_t value);
 uint8_t joypad_read(Joypad* jp);
 // Port zero is $4016; port one is $4017.
 uint8_t joypad_read_port(Joypad *jp, unsigned port);
+uint8_t joypad_debug_peek_port(const Joypad *jp, unsigned port);
 uint8_t joypad_open_bus_mask(unsigned port);
 bool    joypad_clocks_adjacent_reads(void);
 void    joypad_set_microphone(bool active);
@@ -246,5 +248,10 @@ bool    joypad_set_oeka_kids_tablet(int x, int y, bool touch, bool click);
 bool    joypad_persistent_configure(const char *rom_path);
 bool    joypad_persistent_flush(void);
 bool    joypad_persistent_shutdown(void);
+
+bool joypad_state_capture(NesStateWriter *writer);
+bool joypad_hardware_state_capture(NesStateWriter *writer);
+bool joypad_state_validate(NesStateReader *reader);
+bool joypad_state_apply(NesStateReader *reader);
 
 #endif // JOYPAD_H

@@ -28,14 +28,18 @@
 #include <stdbool.h>
 #include <string.h>
 #include "cpu.h"
+#include "cpu_observer.h"
 #include "../ppu/ppu.h"
 #include "../apu/apu.h"
 #include "../apu/epsm.h"
 #include "../rom/mapper.h"
 #include "../joypad/joypad.h"
 #include "../system/hardware.h"
+#include "../system/execution_policy.h"
 #include "../system/timing.h"
 #include "../system/vs_system.h"
+#include "../debugger/debugger.h"
+#include "../cheats/cheats.h"
 
 uint8_t ram[0x0800];        // 2KB internal RAM
 #define APU_IO_SIZE 0x20              // cover $4000-$401F
@@ -46,41 +50,59 @@ static CpuRuntimeState main_runtime = {.ppu_master_phase = 3};
 static CpuRuntimeState *cpu_runtime = &main_runtime;
 static uint8_t *cpu_ram = ram;
 static uint64_t *cpu_cycles = &cpu_total_cycles;
-static enum { ALIGNMENT_DEFAULT, ALIGNMENT_EXPLICIT, ALIGNMENT_SEEDED } alignment_mode;
+static CpuStartupAlignmentMode alignment_mode;
 static CpuStartupAlignment configured_alignment;
 static uint32_t alignment_random_state;
 static bool cpu_test_mode;
 
-void cpu_set_test_mode(bool enabled) { cpu_test_mode = enabled; }
+void cpu_set_test_mode(bool enabled) {
+    if (!nes_execution_allows_host_configuration()) return;
+    cpu_test_mode = enabled;
+}
 bool cpu_test_mode_enabled(void) { return cpu_test_mode; }
 
 void cpu_use_default_startup_alignment(void) {
-    alignment_mode = ALIGNMENT_DEFAULT;
+    if (!nes_execution_allows_host_configuration()) return;
+    alignment_mode = CPU_STARTUP_ALIGNMENT_DEFAULT;
 }
 
 bool cpu_set_startup_alignment(unsigned cpu_offset, unsigned ppu_phase) {
     const NesTiming *timing = nes_timing();
     if (cpu_offset >= timing->cpu_divider || ppu_phase >= timing->ppu_divider)
         return false;
+    if (!nes_execution_allows_host_configuration()) return false;
     configured_alignment = (CpuStartupAlignment){(uint8_t)cpu_offset, (uint8_t)ppu_phase};
-    alignment_mode = ALIGNMENT_EXPLICIT;
+    alignment_mode = CPU_STARTUP_ALIGNMENT_EXPLICIT;
     return true;
 }
 
 void cpu_seed_startup_alignment(uint32_t seed) {
+    if (!nes_execution_allows_host_configuration()) return;
     alignment_random_state = seed;
-    alignment_mode = ALIGNMENT_SEEDED;
+    alignment_mode = CPU_STARTUP_ALIGNMENT_SEEDED;
 }
 
 bool cpu_startup_alignment_valid(NesRegion region) {
     const NesTiming *timing = nes_timing_for_region(region);
-    return alignment_mode != ALIGNMENT_EXPLICIT
+    return alignment_mode != CPU_STARTUP_ALIGNMENT_EXPLICIT
         || (configured_alignment.cpu_offset < timing->cpu_divider
             && configured_alignment.ppu_phase < timing->ppu_divider);
 }
 
 CpuStartupAlignment cpu_get_startup_alignment(void) {
     return cpu_runtime->startup_alignment;
+}
+
+CpuStartupAlignmentMode cpu_get_startup_alignment_mode(void) {
+    return alignment_mode;
+}
+
+CpuStartupAlignment cpu_get_configured_startup_alignment(void) {
+    return configured_alignment;
+}
+
+uint32_t cpu_get_startup_alignment_seed(void) {
+    return alignment_random_state;
 }
 
 static uint8_t random_alignment_offset(uint32_t limit) {
@@ -146,6 +168,29 @@ uint64_t cpu_get_bus_cycle(void) {
 uint8_t cpu_peek_internal_ram(uint16_t addr) {
     uint8_t *expanded = cart_cpu_ram_8k();
     return expanded ? expanded[addr & 0x1FFF] : cpu_ram[addr & 0x07FF];
+}
+
+uint8_t cpu_debug_peek(uint16_t addr) {
+    if (addr <= 0x1FFF) return cpu_peek_internal_ram(addr);
+    if (addr <= 0x3FFF) return ppu_debug_peek_register((uint16_t)(0x2000 | (addr & 7u)));
+    if (addr >= 0x4000 && addr <= 0x4017) {
+        if (addr == 0x4015) {
+            uint8_t status = apu_debug_peek_status();
+            return (uint8_t)((status & 0xDFu) | (bus_get_internal() & 0x20u));
+        }
+        if (addr == 0x4016 || addr == 0x4017) {
+            unsigned port = addr - 0x4016u;
+            uint8_t raw = vs_enabled() ? vs_debug_peek_controller_port(port)
+                                       : joypad_debug_peek_port(port ? &pad2 : &pad1, port);
+            uint8_t mask = vs_enabled() ? 0u : joypad_open_bus_mask(port);
+            return (uint8_t)((bus_get() & mask) | (raw & (uint8_t)~mask));
+        }
+        return bus_get();
+    }
+    if (cpu_test_mode && addr >= 0x4018 && addr <= 0x401A)
+        return apu_read_test_output(addr);
+    if (addr >= 0x4020) return cart_cpu_peek_bus(addr, bus_get());
+    return bus_get();
 }
 
 void cpu_select_machine(CpuMachineContext *context) {
@@ -262,6 +307,11 @@ static void cpu_reset_sequence(CPU* cpu) {
     in_bus_cycle = false;
     joypad_read_valid = false;
 
+    /* Keep NMI edges clocked during reset, after discarding earlier requests. */
+    cpu_nmi_pending = false;
+    cpu_nmi_previous_line = cpu_nmi_line;
+    cpu_nmi_ready = cpu_nmi_injected = false;
+
     (void)reset_bus_read(cpu->pc);
     (void)reset_bus_read(cpu->pc);
     (void)reset_bus_read((uint16_t)(0x0100u | cpu->sp));
@@ -277,9 +327,6 @@ static void cpu_reset_sequence(CPU* cpu) {
     running_cpu = NULL;
     in_bus_cycle = false;
     cpu->halted = false;
-    cpu_nmi_pending = false;
-    cpu_nmi_previous_line = cpu_nmi_line;
-    cpu_nmi_ready = cpu_nmi_injected = false;
     cpu_irq_polled = cpu_irq_ready = false;
     cpu_oam_dma_pending = false;
     joypad_read_valid = false;
@@ -294,9 +341,9 @@ bool cpu_power_on(CPU* cpu) {
     uint8_t *expanded = cart_cpu_ram_8k();
     nes_initialize_power_on_ram(expanded ? expanded : cpu_ram, expanded ? 0x2000 : 0x0800, 0x00);
     CpuStartupAlignment alignment = {0, (uint8_t)(nes_timing()->ppu_divider - 1)};
-    if (alignment_mode == ALIGNMENT_EXPLICIT) {
+    if (alignment_mode == CPU_STARTUP_ALIGNMENT_EXPLICIT) {
         alignment = configured_alignment;
-    } else if (alignment_mode == ALIGNMENT_SEEDED) {
+    } else if (alignment_mode == CPU_STARTUP_ALIGNMENT_SEEDED) {
         alignment.cpu_offset = random_alignment_offset(nes_timing()->cpu_divider);
         alignment.ppu_phase = random_alignment_offset(nes_timing()->ppu_divider);
     }
@@ -432,10 +479,12 @@ static uint8_t finish_bus_read_target(uint16_t addr, BusLatchTarget target, uint
         value = ppu_reg_read_finish((uint16_t)(0x2000 | (addr & 7)), value);
         bus_latch(target, value);
     }
+    value = cheats_apply_read(addr, value);
+    debugger_on_cpu_read(addr, &value);
     return value;
 }
 
-static void write_bus(uint16_t addr, uint8_t value) {
+static void write_bus_raw(uint16_t addr, uint8_t value) {
     uint8_t previous_bus = bus_get();
     bus_set(value); // writes still put value on the CPU bus latch
 
@@ -486,6 +535,12 @@ static void write_bus(uint16_t addr, uint8_t value) {
         cart_cpu_write(addr, value);
         apu_audio_refresh(apu_active_state());
     }
+}
+
+static void write_bus(uint16_t addr, uint8_t value) {
+    write_bus_raw(addr, value);
+    debugger_on_cpu_write(addr, value);
+    nes_cpu_write_observe(addr, value);
 }
 
 static uint8_t read_mem_cycle(uint16_t addr, bool opcode_fetch) {
@@ -909,6 +964,10 @@ static void process_pending_dma(uint16_t read_addr, bool opcode_fetch) {
 int cpu_step(CPU* cpu) {
     uint64_t start = active_cpu_cycles;
     running_cpu = cpu;
+    if (!debugger_before_instruction(cpu)) {
+        running_cpu = NULL;
+        return 0;
+    }
     if (cpu->halted) {
         (void)read_mem_cycle(cpu->pc, true);
     } else if (cpu_nmi_injected) {
@@ -921,4 +980,163 @@ int cpu_step(CPU* cpu) {
     }
     running_cpu = NULL;
     return (int)(active_cpu_cycles - start);
+}
+
+#undef ppu_master_phase
+#undef joypad_read_valid
+#undef joypad_read_addr
+#undef joypad_read_cycle
+#undef joypad_read_value
+#undef joypad_write_pending
+#undef joypad_write_value
+
+typedef struct {
+    CPU cpu;
+    uint8_t ram[0x0800];
+    uint8_t apu_io[APU_IO_SIZE];
+    uint64_t total_cycles;
+    CpuRuntimeState runtime;
+    uint8_t alignment_mode;
+    CpuStartupAlignment configured_alignment;
+    uint32_t alignment_random_state;
+    bool test_mode;
+} CpuSavedState;
+
+static bool cpu_state_write_cpu(NesStateWriter *writer, const CPU *state) {
+    return nes_state_write_u8(writer, state->a)
+        && nes_state_write_u8(writer, state->x)
+        && nes_state_write_u8(writer, state->y)
+        && nes_state_write_u16(writer, state->pc)
+        && nes_state_write_u8(writer, state->sp)
+        && nes_state_write_u8(writer, state->status)
+        && nes_state_write_bool(writer, state->halted);
+}
+
+static bool cpu_state_read_cpu(NesStateReader *reader, CPU *state) {
+    return nes_state_read_u8(reader, &state->a)
+        && nes_state_read_u8(reader, &state->x)
+        && nes_state_read_u8(reader, &state->y)
+        && nes_state_read_u16(reader, &state->pc)
+        && nes_state_read_u8(reader, &state->sp)
+        && nes_state_read_u8(reader, &state->status)
+        && nes_state_read_bool(reader, &state->halted);
+}
+
+static bool cpu_state_write_runtime(NesStateWriter *writer, const CpuRuntimeState *state) {
+    return nes_state_write_u8(writer, state->external_bus)
+        && nes_state_write_u8(writer, state->internal_bus)
+        && nes_state_write_bool(writer, state->nmi_pending)
+        && nes_state_write_bool(writer, state->nmi_line)
+        && nes_state_write_bool(writer, state->nmi_previous_line)
+        && nes_state_write_bool(writer, state->nmi_ready)
+        && nes_state_write_bool(writer, state->nmi_injected)
+        && nes_state_write_bool(writer, state->irq_polled)
+        && nes_state_write_bool(writer, state->irq_ready)
+        && nes_state_write_bool(writer, state->oam_dma_pending)
+        && nes_state_write_u8(writer, state->oam_dma_page)
+        && nes_state_write_u8(writer, state->ppu_master_phase)
+        && nes_state_write_u8(writer, state->startup_alignment.cpu_offset)
+        && nes_state_write_u8(writer, state->startup_alignment.ppu_phase)
+        && nes_state_write_bool(writer, state->joypad_read_valid)
+        && nes_state_write_u16(writer, state->joypad_read_addr)
+        && nes_state_write_u64(writer, state->joypad_read_cycle)
+        && nes_state_write_u8(writer, state->joypad_read_value)
+        && nes_state_write_u8(writer, state->joypad_write_pending)
+        && nes_state_write_u8(writer, state->joypad_write_value);
+}
+
+static bool cpu_state_read_runtime(NesStateReader *reader, CpuRuntimeState *state) {
+    return nes_state_read_u8(reader, &state->external_bus)
+        && nes_state_read_u8(reader, &state->internal_bus)
+        && nes_state_read_bool(reader, &state->nmi_pending)
+        && nes_state_read_bool(reader, &state->nmi_line)
+        && nes_state_read_bool(reader, &state->nmi_previous_line)
+        && nes_state_read_bool(reader, &state->nmi_ready)
+        && nes_state_read_bool(reader, &state->nmi_injected)
+        && nes_state_read_bool(reader, &state->irq_polled)
+        && nes_state_read_bool(reader, &state->irq_ready)
+        && nes_state_read_bool(reader, &state->oam_dma_pending)
+        && nes_state_read_u8(reader, &state->oam_dma_page)
+        && nes_state_read_u8(reader, &state->ppu_master_phase)
+        && nes_state_read_u8(reader, &state->startup_alignment.cpu_offset)
+        && nes_state_read_u8(reader, &state->startup_alignment.ppu_phase)
+        && nes_state_read_bool(reader, &state->joypad_read_valid)
+        && nes_state_read_u16(reader, &state->joypad_read_addr)
+        && nes_state_read_u64(reader, &state->joypad_read_cycle)
+        && nes_state_read_u8(reader, &state->joypad_read_value)
+        && nes_state_read_u8(reader, &state->joypad_write_pending)
+        && nes_state_read_u8(reader, &state->joypad_write_value);
+}
+
+bool cpu_machine_state_capture(NesStateWriter *writer, const CpuMachineContext *context) {
+    if (!writer || !context || running_cpu || in_bus_cycle) return false;
+    return cpu_state_write_cpu(writer, &context->cpu)
+        && nes_state_write_bytes(writer, context->ram, sizeof(context->ram))
+        && nes_state_write_u64(writer, context->total_cycles)
+        && cpu_state_write_runtime(writer, &context->runtime);
+}
+
+bool cpu_machine_state_decode(NesStateReader *reader, CpuMachineContext *context) {
+    if (!reader || !context) return false;
+    memset(context, 0, sizeof(*context));
+    if (!cpu_state_read_cpu(reader, &context->cpu)
+        || !nes_state_read_bytes(reader, context->ram, sizeof(context->ram))
+        || !nes_state_read_u64(reader, &context->total_cycles)
+        || !cpu_state_read_runtime(reader, &context->runtime)
+        || context->runtime.ppu_master_phase >= nes_timing()->ppu_divider) return false;
+    return nes_state_reader_remaining(reader) == 0;
+}
+
+static bool cpu_state_decode(NesStateReader *reader, CpuSavedState *saved) {
+    memset(saved, 0, sizeof(*saved));
+    if (!cpu_state_read_cpu(reader, &saved->cpu)
+        || !nes_state_read_bytes(reader, saved->ram, sizeof(saved->ram))
+        || !nes_state_read_bytes(reader, saved->apu_io, sizeof(saved->apu_io))
+        || !nes_state_read_u64(reader, &saved->total_cycles)
+        || !cpu_state_read_runtime(reader, &saved->runtime)
+        || !nes_state_read_u8(reader, &saved->alignment_mode)
+        || !nes_state_read_u8(reader, &saved->configured_alignment.cpu_offset)
+        || !nes_state_read_u8(reader, &saved->configured_alignment.ppu_phase)
+        || !nes_state_read_u32(reader, &saved->alignment_random_state)
+        || !nes_state_read_bool(reader, &saved->test_mode)) return false;
+    if (saved->alignment_mode > CPU_STARTUP_ALIGNMENT_SEEDED) return false;
+    if (saved->runtime.ppu_master_phase >= nes_timing()->ppu_divider) return false;
+    return nes_state_reader_remaining(reader) == 0;
+}
+
+bool cpu_state_capture(NesStateWriter *writer) {
+    if (!writer || running_cpu || in_bus_cycle) return false;
+    return cpu_state_write_cpu(writer, &cpu)
+        && nes_state_write_bytes(writer, ram, sizeof(ram))
+        && nes_state_write_bytes(writer, apu_io, sizeof(apu_io))
+        && nes_state_write_u64(writer, cpu_total_cycles)
+        && cpu_state_write_runtime(writer, &main_runtime)
+        && nes_state_write_u8(writer, (uint8_t)alignment_mode)
+        && nes_state_write_u8(writer, configured_alignment.cpu_offset)
+        && nes_state_write_u8(writer, configured_alignment.ppu_phase)
+        && nes_state_write_u32(writer, alignment_random_state)
+        && nes_state_write_bool(writer, cpu_test_mode);
+}
+
+bool cpu_state_validate(NesStateReader *reader) {
+    CpuSavedState saved;
+    return reader && cpu_state_decode(reader, &saved);
+}
+
+bool cpu_state_apply(NesStateReader *reader) {
+    CpuSavedState saved;
+    if (!reader || !cpu_state_decode(reader, &saved)) return false;
+    cpu_select_machine(NULL);
+    cpu = saved.cpu;
+    memcpy(ram, saved.ram, sizeof(ram));
+    memcpy(apu_io, saved.apu_io, sizeof(apu_io));
+    cpu_total_cycles = saved.total_cycles;
+    main_runtime = saved.runtime;
+    alignment_mode = saved.alignment_mode;
+    configured_alignment = saved.configured_alignment;
+    alignment_random_state = saved.alignment_random_state;
+    cpu_test_mode = saved.test_mode;
+    running_cpu = NULL;
+    in_bus_cycle = false;
+    return true;
 }

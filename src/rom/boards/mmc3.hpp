@@ -200,6 +200,25 @@ protected:
     }
 
 public:
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("mmc3.reg8000", _state.reg8000)
+            && state.Field("mmc3.regA000", _state.regA000)
+            && state.Field("mmc3.regA001", _state.regA001)
+            && state.Field("mmc3.irq_reload_value", _irqReloadValue)
+            && state.Field("mmc3.irq_counter", _irqCounter)
+            && state.Field("mmc3.irq_reload", _irqReload)
+            && state.Field("mmc3.irq_enabled", _irqEnabled)
+            && state.Field("mmc3.prg_mode", _prgMode, 1)
+            && state.Field("mmc3.chr_mode", _chrMode, 1)
+            && state.Field("mmc3.registers", _registers)
+            && state.Field("mmc3.current_register", _currentRegister, 7)
+            && state.Field("mmc3.wram_enabled", _wramEnabled)
+            && state.Field("mmc3.wram_write_protected", _wramWriteProtected)
+            && state.Field("mmc3.a12_low_clock", _a12LowClock)
+            && state.InvariantBool("mmc3.force_rev_a", _forceMmc3RevAIrqs);
+    }
+
     void NotifyVramAddressChange(uint16_t address) override {
         if (!IsA12RisingEdge(address)) return;
 
@@ -241,6 +260,13 @@ public:
     Mmc3ChrRam(uint16_t firstRamBank, uint16_t lastRamBank, uint16_t defaultRamPages)
         : _firstRamBank(firstRamBank), _lastRamBank(lastRamBank),
           _defaultRamPages(defaultRamPages) {}
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Mmc3::VisitState(state)
+            && state.InvariantU16("mmc3_chr_ram.first_bank", _firstRamBank)
+            && state.InvariantU16("mmc3_chr_ram.last_bank", _lastRamBank)
+            && state.InvariantU16("mmc3_chr_ram.default_pages", _defaultRamPages);
+    }
 };
 
 } // namespace cupid::boards

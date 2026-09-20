@@ -99,6 +99,13 @@ class Mapper42 final : public Board {
                 break;
         }
     }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("mapper42.irqCounter", _irqCounter)
+            && state.Field("mapper42.irqEnabled", _irqEnabled)
+            && state.Field("mapper42.prgReg", _prgReg);
+    }
 };
 
 class Mapper43 final : public Board {
@@ -158,6 +165,14 @@ class Mapper43 final : public Board {
                 break;
         }
     }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("mapper43.reg", _reg)
+            && state.Field("mapper43.swap", _swap)
+            && state.Field("mapper43.irqCounter", _irqCounter)
+            && state.Field("mapper43.irqEnabled", _irqEnabled);
+    }
 };
 
 class ColorDreams46 final : public Board {
@@ -186,6 +201,11 @@ class ColorDreams46 final : public Board {
     void Reset(bool) override {
         _regs[0] = _regs[1] = 0;
         UpdateState();
+    }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("colordreams46.regs", _regs);
     }
 };
 
@@ -233,6 +253,12 @@ class Mapper50 final : public Board {
                 break;
         }
     }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("mapper50.irqCounter", _irqCounter)
+            && state.Field("mapper50.irqEnabled", _irqEnabled);
+    }
 };
 
 class Bmc51 final : public Board {
@@ -272,6 +298,12 @@ class Bmc51 final : public Board {
             _bank = value & 0x0F;
         }
         UpdateState();
+    }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("bmc51.bank", _bank)
+            && state.Field("bmc51.mode", _mode);
     }
 };
 
@@ -319,6 +351,12 @@ class Supervision final : public Board {
         _regs[address < 0x8000 ? 0 : 1] = value;
         UpdateState();
     }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("supervision.regs", _regs)
+            && state.Field("supervision.epromFirst", _epromFirst);
+    }
 };
 
 class NovelDiamond final : public Board {
@@ -365,6 +403,11 @@ class Mapper57 final : public Board {
             case 0x8800: _registers[1] = value; break;
         }
         UpdateState();
+    }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("mapper57.registers", _registers);
     }
 };
 
@@ -418,6 +461,11 @@ class UnlD1038 final : public Board {
         SelectChrPage(0, address & 7);
         SetMirroringType(address & 8 ? MirroringType::Horizontal : MirroringType::Vertical);
         _returnDipSwitch = (address & 0x100) != 0;
+    }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("unld1038.returnDipSwitch", _returnDipSwitch);
     }
 };
 

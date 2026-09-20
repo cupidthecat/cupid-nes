@@ -20,7 +20,7 @@
 extern "C" {
 #endif
 
-enum { GAME_DB_TEXT_FIELD = 64 };
+enum { GAME_DB_TEXT_FIELD = 64, GAME_DB_MAX_FILE_BYTES = 64 * 1024 * 1024 };
 
 typedef struct {
     uint32_t crc32;

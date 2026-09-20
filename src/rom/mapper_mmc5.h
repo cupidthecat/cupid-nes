@@ -129,6 +129,8 @@ static struct {
     uint8_t prg8_bank;
     uint8_t banking_mode;
     uint8_t chr_regs[8];
+    bool nt_chr[16];
+    size_t nt_offsets[16];
     bool prg16_selected;
     bool prg8_selected;
     bool ppu_initialized;
@@ -200,6 +202,38 @@ float cart_expansion_audio(void) {
     if (cart == &mapper_namco && namco.variant == NAMCO_VARIANT_163)
         return namco163_audio_output(&namco163_audio);
     return 0.0f;
+}
+
+void cart_expansion_audio_channels(float output[NES_AUDIO_CHANNEL_COUNT]) {
+    if (!output) return;
+    memset(output, 0, sizeof(*output) * NES_AUDIO_CHANNEL_COUNT);
+    if (active_board) {
+        unsigned channel = board_audio_mix_channel(active_board);
+        if (channel >= NES_AUDIO_CHANNEL_COUNT) channel = NES_AUDIO_CARTRIDGE_PCM;
+        output[channel] = board_audio(active_board);
+        return;
+    }
+
+    bool music = cart == &mapper_nsf;
+    uint8_t chips = music ? nsf_player.metadata.sound_chips : 0;
+    if (cart == &mapper_mmc5 || (chips & NSF_SOUND_MMC5)) {
+        unsigned pulse = (unsigned)mmc5.pulse[0].output + (unsigned)mmc5.pulse[1].output;
+        output[NES_AUDIO_MMC5] = -(float)(pulse * 3u + mmc5.pcm_output) * (14.0f / 5000.0f);
+    }
+    if (cart == &mapper_vrc6 || (chips & NSF_SOUND_VRC6)) {
+        unsigned raw = (unsigned)vrc6_pulse_volume(&vrc6.pulse[0])
+                     + (unsigned)vrc6_pulse_volume(&vrc6.pulse[1])
+                     + (unsigned)vrc6_saw_volume();
+        output[NES_AUDIO_VRC6] = -(float)raw * (75.0f / 5000.0f);
+    }
+    if (cart == &mapper_vrc7) output[NES_AUDIO_VRC7] = vrc7_expansion_output();
+    else if (chips & NSF_SOUND_VRC7) output[NES_AUDIO_VRC7] = vrc7_fm_output(&nsf_vrc7);
+    if ((cart == &mapper_namco && namco.variant == NAMCO_VARIANT_163)
+        || (chips & NSF_SOUND_NAMCO163))
+        output[NES_AUDIO_NAMCO163] = namco163_audio_output(&namco163_audio);
+    if (chips & NSF_SOUND_SUNSOFT5B) output[NES_AUDIO_SUNSOFT5B] = sunsoft5b_output(&sunsoft5b_audio);
+    if (cart == &mapper_fds) output[NES_AUDIO_FDS] = fds_expansion_audio();
+    else if (chips & NSF_SOUND_FDS) output[NES_AUDIO_FDS] = fds_nsf_audio_output();
 }
 
 float cart_audio_gain(void) {
@@ -492,7 +526,7 @@ static void mmc5_begin_ppu_read(uint16_t addr) {
 }
 
 static uint8_t mmc5_read_chr_raw(size_t offset) {
-    return C.chr_sz ? C.chr[offset & (C.chr_sz - 1)] : 0;
+    return C.chr_sz ? chr_read_byte(offset & (C.chr_sz - 1)) : 0;
 }
 
 static unsigned mmc5_split_vertical_scroll(void) {
@@ -619,12 +653,14 @@ static RamBlock *mmc5_ram_location(uint16_t a, size_t *offset) {
 }
 
 static uint8_t mmc5_cpu_read(uint16_t a) {
-    if (a == 0xFFFA || a == 0xFFFB) mmc5_clear_frame_irq_on_nmi_vector();
+    if (!cart_debug_peek_mode && (a == 0xFFFA || a == 0xFFFB)) mmc5_clear_frame_irq_on_nmi_vector();
     if (a == 0x5010) {
         uint8_t status = (uint8_t)((mmc5.pcm_irq_enabled && mmc5.pcm_irq_pending) ? 0x80u : 0u);
         status |= 0x01u;
-        mmc5.pcm_irq_pending = false;
-        mmc5_update_irq_line();
+        if (!cart_debug_peek_mode) {
+            mmc5.pcm_irq_pending = false;
+            mmc5_update_irq_line();
+        }
         return status;
     }
     if (a == 0x5015) {
@@ -640,8 +676,10 @@ static uint8_t mmc5_cpu_read(uint16_t a) {
         uint8_t status = 0;
         if (mmc5.irq_pending) status |= 0x80;
         if (mmc5.in_frame) status |= 0x40;
-        mmc5.irq_pending = false;
-        mmc5_update_irq_line();
+        if (!cart_debug_peek_mode) {
+            mmc5.irq_pending = false;
+            mmc5_update_irq_line();
+        }
         return status;
     }
     if (a == 0x5205) {
@@ -779,7 +817,7 @@ static void mmc5_cpu_write(uint16_t a, uint8_t v) {
 
 static uint8_t mmc5_ppu_read(uint16_t a) {
     a &= 0x1FFF;
-    mmc5_begin_ppu_read(a);
+    if (!cart_debug_peek_mode) mmc5_begin_ppu_read(a);
     uint8_t value;
     if (mmc5_split_chr_read(a, &value)) return value;
     if (mmc5_extended_attr_read(a, false, &value)) return value;
@@ -787,7 +825,17 @@ static uint8_t mmc5_ppu_read(uint16_t a) {
     if (chr_1k_banks == 0) return nrom_ppu_read(a);
 
     size_t bank = mmc5_map_chr_bank_1k(a);
-    return C.chr[bank * CHR_BANK_1K + (a & 0x03FF)];
+    return chr_read_byte(bank * CHR_BANK_1K + (a & 0x03FF));
+}
+
+/* Inspection must not consume the extended-attribute fetch sequence. */
+static uint8_t mmc5_debug_pattern(uint16_t address) {
+    CartPpuFetchSource previous = cart_ppu_fetch_source;
+    cart_ppu_fetch_source = CART_PPU_FETCH_CPU;
+    size_t offset = mmc5_map_chr_bank_1k(address) * CHR_BANK_1K + (address & 0x3FF);
+    uint8_t value = mmc5_read_chr_raw(offset);
+    cart_ppu_fetch_source = previous;
+    return value;
 }
 
 static void mmc5_ppu_write(uint16_t a, uint8_t v) {

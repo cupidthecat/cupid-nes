@@ -682,7 +682,6 @@ static int test_loader_ram_layouts(void) {
     static const struct { uint8_t prg, chr, rom, flags; } invalid[] = {
         {10, 7, 0, 0}, // More RAM than MMC1 can address.
         {0x99, 7, 0, 2}, // Separate large RAM chips lack board selection.
-        {7, 0x77, 0, 2}, // Mixed volatile/nonvolatile CHR chips.
         {7, 0, 0, 0}, // NES 2.0 explicitly declares no CHR memory.
         {0x70, 7, 0, 0} // NVRAM requires the battery flag.
     };
@@ -698,6 +697,16 @@ static int test_loader_ram_layouts(void) {
         CHECK(loaded == -1 && prg_rom == previous_prg && chr_rom == previous_chr);
         CHECK(cart_cpu_read(0x6000) == 0xA7);
     }
+
+    h.flags10 = 7;
+    h.zero[0] = 0x77;
+    h.chr_rom_chunks = 0;
+    h.flags6 = 0x12;
+    image = image_for(&h, 0x4000, 0, &size);
+    CHECK(image != NULL);
+    loaded = load_rom_memory(image, size);
+    free(image);
+    CHECK(loaded == 0 && chr_size == 0x4000);
 
     // CHR RAM declared beside CHR ROM is separate storage. MMC1 has no
     // selector for it in this layout, so the ROM remains mapped and read-only.

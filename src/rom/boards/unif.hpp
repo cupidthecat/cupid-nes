@@ -67,6 +67,10 @@ protected:
     void WriteRegister(uint16_t address, uint8_t value) override {
         regs[address & 1] = value; UpdateState();
     }
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("unif_ghostbusters.regs", regs);
+    }
 };
 
 class UnifCc21 final : public Board {
@@ -108,6 +112,10 @@ protected:
                                     : static_cast<uint8_t>(value & 0x0F);
             UpdateState();
         }
+    }
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("unif_ac08.reg", reg);
     }
 };
 
@@ -158,6 +166,11 @@ protected:
     void WriteRegister(uint16_t, uint8_t) override {}
 public:
     uint8_t *CpuRam8K() override { return cpuRam.data(); }
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("unif_famicom_box.regs", regs)
+            && state.Field("unif_famicom_box.cpu_ram", cpuRam);
+    }
 };
 
 class Unif8237A final : public Mmc3_215 {

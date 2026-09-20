@@ -2,7 +2,7 @@
 
 [Documentation index](README.md)
 
-Cupid persists cartridge nonvolatile memory, writable FDS/QD images, Family BASIC tape recordings, and supported expansion storage. These files preserve the emulated storage device involved; the application does not expose save-state or rewind commands.
+Cupid persists cartridge nonvolatile memory, writable FDS/QD images, Family BASIC tape recordings, and supported expansion storage. Save states capture the entire machine separately from those device files. The desktop exposes state slots, state files, rewind, run-ahead, and input movies; see [states and replay](replay.md) for their different ownership rules.
 
 ## Cartridge save files
 
@@ -24,17 +24,19 @@ Existing save data overlays initialized cartridge memory when the image is loade
 
 Work RAM and save RAM retain separate chip ownership. For example, a trainer on an MMC5 image with 8 KiB of each goes into the work chip, while the `.sav` data loads into the save chip. Bank selection determines which chip the CPU sees. CHR NVRAM declared beside CHR ROM also has separate storage: loading its `.chr.sav` never overwrites the ROM image. A board may allocate that storage without mapping it to the PPU.
 
+For supported native cartridges without CHR ROM, a mixed CHR declaration uses one allocation with volatile RAM first and NVRAM after it. The `.chr.sav` file contains only the NVRAM portion, starting at file offset zero. Writes to the volatile prefix do not create or dirty that save. On reload, volatile bytes follow the selected power-on initialization and saved bytes overlay the nonvolatile tail. A short save leaves the rest of that tail initialized. Board bank limits still determine which bytes are reachable. An uncovered portion of a partial CHR window reads open bus and ignores writes, so those writes neither alter the allocation nor create or dirty a save.
+
 Taito X1-005 boards, mappers 80 and 207, force the battery-selected work or save chip to a 256-byte allocation. A separately declared opposite chip keeps its own storage. X1-017 boards, mappers 82 and 552, honor explicit NES 2.0 sizes, including zero; their legacy save-RAM default is 5 KiB. The ordinary `.sav` contains the complete save-chip allocation, including bytes outside the board's visible windows. RAM permissions control CPU access without discarding those saved bytes.
 
 A short persistent flash save replaces only the bytes read from the file, leaving the remaining PRG flash bytes from the loaded image. UNROM 512 gets a flash save path only when the cartridge header has the battery bit set. GTROM exposes persistent PRG flash even when that bit is clear. Its default CHR RAM is volatile, but explicitly declared CHR NVRAM uses `.chr.sav`. Its dedicated nametable RAM remains volatile.
 
-Both flash boards can also have declared PRG NVRAM. Their `.sav` and `.flash.sav` files load and flush independently. A short PRG save leaves initialization or trainer bytes beyond the saved portion intact and does not change programmed flash bytes. In UNROM 512's eight-kilobyte nametable mode, writes backed by CHR NVRAM persist at offsets `$6000-$7FFF` in `.chr.sav`; they do not modify a separate CHR ROM.
+Both flash boards can also have declared PRG NVRAM. Their `.sav` and `.flash.sav` files load and flush independently. A short PRG save leaves initialization or trainer bytes beyond the saved portion intact and does not change programmed flash bytes. UNROM 512's eight-kilobyte nametable mode uses physical CHR offsets `$6000-$7FFF`. When those bytes belong to NVRAM, their `.chr.sav` offsets subtract any volatile prefix. For example, with 16 KiB of volatile CHR RAM followed by 16 KiB of CHR NVRAM, physical offset `$6000` saves at file offset `$2000`. A separate CHR ROM remains unchanged.
 
 Rainbow saves the complete writable PRG and CHR flash images independently, regardless of the battery flag. It loads those overlays after the original cartridge image and never changes the `.nes` file. Its ordinary PRG and CHR NVRAM use the normal `.sav` and `.chr.sav` paths; FPGA RAM remains volatile. Flash files are replaced through temporary files only after a complete write.
 
 Persistent cartridge data is flushed when the cartridge is shut down, including normal application exit. The main loop has no timed autosave. Close the emulator normally after making progress you want to retain.
 
-The derived filename can collide when two image files share the same stem in one directory. For example, `game.nes` and `game.bin` both derive `game.sav`. Renaming a cartridge image also changes the save path Cupid looks for.
+The derived filename can collide when two plain image files share the same stem in one directory. For example, `game.nes` and `game.bin` both derive `game.sav`. Renaming a cartridge image also changes the save path Cupid looks for. The prepared-image loader gives archive members and patched images separate save stems using the member name, patch checksum, and resulting image checksum, so they do not share the ordinary save merely because they came from the same archive.
 
 ## Board-specific cartridge formats
 
@@ -47,11 +49,11 @@ Some mapper save files contain more than one memory area:
 
 Do not assume another emulator uses the same composite layout. Keep a backup before moving saves between emulator versions or board configurations.
 
-The C mapper implementations write ordinary PRG/CHR battery memory and EEPROM files directly to their destination. Flash and the C++ board modules use a temporary file and replacement. Failed cartridge saves print an error; they do not keep the application open for recovery as a failed FDS save does.
+Cartridge saves use a sibling temporary file and replace the destination only after the complete write succeeds. This applies to PRG and CHR NVRAM, EEPROM, flash, and the composite MMC5 and Namco 163 files. Paths use UTF-8, including on Windows. A failed write leaves the changed bytes available in memory. The production image loaders and `unload_rom()` report that failure and retain the current machine so the caller can retry.
 
 ## Expansion storage
 
-NSF and NSFe playback does not create cartridge save files. Track changes clear the music program's RAM and sound-chip state, and unloading the file discards that playback state.
+NSF and NSFe playback does not create cartridge save files. Track changes clear the music program's RAM and audio state. MMC5 multiplier operands survive soft reset and track changes, and loading a music image initializes them to zero. Unloading the file discards its playback state.
 
 The ASCII Turbo File uses an 8 KiB `.turbofile.sav` file derived from the ROM stem. For example, `games/game.nes` uses `games/game.turbofile.sav`. The file must be exactly 8 KiB when it already exists.
 
@@ -61,9 +63,13 @@ Expansion saves are written to a sibling temporary file and replace the destinat
 
 ## Writable FDS and QD images
 
-Disk-system writes replace the image path passed to Cupid. There is no separate disk `.sav` overlay.
+The disk loader supports two save modes. In-place mode replaces the supplied FDS or QD image. Overlay mode writes an IPS patch beside the image, or to an explicitly selected overlay path, and leaves the original bytes unchanged. An automatically derived overlay name contains the source image's CRC. Archive members and patched disk images use their separate image identity for that destination.
 
-For an image you want to preserve unchanged, launch a copy or start it write-protected:
+Select the save mode and optional overlay path in the desktop's media settings. The desktop defaults to overlays. Archived or patched disks always use overlays. The loader applies an existing overlay before activating the disk and rejects a corrupt patch, changed image length, changed FDS header, or a destination that aliases the original file.
+
+The adapter's 32 KiB work RAM and 8 KiB CHR RAM are volatile and are not part of the disk file. Loading a new image initializes them with the selected [power-on profile](configuration.md#console-and-cpuppu-profiles). Soft reset and side changes retain their contents.
+
+For an image you want to prevent the game from writing at all, start it write-protected:
 
 ```sh
 ./cupid-nes --fds-bios "disksys.rom" --fds-write-protect "game.fds"
@@ -71,11 +77,11 @@ For an image you want to preserve unchanged, launch a copy or start it write-pro
 
 F10 toggles write protection at runtime. F8 ejects or reinserts the selected side, and F9 selects the next side. Ejecting a side does not save the image.
 
-When dirty media is flushed, Cupid rebuilds every side at the image's original 65,500-byte FDS or 65,536-byte QD size and preserves whether the image had a 16-byte FDS header. It writes a sibling temporary file named with the `.cupid-fds.tmp` suffix and replaces the original image only after the temporary write closes successfully.
+When dirty media is flushed, Cupid rebuilds every side at the image's original 65,500-byte FDS or 65,536-byte QD size and preserves whether the image had a 16-byte FDS header. In-place mode saves those bytes; overlay mode computes the IPS differences against the original source. Both modes write a unique sibling temporary file and replace their destination only after a complete write and successful close. An untouched side retains its original bytes.
 
 If that replacement fails, the dirty disk remains in memory. A normal window-close request reports the FDS save error and leaves the emulator open so you can correct the destination problem and try closing again. The loader also refuses to replace or unload dirty FDS media when it cannot flush it.
 
-If the image became dirty before write protection was enabled, F10 must turn write protection off again before a retry can succeed. Check directory permissions and free space as well. A stale `*.cupid-fds.tmp` file left by an interrupted process can block creation of the next temporary file because Cupid creates it exclusively; preserve or move the stale file aside after confirming no other running instance is using the image.
+If the image became dirty before write protection was enabled, F10 must turn write protection off again before a retry can succeed. Check directory permissions and free space as well. A stale temporary file does not block the next save; the writer chooses a fresh name and leaves the old file untouched. A read-only source is compatible with overlay saving as long as the overlay destination is writable. Reloading first flushes pending disk changes, then reads the current image or overlay, so it does not restore an older copy over those changes.
 
 ## Family BASIC tape files
 
@@ -89,7 +95,7 @@ F10 starts a fresh recording after BASIC is ready to save. Before starting anoth
 
 The raw tape format stores one digital sample per 88 emulated CPU cycles. Samples are packed least-significant bit first. Only complete bytes are written, so an incomplete final byte is omitted. The file has no WAV header and is not a BASIC source-text file.
 
-Recording saves use a sibling `.cupid-tape.tmp` file and then replace the requested destination. If an F11 save fails, the completed capture remains in memory and another F11 can retry after the path problem is fixed. A tape save failure during application shutdown is reported and the process exits with failure, so use F11 to confirm an important recording before closing the window.
+Recording saves use a unique sibling temporary file and then replace the requested destination. If an F11 save fails, the completed capture remains in memory and another F11 can retry after the path problem is fixed. Normal window-close handling also retains the session when a tape recording cannot be saved. A forced process termination cannot preserve an in-memory recording.
 
 If the recording buffer cannot grow, recording stops and shutdown reports `Tape recording stopped because the capture buffer could not grow`.
 

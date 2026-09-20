@@ -14,6 +14,7 @@ Cupid has a C11 CPU/PPU core, an SDL frontend, and C++17 cartridge and EPSM soun
 | [src/apu](../src/apu) | Channel DAC latches, frame sequencer, DMC requests, sample production, and ring buffers |
 | [src/apu/epsm.cpp](../src/apu/epsm.cpp), [src/third_party/ymfm](../src/third_party/ymfm) | EPSM bus, clock, firmware ownership, and YMF288 sound engine |
 | [src/rom/rom.c](../src/rom/rom.c) | Image parsing, allocation, validation, and cartridge replacement |
+| [src/media](../src/media) | Bounded ZIP/7z member selection, IPS/UPS/BPS patches, and image save identities |
 | [src/rom/mapper.c](../src/rom/mapper.c) and its private `mapper_*.h` files | Shared cartridge state, board selection, banking, cartridge RAM, nametables, interrupts, and persistence |
 | [src/rom/boards](../src/rom/boards), [board.h](../src/rom/board.h) | Cartridge board modules with owned RAM, 256-byte bus mappings, register decoding, and console reset hooks |
 | [src/rom/fds.c](../src/rom/fds.c) | Disk image ownership, transport, registers, media writes, and disk audio |
@@ -88,9 +89,15 @@ JY boards can clock IRQs from CPU cycles, CPU writes, PPU A12 edges, or physical
 
 The loader validates sizes and supported combinations before replacing the active cartridge. `load_rom_memory()` copies the supplied image bytes but has no filename from which to derive save paths. `load_rom()` installs trainer bytes before loading persistent data from the image's save paths. Lower-level mapper initialization leaves the caller responsible for the PRG/CHR buffers it was given. The C++ board modules own their volatile RAM, nonvolatile RAM, and nametables separately from those ROM buffers. A prepared disk image transfers ownership when activation succeeds.
 
+`nes_image_prepare()` reads a plain file or selected ZIP/7z member and applies an optional IPS, UPS, or BPS patch. Preparation leaves the active machine and its saves untouched. An archive with several supported images returns `NES_MEDIA_NEEDS_SELECTION`; `nes_image_list()` supplies the complete candidate list for the caller's picker. Preparation rejects corrupt data, unsafe or duplicate member names, unsupported compression, checksum failures, and limits above 256 MiB or 4,096 archive entries. Solid 7z blocks and decoder allocations are bounded as well.
+
+`nes_image_load()` sends the prepared bytes through the cartridge, music, disk, or StudyBox loader. Cartridge database lookup, image identity, and hardware selection therefore use the resulting bytes after patching. Plain unpatched cartridge files keep their existing save names. Archives and patches derive a separate save stem from the container path, member name, patch checksum, and resulting image checksum. Disk images from archives or patches use an IPS save overlay and preserve the supplied source. BIOS ownership and hardware checks remain in the production loaders.
+
 The frontend configures expansion-device storage separately through `joypad_persistent_configure()` after image loading. The cartridge loader resolves supported ordinary NES 2.0 default-input metadata before activation and applies the resulting controller configuration only after the new cartridge succeeds. Explicit adapter, port, and expansion choices override their corresponding automatic fields. VS input metadata has its own decoder. EPSM console metadata prepares a new device, including a copy of the configured percussion ROM, before cartridge activation.
 
-`unload_rom()` returns a boolean. Dirty FDS media that cannot be saved leaves the device loaded and returns false. Callers must handle that result before destroying the only in-memory copy. [Saves and media](saves.md) distinguishes this from ordinary cartridge persistence.
+`nes_set_region_mode()` stores the requested Auto, NTSC, PAL, or Dendy choice without changing a running machine. Each loader resolves the effective region before checking startup alignment and timing restrictions, then commits it with the replacement image. The override leaves the header or database timing declaration unchanged. The caller powers on the loaded CPU, PPU, and APU after a successful load; reset keeps the committed timing. A failed replacement preserves the previous timing and machine.
+
+`rom_flush_persistent()` checks cartridge, disk, and input-device storage before an image replacement. `unload_rom()` performs the same check and returns false if a write fails, retaining the loaded machine and unwritten data. Callers must handle that result before destroying the only in-memory copy. Cartridge saves use the shared UTF-8 file layer and atomic replacement, including composite RAM and expansion-audio files. See [saves and media](saves.md) for the file layouts.
 
 ## Power-on and reset
 

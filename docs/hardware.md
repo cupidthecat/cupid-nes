@@ -8,17 +8,17 @@ Cupid models the CPU, picture processing unit (PPU), audio processing unit (APU)
 
 | System profile | Timing selection | Notes |
 | --- | --- | --- |
-| NES and Famicom cartridges | iNES or NES 2.0 header | NTSC, PAL, and Dendy timing are implemented |
+| NES and Famicom cartridges | Image/database metadata or `--region` | NTSC, PAL, and Dendy timing are implemented |
 | Famicom Disk System | NTSC | Requires a supplied BIOS and a supported disk image |
 | VS System | NTSC | Requires supported console, PPU, input, and cartridge metadata |
-| PlayChoice cartridge payload | NTSC | iNES and NES 2.0 PlayChoice headers load the game cartridge; trailing cabinet data is ignored |
-| NES with EPSM | NES 2.0 header | Extended subtype 4 adds an 8 MHz YMF288 with stereo output |
-| Famicom Network System | NES 2.0 header | Extended subtype `0x0C`; optional 256 KiB character ROM supplied by the user |
+| PlayChoice cartridge payload | Image/database metadata or `--region` | iNES and NES 2.0 PlayChoice headers load the game cartridge; trailing cabinet data is ignored |
+| NES with EPSM | NES 2.0 header or `--region` | Extended subtype 4 adds an 8 MHz YMF288 with stereo output |
+| Famicom Network System | NES 2.0 header or `--region` | Extended subtype `0x0C`; optional 256 KiB character ROM supplied by the user |
 | StudyBox | STBX media | NTSC hardware with a user-supplied 256 KiB BIOS and tape PAGE/AUDI data |
 
 NTSC uses 262 scanlines with vblank beginning at line 241. PAL uses 312 scanlines with vblank beginning at line 241, and Dendy uses 312 with vblank beginning at line 291. PAL advances the PPU at 3.2 clocks per CPU clock; NTSC and Dendy use 3. The NTSC 2C02 skips one clock on rendered odd frames. VS RGB PPUs retain all 89,342 clocks on both frame parities, including both sides of a dual cabinet.
 
-The [timing table](../src/system/timing.c) supplies device rates and frame pacing. The [loader](../src/rom/rom.c) selects timing from the header. NES 2.0 dual-region images default to NTSC. Console wiring selected with `--console` is independent of this timing choice. The application has no region override; the legacy PAL diagnostic runner has an explicit test-only mode.
+The [timing table](../src/system/timing.c) supplies device rates and frame pacing. With the default `--region auto`, the [loader](../src/rom/rom.c) selects timing from image metadata and applicable database corrections. NES 2.0 dual-region images default to NTSC. An explicit `--region ntsc`, `pal`, or `dendy` overrides that choice before startup-alignment and hardware checks. VS, FDS, and StudyBox require effective NTSC timing. Console wiring selected with `--console` and the PPU revision remain independent. Successful loads commit the selected timing; a rejected replacement leaves the active machine unchanged.
 
 ## CPU, graphics, and audio
 
@@ -26,7 +26,11 @@ The CPU implements official and undocumented opcodes, page-crossing and read-mod
 
 The PPU renders 256 by 240 pixels. Scheduled pattern fetches feed background and sprite shifters, sprite evaluation, overflow, clipping, priority, and sprite-zero hits. Registers include palette mirrors, delayed address and data transfers, buffered reads, open bus, rendering-time address increments, and vblank/NMI edges. PAL has its own vblank OAM refresh and PAL/Dendy color-emphasis wiring.
 
+Independent PPU options model disabled OAMDATA reads, disabled palette readback, and the early sprite-evaluation wrap behavior that can produce a pixel at X=255. They use the existing register and sprite pipelines. The default leaves all three options off; [configuration](configuration.md#console-and-cpuppu-profiles) lists the switches and their reset behavior.
+
 The APU has two pulse channels, triangle, noise, and DMC. It implements envelopes, length and linear counters, sweep units, frame sequences and interrupts, and nonlinear channel mixing. DMC reads use the CPU DMA engine. Pulse and noise DACs latch their values between channel updates; pulse-register writes also refresh the output. The triangle DAC retains its value when the sequencer stops. PAL selects its own APU periods and frame events; Dendy uses NTSC APU periods at its CPU clock rate.
+
+Optional APU controls model the oldest Famicom's long noise sequence and clone pulse duty wiring. The noise option ignores the stored short-mode flag when choosing the feedback tap. The pulse option swaps duty selections 1 and 2 at register-write time for the base APU; MMC5 pulse channels are unaffected. Both options default to off and are independent of the DMC CPU revision.
 
 Audio reconstruction records CPU-cycle output changes before producing host-rate samples. This preserves short channel transitions that occur between sample boundaries. Cartridge expansion audio participates in the same reconstruction path; EPSM retains its separate stereo contribution.
 
@@ -175,6 +179,8 @@ Mapper 31 selects eight 4 KiB PRG windows with the low three address bits of wri
 NSF and NSFe files use a dedicated music execution environment. The loader checks the header, load address, track count, and chunk lengths, pads program data to 4 KiB pages, and honors bank registers at `$5FF6-$5FFF`. Reset and track changes call the initialization routine with the selected song; a CPU-cycle timer schedules the playback routine at the file's NTSC or PAL rate. NSFe `auth`, `tlbl`, `time`, `fade`, and `BANK` metadata are supported. `plst` and `text` are accepted without changing track order or displaying their text, and unknown required chunks are rejected. Page Up and Page Down select tracks through the normal application.
 
 Music files can combine VRC6, VRC7, FDS, MMC5, Namco 163, and Sunsoft 5B sound. Register writes and clocks use the production expansion-chip models, and their output joins the ordinary APU mix. Namco register writes take precedence over overlapping Sunsoft 5B addresses. NSFe fades scale the complete mix after the requested track length. FDS music uses writable banked program windows without disk transport; MMC5 provides its audio registers, multiplier, and 1 KiB ExRAM window. Track changes clear music-owned RAM and audio state while the application holds the audio-device lock.
+
+The NSF/NSFe MMC5 multiplier retains both operands across soft reset and track changes. Writes to `$5205` and `$5206` replace their respective operands; reads return the low and high bytes of the product. Loading a music image initializes both operands to zero.
 
 The music PPU advances regional frame timing without rendering or generating VBL NMIs. Its reset path remains active when PPU reset suppression is selected. Base-APU frame and DMC IRQs are masked during music playback. Loading a cartridge restores rendering, PPU NMI behavior, and ordinary APU IRQ delivery; these transitions are exercised by the hardware tests.
 
@@ -326,7 +332,11 @@ Legacy iNES RAM fields are unreliable. Cupid uses board defaults and ignores byt
 
 NES 2.0 RAM declarations are normally explicit, including zero RAM. Taito X1-005, used by mappers 80 and 207, forces its battery-selected work or save chip to 256 bytes; a separately declared opposite chip keeps its own allocation. Writes in the unlocked `$7F00-$7FFF` window update both 128-byte halves. X1-017, used by mappers 82 and 552, honors explicit RAM sizes. Its legacy save-RAM default is 5 KiB, while legacy images without a battery use the ordinary 8 KiB work-RAM default. Its three permission registers explicitly select save-RAM pages; an absent selected chip does not replace an existing work-RAM mapping. Mapper 82 shifts PRG register values right by two, while mapper 552 reverses the six low bits.
 
-Cartridge RAM keeps separate volatile and persistent allocations. Native families whose RAM mapping follows the battery-selected work/save path keep both declared PRG chips independent; boards with explicit selectors, such as MMC1 and MMC5, can expose both chips according to their register wiring. In the 8 KiB plus 8 KiB MMC5 layout, bank-select bit 2 chooses the work socket when set and the save socket when clear. A single 16 KiB chip mirrors through the eight low bank selectors. Declared CHR RAM and CHR NVRAM may remain allocated beside CHR ROM without replacing the mapped ROM. Separate CHR ROM/RAM selection still requires a board that implements it; accepted storage does not imply that every allocated chip is CPU- or PPU-addressable.
+Native families whose RAM mapping follows the battery-selected work/save path keep both declared PRG chips independent; boards with explicit selectors, such as MMC1 and MMC5, can expose both chips according to their register wiring. In the 8 KiB plus 8 KiB MMC5 layout, bank-select bit 2 chooses the work socket when set and the save socket when clear. A single 16 KiB chip mirrors through the eight low bank selectors. Declared CHR RAM and CHR NVRAM may remain allocated beside CHR ROM without replacing the mapped ROM. Separate CHR ROM/RAM selection still requires a board that implements it; accepted storage does not imply that every allocated chip is CPU- or PPU-addressable.
+
+Without CHR ROM, supported native mapper paths accept a mixed volatile and nonvolatile CHR allocation. Volatile bytes precede the NVRAM tail, and the existing bank registers address that combined allocation within each board's limits. A fixed window can leave part of the allocation unreachable. This layout does not add independent physical chip-select wiring. Only the declared NVRAM tail is loaded from or written to `.chr.sav`; the volatile prefix follows power-on initialization. CHR ROM with separately declared RAM keeps its existing storage rules and restrictions, including UNROM 512's rejection of ROM plus both CHR sidecars in eight-kilobyte nametable mode.
+
+Native CHR RAM mappings require bank boundaries aligned to 256 bytes. They repeat complete banks within the requested window and leave an incomplete final copy unmapped. For example, NROM with 2 KiB of volatile CHR followed by 4 KiB of NVRAM maps `$0000-$17FF`; `$1800-$1FFF` reads open bus and ignores writes. A 384-byte allocation cannot establish a native bank mapping. VRC6 nametable updates retain preceding mappings in chunks outside a short replacement; Sunsoft 4's CHR-backed nametables expose only complete 256-byte chunks from the selected source offset.
 
 Mappers 0, 2, 3, 7, 11, 13, 66, 79, 94, 113, 144, 146, and 180 accept independent work and save chips without treating their combined size as one power-of-two allocation. The selected chip supplies the fixed `$6000-$7FFF` window. A chip larger than 8 KiB keeps its remaining bytes allocated but unmapped; its complete save allocation is preserved on disk. Smaller chips repeat only complete pages within the window, with uncovered addresses on open bus. For example, a 3 KiB database-declared chip repeats twice through `$77FF`, while `$7800-$7FFF` remains unmapped. The mapping granularity is 256 bytes, so a 128-byte declaration stays unmapped. Banked boards retain their own supported-layout checks and chip-selection rules.
 
@@ -349,6 +359,8 @@ The implementation includes bus conflicts, initially unmapped windows, RAM permi
 Some families have substantially different variants. Namco 175/340 variants do not all contain the N163 audio device. VRC2 variants differ from VRC4 IRQ-capable boards. The supported family name is not a claim that every member has every feature listed for that family.
 
 Expansion sound includes MMC5 pulse/PCM, VRC6 pulse/saw, VRC7 FM, Namco 163 wavetable, Sunsoft 5B tone/noise/envelopes, and disk-system wavetable/modulation output. [Architecture](architecture.md) describes how the audio reaches the application.
+
+Console reset on mapper 85 resets the FM synthesizer. PRG/CHR banks, RAM permissions, mirroring and IRQ counter state are retained. The audio address latch, mute bit and sample-clock phase also survive; the held sample updates at the next chip tick. Cartridge activation initializes the whole mapper.
 
 ## EPSM expansion sound
 
@@ -389,6 +401,8 @@ The disk loader accepts supported headered and raw FDS images, plus the QD layou
 
 The device supplies 32 KiB work RAM, 8 KiB CHR RAM, BIOS mapping, disk transport and block timing, CRC handling, timer and transfer interrupts, and audio. Side selection, ejection, and write protection are available through the application. [Disk tests](../src/tests/fds_accuracy.c) exercise the production loader and cartridge bus with synthetic media and BIOS data.
 
+The work and CHR RAM use the selected power-on profile when a disk image is loaded. CPU startup, soft reset, and side changes preserve their contents. A rejected replacement leaves the active adapter's RAM intact.
+
 Writable images are updated at the loaded path. See [saves and media](saves.md) for backup and failure behavior.
 
 ## VS System
@@ -396,6 +410,8 @@ Writable images are updated at the loaded path. See [saves and media](saves.md) 
 The supported VS configurations use mappers 0, 1, 2, 75, 99, or 151 with NTSC timing. Dual cabinets require mapper 99. NES 2.0 metadata selects the hardware type, PPU, and controller wiring. Legacy mapper 99 images use the implemented ROM-size convention to select single or dual operation. The optional game database can identify supported VS hardware from a legacy image's PRG+CHR hash.
 
 The PPU choices include the 2C03 RGB palette, four 2C04 palettes, and the implemented 2C05 register/status variants. Cabinet handling includes DIP switches, coin and service inputs, controller routing, and the implemented protection-read sequences.
+
+Zapper light sensing uses the active PPU's hardware palette, including the VS RGB palette mappings. Edited display palettes and video filters do not change the light sensor. Beam position, the detection threshold, sampling radius, and light-retention timing use the existing input path.
 
 NES 2.0 console selector 3 with extended subtype 1 also selects VS hardware. That encoding uses the existing 2C03 profile as a compatibility fallback because its subtype occupies the direct descriptor's PPU field. It retains the cabinet type and input metadata. Direct VS descriptors with PPU code 1 (RP2C03G) or unknown codes 13 through 15 also use 2C03 behavior and print a diagnostic. Other defined PPU codes select their corresponding RGB profile.
 

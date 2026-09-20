@@ -12,6 +12,7 @@
  */
 #ifndef CUPID_BOARDS_RAINBOW_DEVICES_HPP
 #define CUPID_BOARDS_RAINBOW_DEVICES_HPP
+#include "state_codec.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -53,6 +54,18 @@ class RainbowFlash {
 public:
     void Initialize(uint8_t *bytes, uint32_t size) { _bytes = bytes; _size = size; }
     bool Identifying() const { return _identify; }
+
+    bool VisitState(BoardStateVisitor &state) {
+        uint8_t mode = static_cast<uint8_t>(_mode);
+        if (!state.InvariantU32("flash.size", _size)
+            || !state.ValueU8("flash.mode", mode, static_cast<uint8_t>(Mode::Erase))
+            || !state.Field("flash.cycle", _cycle, 5)
+            || !state.Field("flash.identify", _identify)
+            || !state.Field("flash.bypass", _bypass))
+            return false;
+        if (state.GetMode() == BoardStateVisitor::Mode::Apply) _mode = static_cast<Mode>(mode);
+        return true;
+    }
 
     uint8_t Read(uint32_t address) const {
         switch (address & 0x1FF) {
@@ -119,6 +132,16 @@ class RainbowPulse {
     uint16_t _frequency = 1, _timer = 1;
     bool _enabled = false, _constant = false;
 public:
+    bool VisitState(BoardStateVisitor &state) {
+        return state.Field("pulse.volume", _volume, 15)
+            && state.Field("pulse.duty", _duty, 7)
+            && state.Field("pulse.step", _step, 15)
+            && state.Field("pulse.frequency", _frequency, 0x0FFF)
+            && state.Field("pulse.timer", _timer)
+            && state.Field("pulse.enabled", _enabled)
+            && state.Field("pulse.constant", _constant);
+    }
+
     void Write(unsigned reg, uint8_t value) {
         if (reg == 0) {
             _volume = value & 15;
@@ -145,6 +168,15 @@ class RainbowSaw {
     uint16_t _frequency = 1, _timer = 1;
     bool _enabled = false;
 public:
+    bool VisitState(BoardStateVisitor &state) {
+        return state.Field("saw.rate", _rate, 0x3F)
+            && state.Field("saw.accumulator", _accumulator)
+            && state.Field("saw.step", _step, 13)
+            && state.Field("saw.frequency", _frequency, 0x0FFF)
+            && state.Field("saw.timer", _timer)
+            && state.Field("saw.enabled", _enabled);
+    }
+
     void Write(unsigned reg, uint8_t value) {
         if (reg == 0) _rate = value & 0x3F;
         else if (reg == 1) _frequency = (_frequency & 0xF00) | value;
@@ -170,6 +202,15 @@ class RainbowAudio {
     RainbowSaw _saw;
     uint8_t _routing = 0, _volume = 0, _lastOutput = 0;
 public:
+    bool VisitState(BoardStateVisitor &state) {
+        return _pulse[0].VisitState(state)
+            && _pulse[1].VisitState(state)
+            && _saw.VisitState(state)
+            && state.Field("audio.routing", _routing, 7)
+            && state.Field("audio.volume", _volume, 15)
+            && state.Field("audio.last_output", _lastOutput);
+    }
+
     void Clock() {
         _pulse[0].Clock();
         _pulse[1].Clock();

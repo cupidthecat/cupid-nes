@@ -2,7 +2,7 @@
 
 [Documentation index](README.md)
 
-Cartridge and media work from issue #77 onward is recorded in [cartridge and media checkpoints](cartridge-checkpoints.md). The earlier implementation and validation history remains below.
+The [hardware revision and CHR checkpoints](#hardware-revision-and-chr-checkpoints) record issues #125 through #130 and #139. The [partial CHR window](#partial-chr-window-checkpoint) and [regional timing](#regional-timing-checkpoint) checkpoints record the remaining #139 cases and #140. Earlier cartridge and media work is recorded in [cartridge and media checkpoints](cartridge-checkpoints.md). The earlier core implementation and validation history remains below.
 
 Each issue or review checkpoint below passed the production hardware regressions and the full pinned AccuracyCoin cartridge: 144/144 passed, zero skipped, and zero unfinished. These records identify the commits tested after integration. Later fixes require their own checks, and the final pull-request commit must pass the complete CI workflow.
 
@@ -127,6 +127,90 @@ The same revision passed local strict Windows builds, Windows AddressSanitizer/U
 
 These are historical results for the named revision. A later documentation or source commit needs its own CI result; consult the pull request's checks for that revision. The frontend harnesses were separate review tools, while the tracked CI suite is defined in [the workflow](../.github/workflows/accuracy.yml).
 
+## Hardware revision and CHR checkpoints
+
+Each integration commit below passed a strict Windows build, production hardware regressions, and AccuracyCoin in both normal and AddressSanitizer/UndefinedBehaviorSanitizer builds. Every run reported 144/144 passed, zero skipped, zero unfinished, and 4,182 frames, matching the cartridge's own tally. The ROM pin and result requirements above were unchanged.
+
+| Issue | Implemented behavior | Tested integration commit |
+| --- | --- | --- |
+| #125 | Optional disabled OAMDATA reads return decaying PPU open bus without reading OAM or refreshing the latch | `dbfc8b7304badc35787246cecf26adb4d7968ee8` |
+| #126 | Optional disabled palette readback uses buffered PPUDATA reads with the ordinary external transfer and address increment | `350780df92200dae50cc538bd6439ac3dbd6ee30` |
+| #127 | Early sprite-evaluation wrap behavior feeds the ordinary sprite pipeline, including the possible X=255 pixel | `0213e74415d4d5a61e2c68f249a518191734f327` |
+| #128 | Oldest-Famicom noise profile retains the written mode flag and selects the long-sequence feedback tap | `bed43aed297ebe0da1ace4f0a65724be802fa553` |
+| #129 | Clone pulse duty profile swaps selections 1 and 2 at base-APU register writes while preserving MMC5 behavior | `4f97d11bf7c1658b30d33dc2a261a1d512cdd00e` |
+| #130 | VS light sensing uses the selected hardware palette independently of display settings | `c0012ca2fb9763cd8e5568604e398cfcba5efd2d` |
+| #139 | Native no-ROM CHR storage accepts a volatile prefix and NVRAM tail, with banking and NVRAM-relative save offsets | `a3c8afd8d5cd155d297917079072aad7ee430151` |
+
+The PPU regressions cover register recovery, bus decay, sprite counts and heights, wrapped Y coordinates, fetch addresses, flips, palette selection, and reset behavior. The APU regressions cover all regional noise rates, both pulse channels and volume modes, write-time selection, reset persistence, and MMC5 independence. VS tests cover palette variants, sensor thresholds, beam timing, and separation from display edits.
+
+The CHR regressions cover a fixed 4 KiB + 4 KiB allocation, unequal CPROM banks, and UNROM 512 nametable and pattern aliases. They compare complete save files, reload volatile and persistent data, retain short-save initialization, and verify the active cartridge after a rejected replacement. With 16 KiB of volatile CHR followed by 16 KiB of NVRAM, physical offset `$6000` persists at `.chr.sav` offset `$2000`. The unsupported ROM-plus-two-sidecar four-screen layout remains rejected.
+
+The combined implementation is `a3c8afd8d5cd155d297917079072aad7ee430151`. Its Linux GCC and Clang AddressSanitizer/UndefinedBehaviorSanitizer builds also passed the production hardware suite, 8,991-state CPU trace, all 91 pinned diagnostic ROMs, and AccuracyCoin 144/144. The Linux sanitizer run enabled leak detection. These results belong to that source revision; the final pull-request commit must pass its own GCC and Clang sanitizer CI jobs.
+
+Revision `6cbf43b6ddb4ad03c09675f63ae732eff3bbfb88` updates the README and five technical guides while retaining that implementation, build scripts, and test pins. Its [push workflow](https://github.com/cupidthecat/cupid-nes/actions/runs/35484461117) and [pull-request workflow](https://github.com/cupidthecat/cupid-nes/actions/runs/35484472930) both passed the GCC and Clang sanitizer jobs. Each job passed the production hardware suite, 8,991-state CPU trace, all 91 diagnostic ROMs, and AccuracyCoin 144/144 with zero skipped or unfinished tests. These are results for the named revision; later commits require their own CI checks.
+
+## NSF multiplier reset checkpoint
+
+Revision `265f7d2919940db3dac83faf3617cb65dddb11eb` preserves the NSF/NSFe MMC5 multiplier operands across soft reset and track changes. A fresh music-image load initializes both operands to zero. The regression runs a synthetic program through the production loader and CPU: its initialization routine reads `$5205/$5206` and stores both product bytes in RAM. It checks `$FE * $FD` across soft reset, a partial operand write followed by a track change, and separate operand initialization after reload. The expansion-audio combination tests also check retained operands while continuing to require cleared audio output.
+
+Before the implementation change, the new reset regression and corrected audio-combination check both failed because the multiplier returned zero. The committed fix passed the strict Windows build, production hardware suite, and AccuracyCoin in normal and AddressSanitizer/UndefinedBehaviorSanitizer builds. Both AccuracyCoin runs reported 144/144 passed, zero skipped, zero unfinished, and 4,182 frames, matching the cartridge's tally. The ROM revision, SHA-256, and result requirements above were unchanged.
+
+Both Windows builds also passed the canonical CPU trace's 8,991 states and all 91 pinned diagnostic ROMs through `scripts/run-diagnostics.py`.
+
+## VRC7 console reset checkpoint
+
+Revision `1dd63fd97a7228f58f14fc13812bc21ba3a3a055` connects mapper 85 console reset to the FM chip's reset operation. Banking, control, RAM, IRQ registers and counter state survive, along with the audio address latch, mute state and sample-clock phase. CPU reset clears an already-pending mapper IRQ before its bus cycles; the retained counter can raise a new IRQ during those cycles. The regression checks all three supported submapper values, an IRQ counter that keeps advancing through the seven CPU reset cycles, the next FM sample boundary, muted writes and a data write through the retained address latch. Before the fix, the sample-boundary assertion failed because the synthesizer kept playing.
+
+The strict Windows build and production hardware suite passed in normal and AddressSanitizer/UndefinedBehaviorSanitizer builds. Each build then passed AccuracyCoin 144/144 with zero skipped and zero unfinished in 4,182 frames, matching the cartridge's tally. The test ROM pin and SHA-256 were unchanged.
+
+## NMI during CPU reset checkpoint
+
+Revision `6177689eed717b5c7ed32842226b866c54d92111` clears earlier NMI requests before the CPU reset bus cycles, preserving new edges detected during those cycles. With PPU reset suppression enabled, the running PPU can raise its vblank NMI inside that window. The regression advances the real PPU to five offsets in each of NTSC, PAL and Dendy, then verifies the first instruction, NMI handler and return. Paired cases use ordinary PPU reset, and the handler count checks that a held NMI line does not cause repeated delivery. Before the fix, all 15 cases with PPU reset suppression enabled missed the interrupt; the paired controls passed.
+
+This revision includes the NSF multiplier and VRC7 reset fixes above. Its strict Windows build and production hardware suite passed in normal and AddressSanitizer/UndefinedBehaviorSanitizer builds. Both builds passed the canonical CPU trace's 8,991 states, all 91 pinned diagnostic ROMs, and AccuracyCoin 144/144 with zero skipped or unfinished tests. Each AccuracyCoin run completed in 4,182 frames and matched the cartridge's tally. The ROM revisions, SHA-256 and result requirements were unchanged.
+
+These local results belong to the named implementation revision. Later documentation commits retain that source, and the final pull-request revision must pass its own GCC and Clang sanitizer CI jobs.
+
+Revision `f26b7ee6aa3f298368f646983b389f932763869b` retains that implementation and passed both the [push workflow](https://github.com/cupidthecat/cupid-nes/actions/runs/35502276983) and [pull-request workflow](https://github.com/cupidthecat/cupid-nes/actions/runs/35502278770). Each workflow's GCC and Clang sanitizer jobs passed the production hardware suite, 8,991-state CPU trace, all 91 diagnostic ROMs and AccuracyCoin 144/144 with zero skipped or unfinished tests. The Clang jobs enabled address, undefined-behavior and leak checks. These CI results belong to the named revision.
+
+## Disk-adapter RAM checkpoint
+
+Revision `ecbd355d3d1d4e0dd9217df4877260fe45950cbe` applies the RAM power-on profile to the disk adapter's 32 KiB work RAM and 8 KiB CHR RAM. Previously both areas were always zeroed. The regression checks every byte for the fixed profiles, repeatable seeded initialization of both areas, preservation through CPU startup and soft reset, and fresh initialization on reload. A rejected image must preserve the active RAM and leave the random source unchanged.
+
+The new regression failed on the preceding implementation and passed with the fix. The production hardware suite and AccuracyCoin passed in normal and AddressSanitizer/UndefinedBehaviorSanitizer builds. Both AccuracyCoin runs reported 144/144 passed, zero skipped, zero unfinished, and 4,182 frames, matching the cartridge's tally. The test image revision and SHA-256 above were unchanged.
+
+## Partial CHR window checkpoint
+
+Revision `dcdac463aac1d426c7c419b2b59e2b5214e11b03` corrects the remaining partial-window cases in #139. Native CHR mapping repeats complete banks and leaves an incomplete final window on open bus. Writes to uncovered addresses no longer modify an aliased byte or dirty a CHR save. VRC6 retains the preceding nametable mapping in chunks that a short replacement cannot cover; Sunsoft 4 exposes only complete 256-byte chunks from its selected CHR offset.
+
+Before the fix, the added regressions produced 19 failures across pattern reads, save persistence, VRC6 nametables, and Sunsoft 4 nametables. They check every pattern-table address for the selected layouts, verify that unmapped writes leave the backing allocation unchanged, compare complete save files, and exercise nametable writes, mirrors, bank changes and CPU reset. Aligned 768-byte RAM and unaligned 384-byte RAM have separate expected mappings; the latter cannot establish a native bank mapping.
+
+The committed revision passed strict Windows builds and the complete production hardware suite with normal and AddressSanitizer/UndefinedBehaviorSanitizer settings. The native mixed-CHR suite passed all nine groups. Both builds passed AccuracyCoin 144/144 with zero skipped or unfinished tests in 4,182 frames, matching the cartridge's tally. This revision includes the disk-adapter RAM initialization above. The ROM pins, SHA-256 and result requirements were unchanged.
+
+## Regional timing checkpoint
+
+Revision `7e2ab28275e3e81f41efef3077554b6206005058` adds `--region auto|ntsc|pal|dendy` through the production image loaders. Auto keeps image and database timing rules; explicit choices take precedence without rewriting that metadata. The selection affects the next successful load. Reset retains the loaded timing, and rejected replacements preserve the active machine. VS, FDS and StudyBox require effective NTSC timing.
+
+The region suite passes 511 checks across iNES, NES 2.0, UNIF, database-corrected and recognized headerless images, startup-alignment failures, rejected replacements and fixed-timing hardware. Loaded-machine tests execute CPU instructions to verify the PPU divider ratio, check frame lengths and vblank boundaries, distinguish PAL APU periods from Dendy's NTSC periods, and check audio sample conversion through reset. Eleven launch cases exercise the production argument parser and loader; CI runs them with both compiler configurations.
+
+NSF and NSFe INIT receive `X=1` only in PAL mode; NTSC and Dendy receive `X=0`. A synthetic music program records INIT registers and increments RAM on each PLAY call. Fixed expected cycle intervals check successive calls at the selected clock, alongside reset, track changes, metadata preservation and image replacement. With the preceding INIT-X expression restored, the classic NSF Dendy case failed while the remaining hardware groups and all 511 region checks passed.
+
+The committed source passed strict Windows builds with normal and AddressSanitizer/UndefinedBehaviorSanitizer settings. Both builds passed the full hardware suite, eleven launch cases, the canonical CPU trace's 8,991 states, all 91 pinned diagnostic ROMs, and AccuracyCoin 144/144. Each AccuracyCoin run reported zero skipped and zero unfinished tests in 4,182 frames, matching the cartridge's tally. The test ROM revisions, SHA-256 and pass requirements were unchanged.
+
+This revision includes the partial CHR, disk-adapter RAM, NSF multiplier, VRC7 reset and NMI during reset corrections above. Their separate checkpoints retain the results for each fix and the seven earlier hardware issues. These local results belong to the named implementation revision. Later documentation commits retain that source; the final pull-request revision must pass its own GCC and Clang sanitizer CI jobs.
+
+## Cartridge save failure checkpoint
+
+The production loaders now refuse an image replacement or unload when cartridge storage cannot be saved. The regression runs a CPU store on a native cartridge and a C++ board, then places a nonempty directory at the save destination to force the final atomic replacement to fail. It checks that both a valid replacement image and an unload are rejected, while the current ROM, program counter, RAM, and destination contents remain intact. Removing the obstruction allows a retry; reloading the original cartridge verifies the saved byte.
+
+Both groups passed with the complete hardware suite in strict Windows normal and AddressSanitizer/UndefinedBehaviorSanitizer builds. The region and database launch checks passed in both builds. Each AccuracyCoin run passed 144/144 with zero skipped or unfinished tests in 4,182 frames, matching the cartridge's tally. These local results cover the persistence changes on the combined integration branch; they do not establish results for later frontend or archive changes. The existing ROM pins and pass requirements were unchanged.
+
+## Archive, patch, and disk-overlay checkpoint
+
+The prepared-image loader passed six patch-format groups, seven archive and image groups, and four FDS save-option groups in the complete Windows hardware suite. The archive fixtures contain owned synthetic cartridges and cover ZIP, LZMA 7z, solid LZMA2 7z, Unicode names, member selection, corruption, entry and output limits, separate save identities, and database lookup after patching. The disk tests exercise headered and headerless FDS and QD images, multiple sides, read-only sources, reloads with pending writes, and failed overlay replacement.
+
+The same implementation passed strict normal and AddressSanitizer/UndefinedBehaviorSanitizer builds, the region and database launch suites, and AccuracyCoin 144/144 with zero skipped or unfinished tests in 4,182 frames. Sanitizer testing found and fixed unaligned integer access in the bundled archive decoder and a freed-buffer read in the recent-image parser. Malformed recent lists now leave the previous list intact. These local checkpoints cover the prepared-image and disk-overlay APIs; later application controls and automatic disk operations require their own integration checks. Existing diagnostic ROM pins and pass requirements were unchanged.
+
 ## Reproducing a checkpoint
 
 Check out the listed commit in a separate worktree, prepare SDL2 and the pinned ROM as described in [development and testing](development.md), then run:
@@ -134,6 +218,116 @@ Check out the listed commit in a separate worktree, prepare SDL2 and the pinned 
 ```powershell
 .\scripts\test-windows.ps1 -SdlRoot C:\path\to\SDL2-2.32.10
 .\build\windows\accuracy-tests.exe --accuracycoin 12000 C:\path\to\AccuracyCoin.nes
+.\scripts\test-windows.ps1 -SdlRoot C:\path\to\SDL2-2.32.10 -Sanitize
+.\build\windows-sanitized\accuracy-tests.exe --accuracycoin 12000 C:\path\to\AccuracyCoin.nes
 ```
 
 The Linux equivalents, canonical CPU trace, 91-ROM collection, and sanitizer commands are in [the accuracy notes](accuracy.md). AccuracyCoin is a regression baseline for CPU/PPU/APU interactions; passing it does not substitute for the focused mapper, disk, audio, and input-device tests.
+
+## Feature integration checkpoints
+
+The hardware checkpoints above cover #125 through #130, #139, and #140. The
+following feature work is integrated into the production desktop application.
+The listed regression files are under `src/tests` unless a script path is given.
+
+| Issue | Integrated behavior | Focused coverage |
+| --- | --- | --- |
+| #131 | Transactional machine states, slots, files, and board/peripheral state | state_accuracy.c, board_state_accuracy.c, state_ui_accuracy.c |
+| #132 | Pause, stepping, reset, power, reload, and speed controls | frontend_accuracy.c |
+| #133 | Saved configuration, profiles, keyboard/gamepad bindings, and launch precedence | frontend_accuracy.c, desktop_accuracy.c |
+| #134 | Debugger, inspection panels, breakpoints, trace, and bounded Lua callbacks | debugger_accuracy.c |
+| #135 | Rewind history and run-ahead with isolated host output | rewind_accuracy.c |
+| #136 | Open, recent images, archive selection, and transactional switching | frontend_accuracy.c |
+| #137 | ZIP/7z loading and IPS/UPS/BPS patches | media_accuracy.c, patch_accuracy.c |
+| #138 | Cheat parsing, persistence, memory matching, and frontend controls | cheat_accuracy.c |
+| #141 | Database discovery, explicit paths, corrections, and desktop selection | game_database_discovery_accuracy.c, desktop_accuracy.c |
+| #142 | Disk save modes, overlays, write protection, and automatic loading | fds_options_accuracy.c, fds_automation_accuracy.c |
+| #143 | Versioned input movies and deterministic session ownership | movie_accuracy.c, movie_frontend_accuracy.c |
+| #144 | TCP sessions, compatibility handshake, slot ownership, frame hashes, and recovery | netplay_accuracy.c, scripts/check-netplay.py |
+| #145 | Music transport, repeat, shuffle, timing, fade, and silence progression | nsf_player_accuracy.c |
+| #146 | PNG screenshots, WAV audio, and AVI video recording | capture_container_accuracy.c, capture_session_accuracy.c |
+| #147 | Regional overscan, layers, channel mixing, and stereo preservation | video_presentation_accuracy.c, audio_mix_accuracy.c |
+| #148 | Format-109 replacement assets, audio, discovery, install, capture, and export | hd_pack_accuracy.cpp, hd_renderer_accuracy.cpp, hd_runtime_accuracy.cpp |
+| #149 | Desktop menus, settings, storage, device panels, navigation, and scaled layouts | desktop_accuracy.c; manual acceptance remains open |
+
+These clean source revisions passed AccuracyCoin **144/144**, with zero skipped
+or unfinished tests in 4,182 frames. Each used ROM revision
+`9bc42d1e3acbeeaea215b1011d58f4ce72a8a49e` and SHA-256
+`7e25ac08d2e7ed14c9b1f16bd853148fef09a824452164f8e0d69fd2bd96176c`.
+
+| Revision | Checkpoint | Windows configuration |
+| --- | --- | --- |
+| `0f22c06bacc00e80a1e436c829686cf9a98ec395` | Database and application baseline | Strict normal |
+| `8af8e5ddcae209ba242fff0a278239c3dc78fc3d` | Disk automation and execution policy | Strict normal and ASan/UBSan |
+| `f8186f2f92a5863166dc764dd46f0d83b5adc6f3` | Music player | Strict normal and ASan/UBSan |
+| `db4758089567f437353b1c8549014c73c5ff7473` | Complete machine states | Strict normal and ASan/UBSan |
+| `10cdfb64918b855e60d9c91c9b7532ddfeefa56a` | Capture and state integration | Strict normal |
+| `4455b2b2e54a644abe6c1b294e4c5dd412942630` | Debugger and trace integration | Strict normal |
+| `1eb1d1fcea02bb7bb68e34a9e604d27623423209` | Movies and combined state/session guards | Strict normal and ASan/UBSan |
+| `ee44f496c15f71fa2120706745d30a3490954ef7` | Desktop runtime and settings | Strict normal |
+| `d1929f3b8b67766fb42168416970608d15a618f5` | HD rendering and audio integration | Strict normal |
+| `b830ed9` | Network sessions | Strict normal |
+| `7f89580` | Desktop navigation and saved pack selection | Strict normal |
+| `cb722fe` | Live settings, storage controls, nested audio locks, and session guards | Strict normal and ASan/UBSan |
+
+The disk, music, state, capture, debugger, and combined movie checkpoints also
+passed the complete production hardware suite and region/database launch checks.
+The combined movie checkpoint passed the canonical 8,991-state CPU trace and all
+91 pinned diagnostic ROMs in both Windows configurations. The network and later
+Windows checkpoints include seven separate-process connection tests.
+
+Revision `f231786` fixes fractional-scale font rendering. Its strict Linux build
+passed AccuracyCoin 144/144 with the same zero-skip, zero-unfinished result.
+The desktop renderer produces the [documented screenshots](desktop.md) from
+synthetic fixtures. Manual native-window acceptance for #149 is still pending;
+these automated checks do not establish physical-controller or native-dialog
+behavior on both operating systems.
+
+Use the commands in the reproduction section for each listed revision. The
+final pull-request head must pass its own CI runs; earlier checkpoint results
+are not substituted for those runs.
+
+Revision `368e6a9` passed the strict Linux hardware suite and AccuracyCoin
+144/144 with zero skipped or unfinished tests after binding-label and panel
+navigation updates.
+
+
+Revision `3b0d27a6d61d7e79a7eeb9a545e2da5f3d171ad0` passed both
+[push CI](https://github.com/cupidthecat/cupid-nes/actions/runs/35531524325) and
+[pull-request CI](https://github.com/cupidthecat/cupid-nes/actions/runs/35531526979).
+Each workflow passed strict GCC and Clang ASan/UBSan with Linux leak detection,
+the production hardware suite, seven network scenarios, eleven region launches,
+database discovery, 8,991 CPU trace states, all 91 diagnostic ROMs, and AccuracyCoin
+144/144 with zero skipped or unfinished tests. The same revision passed the
+strict Windows suite, network/region/Unicode checks, all 91 diagnostics, the CPU
+trace, and AccuracyCoin 144/144 in 4,182 frames.
+
+
+Revision `c596a77` adds saved rewind speed from 1 through 30 frames per activation
+and shows cartridge submapper details. The regression restores two retained
+boundaries, compares the CPU cycle position with the expected boundary, and
+checks that a larger step stops at the oldest retained frame. Configuration
+round-trip coverage retains the chosen speed. Its strict Linux hardware suite
+and AccuracyCoin passed 144/144 with zero skipped or unfinished tests in 4,182
+frames. Windows hardware, region, Unicode, and network checks also passed.
+
+## Visual PPU inspection checkpoint
+
+The visual PPU tools have decoding checks for both pattern tables, nametable
+attributes, palette aliases, sprite priority, and flipped 8 by 16 sprites.
+A full machine snapshot before and after inspection must match byte for byte,
+including during an MMC5 extended-attribute fetch. Separate checks cover its
+background and sprite banks, writable tiles, ROM protection, special nametable
+mappings, OAM attributes, and edit restrictions during deterministic sessions.
+
+Desktop checks open all seven tools at 100%, 150%, and 200% scale. They exercise
+palette and bank selection, view modes, address validation, scrolling, PNG
+chooser selection and cancellation, frozen frame advance, byte edits, undo,
+and replacement of the active session while an edit is open. Settings retain
+the live-view and grid defaults through save and reload.
+
+The strict Windows hardware and desktop suites passed, along with all 91
+diagnostic ROMs, the 8,991-state CPU trace, and AccuracyCoin 144/144 with no
+skipped or unfinished results in 4,182 frames. Region, Unicode-path, and seven
+network scenarios also passed. These are automated checks; they do not replace
+manual native-window, physical-controller, or audio-device acceptance.

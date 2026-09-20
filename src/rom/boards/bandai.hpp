@@ -42,6 +42,11 @@ class Bandai74161 final : public Board {
 
 public:
     explicit Bandai74161(bool mirroringControl) : _mirroringControl(mirroringControl) {}
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("bandai74161.mirroring_control", _mirroringControl);
+    }
 };
 
 class BandaiKaraoke final : public Board {
@@ -80,6 +85,11 @@ class BandaiKaraoke final : public Board {
     }
 
 public:
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("bandai_karaoke.inputs", _inputs);
+    }
+
     bool SetMapperInput(unsigned input, bool pressed) override {
         if (input >= InputCount) return false;
         _inputs[input] = pressed;

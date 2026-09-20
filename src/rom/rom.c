@@ -37,10 +37,13 @@
 #include "unif.h"
 #include "../system/timing.h"
 #include "../system/hardware.h"
+#include "../system/execution_policy.h"
 #include "../system/vs_system.h"
 #include "../cpu/cpu.h"
 #include "../apu/epsm.h"
 #include "../joypad/joypad.h"
+#include "../util/file_io.h"
+#include "../cheats/cheats.h"
 
 #define PRG_ROM_BANK_SIZE 0x4000  // 16KB
 #define CHR_ROM_BANK_SIZE 0x2000  // 8KB
@@ -336,6 +339,7 @@ static int load_unif_data(const uint8_t *data, size_t size, const char *filename
         free(new_prg); free(new_chr);
         return -1;
     }
+    region = nes_resolve_region(region);
     if (!cpu_startup_alignment_valid(region)) {
         fprintf(stderr, "Startup alignment is outside this UNIF image's regional dividers\n");
         free(new_prg); free(new_chr);
@@ -371,7 +375,7 @@ static int load_unif_data(const uint8_t *data, size_t size, const char *filename
 
     VsRomConfig vs_config;
     char vs_reason[96];
-    if (!vs_decode_header(&header, mapper, prg_bytes, chr_bytes,
+    if (!vs_decode_header(&header, mapper, prg_bytes, chr_bytes, region,
                           &vs_config, vs_reason, sizeof(vs_reason))) {
         fprintf(stderr, "Unsupported VS System configuration: %s\n", vs_reason);
         free(new_prg); free(new_chr);
@@ -395,14 +399,7 @@ static int load_unif_data(const uint8_t *data, size_t size, const char *filename
         }
     }
 
-    if (fds_active() && fds_disk_dirty() && !fds_flush()) {
-        fprintf(stderr, "Cannot replace the active FDS disk while modified media is unsaved\n");
-        free(new_prg); free(new_chr);
-        return -1;
-    }
-
-    if (apply_input_config && !joypad_persistent_flush()) {
-        fprintf(stderr, "Cannot change input configuration while expansion-device data is unsaved\n");
+    if (!rom_flush_persistent()) {
         free(new_prg); free(new_chr);
         return -1;
     }
@@ -429,6 +426,7 @@ static int load_unif_data(const uint8_t *data, size_t size, const char *filename
     loaded_file_crc32 = file_crc;
     loaded_prg_crc32 = prg_crc;
     loaded_prg_chr_crc32 = prg_chr_crc;
+    cheats_set_game_identity(loaded_file_crc32);
     if (apply_input_config) (void)joypad_apply_configuration(&input_config);
     printf("UNIF board: %s\n", board_name);
     printf("Mapper: %d  (CHR %s)\n", mapper_no, chr_bytes ? "ROM" : "RAM");
@@ -442,7 +440,8 @@ static int load_nsf_data(const uint8_t *data, size_t size, const char *filename)
         return -1;
     }
 
-    NesRegion region = image.metadata.region_flags == 1 ? NES_REGION_PAL : NES_REGION_NTSC;
+    NesRegion region = nes_resolve_region(image.metadata.region_flags == 1
+                                          ? NES_REGION_PAL : NES_REGION_NTSC);
     if (!cpu_startup_alignment_valid(region)) {
         fprintf(stderr, "Startup alignment is outside this music image's regional dividers\n");
         nsf_image_free(&image);
@@ -453,8 +452,7 @@ static int load_nsf_data(const uint8_t *data, size_t size, const char *filename)
         nsf_image_free(&image);
         return -1;
     }
-    if (fds_active() && fds_disk_dirty() && !fds_flush()) {
-        fprintf(stderr, "Cannot replace the active FDS disk while modified media is unsaved\n");
+    if (!rom_flush_persistent()) {
         free(new_chr);
         nsf_image_free(&image);
         return -1;
@@ -494,6 +492,7 @@ static int load_nsf_data(const uint8_t *data, size_t size, const char *filename)
     loaded_file_crc32 = file_crc;
     loaded_prg_crc32 = payload_crc;
     loaded_prg_chr_crc32 = payload_crc;
+    cheats_set_game_identity(loaded_file_crc32);
     printf("%s: %u track%s, starting at %u\n",
            image.metadata.nsfe ? "NSFe" : "NSF", (unsigned)image.metadata.total_songs,
            image.metadata.total_songs == 1 ? "" : "s",
@@ -676,7 +675,8 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
         fprintf(stderr, "Unsupported NES console type\n");
         return -1;
     }
-    if (!cpu_startup_alignment_valid(rom_region(&header))) {
+    NesRegion region = nes_resolve_region(rom_region(&header));
+    if (!cpu_startup_alignment_valid(region)) {
         fprintf(stderr, "Startup alignment is outside this image's regional dividers\n");
         return -1;
     }
@@ -727,7 +727,7 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
     VsRomConfig vs_config;
     char vs_reason[96];
     int mapper_number = rom_mapper_number(&header);
-    if (!vs_decode_header(&header, mapper_number, prg_payload_size, rom_chr_size,
+    if (!vs_decode_header(&header, mapper_number, prg_payload_size, rom_chr_size, region,
                           &vs_config, vs_reason, sizeof(vs_reason))) {
         fprintf(stderr, "Unsupported VS System configuration: %s\n", vs_reason);
         return -1;
@@ -769,14 +769,7 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
     else if (!board_handles_header(&header))
         nes_initialize_power_on_ram(new_chr, new_chr_size, 0);
 
-    if (fds_active() && fds_disk_dirty() && !fds_flush()) {
-        fprintf(stderr, "Cannot replace the active FDS disk while modified media is unsaved\n");
-        free(new_prg);
-        free(new_chr);
-        return -1;
-    }
-    if (apply_input_config && !joypad_persistent_flush()) {
-        fprintf(stderr, "Cannot change input configuration while expansion-device data is unsaved\n");
+    if (!rom_flush_persistent()) {
         free(new_prg);
         free(new_chr);
         return -1;
@@ -813,7 +806,7 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
     if (trainer) cart_apply_trainer(trainer);
     cart_battery_configure(filename, filename && (header.flags6 & 0x02));
     mirroring_mode = (int)cart_get_mirroring();
-    nes_set_region(rom_region(&header));
+    nes_set_region(region);
     fds_loaded = 0;
     studybox_loaded = 0;
     nsf_loaded = 0;
@@ -822,6 +815,7 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
     loaded_file_crc32 = file_crc;
     loaded_prg_crc32 = prg_crc;
     loaded_prg_chr_crc32 = prg_chr_crc;
+    cheats_set_game_identity(loaded_file_crc32);
     if (apply_input_config) (void)joypad_apply_configuration(&input_config);
 
     printf("Mapper: %d  (CHR %s%s)\n", mapper_no, rom_chr_size ? "ROM" : "RAM",
@@ -830,26 +824,42 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
 }
 
 int load_rom_memory(const uint8_t *data, size_t size) {
+    if (!nes_execution_allows_host_configuration()) return -1;
     return load_rom_data(data, size, NULL);
+}
+
+int load_rom_image(const uint8_t *data, size_t size, const char *save_path) {
+    if (!nes_execution_allows_host_configuration()) return -1;
+    return load_rom_data(data, size, save_path);
 }
 
 int load_fds_memory(const uint8_t *disk, size_t disk_size,
                     const uint8_t *bios, size_t bios_size,
                     const char *disk_path, bool write_protected) {
+    FdsLoadOptions options = {FDS_SAVE_IN_PLACE, NULL, write_protected};
+    return load_fds_memory_options(disk, disk_size, bios, bios_size, disk_path, &options);
+}
+
+int load_fds_memory_options(const uint8_t *disk, size_t disk_size,
+                             const uint8_t *bios, size_t bios_size,
+                             const char *disk_path, const FdsLoadOptions *options) {
+    if (!nes_execution_allows_host_configuration()) return -1;
+    if (nes_resolve_region(NES_REGION_NTSC) != NES_REGION_NTSC) {
+        fprintf(stderr, "FDS requires NTSC timing; choose --region auto or ntsc\n");
+        return -1;
+    }
+
     if (!cpu_startup_alignment_valid(NES_REGION_NTSC)) {
         fprintf(stderr, "FDS startup alignment must fit the NTSC dividers\n");
         return -1;
     }
-    FdsImage *image = fds_image_create(disk, disk_size, bios, bios_size,
-                                       disk_path, write_protected);
+    // An overlay for the active image may have changed in memory. Flush it
+    // before preparing the replacement so a reload sees the latest bytes.
+    if (!rom_flush_persistent()) return -1;
+    FdsImage *image = fds_image_create_options(disk, disk_size, bios, bios_size,
+                                               disk_path, options);
     if (!image) {
-        fprintf(stderr, "Invalid FDS disk image or BIOS\n");
-        return -1;
-    }
-
-    if (fds_active() && fds_disk_dirty() && !fds_flush()) {
-        fprintf(stderr, "Cannot replace the active FDS disk while modified media is unsaved\n");
-        fds_image_destroy(image);
+        fprintf(stderr, "Invalid FDS disk image, BIOS, or disk save overlay\n");
         return -1;
     }
 
@@ -879,6 +889,7 @@ int load_fds_memory(const uint8_t *disk, size_t disk_size,
     loaded_file_crc32 = game_db_crc32(disk, disk_size);
     loaded_prg_crc32 = 0;
     loaded_prg_chr_crc32 = 0;
+    cheats_set_game_identity(loaded_file_crc32);
     printf("Famicom Disk System: %zu side%s\n", fds_side_count(), fds_side_count() == 1 ? "" : "s");
     return 0;
 }
@@ -1033,13 +1044,23 @@ bool rom_is_fds(void) { return fds_loaded != 0; }
 bool rom_is_studybox(void) { return studybox_loaded != 0; }
 bool rom_is_nsf(void) { return nsf_loaded != 0; }
 bool rom_nsf_select_track(unsigned track) {
+    if (!nes_execution_allows_host_configuration()) return false;
     return nsf_loaded && cart_nsf_select_track(track);
 }
 unsigned rom_nsf_current_track(void) { return nsf_loaded ? cart_nsf_current_track() : 0; }
 const NsfMetadata *rom_nsf_metadata(void) { return nsf_loaded ? &loaded_nsf_metadata : NULL; }
+double rom_nsf_elapsed_seconds(void) {
+    return nsf_loaded ? (double)cart_nsf_elapsed_cycles() / nes_timing()->cpu_hz : 0.0;
+}
 
 int load_studybox_memory(const uint8_t *media, size_t media_size,
                          const uint8_t *bios, size_t bios_size) {
+    if (!nes_execution_allows_host_configuration()) return -1;
+    if (nes_resolve_region(NES_REGION_NTSC) != NES_REGION_NTSC) {
+        fprintf(stderr, "StudyBox requires NTSC timing; choose --region auto or ntsc\n");
+        return -1;
+    }
+
     if (!cpu_startup_alignment_valid(NES_REGION_NTSC)) {
         fprintf(stderr, "StudyBox startup alignment must fit the NTSC dividers\n");
         return -1;
@@ -1047,8 +1068,7 @@ int load_studybox_memory(const uint8_t *media, size_t media_size,
     CartridgeBoard *prepared = board_create_studybox(bios, bios_size, media, media_size);
     if (!prepared) return -1;
 
-    if (fds_active() && fds_disk_dirty() && !fds_flush()) {
-        fprintf(stderr, "Cannot replace the active FDS disk while modified media is unsaved\n");
+    if (!rom_flush_persistent()) {
         board_destroy(prepared);
         return -1;
     }
@@ -1076,15 +1096,34 @@ int load_studybox_memory(const uint8_t *media, size_t media_size,
     loaded_file_crc32 = game_db_crc32(media, media_size);
     loaded_prg_crc32 = 0;
     loaded_prg_chr_crc32 = 0;
+    cheats_set_game_identity(loaded_file_crc32);
     printf("StudyBox: STBX tape loaded\n");
     return 0;
 }
 
-bool unload_rom(void) {
-    if (fds_active() && fds_disk_dirty() && !fds_flush()) {
-        fprintf(stderr, "Cannot unload FDS disk while modified media is unsaved\n");
-        return false;
+bool rom_flush_persistent(void) {
+    bool saved = true;
+    if (!cart_battery_flush()) {
+        fprintf(stderr, "Cannot replace the current image while cartridge data is unsaved\n");
+        saved = false;
     }
+
+    if (!fds_flush()) {
+        fprintf(stderr, "Cannot replace the current image while disk data is unsaved\n");
+        saved = false;
+    }
+
+    if (!joypad_persistent_flush()) {
+        fprintf(stderr, "Cannot replace the current image while input-device data is unsaved\n");
+        saved = false;
+    }
+
+    return saved;
+}
+
+bool unload_rom(void) {
+    if (!nes_execution_allows_host_configuration()) return false;
+    if (!rom_flush_persistent()) return false;
     mapper_shutdown();
     free(prg_rom);
     free(chr_rom);
@@ -1100,6 +1139,7 @@ bool unload_rom(void) {
     loaded_file_crc32 = 0;
     loaded_prg_crc32 = 0;
     loaded_prg_chr_crc32 = 0;
+    cheats_set_game_identity(0);
     vs_clear_config();
     epsm_activate(NULL);
     nes_set_region(NES_REGION_NTSC);
@@ -1107,28 +1147,11 @@ bool unload_rom(void) {
 }
 
 static int read_file(const char *path, uint8_t **data, size_t *size) {
-    *data = NULL;
-    *size = 0;
-    FILE *fp = fopen(path, "rb");
-    if (!fp) return -1;
-    if (fseek(fp, 0, SEEK_END) != 0) { fclose(fp); return -1; }
-    long length = ftell(fp);
-    if (length < 0 || fseek(fp, 0, SEEK_SET) != 0) { fclose(fp); return -1; }
-    size_t bytes = (size_t)length;
-    uint8_t *buffer = (uint8_t *)malloc(bytes ? bytes : 1);
-    if (!buffer) { fclose(fp); return -1; }
-    size_t bytes_read = fread(buffer, 1, bytes, fp);
-    int close_result = fclose(fp);
-    if (bytes_read != bytes || close_result != 0) {
-        free(buffer);
-        return -1;
-    }
-    *data = buffer;
-    *size = bytes;
-    return 0;
+    return nes_file_read_all(path, 256u * 1024u * 1024u, data, size) == NES_FILE_OK ? 0 : -1;
 }
 
 bool rom_set_fcns_kanji_firmware(const char *path) {
+    if (!nes_execution_allows_host_configuration()) return false;
     if (!path) return board_set_fcns_kanji_firmware(NULL, 0);
     uint8_t *data = NULL;
     size_t size = 0;
@@ -1143,7 +1166,16 @@ bool rom_set_fcns_kanji_firmware(const char *path) {
 }
 
 int load_fds(const char *disk_path, const char *bios_path, bool write_protected) {
+    FdsLoadOptions options = {FDS_SAVE_IN_PLACE, NULL, write_protected};
+    return load_fds_with_options(disk_path, bios_path, &options);
+}
+
+int load_fds_with_options(const char *disk_path, const char *bios_path,
+                           const FdsLoadOptions *options) {
+    if (!nes_execution_allows_host_configuration()) return -1;
     if (!disk_path || !bios_path) return -1;
+    // In-place reloads must read after saving the current disk, too.
+    if (!rom_flush_persistent()) return -1;
     uint8_t *disk = NULL, *bios = NULL;
     size_t disk_size = 0, bios_size = 0;
     if (read_file(disk_path, &disk, &disk_size) != 0
@@ -1153,14 +1185,14 @@ int load_fds(const char *disk_path, const char *bios_path, bool write_protected)
         free(bios);
         return -1;
     }
-    int result = load_fds_memory(disk, disk_size, bios, bios_size,
-                                 disk_path, write_protected);
+    int result = load_fds_memory_options(disk, disk_size, bios, bios_size, disk_path, options);
     free(disk);
     free(bios);
     return result;
 }
 
 int load_studybox(const char *media_path, const char *bios_path) {
+    if (!nes_execution_allows_host_configuration()) return -1;
     if (!media_path || !bios_path) return -1;
     uint8_t *media = NULL, *bios = NULL;
     size_t media_size = 0, bios_size = 0;
@@ -1178,26 +1210,12 @@ int load_studybox(const char *media_path, const char *bios_path) {
 }
 
 int load_rom(const char *filename) {
+    if (!nes_execution_allows_host_configuration()) return -1;
     if (!filename) return -1;
-    FILE *fp = fopen(filename, "rb");
-    if (!fp) { perror("open"); return -1; }
-    if (fseek(fp, 0, SEEK_END) != 0) {
-        fclose(fp);
-        return -1;
-    }
-    long length = ftell(fp);
-    if (length < 0 || fseek(fp, 0, SEEK_SET) != 0) {
-        fclose(fp);
-        return -1;
-    }
-    size_t size = (size_t)length;
-    uint8_t *data = (uint8_t *)malloc(size ? size : 1);
-    if (!data) { fclose(fp); return -1; }
-    size_t bytes_read = fread(data, 1, size, fp);
-    fclose(fp);
-    if (bytes_read != size) {
+    uint8_t *data = NULL;
+    size_t size = 0;
+    if (read_file(filename, &data, &size) != 0) {
         fprintf(stderr, "Failed to read ROM file\n");
-        free(data);
         return -1;
     }
     int result;

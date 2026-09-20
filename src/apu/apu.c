@@ -25,10 +25,13 @@
 
 #include "apu.h"
 #include "epsm.h"
+#include "../audio/audio_observer.h"
+#include "../audio/audio_mix.h"
 #include "../third_party/blip_buf.h"
 #include "../rom/mapper.h"
 #include "../cpu/cpu.h"
 #include "../system/timing.h"
+#include "../system/execution_policy.h"
 #include <string.h>
 #include <math.h>
 #include <stdio.h>
@@ -38,6 +41,9 @@ static APU *const main_apu = &apu;
 static APU *active_apu = &apu;
 #define apu (*active_apu)
 static ApuCpuRevision cpu_revision = APU_CPU_REVISION_EARLY_2A03;
+static bool disable_noise_mode;
+static bool swap_duty_cycles;
+
 enum { APU_RECONSTRUCTION_CAP = 64, APU_RECONSTRUCTION_SCALE = 16384 };
 
 void apu_select_machine(APU *state) {
@@ -172,6 +178,9 @@ static void apu_init_filter_coeffs(APU *a) {
     a->hp440_prev_out = 0.0f;
     a->lp14k_prev_out = 0.0f;
     a->last_output_sample = 0.0f;
+    a->right_output.hp90_prev_in = a->right_output.hp90_prev_out = 0.0f;
+    a->right_output.hp440_prev_in = a->right_output.hp440_prev_out = 0.0f;
+    a->right_output.lp14k_prev_out = 0.0f;
 }
 
 static inline float apu_post_filter(APU *a, float s) {
@@ -179,6 +188,13 @@ static inline float apu_post_filter(APU *a, float s) {
     s = one_pole_hp(s, a->hp440_alpha, &a->hp440_prev_in, &a->hp440_prev_out);
     s = one_pole_lp(s, a->lp14k_alpha, &a->lp14k_prev_out);
     return s;
+}
+
+static float apu_post_filter_right(APU *a, float sample) {
+    ApuRightOutput *output = &a->right_output;
+    sample = one_pole_hp(sample, a->hp90_alpha, &output->hp90_prev_in, &output->hp90_prev_out);
+    sample = one_pole_hp(sample, a->hp440_alpha, &output->hp440_prev_in, &output->hp440_prev_out);
+    return one_pole_lp(sample, a->lp14k_alpha, &output->lp14k_prev_out);
 }
 
 static void apu_reconstruction_reset(APU *a) {
@@ -189,12 +205,22 @@ static void apu_reconstruction_reset(APU *a) {
     blip_clear(a->reconstruction);
     a->reconstructed_level = 0;
     a->audio_transition_count = 0;
+    if (!a->right_output.reconstruction)
+        a->right_output.reconstruction = blip_new(APU_RECONSTRUCTION_CAP);
+    if (a->right_output.reconstruction) {
+        blip_set_rates(a->right_output.reconstruction, nes_timing()->cpu_hz,
+                       a->sample_rate > 1.0 ? a->sample_rate : 44100.0);
+        blip_clear(a->right_output.reconstruction);
+    }
+    a->right_output.level = 0;
 }
 
 void apu_audio_shutdown_state(APU *a) {
     if (!a) return;
     blip_delete(a->reconstruction);
+    blip_delete(a->right_output.reconstruction);
     a->reconstruction = NULL;
+    memset(&a->right_output, 0, sizeof(a->right_output));
     a->reconstructed_level = 0;
     a->audio_transition_count = 0;
 }
@@ -323,6 +349,7 @@ static void tri_linear_clock(Triangle* t){
 static void apu_reset_state(APU *a, bool soft_reset) {
     double sample_rate = a->sample_rate > 1.0 ? a->sample_rate : 44100.0;
     blip_t *reconstruction = a->reconstruction;
+    blip_t *right_reconstruction = a->right_output.reconstruction;
     bool five_step = soft_reset ? a->five_step : false;
     uint8_t dmc_addr_reg = soft_reset ? a->dmc.sample_addr_reg : 0;
     uint8_t dmc_len_reg = soft_reset ? a->dmc.sample_len_reg : 0;
@@ -332,6 +359,7 @@ static void apu_reset_state(APU *a, bool soft_reset) {
 
     memset(a, 0, sizeof(*a));
     a->reconstruction = reconstruction;
+    a->right_output.reconstruction = right_reconstruction;
     atomic_init(&a->ring_w, 0);
     atomic_init(&a->ring_r, 0);
     a->five_step = five_step;
@@ -401,12 +429,31 @@ bool apu_set_cpu_revision(ApuCpuRevision revision) {
         revision != APU_CPU_REVISION_LATE_2A03) {
         return false;
     }
+    if (!nes_execution_allows_host_configuration()) return false;
     cpu_revision = revision;
     return true;
 }
 
 ApuCpuRevision apu_get_cpu_revision(void) {
     return cpu_revision;
+}
+
+void apu_set_disable_noise_mode(bool enabled) {
+    if (!nes_execution_allows_host_configuration()) return;
+    disable_noise_mode = enabled;
+}
+
+bool apu_noise_mode_disabled(void) {
+    return disable_noise_mode;
+}
+
+void apu_set_swap_duty_cycles(bool enabled) {
+    if (!nes_execution_allows_host_configuration()) return;
+    swap_duty_cycles = enabled;
+}
+
+bool apu_swap_duty_cycles_enabled(void) {
+    return swap_duty_cycles;
 }
 
 // APU register access.
@@ -436,6 +483,19 @@ static inline uint8_t apu_read_4015(APU *a) {
     a->frame_irq_source = false;
     if (a->frame_irq && !a->frame_irq_clear_delay)
         a->frame_irq_clear_delay = (cpu_get_bus_cycle() & 1u) ? 2 : 1;
+    return s;
+}
+
+uint8_t apu_debug_peek_status(void) {
+    APU *a = apu_active_state();
+    uint8_t s = 0;
+    if (a->pulse1.lc.length) s |= 0x01;
+    if (a->pulse2.lc.length) s |= 0x02;
+    if (a->tri.lc.length) s |= 0x04;
+    if (a->noise.lc.length) s |= 0x08;
+    if (a->dmc.bytes_remaining > 0) s |= 0x10;
+    if (a->frame_irq) s |= 0x40;
+    if (a->dmc.irq_flag) s |= 0x80;
     return s;
 }
 
@@ -524,31 +584,35 @@ static void dmc_clock_output(APU* a) {
         }
     }
 }
-static void pulse_write(Pulse* p, uint16_t reg, uint8_t v){
+
+static void pulse_write(Pulse *p, uint16_t reg, uint8_t v) {
     switch (reg & 3) {
-        case 0: // $4000/$4004
-            p->env.loop_envelope = (v & 0x20) != 0;
-            length_set_halt(&p->lc, p->env.loop_envelope);
-            p->env.constant_volume = (v & 0x10) != 0;
-            p->env.volume = v & 0x0F;
-            p->duty = (v >> 6) & 3;
-            break;
-        case 1: // sweep
-            p->sweep.enabled = (v & 0x80) != 0;
-            p->sweep.period  = ((v >> 4) & 7) + 1;
-            p->sweep.negate  = (v & 0x08) != 0;
-            p->sweep.shift   = v & 7;
-            p->sweep.reload  = true;
-            break;
-        case 2: // timer low
-            p->timer_reload = (p->timer_reload & 0x700) | v;
-            break;
-        case 3: // timer high + length load
-            p->timer_reload = (p->timer_reload & 0xFF) | ((v & 7) << 8);
-            p->duty_step = 0;
-            length_load(&p->lc, v, p->enabled);
-            p->env.start_flag = true;
-            break;
+    case 0: // $4000/$4004
+        p->env.loop_envelope = (v & 0x20) != 0;
+        length_set_halt(&p->lc, p->env.loop_envelope);
+        p->env.constant_volume = (v & 0x10) != 0;
+        p->env.volume = v & 0x0F;
+        p->duty = (v >> 6) & 3;
+        if (swap_duty_cycles) {
+            p->duty = (uint8_t)(((p->duty & 0x02u) >> 1) | ((p->duty & 0x01u) << 1));
+        }
+        break;
+    case 1: // sweep
+        p->sweep.enabled = (v & 0x80) != 0;
+        p->sweep.period = ((v >> 4) & 7) + 1;
+        p->sweep.negate = (v & 0x08) != 0;
+        p->sweep.shift = v & 7;
+        p->sweep.reload = true;
+        break;
+    case 2: // timer low
+        p->timer_reload = (p->timer_reload & 0x700) | v;
+        break;
+    case 3: // timer high + length load
+        p->timer_reload = (p->timer_reload & 0xFF) | ((v & 7) << 8);
+        p->duty_step = 0;
+        length_load(&p->lc, v, p->enabled);
+        p->env.start_flag = true;
+        break;
     }
     // Pulse register writes refresh the DAC immediately. $4015 disable only
     // clears the length counter; the latched output changes on the next edge.
@@ -671,14 +735,17 @@ static inline void clock_triangle(Triangle* t){
     }
 }
 
-static inline void clock_noise(Noise* n){
-    if (n->period == 0) return;
-    
+static inline void clock_noise(Noise *n) {
+    if (n->period == 0) {
+        return;
+    }
+
     if (n->timer == 0) {
         n->timer = n->period - 1;
         // Feedback uses bit 0 and bit 1, or bit 6 in short mode.
+        bool mode = disable_noise_mode ? false : n->mode;
         uint16_t bit0 = n->lfsr & 1;
-        uint16_t bitX = (n->lfsr >> (n->mode ? 6 : 1)) & 1;
+        uint16_t bitX = (n->lfsr >> (mode ? 6 : 1)) & 1;
         uint16_t fb = bit0 ^ bitX;
         n->lfsr = (n->lfsr >> 1) | (fb << 14);
         n->output_level = noise_current_output(n);
@@ -736,39 +803,70 @@ static int apu_quantize_mix(float sample) {
     return (int)lrint(scaled);
 }
 
+static float apu_side_mix(const APU *a, const float *expansion, bool right) {
+    const float *gain = nes_audio_mix_side_gains(right);
+    float sample = mix_sample(pulse_out(&a->pulse1) * gain[NES_AUDIO_PULSE1],
+                               pulse_out(&a->pulse2) * gain[NES_AUDIO_PULSE2],
+                               triangle_out(&a->tri) * gain[NES_AUDIO_TRIANGLE],
+                               noise_out(&a->noise) * gain[NES_AUDIO_NOISE],
+                               dmc_out(&a->dmc) * gain[NES_AUDIO_DMC]);
+    for (unsigned channel = NES_AUDIO_FDS; channel < NES_AUDIO_CHANNEL_COUNT; ++channel)
+        sample += expansion[channel] * gain[channel];
+    return sample * cart_audio_gain();
+}
+
 void apu_audio_refresh(APU *a) {
     if (!a) return;
-    float sample = mix_sample(pulse_out(&a->pulse1), pulse_out(&a->pulse2),
-                              triangle_out(&a->tri), noise_out(&a->noise),
-                              dmc_out(&a->dmc));
-    sample += cart_expansion_audio();
-    sample *= cart_audio_gain();
-    int level = apu_quantize_mix(sample);
+    float left, right;
+    if (nes_audio_mix_channels_default()) {
+        left = mix_sample(pulse_out(&a->pulse1), pulse_out(&a->pulse2),
+                           triangle_out(&a->tri), noise_out(&a->noise), dmc_out(&a->dmc));
+        left += cart_expansion_audio();
+        left *= cart_audio_gain();
+        right = left;
+    } else {
+        float expansion[NES_AUDIO_CHANNEL_COUNT];
+        cart_expansion_audio_channels(expansion);
+        left = apu_side_mix(a, expansion, false);
+        right = apu_side_mix(a, expansion, true);
+    }
+    int level = apu_quantize_mix(left);
     int delta = level - a->reconstructed_level;
     if (delta && a->reconstruction) {
         blip_add_delta(a->reconstruction, 0, delta);
         a->audio_transition_count++;
     }
     a->reconstructed_level = level;
+    level = apu_quantize_mix(right);
+    delta = level - a->right_output.level;
+    if (delta && a->right_output.reconstruction)
+        blip_add_delta(a->right_output.reconstruction, 0, delta);
+    a->right_output.level = level;
 }
 
 static void apu_output_reconstructed_samples(APU *a) {
     if (!a->reconstruction) return;
     blip_end_frame(a->reconstruction, 1);
+    if (a->right_output.reconstruction) blip_end_frame(a->right_output.reconstruction, 1);
     while (blip_samples_avail(a->reconstruction) > 0) {
-        short reconstructed = 0;
+        short reconstructed = 0, right_reconstructed = 0;
         if (blip_read_samples(a->reconstruction, &reconstructed, 1, 0) != 1) break;
-        float s = (float)reconstructed / (float)APU_RECONSTRUCTION_SCALE;
-        s = apu_post_filter(a, s);
-
+        if (!a->right_output.reconstruction
+            || blip_read_samples(a->right_output.reconstruction, &right_reconstructed, 1, 0) != 1)
+            right_reconstructed = reconstructed;
+        float left = apu_post_filter(a, (float)reconstructed / (float)APU_RECONSTRUCTION_SCALE);
+        float right = apu_post_filter_right(a, (float)right_reconstructed / (float)APU_RECONSTRUCTION_SCALE);
         float epsm_left = 0.0f, epsm_right = 0.0f;
         if (a == main_apu) epsm_sample_stereo(&epsm_left, &epsm_right);
-        float left = s + epsm_left;
-        float right = s + epsm_right;
+        left += epsm_left * nes_audio_mix_side_gains(false)[NES_AUDIO_EPSM];
+        right += epsm_right * nes_audio_mix_side_gains(true)[NES_AUDIO_EPSM];
+        nes_audio_process(a == main_apu ? 0u : 1u, a->sample_rate, &left, &right);
         if (left > 1.0f) left = 1.0f;
         if (left < -1.0f) left = -1.0f;
         if (right > 1.0f) right = 1.0f;
         if (right < -1.0f) right = -1.0f;
+        nes_audio_observe(a == main_apu ? 0u : 1u, a->sample_rate, left, right);
+        nes_audio_mix_master(&left, &right);
         float middle = (left + right) * 0.5f;
         float side = (left - right) * 0.5f;
         a->last_output_sample = middle;
@@ -907,3 +1005,5 @@ void apu_sdl_stereo_callback(void *userdata, uint8_t *stream, int len) {
     size_t bytes = (size_t)frames * 2 * sizeof(float);
     if (bytes < (size_t)len) memset(stream + bytes, 0, (size_t)len - bytes);
 }
+
+#include "apu_state_impl.h"
