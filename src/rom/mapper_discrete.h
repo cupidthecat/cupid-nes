@@ -513,7 +513,6 @@ static void nsf_clock(int cpu_cycles) {
 static void nsf_reset(bool soft_reset) {
     if (!soft_reset) nsf_player.song = nsf_player.metadata.starting_song;
     nsf_player.play_counter = 0;
-    nsf_player.mmc5_multiplier[0] = nsf_player.mmc5_multiplier[1] = 0;
     mapper_irq_line = false;
     if (nsf_player.metadata.sound_chips & NSF_SOUND_MMC5) mmc5_reset();
     if (nsf_player.metadata.sound_chips & NSF_SOUND_VRC6) { vrc6.variant_b = false; vrc6_reset(); }

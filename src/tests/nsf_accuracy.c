@@ -530,6 +530,52 @@ static int test_nsf_expansion_audio(void) {
     return 0;
 }
 
+static int test_nsf_mmc5_multiplier_reset(void) {
+    cpu_use_default_startup_alignment();
+    static const uint8_t program[] = {
+        0x8D, 0x00, 0x60, /* STA $6000: selected song */
+        0xAD, 0x05, 0x52, /* LDA $5205 */
+        0x8D, 0x03, 0x60, /* STA $6003: product low byte */
+        0xAD, 0x06, 0x52, /* LDA $5206 */
+        0x8D, 0x04, 0x60, /* STA $6004: product high byte */
+        0x60,             /* INIT: RTS */
+        0x60              /* PLAY: RTS */
+    };
+    uint8_t image[0x80 + sizeof(program)];
+    size_t size = make_nsf(image, sizeof(image), 0, NSF_SOUND_MMC5,
+                           1000, 1000, 1, program, sizeof(program));
+    CHECK(size != 0 && load_rom_memory(image, size) == 0);
+    CHECK(power_music() == 0 && run_until_init(0) == 0);
+    CHECK(read_mem(0x6003) == 0 && read_mem(0x6004) == 0);
+
+    write_mem(0x5205, 0xFE);
+    write_mem(0x5206, 0xFD);
+    CHECK(read_mem(0x5205) == 0x06 && read_mem(0x5206) == 0xFB);
+    ppu_soft_reset(&ppu);
+    apu_soft_reset(&apu);
+    cpu_soft_reset(&cpu);
+    CHECK(run_until_init(0) == 0);
+    CHECK(read_mem(0x6003) == 0x06 && read_mem(0x6004) == 0xFB);
+
+    write_mem(0x5205, 7);
+    CHECK(rom_nsf_select_track(1) && run_until_init(1) == 0);
+    CHECK(read_mem(0x6003) == 0xEB && read_mem(0x6004) == 0x06);
+    write_mem(0x5206, 3);
+    CHECK(read_mem(0x5205) == 21 && read_mem(0x5206) == 0);
+
+    CHECK(load_rom_memory(image, size) == 0);
+    CHECK(power_music() == 0 && run_until_init(0) == 0);
+    CHECK(read_mem(0x6003) == 0 && read_mem(0x6004) == 0);
+    write_mem(0x5205, 0xFF);
+    CHECK(read_mem(0x5205) == 0 && read_mem(0x5206) == 0);
+
+    CHECK(load_rom_memory(image, size) == 0);
+    CHECK(power_music() == 0 && run_until_init(0) == 0);
+    write_mem(0x5206, 0xFF);
+    CHECK(read_mem(0x5205) == 0 && read_mem(0x5206) == 0);
+    return 0;
+}
+
 static void configure_nsf_audio(uint8_t chips) {
     if (chips & NSF_SOUND_MMC5) write_mem(0x5011, 0x20);
     if (chips & NSF_SOUND_FDS) {
@@ -599,7 +645,7 @@ static int test_nsf_expansion_combinations_and_reset(void) {
         CHECK(rom_nsf_select_track(1));
         CHECK(fabsf(cart_expansion_audio()) < 0.000001f);
         if (mask & NSF_SOUND_MMC5)
-            CHECK(read_mem(0x5205) == 0 && read_mem(0x5206) == 0);
+            CHECK(read_mem(0x5205) == 91 && read_mem(0x5206) == 0);
         if (mask & NSF_SOUND_NAMCO163) {
             write_mem(0xF800, 0x00);
             CHECK(read_mem(0x4800) == 0);
@@ -761,11 +807,12 @@ int test_nsf_accuracy(void) {
     failures += test_nsf_ppu_clock_only_and_restore();
     failures += test_nsfe_metadata_and_required_chunks();
     failures += test_nsf_expansion_audio();
+    failures += test_nsf_mmc5_multiplier_reset();
     failures += test_nsf_expansion_combinations_and_reset();
     failures += test_nsfe_fade_and_replacement();
     failures += test_nsf_metadata_string_boundaries();
     failures += test_nsf_invalid_images();
     unload_rom();
-    printf("NSF/NSFe accuracy: 11 groups, %d failures\n", failures);
+    printf("NSF/NSFe accuracy: 12 groups, %d failures\n", failures);
     return failures;
 }
