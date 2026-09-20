@@ -828,6 +828,16 @@ static uint8_t mmc5_ppu_read(uint16_t a) {
     return chr_read_byte(bank * CHR_BANK_1K + (a & 0x03FF));
 }
 
+/* Inspection must not consume the extended-attribute fetch sequence. */
+static uint8_t mmc5_debug_pattern(uint16_t address) {
+    CartPpuFetchSource previous = cart_ppu_fetch_source;
+    cart_ppu_fetch_source = CART_PPU_FETCH_CPU;
+    size_t offset = mmc5_map_chr_bank_1k(address) * CHR_BANK_1K + (address & 0x3FF);
+    uint8_t value = mmc5_read_chr_raw(offset);
+    cart_ppu_fetch_source = previous;
+    return value;
+}
+
 static void mmc5_ppu_write(uint16_t a, uint8_t v) {
     if (!C.chr_is_ram) return;
     a &= 0x1FFF;

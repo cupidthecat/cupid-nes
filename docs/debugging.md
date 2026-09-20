@@ -2,7 +2,7 @@
 
 Cupid exposes one debugger service to the desktop tools and Lua scripts. The same service handles instruction control, breakpoints, memory inspection, PPU viewers, disassembly, watches, and tracing. Inspection reads use dedicated peek paths. They do not acknowledge the APU frame IRQ, clear PPU status, advance controller shift registers, change mapper read latches, or trigger FDS status-read automation.
 
-Open Tools > Debugger to inspect the running game in a separate resizable
+Open Tools > Debugging > Debugger to inspect the running game in a separate resizable
 window. Drag its title bar to place it beside the game or on another display.
 Memory and PPU Viewers and Lua Scripting also have their own windows. Opening
 or focusing these tools leaves gameplay and audio running; Pause, breakpoints,
@@ -19,6 +19,48 @@ Frame Advance can continue from a debugger stop to the end of the current frame 
 The disassembler covers all 256 opcode values, including undocumented instructions. Operands show their addressing mode, and relative branches show the destination address. Inspection reads only the bytes belonging to each instruction.
 
 CPU memory inspection covers `$0000-$FFFF`. PPU memory inspection covers `$0000-$3FFF`. The hardware viewers copy current nametable, pattern-table, palette, and primary OAM data without performing normal CPU or PPU register reads. Mapper-backed pattern and nametable reads use the currently selected banks.
+
+## Visual PPU tools
+
+Open **Tools > Debugging > PPU tools** to choose a viewer. Each opens in its own
+resizable window and follows the loaded game. The game keeps running until you
+pause it. Live views refresh at most 30 times per second; Frozen holds a snapshot,
+and Refresh takes another. The footer records its frame, scanline, and dot.
+
+| Tool | What it shows |
+| --- | --- |
+| Pattern tables | Both pattern tables, with background or sprite palettes and CPU, background, or sprite bank selection |
+| Nametables | All four logical nametables, decoded tiles or attribute colors, and the selected tile's addresses and palette |
+| Sprites and OAM | All 64 sprites in an OAM grid or at their screen positions, with size, flips, priority, coordinates, and tile address |
+| PPU debugger | Control, mask, status, scrolling latches, OAM address, banks, scanline, dot, and cycle count |
+| VRAM inspector | Hexadecimal PPU memory from `$0000` to `$3FFF`, or 256 bytes of primary OAM, with a scrollbar and address entry |
+| Tile editor | An enlarged 8 by 8 tile with four pixel values and palette selection |
+| PPU palettes | The 32 palette RAM entries, including their mirrored addresses |
+
+Click an image to select a tile, sprite, or palette entry. Double-click a pattern
+tile to open it in the tile editor. Arrows move the selection; the mouse wheel
+moves through rows. Grid toggles outlines. Export PNG saves the displayed graphics
+without the grid or selection outline through a Save dialog.
+
+Pause the game and leave Live enabled to edit. In VRAM or palettes, select a byte
+and choose Edit byte, press Enter, or double-click it. Addresses and byte values
+are hexadecimal. In the tile editor, choose a pixel value from 0 through 3 and
+click the tile to paint. CHR ROM, unmapped memory, and protected pages are read-only.
+Writable CHR, nametable RAM, palette RAM, and OAM edits affect the running machine;
+they do not modify the cartridge file. The game can overwrite RAM after resuming.
+Undo or Ctrl+Z reverses the last edit while its memory and frame still match.
+Edits clear rewind history and are disabled during movies, rewind, and netplay.
+
+The viewers inspect mapped memory without clocking the PPU bus or consuming
+mapper fetch state. MMC5 background and sprite bank views and extended nametable
+attributes are decoded separately. Nametables show the current mapping, not a
+reconstruction of bank changes or split windows across a completed frame. The
+sprite position view includes all sprites, without the rendering limit of eight
+per scanline or background occlusion. Registers are read-only in the PPU debugger;
+Frame advances through the shared execution controls.
+
+Settings > General saves **Live PPU viewers** and **PPU viewer grid** as defaults
+for newly opened viewers. Each open window can change these independently.
 
 ## Lua scripts
 

@@ -32,6 +32,7 @@ typedef struct FrontendDesktopUi {
     bool native_windows, focused, palette_window;
     uint32_t tool_rendered;
     struct DesktopClay *clay;
+    struct DesktopPpuViewer *ppu_viewer;
     const FrontendSession *idle_session;
     int idle_recent_index;
     int visible_rows;

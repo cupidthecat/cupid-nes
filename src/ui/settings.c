@@ -284,6 +284,8 @@ void frontend_settings_defaults(FrontendSettings *settings) {
     settings->recent_file_limit = FRONTEND_RECENT_MAX;
     settings->pause_on_focus_loss = true;
     settings->pause_on_ui = true;
+    settings->ppu_viewer_live = true;
+    settings->ppu_viewer_grid = true;
     settings->vsync = true;
     settings->window_width = 768;
     settings->window_height = 640;
@@ -641,6 +643,10 @@ static bool set_known_setting(FrontendSettings *settings, const char *key,
         if (!parse_boolean(value, &settings->pause_on_focus_loss)) return false;
     } else if (strcmp(key, "pause_on_ui") == 0) {
         if (!parse_boolean(value, &settings->pause_on_ui)) return false;
+    } else if (strcmp(key, "ppu_viewer_live") == 0) {
+        if (!parse_boolean(value, &settings->ppu_viewer_live)) return false;
+    } else if (strcmp(key, "ppu_viewer_grid") == 0) {
+        if (!parse_boolean(value, &settings->ppu_viewer_grid)) return false;
     } else if (strcmp(key, "show_fps") == 0) {
         if (!parse_boolean(value, &settings->show_fps)) return false;
     } else if (strcmp(key, "fullscreen") == 0) {
@@ -1050,7 +1056,7 @@ bool frontend_settings_save(const char *path, const FrontendSettings *settings,
                           "speed=%.6g\nfast_forward_speed=%.6g\n"
                           "reopen_last_image=%s\nremember_window_size=%s\nrecent_file_limit=%u\n"
                           "pause_on_focus_loss=%s\npause_on_ui=%s\n"
-                          "show_fps=%s\nfullscreen=%s\ninteger_scaling=%s\nmuted=%s\n"
+                          "ppu_viewer_live=%s\nppu_viewer_grid=%s\nshow_fps=%s\nfullscreen=%s\ninteger_scaling=%s\nmuted=%s\n"
                           "window_width=%u\nwindow_height=%u\n"
                           "disk_save_mode=%s\ndisk_overlay_path=%s\n"
                           "fds_bios_path=%s\nstudybox_bios_path=%s\n"
@@ -1075,6 +1081,8 @@ bool frontend_settings_save(const char *path, const FrontendSettings *settings,
                           settings->recent_file_limit,
                           settings->pause_on_focus_loss ? "true" : "false",
                           settings->pause_on_ui ? "true" : "false",
+                          settings->ppu_viewer_live ? "true" : "false",
+                          settings->ppu_viewer_grid ? "true" : "false",
                           settings->show_fps ? "true" : "false",
                           settings->fullscreen ? "true" : "false",
                           settings->integer_scaling ? "true" : "false",

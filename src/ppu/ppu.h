@@ -183,6 +183,7 @@ static const uint32_t nes_palette[64] = {
 // Function prototypes
 uint8_t ppu_read(uint16_t addr);
 uint8_t ppu_debug_peek(uint16_t addr);
+bool ppu_debug_write(uint16_t addr, uint8_t value);
 uint8_t ppu_debug_peek_register(uint16_t reg);
 void ppu_write(uint16_t addr, uint8_t value);
 void ppu_reset(PPU* ppu);

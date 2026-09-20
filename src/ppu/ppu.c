@@ -380,6 +380,15 @@ uint8_t ppu_debug_peek(uint16_t addr) {
     return cart_nt_peek(addr, active_ppu_vram);
 }
 
+bool ppu_debug_write(uint16_t addr, uint8_t value) {
+    addr &= 0x3FFF;
+    if (addr >= 0x3F00) {
+        ppu_write(addr, value); /* Palette RAM never drives the external bus. */
+        return true;
+    }
+    return cart_debug_write_ppu(addr, value, active_ppu_vram);
+}
+
 uint8_t ppu_debug_peek_register(uint16_t reg) {
     switch (reg & 7u) {
         case 0: return ppu.ctrl;

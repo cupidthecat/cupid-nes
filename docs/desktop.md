@@ -35,6 +35,10 @@ and databases use an Open dialog; state, movie, tape, and capture destinations
 use a Save dialog. Existing Load and Save actions remain available for choosing
 an input or output file. HD packs offer both a ZIP picker and a folder picker.
 
+Tools > Debugging > PPU tools opens graphical pattern, nametable, sprite, palette,
+register, VRAM, and tile windows. See [visual PPU tools](debugging.md#visual-ppu-tools)
+for inspection controls and editing limits.
+
 ## Settings
 
 Ctrl+Comma opens Settings. The eight categories cover General, Emulation,

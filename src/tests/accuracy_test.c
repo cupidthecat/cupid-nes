@@ -107,6 +107,7 @@ int test_board_state_accuracy(void);
 int test_state_accuracy(void);
 int test_state_ui_accuracy(void);
 int test_debugger_accuracy(void);
+int test_ppu_inspector_accuracy(void);
 int test_cheat_accuracy(void);
 int test_rewind_accuracy(void);
 int test_movie_accuracy(void);
@@ -125,6 +126,7 @@ int run_accuracycoin_rom(const char *path, unsigned frames, const char *output);
 int test_netplay_peer(const char *role, unsigned port, const char *scenario);
 int benchmark_frontend(unsigned frames, const char *path);
 int main(int argc, char **argv) {
+    if(argc==2 && !strcmp(argv[1],"--ppu-tools"))return test_ppu_inspector_accuracy()?1:0;
     if(argc==2 && !strcmp(argv[1],"--desktop"))return test_desktop_accuracy()?1:0;
     if(argc==4 && !strcmp(argv[1],"--benchmark-frontend")){
         char *end=NULL;unsigned long frames=strtoul(argv[2],&end,10);
@@ -251,6 +253,7 @@ int main(int argc, char **argv) {
     failures += test_fds_automation_accuracy();
     failures += test_execution_policy_accuracy();
     failures += test_debugger_accuracy();
+    failures += test_ppu_inspector_accuracy();
     failures += test_cheat_accuracy();
     failures += test_frontend_accuracy();
     failures += test_desktop_accuracy();

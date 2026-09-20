@@ -480,6 +480,14 @@ uint8_t Board::PeekPpu(uint16_t addr) const {
                                               : static_cast<uint8_t>(addr);
 }
 
+bool Board::DebugWritePpu(uint16_t addr, uint8_t value) {
+    addr &= 0x3FFF;
+    Page &page = _ppuPages[addr >> 8];
+    if (!page.data || !(page.access & Write)) return false;
+    page.data[addr & 0xFF] = value;
+    return true;
+}
+
 void Board::ClockCpu(bool writeCycle) {
     _writeCycle = writeCycle;
     if (_clockHook) ProcessCpuClock();
@@ -766,6 +774,9 @@ uint8_t board_ppu_read(CartridgeBoard *board, uint16_t address, unsigned source)
 }
 uint8_t board_ppu_peek(const CartridgeBoard *board, uint16_t address) {
     return board ? board->instance->PeekPpu(address) : static_cast<uint8_t>(address);
+}
+bool board_debug_write_ppu(CartridgeBoard *board, uint16_t address, uint8_t value) {
+    return board && board->instance->DebugWritePpu(address, value);
 }
 void board_ppu_write(CartridgeBoard *board, uint16_t address, uint8_t value) {
     if (board) board->instance->MapperWriteVram(address & 0x3FFF, value);

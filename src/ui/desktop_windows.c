@@ -130,6 +130,7 @@ static void destroy_tool(FrontendDesktopUi *tool) {
     if (tool->edit_text_active) {
         SDL_StopTextInput();
     }
+    desktop_ppu_destroy(tool);
     desktop_clay_destroy(tool->clay);
     SDL_DestroyRenderer(tool->renderer);
     SDL_DestroyWindow(tool->window);

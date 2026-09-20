@@ -208,6 +208,7 @@ public:
     void WriteCpu(uint16_t addr, uint8_t value);
     uint8_t ReadPpu(uint16_t addr, unsigned fetchSource);
     uint8_t PeekPpu(uint16_t addr) const;
+    bool DebugWritePpu(uint16_t addr, uint8_t value);
     void ClockCpu(bool writeCycle);
     void NotifyPpu(uint16_t addr, uint64_t cycle);
     bool PendingIrq() const { return _irq; }

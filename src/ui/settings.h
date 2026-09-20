@@ -120,6 +120,7 @@ typedef struct {
     bool pause_on_focus_loss;
     bool pause_on_ui;
     bool show_fps;
+    bool ppu_viewer_live, ppu_viewer_grid;
     bool fullscreen;
     bool integer_scaling;
     bool vsync;

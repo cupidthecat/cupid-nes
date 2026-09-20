@@ -156,6 +156,12 @@ void desktop_clay_end(DesktopClay *clay) {
             rectangle(renderer, b, c->renderData.rectangle.backgroundColor,
                       c->renderData.rectangle.cornerRadius.topLeft);
             break;
+        case CLAY_RENDER_COMMAND_TYPE_IMAGE: {
+            SDL_Texture *texture = c->renderData.image.imageData;
+            SDL_FRect destination = {b.x, b.y, b.width, b.height};
+            if (texture) SDL_RenderCopyF(renderer, texture, NULL, &destination);
+            break;
+        }
         case CLAY_RENDER_COMMAND_TYPE_TEXT: {
             Clay_TextRenderData *t = &c->renderData.text;
             desktop_font_draw(clay->font, renderer, t->stringContents.chars, t->stringContents.length, b.x,

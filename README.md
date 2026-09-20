@@ -9,6 +9,9 @@ You can open and switch games, save your settings and input profiles, and use
 save states, rewind, cheats, netplay, and HD packs. Music playback, screenshots,
 and audio and video recording are built in. Settings and tools have separate,
 resizable windows, so you can keep the debugger open while a game runs.
+[Visual PPU tools](docs/debugging.md#visual-ppu-tools) show pattern tables,
+nametables, sprites, palettes, registers, and VRAM. You can paint writable tiles
+and edit RAM while the game is paused.
 
 The menu bar and toolbar give you access to the main actions, with submenus
 keeping longer lists on screen. Settings use checkboxes, dropdowns, editable

@@ -563,6 +563,8 @@ static bool handle_event(FrontendDesktopUi *ui, const SDL_Event *event) {
             return true;
         }
     }
+    if (ui->panel_open && desktop_ppu_panel(ui->panel_id) && !ui->edit_text_active &&
+        desktop_ppu_event(ui, event)) return true;
     if (ui->info_open && ui->log_open && ui->log_count &&
         (event->type == SDL_MOUSEWHEEL ||
          (event->type == SDL_KEYDOWN &&

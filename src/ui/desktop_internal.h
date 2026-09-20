@@ -3,6 +3,7 @@
 #define CUPID_DESKTOP_INTERNAL_H
 #include "clay_backend.h"
 #include "desktop_ui.h"
+#include "desktop_ppu.h"
 
 typedef struct {
     unsigned id, kind;

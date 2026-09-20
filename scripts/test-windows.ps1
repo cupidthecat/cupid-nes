@@ -55,7 +55,7 @@ $cppFlags = @($flags | Where-Object { $_ -ne '-std=c11' }) + @('-std=c++17')
 
 $coreSources = @('src/system/timing.c', 'src/system/hardware.c', 'src/system/vs_system.c', 'src/state/state.c', 'src/state/state_io.c', 'src/state/state_alloc.c', 'src/cpu/cpu.c', 'src/cpu/cpu_observer.c', 'src/ppu/ppu.c', 'src/rom/rom.c', 'src/rom/mapper.c',
                  'src/rom/fds.c', 'src/rom/nsf.c', 'src/util/file_io.c', 'src/util/sha1.c',
-                 'src/debugger/debugger.c', 'src/debugger/disassembly.c', 'src/debugger/lua_runtime.c', 'src/cheats/cheats.c',
+                 'src/debugger/ppu_inspector.c', 'src/debugger/debugger.c', 'src/debugger/disassembly.c', 'src/debugger/lua_runtime.c', 'src/cheats/cheats.c',
                  'src/rom/vrc7_audio.c', 'src/rom/emu2413.c',
                  'src/rom/eeprom.c', 'src/rom/namco163.c', 'src/rom/sunsoft5b.c',
                  'src/joypad/joypad.c', 'src/joypad/family_basic.c', 'src/joypad/special_peripherals.c',
@@ -65,7 +65,7 @@ $coreSources = @('src/system/timing.c', 'src/system/hardware.c', 'src/system/vs_
                  'src/ui/frontend_panels.c', 'src/ui/frontend_session.c', 'src/ui/platform_frontend.c', 'src/ui/platform_paths.c', 'src/ui/device_frontend.c', 'src/ui/storage_frontend.c', 'src/ui/device_panels.c',
                  'src/ui/settings.c', 'src/ui/settings_runtime.c', 'src/ui/game_database.c', 'src/ui/hd_pack_frontend.c', 'src/ui/idle_frontend.c',
                  'src/ui/image_open.c', 'src/ui/session_actions.c',
-                 'src/ui/clay_backend.c', 'src/ui/font_atlas.c', 'src/ui/desktop_layout.c', 'src/ui/desktop_events.c','src/ui/desktop_windows.c','src/ui/desktop_settings_model.c','src/ui/desktop_menus.c', 'src/third_party/clay/clay.c', 'src/third_party/stb/stb_truetype.c', 'src/ui/desktop_ui.c', 'src/ui/desktop_idle.c', 'src/ui/desktop_features.c', 'src/ui/state_frontend.c', 'src/ui/state_runtime.c',
+                 'src/ui/clay_backend.c', 'src/ui/font_atlas.c', 'src/ui/desktop_ppu.c', 'src/ui/desktop_layout.c', 'src/ui/desktop_events.c','src/ui/desktop_windows.c','src/ui/desktop_settings_model.c','src/ui/desktop_menus.c', 'src/third_party/clay/clay.c', 'src/third_party/stb/stb_truetype.c', 'src/ui/desktop_ui.c', 'src/ui/desktop_idle.c', 'src/ui/desktop_features.c', 'src/ui/state_frontend.c', 'src/ui/state_runtime.c',
                  'src/ui/debug_frontend.c', 'src/ui/output_guard.c', 'src/ui/host_input.c', 'src/ui/peripheral_input.c', 'src/ui/cheat_frontend.c',
                  'src/ui/video_runtime.c', 'src/ui/audio_runtime.c')
 $coreSources += @('src/system/execution_policy.c', 'src/replay/rewind.c', 'src/video/frame_snapshot.c',
@@ -137,7 +137,7 @@ $testSources = @('src/tests/frontend_benchmark.c', 'src/tests/netplay_accuracy.c
                  'src/tests/native_chr_capacity_accuracy.c', 'src/tests/native_mixed_chr_accuracy.c',
                  'src/tests/board_nina_fme7_accuracy.c', 'src/tests/board_state_accuracy.c', 'src/tests/state_accuracy.c',
                  'src/tests/state_ui_accuracy.c',
-                 'src/tests/debugger_accuracy.c',
+                 'src/tests/debugger_accuracy.c', 'src/tests/ppu_inspector_accuracy.c',
                  'src/tests/cheat_accuracy.c', 'src/tests/rewind_accuracy.c', 'src/tests/movie_accuracy.c',
                  'src/tests/movie_frontend_accuracy.c',
                  'src/tests/frontend_accuracy.c', 'src/tests/desktop_accuracy.c')

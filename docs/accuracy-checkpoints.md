@@ -310,3 +310,24 @@ checks that a larger step stops at the oldest retained frame. Configuration
 round-trip coverage retains the chosen speed. Its strict Linux hardware suite
 and AccuracyCoin passed 144/144 with zero skipped or unfinished tests in 4,182
 frames. Windows hardware, region, Unicode, and network checks also passed.
+
+## Visual PPU inspection checkpoint
+
+The visual PPU tools have decoding checks for both pattern tables, nametable
+attributes, palette aliases, sprite priority, and flipped 8 by 16 sprites.
+A full machine snapshot before and after inspection must match byte for byte,
+including during an MMC5 extended-attribute fetch. Separate checks cover its
+background and sprite banks, writable tiles, ROM protection, special nametable
+mappings, OAM attributes, and edit restrictions during deterministic sessions.
+
+Desktop checks open all seven tools at 100%, 150%, and 200% scale. They exercise
+palette and bank selection, view modes, address validation, scrolling, PNG
+chooser selection and cancellation, frozen frame advance, byte edits, undo,
+and replacement of the active session while an edit is open. Settings retain
+the live-view and grid defaults through save and reload.
+
+The strict Windows hardware and desktop suites passed, along with all 91
+diagnostic ROMs, the 8,991-state CPU trace, and AccuracyCoin 144/144 with no
+skipped or unfinished results in 4,182 frames. Region, Unicode-path, and seven
+network scenarios also passed. These are automated checks; they do not replace
+manual native-window, physical-controller, or audio-device acceptance.

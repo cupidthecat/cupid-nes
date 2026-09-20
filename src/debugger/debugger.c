@@ -46,6 +46,8 @@ typedef struct {
 
 static DebuggerState debug_state;
 static uint64_t pause_revision;
+static uint64_t session_revision;
+uint64_t debugger_session_revision(void) { return session_revision; }
 
 static void set_paused(bool paused) {
     if (debug_state.paused == paused) return;
@@ -76,6 +78,7 @@ static bool breakpoint_match(uint8_t type, uint16_t address) {
 }
 
 void debugger_init(void) {
+    ++session_revision;
     memset(&debug_state, 0, sizeof(debug_state));
     debug_state.next_id = 1;
     ++pause_revision;
@@ -88,6 +91,7 @@ void debugger_shutdown(void) {
 }
 
 void debugger_reset_session(void) {
+    ++session_revision;
     debug_state.stop = (DebugStopInfo){0};
     debug_state.step = STEP_NONE;
     debug_state.step_started = false;

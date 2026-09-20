@@ -26,18 +26,20 @@ enum {
     GROUP_MUSIC,
     GROUP_OTHER,
     GROUP_DEBUG_EXECUTION,
-    GROUP_SCRIPT
+    GROUP_SCRIPT,
+    GROUP_PPU
 };
 
 static const char *const names[] = {
     "",          "Save states",    "Recent games",  "Speed",     "Palette",      "Disk system",
     "Tape",      "Barcode reader", "Arcade inputs", "Debugging", "Cheats",       "Rewind and movies",
     "Netplay",   "Capture",        "HD graphics",   "Storage",   "Music player", "Other tools",
-    "Execution", "Scripts"};
+    "Execution", "Scripts", "PPU tools"};
 
 static unsigned group(const DesktopMenuItem *item, int menu, unsigned parent) {
     unsigned id = item->id;
     if (parent == GROUP_DEBUG) {
+        if (desktop_ppu_panel(id)) return GROUP_PPU;
         if (id == DEBUGGER_FRONTEND_COMMAND || (id >= DEBUGGER_STEP_INTO_COMMAND && id <= DEBUGGER_PAUSE_COMMAND)) {
             return GROUP_DEBUG_EXECUTION;
         }
@@ -83,7 +85,7 @@ static unsigned group(const DesktopMenuItem *item, int menu, unsigned parent) {
             id == CHEATS_TOGGLE_COMMAND) {
             return GROUP_CHEATS;
         }
-        if (id >= 0x1340 && id <= 0x1382) {
+        if (desktop_ppu_panel(id) || (id >= 0x1340 && id <= 0x1382)) {
             return GROUP_DEBUG;
         }
         if (id >= 0x1700 && id < 0x1800) {

@@ -123,7 +123,7 @@ static Number number(FrontendDesktopUi *ui, int row) {
 DesktopSettingKind desktop_setting_kind(const FrontendDesktopUi *ui, int row) {
     switch (ui->settings_category) {
     case 0:
-        return row == 2 || row >= 6 ? SETTING_NUMBER : SETTING_TOGGLE;
+        return row == 2 || row == 6 || row == 7 ? SETTING_NUMBER : SETTING_TOGGLE;
     case 1:
         return row == 0 || row == 4 ? SETTING_CHOICE : SETTING_NUMBER;
     case 2:

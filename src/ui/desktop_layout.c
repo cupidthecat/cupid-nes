@@ -721,7 +721,8 @@ void desktop_layout(FrontendDesktopUi *ui, const char *title, const char *region
                     if (ui->settings_open) {
                         settings(ui, mh);
                     } else if (ui->panel_open) {
-                        panel(ui, mh);
+                        if (desktop_ppu_panel(ui->panel_id)) desktop_ppu_layout(ui, mw - 40, mh - 40);
+                        else panel(ui, mh);
                     } else if (ui->info_open) {
                         information(ui, mh);
                     } else {

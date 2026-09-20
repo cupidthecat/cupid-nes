@@ -427,6 +427,7 @@ uint8_t cart_nt_peek(uint16_t addr, uint8_t *nt_ram) {
         unsigned char saved[sizeof(mmc5)];
         bool saved_irq = mapper_irq_line;
         memcpy(saved, &mmc5, sizeof(mmc5));
+        mmc5.in_frame = false; /* Inspect mapped memory, not a transient fetch phase. */
         uint8_t value = cart_nt_read(addr, nt_ram);
         memcpy(&mmc5, saved, sizeof(mmc5));
         mapper_irq_line = saved_irq;

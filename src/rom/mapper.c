@@ -839,10 +839,12 @@ void cart_clock_cpu_cycle(bool write_cycle) {
     cart_cpu_cycle_is_write = false;
 }
 uint8_t cart_ppu_read(uint16_t a) { return cart ? cart->ppu_read(a) : 0x00; }
+static uint8_t mmc5_debug_pattern(uint16_t address);
 uint8_t cart_ppu_peek(uint16_t a) {
     if (!cart) return 0;
     if (active_board) return board_ppu_peek(active_board, a);
     if (cart == &mapper_fds) return fds_ppu_read(a);
+    if (cart == &mapper_mmc5) return mmc5_debug_pattern(a);
     bool previous_peek = cart_debug_peek_mode;
     cart_debug_peek_mode = true;
     uint8_t value = cart->ppu_read(a);
@@ -890,5 +892,6 @@ void cart_notify_vblank_start(void) {
 #include "mapper_jaleco_irem.h"
 #include "mapper_factory.h"
 #include "mapper_state_impl.h"
+#include "mapper_debug.h"
 
 bool cart_has_chr_rom(void) { return C.chr && C.chr_sz && !C.chr_is_ram; }

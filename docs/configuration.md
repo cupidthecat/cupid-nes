@@ -244,3 +244,10 @@ actions. The database path and correction switch are saved as `game_database_pat
 and `disable_database_corrections`; explicit `--game-db` and correction options
 retain precedence. The selected movie path is saved as `movie_file_path`. See the
 [desktop guide](desktop.md) for settings categories and when changes take effect.
+
+## PPU viewer preferences
+
+Settings > General includes Live PPU viewers and PPU viewer grid. Both default
+to on and are saved as `ppu_viewer_live` and `ppu_viewer_grid`. They set the initial
+state of newly opened viewers; Live and Grid in each window control that window.
+These preferences do not change emulated hardware behavior.

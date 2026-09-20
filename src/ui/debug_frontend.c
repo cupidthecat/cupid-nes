@@ -10,6 +10,7 @@
 #include "frontend_commands.h"
 #include "frontend_panels.h"
 #include "platform_frontend.h"
+#include "desktop_ppu.h"
 #include "../debugger/debugger.h"
 #include "../debugger/lua_runtime.h"
 #include "../util/file_io.h"
@@ -639,6 +640,11 @@ bool debug_frontend_register_ui(DebugFrontend *frontend) {
             (void)frontend_command_unregister(commands[i].id);
         return false;
     }
+    if (!desktop_ppu_register()) {
+        for (size_t i = 0; i < sizeof(panels) / sizeof(panels[0]); ++i) frontend_panel_unregister(panels[i].id);
+        for (size_t i = 0; i < sizeof(commands) / sizeof(commands[0]); ++i) frontend_command_unregister(commands[i].id);
+        return false;
+    }
     frontend->registered = true;
     (void)frontend_command_set_checked(DEBUGGER_VIEWERS_FRONTEND_COMMAND, debugger_trace_enabled());
     return true;
@@ -656,6 +662,7 @@ void debug_frontend_image_changed(DebugFrontend *frontend) {
 void debug_frontend_destroy(DebugFrontend *frontend) {
     if (!frontend) return;
     if (frontend->registered) {
+        desktop_ppu_unregister();
         const unsigned commands[] = {
             DEBUGGER_FRONTEND_COMMAND, DEBUGGER_VIEWERS_FRONTEND_COMMAND,
             DEBUGGER_LUA_FRONTEND_COMMAND, DEBUGGER_STEP_INTO_COMMAND,

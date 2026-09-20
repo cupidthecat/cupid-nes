@@ -435,7 +435,7 @@ static const char *on_off(bool enabled) { return enabled ? "On" : "Off"; }
 
 int desktop_setting_rows(const FrontendDesktopUi *ui) {
     switch (ui->settings_category) {
-        case 0: return 8;
+        case 0: return 10;
         case 1: return 6;
         case 2: return 19;
         case 3: return 5 + NES_AUDIO_CHANNEL_COUNT * 2;
@@ -461,7 +461,7 @@ void desktop_setting_text(FrontendDesktopUi *ui, int row, char *label, size_t lc
     if (ui->settings_category == 0) {
         const char *labels[] = {"Reopen last image", "Remember window size", "Recent image count",
             "Pause on focus loss", "Pause while UI is open", "Show frame rate",
-            "Window width", "Window height"};
+            "Window width", "Window height", "Live PPU viewers", "PPU viewer grid"};
         snprintf(label, lc, "%s", labels[row]);
         if (row == 0) snprintf(value, vc, "%s", on_off(s->reopen_last_image));
         else if (row == 1) snprintf(value, vc, "%s", on_off(s->remember_window_size));
@@ -469,6 +469,7 @@ void desktop_setting_text(FrontendDesktopUi *ui, int row, char *label, size_t lc
         else if (row == 3) snprintf(value, vc, "%s", on_off(s->pause_on_focus_loss));
         else if (row == 4) snprintf(value, vc, "%s", on_off(s->pause_on_ui));
         else if (row == 5) snprintf(value, vc, "%s", on_off(s->show_fps));
+        else if (row >= 8) snprintf(value, vc, "%s", on_off(row == 8 ? s->ppu_viewer_live : s->ppu_viewer_grid));
         else snprintf(value, vc, "%u", row == 6 ? s->window_width : s->window_height);
     } else if (ui->settings_category == 1) {
         const char *labels[] = {"Timing selection", "Emulation speed", "Fast-forward speed",
@@ -648,6 +649,8 @@ void desktop_adjust_setting(FrontendDesktopUi *ui, int row, int direction) {
         else if (row == 4) s->pause_on_ui = !s->pause_on_ui;
         else if (row == 5) s->show_fps = !s->show_fps;
         else if (row == 6) { int v = (int)s->window_width + direction * 32; s->window_width = (unsigned)(v < 320 ? 320 : v > 16384 ? 16384 : v); }
+        else if (row == 8) s->ppu_viewer_live = !s->ppu_viewer_live;
+        else if (row == 9) s->ppu_viewer_grid = !s->ppu_viewer_grid;
         else { int v = (int)s->window_height + direction * 24; s->window_height = (unsigned)(v < 240 ? 240 : v > 16384 ? 16384 : v); }
     } else if (ui->settings_category == 1) {
         if (row == 0) s->region_mode = (NesRegionMode)(((int)s->region_mode + direction + 4) % 4);
@@ -783,7 +786,8 @@ void desktop_commit_edit(FrontendDesktopUi *ui) {
         }
     } else if (ui->panel_open) {
         char error[256] = {0};
-        if (!frontend_panel_action(ui->panel_id, ui->edit_control, ui->edit_text, -1, error, sizeof(error))) {
+        if (!(desktop_ppu_panel(ui->panel_id) ? desktop_ppu_commit(ui, ui->edit_text, error, sizeof(error)) :
+              frontend_panel_action(ui->panel_id, ui->edit_control, ui->edit_text, -1, error, sizeof(error)))) {
             desktop_copy_status(ui, error); return;
         }
         if (ui->prompt_command && !frontend_command_invoke(ui->prompt_command, error, sizeof(error))) {
@@ -886,6 +890,8 @@ static void category_defaults(FrontendDesktopUi *ui) {
             memcpy(&ui->staged.pause_on_focus_loss, &d.pause_on_focus_loss, sizeof(d.pause_on_focus_loss));
             memcpy(&ui->staged.pause_on_ui, &d.pause_on_ui, sizeof(d.pause_on_ui));
             memcpy(&ui->staged.show_fps, &d.show_fps, sizeof(d.show_fps));
+            ui->staged.ppu_viewer_live = d.ppu_viewer_live;
+            ui->staged.ppu_viewer_grid = d.ppu_viewer_grid;
             memcpy(&ui->staged.window_width, &d.window_width, sizeof(d.window_width));
             memcpy(&ui->staged.window_height, &d.window_height, sizeof(d.window_height));
             break;
@@ -994,7 +1000,7 @@ bool frontend_desktop_input_captured(const FrontendDesktopUi *ui) {
 }
 bool frontend_desktop_quit_requested(const FrontendDesktopUi *ui){return ui&&ui->quit_requested;}
 void frontend_desktop_update_window_settings(FrontendDesktopUi *ui){if(!ui||ui->parent||!ui->window||!ui->settings||!ui->settings->remember_window_size)return;int w,h;SDL_GetWindowSize(ui->window,&w,&h);if(w>0&&h>0){ui->settings->window_width=(unsigned)w;ui->settings->window_height=(unsigned)h;}}
-void frontend_desktop_shutdown(FrontendDesktopUi *ui){if(!ui)return;desktop_close_windows(ui);desktop_settings_open(ui,false);SDL_StopTextInput();desktop_clay_destroy(ui->clay);ui->clay=NULL;}
+void frontend_desktop_shutdown(FrontendDesktopUi *ui){if(!ui)return;desktop_close_windows(ui);desktop_ppu_destroy(ui);desktop_settings_open(ui,false);SDL_StopTextInput();desktop_clay_destroy(ui->clay);ui->clay=NULL;}
 
 bool desktop_palette_visible(const FrontendDesktopUi *ui) {
     return ui && (ui->palette_window || (!ui->parent && palette_tool_is_visible()));

@@ -717,6 +717,8 @@ static void cheat_prompt(FrontendDesktopUi *ui) {
     (void)nes_file_remove("build/ui-cheats.txt");
 }
 
+#include "desktop_ppu_accuracy.h"
+
 static void window_regressions(FrontendDesktopUi *ui) {
     uint8_t image[16 + 16384 + 8192] = {0};
     memcpy(image, "NES\x1a", 4);
@@ -856,6 +858,7 @@ static void window_regressions(FrontendDesktopUi *ui) {
     DebugFrontend *debug = debug_frontend_create(&runtime);
     CHECK(debug && debug_frontend_register_ui(debug));
     frontend_panel_set_session_active(true);
+    ppu_windows(ui);
     lua_chooser(ui);
     cheat_prompt(ui);
     menu_coverage(ui);

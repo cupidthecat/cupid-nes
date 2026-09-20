@@ -76,6 +76,11 @@ void cart_observe_cpu_write(uint16_t address, uint8_t value);
 void    cart_clock_cpu_cycle(bool write_cycle);
 uint8_t cart_ppu_read (uint16_t addr);
 uint8_t cart_ppu_peek(uint16_t addr);
+/* Debug-only reads of the selected pattern bank and a background tile row. */
+uint8_t cart_debug_chr(uint16_t addr, CartPpuFetchSource source);
+void cart_debug_bg_row(uint16_t nt_addr, uint16_t pattern_addr, unsigned row,
+                       uint8_t *low, uint8_t *high, uint8_t *palette);
+bool cart_debug_write_ppu(uint16_t addr, uint8_t value, uint8_t *nt_ram);
 void    cart_ppu_write(uint16_t addr, uint8_t v);
 void    cart_set_ppu_fetch_source(CartPpuFetchSource src);
 // Notify an exact CPU write to $2000. MMC5 does not observe PPU register mirrors.
