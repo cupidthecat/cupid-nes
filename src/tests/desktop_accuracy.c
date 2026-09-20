@@ -2,8 +2,12 @@
 #include "../apu/apu.h"
 #include "../cpu/cpu.h"
 #include "../debugger/debugger.h"
+#include "../debugger/lua_runtime.h"
 #include "../rom/rom.h"
 #include "../ui/debug_frontend.h"
+#include "../ui/cheat_frontend.h"
+#include "../cheats/cheats.h"
+#include "../ui/platform_frontend.h"
 #include "../ui/machine_actions.h"
 #include "../capture/capture_writer.h"
 #include "../joypad/family_basic.h"
@@ -24,26 +28,30 @@
 #include <string.h>
 
 static int failures;
-#define CHECK(x)                                                                                             \
-    do {                                                                                                     \
-        if (!(x)) {                                                                                          \
-            fprintf(stderr, "Desktop check %d failed: %s\n", __LINE__, #x);                                  \
-            ++failures;                                                                                      \
-        }                                                                                                    \
+#define CHECK(x)                                                                                                       \
+    do {                                                                                                               \
+        if (!(x)) {                                                                                                    \
+            fprintf(stderr, "Desktop check %d failed: %s\n", __LINE__, #x);                                            \
+            ++failures;                                                                                                \
+        }                                                                                                              \
     } while (0)
+
 static void key(FrontendDesktopUi *ui, SDL_Scancode sc, SDL_Keymod mod) {
     SDL_Event event = {.type = SDL_KEYDOWN};
     event.key.keysym.scancode = sc;
     event.key.keysym.mod = mod;
     CHECK(frontend_desktop_handle_event(ui, &event));
 }
+
 static void screenshot(FrontendDesktopUi *ui, const char *path);
+
 static void click_control(FrontendDesktopUi *ui, int kind, int index, int direction) {
     SDL_FRect rect;
     bool found = desktop_clay_bounds(ui->clay, kind, index, direction, &rect);
     CHECK(found);
-    if (!found)
+    if (!found) {
         return;
+    }
     int width, height;
     SDL_GetWindowSize(ui->window, &width, &height);
     CHECK(rect.w > 0 && rect.h > 0 && rect.x >= 0 && rect.y >= 0);
@@ -54,11 +62,13 @@ static void click_control(FrontendDesktopUi *ui, int kind, int index, int direct
     event.button.y = (int)((rect.y + rect.h / 2) * ui->ui_scale);
     CHECK(frontend_desktop_handle_event(ui, &event));
 }
+
 static void render(FrontendDesktopUi *ui) {
     SDL_SetRenderDrawColor(ui->renderer, 14, 18, 27, 255);
     SDL_RenderClear(ui->renderer);
     frontend_desktop_render(ui, 256, 240, "Synthetic cartridge", "NTSC", "Paused");
 }
+
 static void mouse_controls(FrontendDesktopUi *ui) {
     ppu_palette_reset_default();
     for (int dpi = 0; dpi < 3; ++dpi) {
@@ -73,8 +83,11 @@ static void mouse_controls(FrontendDesktopUi *ui) {
         CHECK(ui->settings_category == 1);
         render(ui);
         double previous = ui->staged.speed;
-        click_control(ui, HIT_SETTING, 1, 1);
-        CHECK(ui->staged.speed != previous);
+        click_control(ui, HIT_SETTING, 1, 0);
+        CHECK(ui->edit_text_active && ui->edit_number);
+        snprintf(ui->edit_text, sizeof(ui->edit_text), "%.2f", previous == 1 ? 1.75 : 1.0);
+        key(ui, SDL_SCANCODE_RETURN, KMOD_NONE);
+        CHECK(!ui->edit_text_active && ui->staged.speed != previous);
         render(ui);
         click_control(ui, HIT_SETTINGS_BUTTON, 2, 0);
         CHECK(!ui->settings_open);
@@ -100,8 +113,9 @@ static void mouse_controls(FrontendDesktopUi *ui) {
         ppu_palette_get(after);
         CHECK(before[1] != after[1]);
         render(ui);
-        if (dpi == 0)
+        if (dpi == 0) {
             screenshot(ui, "build/desktop-palette.png");
+        }
         click_control(ui, HIT_CLOSE, 0, 0);
         CHECK(!palette_tool_is_visible());
         ppu_palette_reset_default();
@@ -131,42 +145,62 @@ static void mouse_controls(FrontendDesktopUi *ui) {
     click_control(ui, HIT_SETTINGS_BUTTON, 2, 0);
 }
 
+static int panel_choice_selected;
+static const char *panel_choices[45];
+static char panel_choice_names[45][24];
+
 static bool panel_snapshot(void *context, FrontendPanelModel *model, char *error, size_t size) {
     (void)context;
     (void)error;
     (void)size;
     for (unsigned i = 0; i < 24; ++i) {
         FrontendPanelControl c = {i, FRONTEND_PANEL_ACTION, "Action", NULL, NULL, 0, -1, true, false};
-        if (!frontend_panel_add_control(model, &c))
+        if (!frontend_panel_add_control(model, &c)) {
             return false;
+        }
+    }
+    for (int i = 0; i < 45; ++i) {
+        snprintf(panel_choice_names[i], sizeof(panel_choice_names[i]), "Option %d", i + 1);
+        panel_choices[i] = panel_choice_names[i];
+    }
+    FrontendPanelControl choice = {
+        24, FRONTEND_PANEL_CHOICE, "Multiple pages", NULL, panel_choices, 45, panel_choice_selected, true, false};
+    if (!frontend_panel_add_control(model, &choice)) {
+        return false;
     }
     return true;
 }
-static bool panel_action(void *context, unsigned id, const char *value, int selected, char *error,
-                         size_t size) {
+
+static bool panel_action(void *context, unsigned id, const char *value, int selected, char *error, size_t size) {
     (void)value;
-    (void)selected;
+    if (id == 24) {
+        panel_choice_selected = selected;
+    }
     (void)error;
     (void)size;
     *(unsigned *)context = id;
     return true;
 }
+
 static void screenshot(FrontendDesktopUi *ui, const char *path) {
     int width, height;
     CHECK(SDL_GetRendererOutputSize(ui->renderer, &width, &height) == 0);
     uint32_t *pixels = malloc((size_t)width * height * sizeof(*pixels));
     CHECK(pixels);
-    if (!pixels)
+    if (!pixels) {
         return;
+    }
     CHECK(SDL_RenderReadPixels(ui->renderer, NULL, SDL_PIXELFORMAT_ARGB8888, pixels, width * 4) == 0);
     NesCaptureFrame frame = {pixels, (unsigned)width, (unsigned)height, (size_t)width};
     CHECK(nes_capture_png(path, &frame) == NES_FILE_OK);
     free(pixels);
 }
+
 static void silence(void *context, Uint8 *stream, int length) {
     (void)context;
     memset(stream, 0, (size_t)length);
 }
+
 static void audio_settings(void) {
     SDL_setenv("SDL_AUDIODRIVER", "dummy", 1);
     CHECK(SDL_InitSubSystem(SDL_INIT_AUDIO) == 0);
@@ -178,8 +212,9 @@ static void audio_settings(void) {
     want.callback = silence;
     SDL_AudioDeviceID device = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
     CHECK(device);
-    if (!device)
+    if (!device) {
         return;
+    }
     FrontendExecutionRuntime execution;
     frontend_execution_init(&execution, &device, have.freq, NULL, NULL, NULL, NULL);
     SDL_PauseAudioDevice(device, 0);
@@ -235,6 +270,7 @@ static void audio_settings(void) {
     frontend_commands_reset();
     frontend_panels_reset();
 }
+
 static void storage_settings(void) {
     FrontendSettings settings;
     frontend_settings_defaults(&settings);
@@ -248,8 +284,7 @@ static void storage_settings(void) {
     CHECK(frontend_settings_load("build/storage-settings.ini", &restored, &report));
     CHECK(!strcmp(restored.game_database_path, settings.game_database_path));
     CHECK(restored.rewind_step_frames == 3);
-    CHECK(!strcmp(restored.movie_file_path, settings.movie_file_path) &&
-          restored.disable_database_corrections);
+    CHECK(!strcmp(restored.movie_file_path, settings.movie_file_path) && restored.disable_database_corrections);
     (void)nes_file_remove("build/storage-settings.ini");
     FrontendExecutionRuntime execution;
     frontend_execution_init(&execution, NULL, 44100, NULL, NULL, NULL, NULL);
@@ -272,28 +307,298 @@ static void storage_settings(void) {
     frontend_execution_shutdown(&execution);
     frontend_panels_reset();
 }
+
 static void focus_event(FrontendDesktopUi *root, SDL_Window *window, bool focused) {
     SDL_Event event = {.type = SDL_WINDOWEVENT};
     event.window.windowID = SDL_GetWindowID(window);
     event.window.event = focused ? SDL_WINDOWEVENT_FOCUS_GAINED : SDL_WINDOWEVENT_FOCUS_LOST;
     (void)frontend_desktop_handle_event(root, &event);
 }
+
+static bool menu_find(FrontendDesktopUi *ui, int depth, unsigned id, int kind) {
+    DesktopMenuItem items[128];
+    int count = desktop_menu_level(ui, depth, items);
+    CHECK(count <= 10);
+    for (int i = 0; i < count; ++i) {
+        if (items[i].kind != 7 && items[i].id == id && (kind < 0 || items[i].kind == (unsigned)kind)) {
+            ui->menu_depth = depth;
+            ui->menu_row = i;
+            return true;
+        }
+        if (items[i].kind == 7 && depth < 4) {
+            ui->menu_path[depth] = items[i].id;
+            ui->menu_parent_rows[depth] = i;
+            if (menu_find(ui, depth + 1, id, kind)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+static bool menu_noop(void *context, char *error, size_t size) {
+    (void)context;
+    (void)error;
+    (void)size;
+    return true;
+}
+
+static void menu_coverage(FrontendDesktopUi *ui) {
+    for (unsigned i = 0; i < 30; ++i) {
+        FrontendCommandSpec command = {0x7f10 + i, "Additional command", "Tools", "", 0, menu_noop, NULL};
+        CHECK(frontend_command_register(&command));
+    }
+    for (int menu = 0; menu < 7; ++menu) {
+        ui->open_menu = menu;
+        DesktopMenuItem all[128];
+        int count = desktop_menu_all(ui, all);
+        for (int i = 0; i < count; ++i) {
+            bool found = menu_find(ui, 0, all[i].id, all[i].kind);
+            CHECK(found);
+            if (found) {
+                render(ui);
+                SDL_FRect bounds;
+                CHECK(desktop_clay_bounds(ui->clay, HIT_MENU_ROW, ui->menu_row, ui->menu_depth, &bounds));
+                int w, h;
+                SDL_GetWindowSize(ui->window, &w, &h);
+                CHECK(bounds.x >= 0 && bounds.y >= 32 && bounds.x + bounds.w <= w / ui->ui_scale &&
+                      bounds.y + bounds.h <= h / ui->ui_scale - 28);
+                CHECK(!desktop_clay_bounds(ui->clay, HIT_SCROLL, 0, 1, &bounds));
+            }
+        }
+    }
+    for (unsigned i = 0; i < 30; ++i) {
+        CHECK(frontend_command_unregister(0x7f10 + i));
+    }
+    ui->open_menu = 5;
+    if (menu_find(ui, 0, DEBUGGER_FRONTEND_PANEL, 1)) {
+        render(ui);
+        screenshot(ui, "build/desktop-submenus.png");
+        int old_depth = ui->menu_depth;
+        CHECK(old_depth > 0);
+        key(ui, SDL_SCANCODE_ESCAPE, KMOD_NONE);
+        CHECK(ui->menu_depth == old_depth - 1 && ui->open_menu == 5);
+    }
+    ui->open_menu = -1;
+    ui->menu_depth = 0;
+}
+
 static void menu_activate(FrontendDesktopUi *ui, int menu, unsigned id) {
     ui->open_menu = menu;
-    DesktopMenuItem items[128];
-    int count = desktop_menu_items(ui, items), row = -1;
-    for (int i = 0; i < count; ++i) if (items[i].id == id) row = i;
-    CHECK(row >= 0);
-    if (row < 0) return;
-    ui->menu_row = ui->menu_scroll = row;
+    bool found = menu_find(ui, 0, id, -1);
+    CHECK(found);
+    if (!found) {
+        return;
+    }
     render(ui);
-    click_control(ui, HIT_MENU_ROW, row, 0);
+    click_control(ui, HIT_MENU_ROW, ui->menu_row, ui->menu_depth);
+}
+
+static void typed_settings(FrontendDesktopUi *ui) {
+    desktop_settings_open(ui, true);
+    FrontendSettings original = ui->staged;
+    for (int category = 0; category < 8; ++category) {
+        ui->settings_category = category;
+        int rows = desktop_setting_rows(ui);
+        for (int row = 0; row < rows; ++row) {
+            ui->staged = original;
+            ui->settings_row = row;
+            char name[96], value[256];
+            desktop_setting_text(ui, row, name, sizeof(name), value, sizeof(value));
+            CHECK(name[0]);
+            DesktopSettingKind kind = desktop_setting_kind(ui, row);
+            if (kind == SETTING_CHOICE) {
+                int selected, count = desktop_setting_choices(ui, row, &selected);
+                CHECK(count > 0);
+                for (int option = 0; option < count; ++option) {
+                    desktop_setting_choice_text(ui, row, option, value, sizeof(value));
+                    CHECK(value[0]);
+                    desktop_setting_choose(ui, row, option);
+                    (void)desktop_setting_choices(ui, row, &selected);
+                    CHECK(selected == option);
+                }
+                desktop_activate_setting(ui, row);
+                CHECK(ui->choice_open);
+                render(ui);
+                click_control(ui, HIT_CHOICE, ui->choice_index, 0);
+                CHECK(!ui->choice_open);
+            } else if (kind == SETTING_NUMBER) {
+                desktop_activate_setting(ui, row);
+                CHECK(ui->edit_text_active && ui->edit_number);
+                CHECK(desktop_setting_commit_number(ui, row, ui->edit_text));
+                FrontendSettings before = ui->staged;
+                const char *invalid[] = {"garbage",      "NaN",     "inf", "1e999", "-999999999999",
+                                         "999999999999", "12 junk", "",    "   "};
+                for (unsigned i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
+                    CHECK(!desktop_setting_commit_number(ui, row, invalid[i]));
+                    CHECK(!memcmp(&before, &ui->staged, sizeof(before)));
+                }
+                ui->edit_text_active = false;
+                SDL_StopTextInput();
+            } else if (kind == SETTING_TOGGLE) {
+                desktop_activate_setting(ui, row);
+                desktop_setting_text(ui, row, name, sizeof(name), value, sizeof(value));
+                CHECK(value[0]);
+            } else if (kind == SETTING_BINDING) {
+                desktop_activate_setting(ui, row);
+                CHECK(ui->capture_binding);
+                ui->capture_binding = false;
+            } else if (kind == SETTING_TEXT) {
+                desktop_activate_setting(ui, row);
+                CHECK(ui->edit_text_active);
+                ui->edit_text_active = false;
+                SDL_StopTextInput();
+            }
+            render(ui);
+        }
+    }
+    ui->settings_category = 7;
+    ui->settings_row = 1;
+    uint32_t seed = ui->staged.power_on_seed;
+    key(ui, SDL_SCANCODE_LEFT, KMOD_NONE);
+    key(ui, SDL_SCANCODE_RIGHT, KMOD_NONE);
+    CHECK(ui->staged.power_on_seed == seed);
+    ui->settings_category = 3;
+    CHECK(desktop_setting_commit_number(ui, 3, "44100"));
+    CHECK(ui->staged.audio_sample_rate == 44100);
+    CHECK(desktop_setting_commit_number(ui, 6, "-35"));
+    CHECK(ui->staged.audio_mix.pan[0] == -35);
+    ui->settings_category = 1;
+    CHECK(desktop_setting_commit_number(ui, 1, "1.25"));
+    CHECK(ui->staged.speed == 1.25);
+    ui->settings_category = 4;
+    ui->settings_row = 0;
+    render(ui);
+    SDL_FRect bar;
+    CHECK(desktop_clay_bounds(ui->clay, HIT_SCROLLBAR, 0, 0, &bar));
+    SDL_Event drag = {.type = SDL_MOUSEBUTTONDOWN};
+    drag.button.button = SDL_BUTTON_LEFT;
+    drag.button.x = (int)((bar.x + bar.w / 2) * ui->ui_scale);
+    drag.button.y = (int)((bar.y + bar.h - 1) * ui->ui_scale);
+    CHECK(frontend_desktop_handle_event(ui, &drag));
+    CHECK(ui->settings_row >= desktop_setting_rows(ui) - 2);
+    render(ui);
+    CHECK(ui->settings_scroll > 0);
+    drag.type = SDL_MOUSEBUTTONUP;
+    (void)frontend_desktop_handle_event(ui, &drag);
+    CHECK(ui->dragging_scroll == -1);
+    ui->settings_category = 1;
+    ui->settings_row = 0;
+    desktop_activate_setting(ui, 0);
+    CHECK(ui->choice_open);
+    render(ui);
+    key(ui, SDL_SCANCODE_DOWN, KMOD_NONE);
+    key(ui, SDL_SCANCODE_RETURN, KMOD_NONE);
+    CHECK(!ui->choice_open);
+    desktop_activate_setting(ui, 1);
+    strcpy(ui->edit_text, "NaN");
+    key(ui, SDL_SCANCODE_RETURN, KMOD_NONE);
+    CHECK(ui->edit_text_active && ui->status[0]);
+    key(ui, SDL_SCANCODE_ESCAPE, KMOD_NONE);
+    CHECK(!ui->edit_text_active);
+    ui->staged = original;
+    desktop_settings_open(ui, false);
+}
+
+static bool choose_cheats(bool save, unsigned type, char *path, size_t size, char *error, size_t error_size,
+                          void *context) {
+    CHECK(type == (save ? FRONTEND_SAVE_CHEATS : FRONTEND_OPEN_CHEATS));
+    if (error && error_size) {
+        error[0] = 0;
+    }
+    if (!*(bool *)context) {
+        return false;
+    }
+    snprintf(path, size, "build/ui-cheats.txt");
+    return true;
+}
+
+static bool choose_lua(bool save, unsigned type, char *path, size_t size, char *error, size_t error_size,
+                       void *context) {
+    CHECK(!save && type == FRONTEND_OPEN_SCRIPT);
+    if (error && error_size) {
+        error[0] = 0;
+    }
+    if (!*(bool *)context) {
+        return false;
+    }
+    snprintf(path, size, "build/ui-script.lua");
+    return true;
+}
+
+static void lua_chooser(FrontendDesktopUi *ui) {
+    const char script[] = "local value = 1 + 2";
+    CHECK(nes_file_write_atomic("build/ui-script.lua", script, sizeof(script) - 1) == NES_FILE_OK);
+    bool choose = true;
+    frontend_set_file_chooser(choose_lua, &choose);
+    menu_activate(ui, 5, DEBUGGER_LUA_LOAD_COMMAND);
+    CHECK(debugger_lua_loaded());
+    choose = false;
+    menu_activate(ui, 5, DEBUGGER_LUA_LOAD_COMMAND);
+    CHECK(debugger_lua_loaded());
+    frontend_set_file_chooser(NULL, NULL);
+    debugger_lua_unload();
+    (void)nes_file_remove("build/ui-script.lua");
+}
+
+static void cheat_prompt(FrontendDesktopUi *ui) {
+    CheatFrontend *cheats = cheat_frontend_create("build/");
+    CHECK(cheats && cheat_frontend_register_ui(cheats));
+    CHECK(cheats_clear() == CHEAT_OK);
+    menu_activate(ui, 5, CHEATS_ADD_COMMAND);
+    FrontendDesktopUi *tool = ui->tools;
+    CHECK(tool && tool->edit_text_active && tool->prompt_command == CHEATS_ADD_COMMAND);
+    if (tool) {
+        strcpy(tool->edit_text, "invalid");
+        key(tool, SDL_SCANCODE_RETURN, KMOD_NONE);
+        CHECK(tool->edit_text_active && tool->status[0] && cheats_count() == 0);
+        render(tool);
+        screenshot(tool, "build/desktop-cheat-validation.png");
+        strcpy(tool->edit_text, "8000:EA");
+        key(tool, SDL_SCANCODE_RETURN, KMOD_NONE);
+        CHECK(!tool->edit_text_active && cheats_count() == 1);
+        bool choose = true;
+        frontend_set_file_chooser(choose_cheats, &choose);
+        tool->panel_row = 11;
+        render(tool);
+        click_control(tool, HIT_PANEL, 11, 0);
+        CHECK(cheats_clear() == CHEAT_OK);
+        tool->panel_row = 10;
+        render(tool);
+        click_control(tool, HIT_PANEL, 10, 0);
+        CHECK(cheats_count() == 1);
+        CHECK(frontend_panel_action(CHEATS_FRONTEND_PANEL, CHEAT_CONTROL_PATH, "build/ui-original-cheats.txt", 0, NULL,
+                                    0));
+        const char invalid_file[] = "invalid cheat file";
+        CHECK(nes_file_write_atomic("build/ui-cheats.txt", invalid_file, sizeof(invalid_file) - 1) == NES_FILE_OK);
+        click_control(tool, HIT_PANEL, 10, 0);
+        CHECK(cheats_count() == 1 && tool->status[0]);
+        FrontendPanelControl controls[64];
+        FrontendPanelModel model = {.controls = controls, .capacity = 64};
+        CHECK(frontend_panel_snapshot(CHEATS_FRONTEND_PANEL, &model, NULL, 0));
+        for (size_t i = 0; i < model.count; ++i) {
+            if (controls[i].id == CHEAT_CONTROL_PATH) {
+                CHECK(!strcmp(controls[i].value, "build/ui-original-cheats.txt"));
+            }
+        }
+        choose = false;
+        click_control(tool, HIT_PANEL, 10, 0);
+        CHECK(cheats_count() == 1);
+        frontend_set_file_chooser(NULL, NULL);
+        desktop_close_windows(ui);
+    }
+    cheat_frontend_destroy(cheats);
+    CHECK(cheats_clear() == CHEAT_OK);
+    (void)nes_file_remove("build/ui-cheats.txt");
 }
 
 static void window_regressions(FrontendDesktopUi *ui) {
     uint8_t image[16 + 16384 + 8192] = {0};
-    memcpy(image, "NES\x1a", 4); image[4] = image[5] = 1;
-    image[16] = 0x4c; image[17] = 0; image[18] = 0x80;
+    memcpy(image, "NES\x1a", 4);
+    image[4] = image[5] = 1;
+    image[16] = 0x4c;
+    image[17] = 0;
+    image[18] = 0x80;
     image[16 + 0x3ffd] = 0x80;
     CHECK(load_rom_memory(image, sizeof(image)) == 0);
     debugger_init();
@@ -309,7 +614,9 @@ static void window_regressions(FrontendDesktopUi *ui) {
     ui->settings->pause_on_ui = ui->settings->pause_on_focus_loss = true;
     FrontendDesktopUi *tool = desktop_open_window(ui, 1, 0x7F00);
     CHECK(tool && tool->window != ui->window && tool->renderer != ui->renderer);
-    if (!tool) return;
+    if (!tool) {
+        return;
+    }
     focus_event(ui, ui->window, false);
     focus_event(ui, tool->window, true);
     frontend_desktop_update_activity(ui);
@@ -401,6 +708,9 @@ static void window_regressions(FrontendDesktopUi *ui) {
     DebugFrontend *debug = debug_frontend_create(&runtime);
     CHECK(debug && debug_frontend_register_ui(debug));
     frontend_panel_set_session_active(true);
+    lua_chooser(ui);
+    cheat_prompt(ui);
+    menu_coverage(ui);
     menu_activate(ui, 5, DEBUGGER_FRONTEND_PANEL);
     FrontendDesktopUi *debug_window = ui->tools;
     CHECK(debug_window);
@@ -409,7 +719,9 @@ static void window_regressions(FrontendDesktopUi *ui) {
         focus_event(ui, debug_window->window, true);
         frontend_desktop_update_activity(ui);
         uint64_t cycles = cpu_total_cycles;
-        for (int i = 0; i < 8; ++i) CHECK(frontend_execution_run_frame(&runtime));
+        for (int i = 0; i < 8; ++i) {
+            CHECK(frontend_execution_run_frame(&runtime));
+        }
         CHECK(cpu_total_cycles > cycles && !frontend_execution_paused(&runtime));
         render(debug_window);
         screenshot(debug_window, "build/desktop-debugger-window.png");
@@ -447,7 +759,8 @@ static void window_regressions(FrontendDesktopUi *ui) {
     menu_activate(ui, 4, DEVICE_COMMAND_TAPE_STOP);
     CHECK(!devices.tape_capture_pending);
     CHECK(joypad_apply_configuration(&old_inputs));
-    frontend_devices_unregister(); ui->devices = NULL;
+    frontend_devices_unregister();
+    ui->devices = NULL;
     (void)nes_file_remove("build/ui-menu-tape.bin");
     (void)nes_file_remove("build/ui-menu-record.bin");
     debug_frontend_destroy(debug);
@@ -479,13 +792,13 @@ int test_desktop_accuracy(void) {
     storage_settings();
     SDL_setenv("SDL_VIDEODRIVER", "dummy", 1);
     CHECK(SDL_InitSubSystem(SDL_INIT_VIDEO) == 0);
-    SDL_Window *window =
-        SDL_CreateWindow("Desktop checks", 0, 0, 768, 720, SDL_WINDOW_HIDDEN | SDL_WINDOW_RESIZABLE);
+    SDL_Window *window = SDL_CreateWindow("Desktop checks", 0, 0, 768, 720, SDL_WINDOW_HIDDEN | SDL_WINDOW_RESIZABLE);
     SDL_Renderer *renderer = window ? SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE) : NULL;
     CHECK(window && renderer);
     if (!renderer) {
-        if (window)
+        if (window) {
             SDL_DestroyWindow(window);
+        }
         SDL_QuitSubSystem(SDL_INIT_VIDEO);
         return failures;
     }
@@ -504,8 +817,9 @@ int test_desktop_accuracy(void) {
     CHECK(ui.settings_category == 1);
     key(&ui, SDL_SCANCODE_TAB, KMOD_NONE);
     CHECK(ui.settings_focus == 1);
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < 3; ++i) {
         key(&ui, SDL_SCANCODE_RIGHT, KMOD_NONE);
+    }
     key(&ui, SDL_SCANCODE_RETURN, KMOD_NONE);
     CHECK(ui.staged.speed == 1 && ui.staged.audio_mix.master_volume == 40 && settings.speed == 2);
     key(&ui, SDL_SCANCODE_TAB, KMOD_NONE);
@@ -522,23 +836,35 @@ int test_desktop_accuracy(void) {
     CHECK(settings.speed == 2);
     key(&ui, SDL_SCANCODE_F, KMOD_ALT);
     CHECK(frontend_desktop_input_captured(&ui));
-    for (int i = 0; i < 4; ++i)
-        key(&ui, SDL_SCANCODE_RIGHT, KMOD_NONE);
-    CHECK(ui.open_menu == 4);
+    key(&ui, SDL_SCANCODE_LEFT, KMOD_NONE);
+    CHECK(ui.open_menu == 6);
     key(&ui, SDL_SCANCODE_ESCAPE, KMOD_NONE);
     unsigned selected = 0;
-    FrontendPanelSpec panel = {0x7F00,         "Scrollable panel", "Tools",  0,
-                               panel_snapshot, panel_action,       &selected};
+    FrontendPanelSpec panel = {0x7F00, "Scrollable panel", "Tools", 0, panel_snapshot, panel_action, &selected};
     CHECK(frontend_panel_register(&panel));
     ui.panel_id = panel.id;
     ui.panel_open = true;
-    for (int i = 0; i < 20; ++i)
+    for (int i = 0; i < 20; ++i) {
         key(&ui, SDL_SCANCODE_DOWN, KMOD_NONE);
+    }
     key(&ui, SDL_SCANCODE_RETURN, KMOD_NONE);
     CHECK(selected == 20 && ui.panel_scroll > 0);
     SDL_RenderClear(renderer);
     frontend_desktop_render(&ui, 256, 240, "Synthetic cartridge", "NTSC", "Paused");
     screenshot(&ui, "build/desktop-panel.png");
+    ui.panel_row = 24;
+    render(&ui);
+    click_control(&ui, HIT_PANEL, 24, 0);
+    CHECK(ui.choice_open && desktop_choice_count(&ui) == 45);
+    render(&ui);
+    screenshot(&ui, "build/desktop-choices.png");
+    render(&ui);
+    click_control(&ui, HIT_CHOICE_PAGE, 0, 1);
+    render(&ui);
+    click_control(&ui, HIT_CHOICE_PAGE, 0, 1);
+    render(&ui);
+    click_control(&ui, HIT_CHOICE, 44, 0);
+    CHECK(!ui.choice_open && panel_choice_selected == 44);
     ui.panel_open = false;
     SDL_SetWindowSize(window, 1280, 960);
     SDL_RenderSetLogicalSize(renderer, 1280, 960);
@@ -578,7 +904,28 @@ int test_desktop_accuracy(void) {
     unsigned width = settings.window_width;
     frontend_desktop_update_window_settings(&ui);
     CHECK(settings.window_width == width);
+    typed_settings(&ui);
     mouse_controls(&ui);
+    ui.info_open = ui.log_open = true;
+    ui.panel_row = ui.panel_scroll = 0;
+    for (int i = 0; i < 12; ++i) {
+        desktop_copy_status(&ui, "A diagnostic message with useful details.");
+    }
+    SDL_SetWindowSize(window, 640, 480);
+    SDL_RenderSetLogicalSize(renderer, 640, 480);
+    render(&ui);
+    SDL_FRect log_bar;
+    CHECK(desktop_clay_bounds(ui.clay, HIT_SCROLLBAR, 2, 0, &log_bar));
+    for (int i = 0; i < 11; ++i) {
+        key(&ui, SDL_SCANCODE_DOWN, KMOD_NONE);
+    }
+    render(&ui);
+    CHECK(ui.panel_scroll > 0 && ui.panel_row == 11);
+    click_control(&ui, HIT_LOG, 11, 0);
+    click_control(&ui, HIT_CLOSE, 0, 0);
+    CHECK(!ui.info_open);
+    SDL_SetWindowSize(window, 900, 680);
+    SDL_RenderSetLogicalSize(renderer, 900, 680);
     modifier_bindings();
     window_regressions(&ui);
     frontend_desktop_shutdown(&ui);
@@ -595,10 +942,10 @@ int test_desktop_accuracy(void) {
     char error[256];
     const uint8_t tape[] = {0, 1, 0, 1};
     CHECK(nes_file_write_atomic("build/desktop-tape.bin", tape, sizeof(tape)) == NES_FILE_OK);
-    CHECK(frontend_devices_set_tape_paths(&devices, "build/desktop-tape.bin", "build/desktop-tape-out.bin",
-                                          error, sizeof(error)));
-    CHECK(!frontend_devices_set_tape_paths(&devices, "build/desktop-tape.bin", "build/desktop-tape.bin",
-                                           error, sizeof(error)));
+    CHECK(frontend_devices_set_tape_paths(&devices, "build/desktop-tape.bin", "build/desktop-tape-out.bin", error,
+                                          sizeof(error)));
+    CHECK(!frontend_devices_set_tape_paths(&devices, "build/desktop-tape.bin", "build/desktop-tape.bin", error,
+                                           sizeof(error)));
     CHECK(frontend_devices_tape_load(&devices, "build/desktop-tape.bin", error, sizeof(error)));
     CHECK(frontend_devices_tape_play(&devices, error, sizeof(error)));
     CHECK(family_basic_tape_mode() == FB_TAPE_PLAYING);

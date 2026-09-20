@@ -65,6 +65,11 @@ typedef struct FrontendDesktopUi {
     int open_menu;
     int menu_row;
     int menu_scroll;
+    int menu_depth, menu_parent_rows[4];
+    unsigned menu_path[4];
+    bool choice_open, choice_panel, edit_number;
+    int choice_row, choice_index, choice_page;
+    int dragging_scroll;
     int panel_row;
     int panel_scroll;
     int settings_focus;
@@ -75,7 +80,7 @@ typedef struct FrontendDesktopUi {
     unsigned settings_player;
     unsigned capture_index;
     unsigned panel_id;
-    unsigned edit_control;
+    unsigned edit_control, prompt_command;
     float ui_scale;
     bool edit_text_active;
     char edit_text[FRONTEND_SETTINGS_PATH_TEXT];

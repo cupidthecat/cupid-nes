@@ -7,9 +7,11 @@ Ctrl+O, drop a game image, or select a recent entry. Recent entries retain the
 archive member, patch, firmware selection, and save identity needed to reopen
 that image. A failed replacement leaves the current machine available.
 
-The toolbar provides Open, Pause/Resume, Reset, and Settings. Menus group the
-shared emulator commands and feature panels. Alt+F opens the menu bar; arrow
-keys select a menu or command, Enter activates it, and Escape closes it. The
+The top menu bar contains File, Emulation, View, Audio, Media, Tools, and Help.
+A separate toolbar below it provides Open, Pause/Resume, Reset, and Settings.
+Commands are grouped into submenus, with at most ten entries per menu. Hover
+over a group or press Right to open it; Left or Escape returns to its parent.
+Alt+F opens the menu bar, arrow keys move the selection, and Enter activates it. The
 status bar shows the title, effective region, execution state, active capture
 or movie, and disk activity where applicable. Netplay supplies its connection
 status while listening or connected.
@@ -29,14 +31,17 @@ windows does not trigger the pause-on-focus-loss preference.
 
 Ctrl+Comma opens Settings. The eight categories cover General, Emulation,
 Video, Audio, Controllers, Media and firmware, Files and storage, and Advanced
-hardware. Arrow keys select and change a row. Ctrl+Tab changes categories;
-Tab moves among rows, buttons, and the category list. Enter starts text or
-binding entry and commits entered text. Click the minus/plus buttons to adjust
-a value, or click its value field. Text fields start with their contents selected;
+hardware. Up/Down selects a row; Left/Right adjusts its value. Ctrl+Tab changes
+categories; Tab moves among rows, buttons, and the category list. Click a
+checkbox to toggle it, a choice field to open its options, or Edit to enter a
+number or text. Enter opens the selected control and saves an edit. Numeric
+fields accept custom values, such as 1.25 for speed or 44100 for sample rate.
+Invalid entries stay open with their allowed range shown. Text fields start with their contents selected;
 typing replaces them. Ctrl+A selects all, Ctrl+C copies the selection, Ctrl+V
 pastes, and End lets you append. Escape cancels an edit or closes the
 window. F4 opens a picker for supported file-path rows. Lists scroll to keep
-the selected row visible.
+the selected row visible. Scrollbars show the position and can be dragged; the
+wheel and arrow controls also move through rows.
 
 Apply validates and saves changes while leaving the window open. OK applies
 and closes it. Cancel discards unapplied edits. Defaults resets the current
@@ -67,29 +72,35 @@ after menus, aspect scaling, overscan, HD rendering, and dual-display layout.
 
 | Task | Location |
 | --- | --- |
-| Save slots and state files | File commands and Tools > Save States |
-| Rewind, run-ahead, input movies | Tools > Rewind, Run-Ahead and Movies |
+| Save slots and state files | File > Save states; Tools > Storage |
+| Rewind, run-ahead, input movies | Tools > Rewind and movies |
 | Direct network sessions | Tools > Netplay |
-| Breakpoints, registers, memory, hardware inspection, Lua | Tools debugger panels |
+| Breakpoints, registers, memory, hardware inspection, Lua | Tools > Debugging |
 | Cheat list and code entry | Tools > Cheats |
-| Track selection, playback, repeat, shuffle | Music player panel |
+| Track selection, playback, repeat, shuffle | Tools > Music player |
 | Disk sides, insertion, write protection, tape, barcodes, cabinet input | Media device panels |
 | PNG screenshots, WAV audio, AVI video | Capture panel |
-| Replacement graphics/audio, pack install/export/capture | Tools > HD Packs |
-| Effective paths and database selection | Tools > Storage locations |
+| Replacement graphics/audio, pack install/export/capture | Tools > HD graphics |
+| Effective paths and database selection | Tools > Storage |
 | Loaded image and effective hardware | Help > Game information |
 | Recent application errors and notices | Help > Recent messages |
 
 Panels use Up/Down or Tab to select a row and Enter to activate it. Text rows
-accept paths or values, choice rows cycle through their entries, and long panels
-scroll. A disabled action belongs to hardware or a session that is unavailable;
+accept paths or values, and choice fields open an option list. Lists with more
+than twenty choices have Previous and Next pages. Long panels and the message
+log have visible scrollbars. A disabled action belongs to hardware or a session that is unavailable;
 clicking an unavailable menu item explains the requirement. Disk commands need
 a loaded FDS image; tape commands need the Family BASIC keyboard selected as
-the expansion device. Click an action row or its Edit, Toggle, or Run button;
-minus and plus buttons move through choices. Long values stay within their
+the expansion device. Click an action row or its Run button. Checkboxes toggle
+on click, and Edit opens text entry. Long values stay within their
 columns, with the selected value shown below the rows.
 
-View > Palette editor (F7) opens a separate window with all 64 colors. Select a swatch, drag an RGB
+Tools > Cheats > Add cheat opens a code editor. Invalid codes remain in the
+editor with an error beside the input. Load cheat file, Save cheat file, and
+Load Lua Script open file choosers. Canceling a chooser leaves the active
+cheats or script unchanged.
+
+View > Palette > Palette editor (F7) opens a separate window with all 64 colors. Select a swatch, drag an RGB
 slider, or use its minus/plus buttons. Load palette opens a `.pal` file; Reset
 palette restores the default colors. Ctrl+V accepts palette text while the
 editor is open. Escape or Close returns to the game.
@@ -141,6 +152,10 @@ artwork. They are automated render checks, not records of manual desktop use.
 
 ![Main window](images/desktop-main.png)
 
+![Nested tool menus](images/desktop-submenus.png)
+
+[Option list with pages](images/desktop-choices.png) · [Cheat validation](images/desktop-cheat-validation.png)
+
 [Palette editor](images/desktop-palette.png) · [Text entry](images/desktop-text-entry.png)
 
 | Category | Render |
@@ -155,7 +170,9 @@ artwork. They are automated render checks, not records of manual desktop use.
 | Advanced hardware | [View](images/desktop-category-7.png) |
 
 The event tests cover keyboard navigation, category defaults and cancellation,
-scrolling, mouse targets at three scales, palette changes, text replacement,
+every settings row and choice, custom numeric validation, scrollbar dragging,
+nested menu reachability, paged choices, cheat validation and file selection,
+mouse targets at three scales, palette changes, text replacement,
 window-close events during dialogs, uninterrupted audio-device state during
 snapshot locks, settings-write rollback, storage selection, tape
 transport, and barcode input. Render checks exercise [100%](images/desktop-settings.png),

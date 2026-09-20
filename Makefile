@@ -23,7 +23,7 @@ CORE_SRC = src/system/timing.c src/system/hardware.c src/system/vs_system.c src/
            src/ui/frontend_execution.c src/ui/replay_frontend.c src/ui/netplay_frontend.c src/ui/frontend_panels.c src/ui/frontend_session.c \
            src/ui/platform_frontend.c src/ui/platform_paths.c src/ui/device_frontend.c src/ui/storage_frontend.c src/ui/device_panels.c src/ui/settings.c src/ui/settings_runtime.c src/ui/game_database.c src/ui/hd_pack_frontend.c \
            src/ui/idle_frontend.c src/ui/image_open.c src/ui/session_actions.c \
-           src/ui/clay_backend.c src/ui/font_atlas.c src/ui/desktop_layout.c src/ui/desktop_events.c src/ui/desktop_windows.c src/third_party/clay/clay.c src/third_party/stb/stb_truetype.c src/ui/desktop_ui.c src/ui/desktop_idle.c src/ui/desktop_features.c src/ui/state_frontend.c src/ui/state_runtime.c \
+           src/ui/clay_backend.c src/ui/font_atlas.c src/ui/desktop_layout.c src/ui/desktop_events.c src/ui/desktop_windows.c src/ui/desktop_settings_model.c src/ui/desktop_menus.c src/third_party/clay/clay.c src/third_party/stb/stb_truetype.c src/ui/desktop_ui.c src/ui/desktop_idle.c src/ui/desktop_features.c src/ui/state_frontend.c src/ui/state_runtime.c \
            src/ui/debug_frontend.c src/ui/output_guard.c src/ui/host_input.c src/ui/peripheral_input.c src/ui/cheat_frontend.c \
            src/ui/video_runtime.c src/ui/audio_runtime.c
 CORE_SRC += src/system/execution_policy.c src/replay/rewind.c src/video/frame_snapshot.c \

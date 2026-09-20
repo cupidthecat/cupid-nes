@@ -1,5 +1,9 @@
 /* Desktop input and command routing. SPDX-License-Identifier: GPL-3.0-or-later */
 #include "desktop_internal.h"
+#include "cheat_frontend.h"
+#include "debug_frontend.h"
+#include "../debugger/debugger.h"
+#include "../cheats/cheats.h"
 #include "frontend_commands.h"
 #include "frontend_panels.h"
 #include "palette_tool.h"
@@ -15,6 +19,12 @@ static void activate_menu_row(FrontendDesktopUi *ui, int row) {
         return;
     }
     DesktopMenuItem *item = &items[row];
+    if (item->kind == 7 && ui->menu_depth < 4) {
+        ui->menu_parent_rows[ui->menu_depth] = row;
+        ui->menu_path[ui->menu_depth++] = item->id;
+        ui->menu_row = 0;
+        return;
+    }
     if (!item->enabled) {
         char message[256];
         snprintf(message, sizeof(message),
@@ -72,9 +82,16 @@ static void activate_menu_row(FrontendDesktopUi *ui, int row) {
 static void menu_key(FrontendDesktopUi *ui, SDL_Scancode sc) {
     DesktopMenuItem items[128];
     int count = desktop_menu_items(ui, items);
-    if (sc == SDL_SCANCODE_LEFT || sc == SDL_SCANCODE_RIGHT) {
+    if (ui->menu_row < 0 || ui->menu_row >= count) {
+        ui->menu_row = 0;
+    }
+    if (sc == SDL_SCANCODE_RIGHT && count && items[ui->menu_row].kind == 7) {
+        activate_menu_row(ui, ui->menu_row);
+    } else if (sc == SDL_SCANCODE_LEFT && ui->menu_depth) {
+        ui->menu_row = ui->menu_parent_rows[--ui->menu_depth];
+    } else if (sc == SDL_SCANCODE_LEFT || sc == SDL_SCANCODE_RIGHT) {
         ui->open_menu = (ui->open_menu + (sc == SDL_SCANCODE_LEFT ? 6 : 1)) % 7;
-        ui->menu_row = ui->menu_scroll = 0;
+        ui->menu_depth = ui->menu_row = ui->menu_scroll = 0;
     } else if (count && (sc == SDL_SCANCODE_UP || sc == SDL_SCANCODE_DOWN)) {
         ui->menu_row = (ui->menu_row + count + (sc == SDL_SCANCODE_UP ? -1 : 1)) % count;
     } else if (sc == SDL_SCANCODE_RETURN || sc == SDL_SCANCODE_SPACE) {
@@ -92,6 +109,39 @@ static void activate_panel(FrontendDesktopUi *ui, int row, int direction) {
     ui->panel_row = row;
     FrontendPanelControl *control = &controls[row];
     if (!control->enabled || control->read_only) {
+        return;
+    }
+    if (ui->panel_id == DEBUGGER_LUA_FRONTEND_PANEL && control->id == LUA_CONTROL_LOAD) {
+        (void)desktop_invoke_command(ui, DEBUGGER_LUA_LOAD_COMMAND);
+        return;
+    }
+    if (ui->panel_id == CHEATS_FRONTEND_PANEL &&
+        (control->id == CHEAT_CONTROL_LOAD || control->id == CHEAT_CONTROL_SAVE)) {
+        char path[FRONTEND_SETTINGS_PATH_TEXT] = {0}, previous[FRONTEND_SETTINGS_PATH_TEXT] = {0};
+        for (size_t i = 0; i < model.count; ++i) {
+            if (controls[i].id == CHEAT_CONTROL_PATH && controls[i].value) {
+                snprintf(previous, sizeof(previous), "%s", controls[i].value);
+            }
+        }
+        bool chosen = control->id == CHEAT_CONTROL_LOAD
+                          ? frontend_open_file_dialog(FRONTEND_OPEN_CHEATS, path, sizeof(path), error, sizeof(error))
+                          : frontend_save_file_dialog(FRONTEND_SAVE_CHEATS, path, sizeof(path), error, sizeof(error));
+        if (chosen && frontend_panel_action(ui->panel_id, CHEAT_CONTROL_PATH, path, 0, error, sizeof(error))) {
+            if (!frontend_panel_action(ui->panel_id, control->id, NULL, 0, error, sizeof(error))) {
+                (void)frontend_panel_action(ui->panel_id, CHEAT_CONTROL_PATH, previous, 0, NULL, 0);
+            }
+        }
+        if (error[0]) {
+            desktop_copy_status(ui, error);
+        }
+        return;
+    }
+    if (!direction && (control->type == FRONTEND_PANEL_CHOICE || control->type == FRONTEND_PANEL_LIST)) {
+        ui->choice_open = true;
+        ui->choice_panel = true;
+        ui->choice_row = row;
+        ui->choice_index = control->selected < 0 ? 0 : control->selected;
+        ui->choice_page = ui->choice_index / 20;
         return;
     }
     if (!direction) {
@@ -126,7 +176,7 @@ static void panel_key(FrontendDesktopUi *ui, SDL_Scancode sc) {
     } else if (sc == SDL_SCANCODE_LEFT) {
         activate_panel(ui, ui->panel_row, -1);
     } else if (sc == SDL_SCANCODE_RETURN || sc == SDL_SCANCODE_SPACE || sc == SDL_SCANCODE_RIGHT) {
-        activate_panel(ui, ui->panel_row, 1);
+        activate_panel(ui, ui->panel_row, sc == SDL_SCANCODE_RIGHT ? 1 : 0);
     }
     if (ui->panel_row < ui->panel_scroll) {
         ui->panel_scroll = ui->panel_row;
@@ -185,9 +235,15 @@ static void settings_key(FrontendDesktopUi *ui, SDL_Scancode sc, SDL_Keymod mod)
         } else if (sc == SDL_SCANCODE_UP) {
             ui->settings_row = (ui->settings_row + rows - 1) % rows;
         } else if (sc == SDL_SCANCODE_LEFT) {
-            desktop_adjust_setting(ui, ui->settings_row, -1);
-        } else if (sc == SDL_SCANCODE_RIGHT || sc == SDL_SCANCODE_RETURN) {
-            desktop_adjust_setting(ui, ui->settings_row, 1);
+            if (desktop_setting_kind(ui, ui->settings_row) != SETTING_READONLY) {
+                desktop_adjust_setting(ui, ui->settings_row, -1);
+            }
+        } else if (sc == SDL_SCANCODE_RETURN || sc == SDL_SCANCODE_SPACE) {
+            desktop_activate_setting(ui, ui->settings_row);
+        } else if (sc == SDL_SCANCODE_RIGHT) {
+            if (desktop_setting_kind(ui, ui->settings_row) != SETTING_READONLY) {
+                desktop_adjust_setting(ui, ui->settings_row, 1);
+            }
         }
     }
 }
@@ -199,15 +255,20 @@ static bool handle_click(FrontendDesktopUi *ui, int x, int y) {
             ui->open_menu = -1;
             return true;
         }
+        if (ui->choice_open) {
+            ui->choice_open = false;
+            return true;
+        }
         return frontend_desktop_input_captured(ui);
     }
     DesktopHit hit = *found;
     switch (hit.kind) {
     case HIT_MENU:
         ui->open_menu = ui->open_menu == hit.index ? -1 : hit.index;
-        ui->menu_row = ui->menu_scroll = 0;
+        ui->menu_depth = ui->menu_row = ui->menu_scroll = 0;
         break;
     case HIT_MENU_ROW:
+        ui->menu_depth = hit.direction;
         activate_menu_row(ui, hit.index);
         break;
     case HIT_COMMAND:
@@ -221,7 +282,11 @@ static bool handle_click(FrontendDesktopUi *ui, int x, int y) {
     case HIT_SETTING:
         ui->settings_row = hit.index;
         ui->settings_focus = 0;
-        desktop_adjust_setting(ui, hit.index, hit.direction);
+        if (hit.direction) {
+            desktop_adjust_setting(ui, hit.index, hit.direction);
+        } else {
+            desktop_activate_setting(ui, hit.index);
+        }
         break;
     case HIT_SETTINGS_BUTTON:
         desktop_settings_button(ui, hit.index);
@@ -236,6 +301,10 @@ static bool handle_click(FrontendDesktopUi *ui, int x, int y) {
         ui->idle_recent_index = hit.index;
         break;
     case HIT_CLOSE:
+        if (ui->choice_open) {
+            ui->choice_open = false;
+            break;
+        }
         if (ui->settings_open) {
             desktop_settings_open(ui, false);
         } else if (ui->panel_open) {
@@ -267,12 +336,48 @@ static bool handle_click(FrontendDesktopUi *ui, int x, int y) {
         ppu_palette_set_color(ui->palette_index, (uint8_t)rgb[0], (uint8_t)rgb[1], (uint8_t)rgb[2]);
         break;
     }
+    case HIT_LOG:
+        ui->panel_row = hit.index;
+        break;
+    case HIT_CHOICE:
+        desktop_choice_select(ui, hit.index);
+        break;
+    case HIT_CHOICE_PAGE:
+        ui->choice_page += hit.direction;
+        ui->choice_index = ui->choice_page * 20;
+        break;
+    case HIT_SCROLLBAR: {
+        ui->dragging_scroll = hit.index;
+        int count = hit.index == 0 ? desktop_setting_rows(ui) : hit.index == 2 ? (int)ui->log_count : 0;
+        if (hit.index == 1) {
+            FrontendPanelControl controls[64];
+            FrontendPanelModel model = {.controls = controls, .capacity = 64};
+            if (frontend_panel_snapshot(ui->panel_id, &model, NULL, 0)) {
+                count = (int)model.count;
+            }
+        }
+        int row = (int)((y - hit.bounds.y) * count / hit.bounds.height);
+        if (row < 0) {
+            row = 0;
+        }
+        if (row >= count) {
+            row = count - 1;
+        }
+        if (hit.index == 0) {
+            ui->settings_row = row;
+        } else {
+            ui->panel_row = row;
+        }
+        break;
+    }
     case HIT_SCROLL:
         if (ui->open_menu >= 0) {
             menu_key(ui, hit.direction < 0 ? SDL_SCANCODE_UP : SDL_SCANCODE_DOWN);
         } else if (ui->settings_open) {
             ui->settings_focus = 0;
             settings_key(ui, hit.direction < 0 ? SDL_SCANCODE_UP : SDL_SCANCODE_DOWN, KMOD_NONE);
+        } else if (ui->info_open && ui->log_open && ui->log_count) {
+            ui->panel_row = (ui->panel_row + (int)ui->log_count + hit.direction) % (int)ui->log_count;
         } else if (ui->panel_open) {
             panel_key(ui, hit.direction < 0 ? SDL_SCANCODE_UP : SDL_SCANCODE_DOWN);
         }
@@ -299,6 +404,25 @@ static bool handle_event(FrontendDesktopUi *ui, const SDL_Event *event) {
     }
     if (event->type == SDL_QUIT) {
         return false;
+    }
+    if (ui->choice_open && event->type == SDL_KEYDOWN) {
+        int count = desktop_choice_count(ui);
+        SDL_Scancode sc = event->key.keysym.scancode;
+        if (sc == SDL_SCANCODE_ESCAPE) {
+            ui->choice_open = false;
+        } else if (sc == SDL_SCANCODE_RETURN || sc == SDL_SCANCODE_SPACE) {
+            desktop_choice_select(ui, ui->choice_index);
+        } else if (count && (sc == SDL_SCANCODE_UP || sc == SDL_SCANCODE_DOWN)) {
+            ui->choice_index = (ui->choice_index + count + (sc == SDL_SCANCODE_UP ? -1 : 1)) % count;
+            ui->choice_page = ui->choice_index / 20;
+        }
+        return true;
+    }
+    if (ui->choice_open && (event->type == SDL_KEYUP || event->type == SDL_MOUSEWHEEL)) {
+        if (event->type == SDL_KEYUP) {
+            frontend_execution_release_host_input(ui->execution);
+        }
+        return true;
     }
     if (event->type == SDL_DROPFILE && frontend_desktop_input_captured(ui)) {
         if (event->drop.file) {
@@ -413,6 +537,15 @@ static bool handle_event(FrontendDesktopUi *ui, const SDL_Event *event) {
             return true;
         }
     }
+    if (ui->info_open && ui->log_open && ui->log_count &&
+        (event->type == SDL_MOUSEWHEEL ||
+         (event->type == SDL_KEYDOWN &&
+          (event->key.keysym.scancode == SDL_SCANCODE_DOWN || event->key.keysym.scancode == SDL_SCANCODE_UP)))) {
+        int direction = event->type == SDL_MOUSEWHEEL ? (event->wheel.y > 0 ? -1 : 1)
+                                                      : (event->key.keysym.scancode == SDL_SCANCODE_UP ? -1 : 1);
+        ui->panel_row = (ui->panel_row + (int)ui->log_count + direction) % (int)ui->log_count;
+        return true;
+    }
     if (event->type == SDL_MOUSEWHEEL && (ui->edit_text_active || ui->capture_binding)) {
         return true;
     }
@@ -491,6 +624,8 @@ static bool handle_event(FrontendDesktopUi *ui, const SDL_Event *event) {
             } else if (desktop_palette_visible(ui)) {
                 ui->palette_window = false;
                 palette_tool_hide_overlay();
+            } else if (ui->menu_depth) {
+                ui->menu_row = ui->menu_parent_rows[--ui->menu_depth];
             } else {
                 ui->open_menu = -1;
             }
@@ -510,7 +645,7 @@ static bool handle_event(FrontendDesktopUi *ui, const SDL_Event *event) {
         }
         if ((event->key.keysym.mod & KMOD_ALT) && sc == SDL_SCANCODE_F) {
             ui->open_menu = 0;
-            ui->menu_row = ui->menu_scroll = 0;
+            ui->menu_depth = ui->menu_row = ui->menu_scroll = 0;
             return true;
         }
         if ((event->key.keysym.mod & KMOD_ALT) && sc == SDL_SCANCODE_RETURN) {
@@ -519,6 +654,42 @@ static bool handle_event(FrontendDesktopUi *ui, const SDL_Event *event) {
         }
         if ((event->key.keysym.mod & KMOD_CTRL) && sc == SDL_SCANCODE_COMMA) {
             desktop_settings_open(ui, true);
+            return true;
+        }
+    }
+    if (event->type == SDL_MOUSEBUTTONUP) {
+        ui->dragging_scroll = -1;
+    }
+    if (event->type == SDL_MOUSEMOTION) {
+        float scale = ui->ui_scale > 0 ? ui->ui_scale : 1;
+        int x = (int)(event->motion.x / scale), y = (int)(event->motion.y / scale);
+        const DesktopHit *hit = desktop_clay_at(ui->clay, (float)x, (float)y);
+        if (ui->dragging_scroll >= 0 && (event->motion.state & SDL_BUTTON_LMASK)) {
+            SDL_FRect bounds;
+            if (desktop_clay_bounds(ui->clay, HIT_SCROLLBAR, ui->dragging_scroll, 0, &bounds)) {
+                int clamped_y = y < bounds.y               ? (int)bounds.y
+                                : y >= bounds.y + bounds.h ? (int)(bounds.y + bounds.h - 1)
+                                                           : y;
+                return handle_click(ui, (int)(bounds.x + bounds.w / 2), clamped_y);
+            }
+        }
+        if (hit && ui->open_menu >= 0 && hit->kind == HIT_MENU) {
+            if (ui->open_menu != hit->index) {
+                ui->open_menu = hit->index;
+                ui->menu_depth = ui->menu_row = 0;
+            }
+            return true;
+        }
+        if (hit && ui->open_menu >= 0 && hit->kind == HIT_MENU_ROW) {
+            DesktopMenuItem items[128];
+            int count = desktop_menu_level(ui, hit->direction, items);
+            if (hit->index < count) {
+                ui->menu_depth = hit->direction;
+                ui->menu_row = hit->index;
+                if (items[hit->index].kind == 7) {
+                    activate_menu_row(ui, hit->index);
+                }
+            }
             return true;
         }
     }

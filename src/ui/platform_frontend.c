@@ -36,7 +36,8 @@ static const FileDialog open_dialogs[] = {
     {"Choose Firmware", "Firmware images", "*.bin;*.rom;*.bios", NULL, false, false},
     {"Choose Game Database", "Game databases", "*.txt;*.csv", "txt", false, false},
     {"Install HD Pack", "HD pack archives", "*.zip", "zip", false, false},
-    {"Load Lua Script", "Lua scripts", "*.lua", "lua", false, false}
+    {"Load Lua Script", "Lua scripts", "*.lua", "lua", false, false},
+    {"Load Cheats", "Cheat files", "*.txt;*.cht", "txt", false, false}
 };
 
 static const FileDialog save_dialogs[] = {
@@ -46,8 +47,16 @@ static const FileDialog save_dialogs[] = {
     {"Record Input Movie", "Input movies", "*.cmv;*.movie", "cmv", true, false},
     {"Save State", "Save states", "*.cst;*.state", "cst", true, false},
     {"Save Tape", "Family BASIC tapes", "*.tap", "tap", true, false},
-    {"Export HD Pack", "HD pack archives", "*.zip", "zip", true, false}
+    {"Export HD Pack", "HD pack archives", "*.zip", "zip", true, false},
+    {"Save Cheats", "Cheat files", "*.txt;*.cht", "txt", true, false}
 };
+
+static FrontendFileChooser file_chooser;
+static void *file_chooser_context;
+void frontend_set_file_chooser(FrontendFileChooser chooser, void *context) {
+    file_chooser = chooser;
+    file_chooser_context = context;
+}
 
 static const FileDialog folder_dialog = {"Choose a Folder", "Folders", "*", NULL, false, true};
 
@@ -282,6 +291,7 @@ bool frontend_save_file_dialog(FrontendSaveFileType type, char *path, size_t pat
         set_error(error, error_size, "The requested output format is not supported");
         return false;
     }
+    if (file_chooser) return file_chooser(true, (unsigned)type, path, path_size, error, error_size, file_chooser_context);
     return native_file_dialog(&save_dialogs[type], path, path_size, error, error_size);
 }
 
@@ -296,6 +306,7 @@ bool frontend_open_file_dialog(FrontendOpenFileType type, char *path, size_t pat
         set_error(error, error_size, "The requested input format is not supported");
         return false;
     }
+    if (file_chooser) return file_chooser(false, (unsigned)type, path, path_size, error, error_size, file_chooser_context);
     return native_file_dialog(&open_dialogs[type], path, path_size, error, error_size);
 }
 

@@ -25,7 +25,7 @@ enum {
     HIT_BROWSE,
     HIT_EDIT_OK,
     HIT_EDIT_CANCEL,
-    HIT_SCROLL
+    HIT_SCROLL, HIT_SCROLLBAR, HIT_CHOICE, HIT_LOG, HIT_CHOICE_PAGE
 };
 DesktopClay *desktop_clay_create(SDL_Renderer *renderer);
 void desktop_clay_destroy(DesktopClay *clay);

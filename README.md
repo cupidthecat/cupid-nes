@@ -4,7 +4,9 @@ Cupid runs NES and Famicom cartridges, UNIF images, NSF and NSFe music, Famicom
 Disk System disks, StudyBox media, and supported VS System arcade images. Disk
 System and StudyBox images require their respective BIOS files. It uses SDL2 for
 video, audio, and controllers, with Clay layouts and cached TrueType text for
-the desktop interface. Settings and tools open in separate resizable windows;
+the desktop interface. A menu bar and toolbar provide the main actions; nested
+menus keep longer command lists on screen. Settings use checkboxes, option
+lists, and editable numeric fields. Settings and tools open in separate resizable windows;
 the debugger can stay open while the game runs. The interface opens and switches games,
 remembers settings and input profiles, and provides access to save states,
 rewind, debugging, cheats, music playback, netplay, HD packs, and screenshots or recordings.

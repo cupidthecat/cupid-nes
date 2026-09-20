@@ -107,6 +107,7 @@ bool desktop_clay_bounds(DesktopClay *clay, int kind, int index, int direction, 
 }
 static SDL_Color color(Clay_Color c) { return (SDL_Color){(Uint8)c.r, (Uint8)c.g, (Uint8)c.b, (Uint8)c.a}; }
 static void rectangle(SDL_Renderer *renderer, Clay_BoundingBox b, Clay_Color c, float radius) {
+    if (b.width <= 0 || b.height <= 0 || c.a <= 0) return;
     SDL_Color tint = color(c);
     SDL_SetRenderDrawColor(renderer, tint.r, tint.g, tint.b, tint.a);
     if (radius < 1) {

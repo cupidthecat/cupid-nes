@@ -120,7 +120,7 @@ bool desktop_route_window(FrontendDesktopUi *ui, const SDL_Event *event) {
     for (FrontendDesktopUi **link = &ui->tools; *link; link = &(*link)->next) {
         FrontendDesktopUi *tool = *link;
         bool controller = (event->type == SDL_CONTROLLERBUTTONDOWN || event->type == SDL_CONTROLLERBUTTONUP) &&
-                          tool->focused && (tool->settings_open || tool->edit_text_active || tool->capture_binding);
+                          tool->focused && (tool->settings_open || tool->edit_text_active || tool->capture_binding || tool->choice_open);
         if (id != SDL_GetWindowID(tool->window) && !controller) {
             continue;
         }

@@ -11,6 +11,18 @@
 
 #include "frontend_execution.h"
 
+enum {
+    LUA_CONTROL_PATH = 1,
+    LUA_CONTROL_LOAD,
+    LUA_CONTROL_UNLOAD,
+    LUA_CONTROL_BUDGET,
+    LUA_CONTROL_STATE,
+    LUA_CONTROL_OVERLAY,
+    LUA_CONTROL_CLEAR_OVERLAY,
+    LUA_CONTROL_ERROR,
+    LUA_CONTROL_LOG
+};
+
 typedef struct DebugFrontend DebugFrontend;
 
 DebugFrontend *debug_frontend_create(FrontendExecutionRuntime *execution);

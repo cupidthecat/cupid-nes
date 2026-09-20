@@ -174,9 +174,9 @@ static bool snapshot(void *context, FrontendPanelModel *model,
         {CHEAT_CONTROL_PATH, FRONTEND_PANEL_TEXT, "Cheat file", frontend->path,
          NULL, 0, 0, true, false},
         {CHEAT_CONTROL_LOAD, FRONTEND_PANEL_ACTION, "Load cheat file", "", NULL, 0, 0,
-         frontend->path[0] != '\0', false},
+         true, false},
         {CHEAT_CONTROL_SAVE, FRONTEND_PANEL_ACTION, "Save cheat file", "", NULL, 0, 0,
-         frontend->path[0] != '\0', false},
+         true, false},
         {CHEAT_CONTROL_INFO, FRONTEND_PANEL_TEXT, "Decoded", frontend->info,
          NULL, 0, 0, true, true}
     };

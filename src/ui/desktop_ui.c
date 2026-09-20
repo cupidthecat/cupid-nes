@@ -8,6 +8,10 @@
  */
 #include "desktop_ui.h"
 #include "host_input.h"
+#include "cheat_frontend.h"
+#include "debug_frontend.h"
+#include "../debugger/debugger.h"
+#include "../cheats/cheats.h"
 #include "../rom/fds.h"
 #include "../system/execution_policy.h"
 #include "app_paths.h"
@@ -97,6 +101,28 @@ void frontend_desktop_game_rect(const FrontendDesktopUi *ui, int ww, int wh,
 
 bool desktop_invoke_command(FrontendDesktopUi *ui, unsigned id) {
     char error[256] = {0};
+    if (id == CHEATS_ADD_COMMAND) {
+        FrontendDesktopUi *editor = ui;
+        if (ui->native_windows || ui->parent) editor = desktop_open_window(ui, 1, CHEATS_FRONTEND_PANEL);
+        else { ui->panel_id = CHEATS_FRONTEND_PANEL; ui->panel_open = true; }
+        if (!editor) return false;
+        if (!frontend_panel_action(CHEATS_FRONTEND_PANEL, CHEAT_CONTROL_LIST, NULL, 0, error, sizeof(error))) {
+            desktop_copy_status(editor, error); return false;
+        }
+        desktop_start_text_edit(editor, CHEAT_CONTROL_CODE, "");
+        editor->prompt_command = CHEATS_ADD_COMMAND;
+        return true;
+    }
+    if (id == DEBUGGER_LUA_FRONTEND_COMMAND || id == DEBUGGER_LUA_LOAD_COMMAND) {
+        char path[FRONTEND_SETTINGS_PATH_TEXT] = {0};
+        if (!frontend_open_file_dialog(FRONTEND_OPEN_SCRIPT, path, sizeof(path), error, sizeof(error))) {
+            if (error[0]) desktop_copy_status(ui, error);
+            return false;
+        }
+        if (!frontend_panel_action(DEBUGGER_LUA_FRONTEND_PANEL, LUA_CONTROL_PATH, path, 0, error, sizeof(error))) {
+            desktop_copy_status(ui, error); return false;
+        }
+    }
     bool ok = frontend_command_invoke(id, error, sizeof(error));
     if (error[0]) desktop_copy_status(ui, error);
     if (ok && ui->execution && ui->settings &&
@@ -113,6 +139,7 @@ void desktop_settings_open(FrontendDesktopUi *ui, bool open) {
         return;
     }
     if (ui->settings_open == open) return;
+    ui->choice_open = false; ui->dragging_scroll = -1;
     if (open) {
         palette_tool_hide_overlay();
         ui->panel_open=ui->info_open=false;
@@ -318,6 +345,7 @@ void frontend_desktop_init(FrontendDesktopUi *ui, SDL_Window *window,
     ui->settings_path = settings_path;
     ui->settings_player = 0;
     ui->open_menu = -1;
+    ui->dragging_scroll = -1;
     ui->focused = true;
     desktop_sync_scale(ui);
 }
@@ -586,6 +614,9 @@ void desktop_start_text_edit(FrontendDesktopUi *ui, unsigned control, const char
         desktop_copy_status(ui, "This value is too long to edit here");
         return;
     }
+    ui->status[0] = 0;
+    ui->edit_number = false;
+    ui->prompt_command = 0;
     ui->edit_control = control;
     memcpy(ui->edit_text, text, size + 1);
     ui->edit_text_active = true;
@@ -715,7 +746,9 @@ void desktop_commit_edit(FrontendDesktopUi *ui) {
     unsigned row = ui->edit_control & 0x7fffffffu;
     FrontendSettings *s = &ui->staged;
     if (ui->settings_open) {
-        if (ui->settings_category == 3 && row == 2) {
+        if (ui->edit_number) {
+            if (!desktop_setting_commit_number(ui, (int)row, ui->edit_text)) return;
+        } else if (ui->settings_category == 3 && row == 2) {
             if (strlen(ui->edit_text) >= sizeof(s->audio_device)) {
                 desktop_copy_status(ui, "Audio device name is too long");
                 return;
@@ -740,7 +773,12 @@ void desktop_commit_edit(FrontendDesktopUi *ui) {
         }
     } else if (ui->panel_open) {
         char error[256] = {0};
-        if (!frontend_panel_action(ui->panel_id, ui->edit_control, ui->edit_text, -1, error, sizeof(error))) desktop_copy_status(ui, error);
+        if (!frontend_panel_action(ui->panel_id, ui->edit_control, ui->edit_text, -1, error, sizeof(error))) {
+            desktop_copy_status(ui, error); return;
+        }
+        if (ui->prompt_command && !frontend_command_invoke(ui->prompt_command, error, sizeof(error))) {
+            desktop_copy_status(ui, error); return;
+        }
     }
     ui->edit_text_active = false; SDL_StopTextInput();
 }
@@ -769,7 +807,7 @@ void desktop_binding_gamepad(FrontendDesktopUi *ui, SDL_GameControllerButton but
     desktop_copy_status(ui, "Binding updated");
 }
 
-int desktop_menu_items(FrontendDesktopUi *ui, DesktopMenuItem items[128]) {
+int desktop_menu_all(FrontendDesktopUi *ui, DesktopMenuItem items[128]) {
     if (ui->open_menu < 0 || ui->open_menu >= 7) return 0;
     const char *menu = menu_names[ui->open_menu];
     int count = 0;
@@ -777,6 +815,7 @@ int desktop_menu_items(FrontendDesktopUi *ui, DesktopMenuItem items[128]) {
     for (size_t i=0; i<frontend_command_count() && count<100; ++i) {
         if (!frontend_command_at(i,&command) || strcmp(command.menu,menu)) continue;
         items[count]=(DesktopMenuItem){.id=command.id,.enabled=command.enabled};
+        if (command.id == CHEATS_ADD_COMMAND) command.label = "Add cheat…";
         snprintf(items[count].shortcut,sizeof(items[count].shortcut),"%s",command.shortcut?command.shortcut:"");
         const FrontendBindingProfile *profile=frontend_settings_active_profile_const(ui->settings);
         if(profile)for(unsigned shortcut=0;shortcut<FRONTEND_SHORTCUT_COUNT;++shortcut){
@@ -939,9 +978,9 @@ void desktop_settings_button(FrontendDesktopUi *ui, int button) {
 bool frontend_desktop_input_captured(const FrontendDesktopUi *ui) {
     if (!ui) return false;
     for (const FrontendDesktopUi *tool = ui->tools; tool; tool = tool->next)
-        if (tool->focused && (tool->settings_open || tool->edit_text_active || tool->capture_binding)) return true;
+        if (tool->focused && (tool->settings_open || tool->edit_text_active || tool->capture_binding || tool->choice_open)) return true;
     return ui->settings_open || ui->panel_open || ui->info_open || ui->edit_text_active ||
-        ui->capture_binding || ui->open_menu >= 0 || desktop_palette_visible(ui);
+        ui->capture_binding || ui->choice_open || ui->open_menu >= 0 || desktop_palette_visible(ui);
 }
 bool frontend_desktop_quit_requested(const FrontendDesktopUi *ui){return ui&&ui->quit_requested;}
 void frontend_desktop_update_window_settings(FrontendDesktopUi *ui){if(!ui||ui->parent||!ui->window||!ui->settings||!ui->settings->remember_window_size)return;int w,h;SDL_GetWindowSize(ui->window,&w,&h);if(w>0&&h>0){ui->settings->window_width=(unsigned)w;ui->settings->window_height=(unsigned)h;}}

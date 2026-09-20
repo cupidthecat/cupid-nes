@@ -20,7 +20,8 @@ typedef enum {
     FRONTEND_SAVE_MOVIE,
     FRONTEND_SAVE_STATE,
     FRONTEND_SAVE_TAPE,
-    FRONTEND_SAVE_HD_PACK
+    FRONTEND_SAVE_HD_PACK,
+    FRONTEND_SAVE_CHEATS
 } FrontendSaveFileType;
 
 typedef enum {
@@ -33,8 +34,14 @@ typedef enum {
     FRONTEND_OPEN_FIRMWARE,
     FRONTEND_OPEN_DATABASE,
     FRONTEND_OPEN_HD_PACK,
-    FRONTEND_OPEN_SCRIPT
+    FRONTEND_OPEN_SCRIPT,
+    FRONTEND_OPEN_CHEATS
 } FrontendOpenFileType;
+
+/* Optional host chooser; NULL restores the native platform dialog. */
+typedef bool (*FrontendFileChooser)(bool save, unsigned type, char *path, size_t path_size,
+                                     char *error, size_t error_size, void *context);
+void frontend_set_file_chooser(FrontendFileChooser chooser, void *context);
 
 int frontend_application_entry_utf8(int argc, char **argv,
                                     FrontendApplicationEntry entry);
