@@ -514,6 +514,8 @@ int main(int argc, char *argv[]) {
             cpu_set_test_mode(true);
         } else if (strcmp(argv[i], "--apu-disable-noise-mode") == 0) {
             apu_set_disable_noise_mode(true);
+        } else if (strcmp(argv[i], "--apu-swap-duty-cycles") == 0) {
+            apu_set_swap_duty_cycles(true);
         } else if (strcmp(argv[i], "--epsm-adpcm") == 0) {
             if (++i == argc) {
                 fprintf(stderr, "--epsm-adpcm requires an 8 KiB YMF288 ADPCM ROM file\n");
@@ -743,7 +745,7 @@ int main(int argc, char *argv[]) {
     }
     if (!rom_path) {
         printf("Usage: %s [--console MODEL] [--cpu-revision REVISION] "
-               "[--cpu-test-mode] [--apu-disable-noise-mode] "
+               "[--cpu-test-mode] [--apu-disable-noise-mode] [--apu-swap-duty-cycles] "
                "[--epsm-adpcm FILE] "
                "[--fcns-kanji FILE] "
                "[--game-db FILE] [--no-game-db-overrides] "
@@ -784,6 +786,7 @@ int main(int argc, char *argv[]) {
     printf("Console: %s\n", nes_console_model_name());
     printf("CPU revision: %s\n", apu_get_cpu_revision() == APU_CPU_REVISION_EARLY_2A03 ? "early-2a03" : "late-2a03");
     printf("APU noise short mode: %s\n", apu_noise_mode_disabled() ? "disabled" : "standard");
+    printf("APU pulse duty mapping: %s\n", apu_swap_duty_cycles_enabled() ? "swapped" : "standard");
     printf("RAM power-on state: %s\n", nes_ram_power_on_state_name());
     printf("Random power-on VBL flag: %s\n", nes_randomize_vblank_enabled() ? "enabled" : "disabled");
     if (power_on_seed_set) {

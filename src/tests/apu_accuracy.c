@@ -106,11 +106,13 @@ static float sample_difference(const float *left, const float *right, int count)
 }
 
 #include "apu_accuracy_noise_profile.h"
+#include "apu_accuracy_pulse_profile.h"
 
 int test_apu_accuracy(void) {
     checks = failures = 0;
 
     test_apu_noise_profile();
+    test_apu_pulse_profile();
 
     CHECK("DMC CPU revision defaults to early 2A03 behavior", apu_get_cpu_revision() == APU_CPU_REVISION_EARLY_2A03);
     CHECK("later DMC CPU revision is accepted", apu_set_cpu_revision(APU_CPU_REVISION_LATE_2A03));

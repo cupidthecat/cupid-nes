@@ -1306,6 +1306,20 @@ static int test_mmc5_audio_and_pcm(void) {
     CHECK(cart_expansion_audio() == one_pulse);
 
     CHECK(fixture(5, 0x20000, 0x8000, false) == 5);
+    apu_set_swap_duty_cycles(true);
+    cart_cpu_write(0x5015, 0x01);
+    cart_cpu_write(0x5000, 0x5F); // Duty 1 remains MMC5 duty 1 under the clone APU profile.
+    cart_cpu_write(0x5002, 0);
+    cart_cpu_write(0x5003, 0x08);
+    cart->clock(1);
+    CHECK(cart_expansion_audio() == 0.0f);
+    cart->clock(2);
+    CHECK(cart_expansion_audio() < 0.0f);
+    cart->clock(2);
+    CHECK(cart_expansion_audio() == 0.0f);
+    apu_set_swap_duty_cycles(false);
+
+    CHECK(fixture(5, 0x20000, 0x8000, false) == 5);
     cart_cpu_write(0x5015, 0x03);
     cart_cpu_write(0x5000, 0xDF);
     cart_cpu_write(0x5002, 0);

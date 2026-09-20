@@ -214,6 +214,8 @@ ApuCpuRevision apu_get_cpu_revision(void);
 // Optional channel hardware profiles persist across APU resets.
 void apu_set_disable_noise_mode(bool enabled);
 bool apu_noise_mode_disabled(void);
+void apu_set_swap_duty_cycles(bool enabled);
+bool apu_swap_duty_cycles_enabled(void);
 
 // memory-mapped access
 void apu_write(uint16_t addr, uint8_t val);

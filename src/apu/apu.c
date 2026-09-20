@@ -39,6 +39,7 @@ static APU *active_apu = &apu;
 #define apu (*active_apu)
 static ApuCpuRevision cpu_revision = APU_CPU_REVISION_EARLY_2A03;
 static bool disable_noise_mode;
+static bool swap_duty_cycles;
 
 enum { APU_RECONSTRUCTION_CAP = 64, APU_RECONSTRUCTION_SCALE = 16384 };
 
@@ -419,6 +420,14 @@ bool apu_noise_mode_disabled(void) {
     return disable_noise_mode;
 }
 
+void apu_set_swap_duty_cycles(bool enabled) {
+    swap_duty_cycles = enabled;
+}
+
+bool apu_swap_duty_cycles_enabled(void) {
+    return swap_duty_cycles;
+}
+
 // APU register access.
 static inline void apu_write_4017(APU *a, uint8_t v) {
     a->regs[0x17] = v;
@@ -534,31 +543,35 @@ static void dmc_clock_output(APU* a) {
         }
     }
 }
-static void pulse_write(Pulse* p, uint16_t reg, uint8_t v){
+
+static void pulse_write(Pulse *p, uint16_t reg, uint8_t v) {
     switch (reg & 3) {
-        case 0: // $4000/$4004
-            p->env.loop_envelope = (v & 0x20) != 0;
-            length_set_halt(&p->lc, p->env.loop_envelope);
-            p->env.constant_volume = (v & 0x10) != 0;
-            p->env.volume = v & 0x0F;
-            p->duty = (v >> 6) & 3;
-            break;
-        case 1: // sweep
-            p->sweep.enabled = (v & 0x80) != 0;
-            p->sweep.period  = ((v >> 4) & 7) + 1;
-            p->sweep.negate  = (v & 0x08) != 0;
-            p->sweep.shift   = v & 7;
-            p->sweep.reload  = true;
-            break;
-        case 2: // timer low
-            p->timer_reload = (p->timer_reload & 0x700) | v;
-            break;
-        case 3: // timer high + length load
-            p->timer_reload = (p->timer_reload & 0xFF) | ((v & 7) << 8);
-            p->duty_step = 0;
-            length_load(&p->lc, v, p->enabled);
-            p->env.start_flag = true;
-            break;
+    case 0: // $4000/$4004
+        p->env.loop_envelope = (v & 0x20) != 0;
+        length_set_halt(&p->lc, p->env.loop_envelope);
+        p->env.constant_volume = (v & 0x10) != 0;
+        p->env.volume = v & 0x0F;
+        p->duty = (v >> 6) & 3;
+        if (swap_duty_cycles) {
+            p->duty = (uint8_t)(((p->duty & 0x02u) >> 1) | ((p->duty & 0x01u) << 1));
+        }
+        break;
+    case 1: // sweep
+        p->sweep.enabled = (v & 0x80) != 0;
+        p->sweep.period = ((v >> 4) & 7) + 1;
+        p->sweep.negate = (v & 0x08) != 0;
+        p->sweep.shift = v & 7;
+        p->sweep.reload = true;
+        break;
+    case 2: // timer low
+        p->timer_reload = (p->timer_reload & 0x700) | v;
+        break;
+    case 3: // timer high + length load
+        p->timer_reload = (p->timer_reload & 0xFF) | ((v & 7) << 8);
+        p->duty_step = 0;
+        length_load(&p->lc, v, p->enabled);
+        p->env.start_flag = true;
+        break;
     }
     // Pulse register writes refresh the DAC immediately. $4015 disable only
     // clears the length counter; the latched output changes on the next edge.
