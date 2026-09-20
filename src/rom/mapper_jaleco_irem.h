@@ -681,6 +681,8 @@ static float vrc7_expansion_output(void) { return vrc7_fm_output(&vrc7.fm); }
 
 static void vrc7_shutdown(void) { vrc7_fm_destroy(&vrc7.fm); }
 
+static void vrc7_console_reset(void) { vrc7_fm_reset_chip(&vrc7.fm); }
+
 static void vrc7_reset(void) {
     Vrc7Fm fm = vrc7.fm;
     memset(&vrc7, 0, sizeof(vrc7));

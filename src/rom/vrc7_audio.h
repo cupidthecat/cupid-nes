@@ -17,6 +17,7 @@ typedef struct {
 bool vrc7_fm_init(Vrc7Fm *fm);
 void vrc7_fm_destroy(Vrc7Fm *fm);
 void vrc7_fm_reset(Vrc7Fm *fm);
+void vrc7_fm_reset_chip(Vrc7Fm *fm);
 void vrc7_fm_set_muted(Vrc7Fm *fm, bool muted);
 void vrc7_fm_write_address(Vrc7Fm *fm, uint8_t value);
 void vrc7_fm_write_data(Vrc7Fm *fm, uint8_t value);

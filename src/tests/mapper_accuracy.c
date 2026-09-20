@@ -141,6 +141,7 @@ static void serial_write(uint16_t addr, uint8_t value) {
 #include "mapper_accuracy_persistence.h"
 #include "mapper_accuracy_native.h"
 #include "mapper_accuracy_irq.h"
+#include "mapper_accuracy_vrc7_reset.h"
 #include "mapper_accuracy_sunsoft.h"
 #include "mapper_accuracy_followups.h"
 
@@ -229,6 +230,7 @@ int test_mapper_accuracy(void) {
         test_vrc24_variant_register_wiring, test_vrc24_ram_latch_and_mapper183_window,
         test_vrc24_irq_variants_and_phase, test_vrc24_loader_rejection_preserves_cart,
         test_vrc7_banks_wiring_and_ram, test_vrc7_irq_timing, test_vrc7_fm_audio,
+        test_vrc7_console_reset, test_vrc7_reset_address_latch,
         test_vrc7_register_boundaries,
         test_vrc7_loader_rejection_preserves_cart,
         test_vrc1_banks_mirroring_and_reset, test_vrc1_loader_rejection_preserves_cart,
