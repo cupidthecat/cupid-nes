@@ -37,11 +37,18 @@ static void refresh_audio(FrontendExecutionRuntime *runtime) {
     if (!runtime->execution.paused) SDL_PauseAudioDevice(device, 0);
 }
 
-static void debugger_pause_changed(bool paused, void *userdata) {
-    FrontendExecutionRuntime *runtime = (FrontendExecutionRuntime *)userdata;
-    if (!runtime) return;
+static void update_audio_pause(FrontendExecutionRuntime *runtime) {
+    if (runtime && runtime->audio_device && *runtime->audio_device)
+        SDL_PauseAudioDevice(*runtime->audio_device, runtime->execution.paused ? 1 : 0);
+}
+
+void frontend_execution_sync_debugger(FrontendExecutionRuntime *runtime) {
+    if (!runtime || runtime->debugger_pause_revision == debugger_pause_revision()) return;
+    runtime->debugger_pause_revision = debugger_pause_revision();
+    bool paused = debugger_is_paused();
     execution_control_set_paused(&runtime->execution, paused);
     frontend_command_set_checked(FRONTEND_COMMAND_PAUSE, paused);
+    update_audio_pause(runtime);
 }
 
 static void lock_audio_for_machine_change(FrontendExecutionRuntime *runtime) {
@@ -62,17 +69,22 @@ static bool command_pause(void *userdata, char *error, size_t error_size) {
     FrontendExecutionRuntime *runtime = (FrontendExecutionRuntime *)userdata;
     if (debugger_is_paused()) {
         debugger_resume();
-        refresh_audio(runtime);
+        frontend_execution_sync_debugger(runtime);
         return true;
     }
     execution_control_toggle_paused(&runtime->execution);
     frontend_command_set_checked(FRONTEND_COMMAND_PAUSE, runtime->execution.paused);
-    refresh_audio(runtime);
+    update_audio_pause(runtime);
     return true;
 }
 
 static bool command_frame_advance(void *userdata, char *error, size_t error_size) {
     FrontendExecutionRuntime *runtime = (FrontendExecutionRuntime *)userdata;
+    if (debugger_is_paused()) {
+        debugger_resume();
+        runtime->debugger_pause_revision = debugger_pause_revision();
+        execution_control_set_paused(&runtime->execution, true);
+    }
     if (!execution_control_request_frame(&runtime->execution)) {
         set_error(error, error_size, "Frame advance requires paused emulation");
         return false;
@@ -207,7 +219,7 @@ void frontend_execution_init(FrontendExecutionRuntime *runtime,
     runtime->studybox_bios_path = studybox_bios_path;
     runtime->fds_side = fds_side;
     debugger_init();
-    debugger_set_pause_callback(debugger_pause_changed, runtime);
+    runtime->debugger_pause_revision = debugger_pause_revision();
 }
 
 bool frontend_execution_register_commands(FrontendExecutionRuntime *runtime) {
@@ -317,8 +329,10 @@ static bool run_emulation_frame(void *userdata) {
 
 bool frontend_execution_run_frame(FrontendExecutionRuntime *runtime) {
     if (!runtime) return false;
+    frontend_execution_sync_debugger(runtime);
     bool ran = execution_control_run_frame(&runtime->execution, run_emulation_frame, NULL);
-    if (runtime->execution.paused) refresh_audio(runtime);
+    frontend_execution_sync_debugger(runtime);
+    if (runtime->execution.paused) update_audio_pause(runtime);
     return ran;
 }
 

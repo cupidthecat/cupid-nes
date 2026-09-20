@@ -8,6 +8,10 @@ The debugger supports execute, CPU-read, and CPU-write breakpoints over an addre
 
 Step Into executes one instruction and stops before the next instruction. Step Over treats a `JSR` as one operation and stops at its return address with the original stack depth. Other instructions behave like Step Into. Step Out runs until the current subroutine returns to the caller's stack depth. Debugger pause state is connected to the normal frontend execution control, so a breakpoint also pauses the shared frame runner and audio path.
 
+Frame Advance can continue from a debugger stop to the end of the current frame while leaving emulation paused. A breakpoint on either machine of a dual VS cabinet stops the shared runner. Pausing audio retains its queued samples and reconstruction state.
+
+The disassembler covers all 256 opcode values, including undocumented instructions. Operands show their addressing mode, and relative branches show the destination address. Inspection reads only the bytes belonging to each instruction.
+
 CPU memory inspection covers `$0000-$FFFF`. PPU memory inspection covers `$0000-$3FFF`. The hardware viewers copy current nametable, pattern-table, palette, and primary OAM data without performing normal CPU or PPU register reads. Mapper-backed pattern and nametable reads use the currently selected banks.
 
 ## Lua scripts

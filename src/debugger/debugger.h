@@ -109,6 +109,9 @@ void debugger_set_pause_callback(DebugPauseCallback callback, void *userdata);
 void debugger_pause(void);
 void debugger_resume(void);
 bool debugger_is_paused(void);
+/* Changes whenever debugger pause/resume or initialization changes its state.
+ * Frontends poll this token instead of retaining callbacks to their storage. */
+uint64_t debugger_pause_revision(void);
 DebugStopInfo debugger_last_stop(void);
 
 bool debugger_step_into(void);

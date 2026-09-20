@@ -44,10 +44,12 @@ typedef struct {
 } DebuggerState;
 
 static DebuggerState debug_state;
+static uint64_t pause_revision;
 
 static void set_paused(bool paused) {
     if (debug_state.paused == paused) return;
     debug_state.paused = paused;
+    ++pause_revision;
     if (debug_state.pause_callback)
         debug_state.pause_callback(paused, debug_state.pause_userdata);
 }
@@ -73,21 +75,15 @@ static bool breakpoint_match(uint8_t type, uint16_t address) {
 }
 
 void debugger_init(void) {
-    DebugPauseCallback callback = debug_state.pause_callback;
-    void *userdata = debug_state.pause_userdata;
     memset(&debug_state, 0, sizeof(debug_state));
     debug_state.next_id = 1;
-    debug_state.pause_callback = callback;
-    debug_state.pause_userdata = userdata;
+    ++pause_revision;
 }
 
 void debugger_shutdown(void) {
     debugger_lua_unload();
-    DebugPauseCallback callback = debug_state.pause_callback;
-    void *userdata = debug_state.pause_userdata;
     memset(&debug_state, 0, sizeof(debug_state));
-    debug_state.pause_callback = callback;
-    debug_state.pause_userdata = userdata;
+    ++pause_revision;
 }
 
 void debugger_reset_session(void) {
@@ -122,6 +118,7 @@ void debugger_resume(void) {
 }
 
 bool debugger_is_paused(void) { return debug_state.paused; }
+uint64_t debugger_pause_revision(void) { return pause_revision; }
 DebugStopInfo debugger_last_stop(void) { return debug_state.stop; }
 
 static bool begin_step(StepMode mode) {
@@ -290,69 +287,6 @@ bool debugger_watch_at(size_t index, DebugWatch *out, uint32_t *value) {
             result |= (uint32_t)debugger_peek_cpu((uint16_t)(out->address + i)) << (8u * i);
         *value = result;
     }
-    return true;
-}
-
-static uint8_t opcode_length(uint8_t opcode) {
-    switch (opcode) {
-        case 0x20: case 0x4C: case 0x6C:
-        case 0x0C: case 0x0D: case 0x0E: case 0x19: case 0x1C: case 0x1D: case 0x1E:
-        case 0x2C: case 0x2D: case 0x2E: case 0x39: case 0x3C: case 0x3D: case 0x3E:
-        case 0x4D: case 0x4E: case 0x59: case 0x5C: case 0x5D: case 0x5E:
-        case 0x6D: case 0x6E: case 0x79: case 0x7C: case 0x7D: case 0x7E:
-        case 0x8C: case 0x8D: case 0x8E: case 0x99: case 0x9C: case 0x9D: case 0x9E: case 0x9F:
-        case 0xAC: case 0xAD: case 0xAE: case 0xB9: case 0xBC: case 0xBD: case 0xBE: case 0xBF:
-        case 0xCC: case 0xCD: case 0xCE: case 0xD9: case 0xDC: case 0xDD: case 0xDE:
-        case 0xEC: case 0xED: case 0xEE: case 0xF9: case 0xFC: case 0xFD: case 0xFE:
-            return 3;
-        default: break;
-    }
-    if ((opcode & 0x1Fu) == 0x10 || (opcode & 0x1Fu) == 0x11 ||
-        (opcode & 0x1Fu) == 0x15 || (opcode & 0x1Fu) == 0x16 ||
-        (opcode & 0x1Fu) == 0x19 || (opcode & 0x1Fu) == 0x1A ||
-        (opcode & 0x1Fu) == 0x01 || (opcode & 0x1Fu) == 0x05 ||
-        (opcode & 0x1Fu) == 0x06 || (opcode & 0x1Fu) == 0x09)
-        return 2;
-    switch (opcode) {
-        case 0x24: case 0x84: case 0x85: case 0x86: case 0x94: case 0x95: case 0x96:
-        case 0xA0: case 0xA2: case 0xA4: case 0xA5: case 0xA6: case 0xB4: case 0xB5: case 0xB6:
-        case 0xC0: case 0xC4: case 0xC5: case 0xC6: case 0xD5: case 0xD6:
-        case 0xE0: case 0xE4: case 0xE5: case 0xE6: case 0xF5: case 0xF6:
-            return 2;
-        default: return 1;
-    }
-}
-
-static const char *opcode_name(uint8_t op) {
-    switch (op) {
-        case 0x00: return "BRK"; case 0x20: return "JSR"; case 0x40: return "RTI"; case 0x60: return "RTS";
-        case 0x4C: case 0x6C: return "JMP"; case 0xEA: return "NOP";
-        case 0xA9: case 0xA5: case 0xAD: case 0xB5: case 0xBD: case 0xB9: case 0xA1: case 0xB1: return "LDA";
-        case 0xA2: case 0xA6: case 0xAE: case 0xB6: case 0xBE: return "LDX";
-        case 0xA0: case 0xA4: case 0xAC: case 0xB4: case 0xBC: return "LDY";
-        case 0x85: case 0x8D: case 0x95: case 0x9D: case 0x99: case 0x81: case 0x91: return "STA";
-        case 0x86: case 0x8E: case 0x96: return "STX"; case 0x84: case 0x8C: case 0x94: return "STY";
-        case 0x69: case 0x65: case 0x6D: case 0x75: case 0x7D: case 0x79: case 0x61: case 0x71: return "ADC";
-        case 0xE9: case 0xE5: case 0xED: case 0xF5: case 0xFD: case 0xF9: case 0xE1: case 0xF1: return "SBC";
-        case 0x29: case 0x25: case 0x2D: return "AND"; case 0x09: case 0x05: case 0x0D: return "ORA";
-        case 0x49: case 0x45: case 0x4D: return "EOR"; case 0xC9: case 0xC5: case 0xCD: return "CMP";
-        case 0xE8: return "INX"; case 0xC8: return "INY"; case 0xCA: return "DEX"; case 0x88: return "DEY";
-        case 0x18: return "CLC"; case 0x38: return "SEC"; case 0x58: return "CLI"; case 0x78: return "SEI";
-        case 0xD8: return "CLD"; case 0xF8: return "SED"; case 0xB8: return "CLV";
-        case 0x10: return "BPL"; case 0x30: return "BMI"; case 0x50: return "BVC"; case 0x70: return "BVS";
-        case 0x90: return "BCC"; case 0xB0: return "BCS"; case 0xD0: return "BNE"; case 0xF0: return "BEQ";
-        default: return "???";
-    }
-}
-
-bool debugger_disassemble(uint16_t address, DebugDisassembly *out) {
-    if (!out) return false;
-    memset(out, 0, sizeof(*out)); out->address = address;
-    out->bytes[0] = debugger_peek_cpu(address); out->length = opcode_length(out->bytes[0]);
-    for (unsigned i = 1; i < out->length; ++i) out->bytes[i] = debugger_peek_cpu((uint16_t)(address + i));
-    if (out->length == 1) snprintf(out->text, sizeof(out->text), "%04X  %02X       %s", address, out->bytes[0], opcode_name(out->bytes[0]));
-    else if (out->length == 2) snprintf(out->text, sizeof(out->text), "%04X  %02X %02X    %s $%02X", address, out->bytes[0], out->bytes[1], opcode_name(out->bytes[0]), out->bytes[1]);
-    else snprintf(out->text, sizeof(out->text), "%04X  %02X %02X %02X %s $%04X", address, out->bytes[0], out->bytes[1], out->bytes[2], opcode_name(out->bytes[0]), (unsigned)(out->bytes[1] | (out->bytes[2] << 8)));
     return true;
 }
 

@@ -17,6 +17,7 @@
 #include "vs_system.h"
 #include "../apu/apu.h"
 #include "../cpu/cpu.h"
+#include "../debugger/debugger.h"
 #include "../joypad/joypad.h"
 #include "../ppu/ppu.h"
 #include "timing.h"
@@ -257,8 +258,9 @@ int vs_cpu_step(void) {
     uint64_t main_frame = ppu.frame_count;
     while ((main_count > vs.sub_cpu.total_cycles && main_count - vs.sub_cpu.total_cycles > 5)
            || main_frame > vs.sub_ppu.state.frame_count) {
+        if (debugger_is_paused()) break;
         select_side(1);
-        cpu_step(&vs.sub_cpu.cpu);
+        if (cpu_step(&vs.sub_cpu.cpu) == 0) break;
     }
     select_side(0);
     return main_cycles;

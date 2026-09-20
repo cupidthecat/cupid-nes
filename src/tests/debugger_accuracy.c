@@ -17,6 +17,9 @@
 #include "../rom/rom.h"
 #include "../system/hardware.h"
 #include "../system/timing.h"
+#include "../system/vs_system.h"
+#include "../ui/frontend_execution.h"
+#include "../ui/frontend_commands.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -214,6 +217,172 @@ static int inspection_trace_and_watches(void) {
     return 0;
 }
 
+static int disassembly_formats_and_lengths(void) {
+    CHECK(start_debug_machine() == 0);
+    static const struct {
+        uint8_t opcode;
+        const char *instruction;
+    } formats[] = {
+        {0x1A,"NOP"}, {0x1B,"SLO $0544,Y"}, {0x04,"NOP $44"}, {0x0C,"NOP $0544"},
+        {0x09,"ORA #$44"}, {0x01,"ORA ($44,X)"}, {0x11,"ORA ($44),Y"},
+        {0x25,"AND $44"}, {0x35,"AND $44,X"}, {0x39,"AND $0544,Y"},
+        {0x0A,"ASL A"}, {0x2A,"ROL A"}, {0x46,"LSR $44"}, {0x7E,"ROR $0544,X"},
+        {0x96,"STX $44,Y"}, {0xB6,"LDX $44,Y"}, {0x6C,"JMP ($0544)"},
+        {0xD0,"BNE $0646"}, {0x3D,"AND $0544,X"}, {0x7D,"ADC $0544,X"},
+        {0xD1,"CMP ($44),Y"}, {0x5D,"EOR $0544,X"}, {0x48,"PHA"}, {0xBA,"TSX"},
+        {0x8B,"ANE #$44"}, {0x93,"SHA ($44),Y"}, {0xEB,"SBC #$44"}
+    };
+    for (size_t i = 0; i < sizeof(formats) / sizeof(formats[0]); ++i) {
+        write_mem(0x0600, formats[i].opcode);
+        write_mem(0x0601, 0x44);
+        write_mem(0x0602, 0x05);
+        DebugDisassembly result;
+        uint64_t cycles = cpu_total_cycles;
+        CHECK(debugger_disassemble(0x0600, &result));
+        CHECK(!strcmp(result.text + 15, formats[i].instruction));
+        CHECK(cpu_total_cycles == cycles);
+    }
+
+    /* Compare each reported instruction length with the real CPU's PC advance.
+     * Branch conditions are chosen not to branch. Control transfers and jammed
+     * opcodes have separate formatting/flow checks rather than PC increments. */
+    for (unsigned opcode = 0; opcode < 256; ++opcode) {
+        ppu_power_on(&ppu);
+        apu_power_on(&apu);
+        CHECK(cpu_power_on(&cpu));
+        write_mem(0x0600, (uint8_t)opcode);
+        write_mem(0x0601, 0x44);
+        write_mem(0x0602, 0x05);
+        write_mem(0x0044, 0x50);
+        write_mem(0x0045, 0x05);
+        write_mem(0x0046, 0x05);
+        cpu.pc = 0x0600;
+        cpu.a = 0x55;
+        cpu.x = cpu.y = 1;
+        cpu.status = 0x24;
+        switch (opcode) {
+            case 0x10: cpu.status |= 0x80; break;
+            case 0x50: cpu.status |= 0x40; break;
+            case 0x90: cpu.status |= 0x01; break;
+            case 0xD0: cpu.status |= 0x02; break;
+            default: break;
+        }
+        DebugDisassembly result;
+        CHECK(debugger_disassemble(0x0600, &result));
+        CHECK(result.length >= 1 && result.length <= 3 && !strstr(result.text, "???"));
+        CHECK(result.bytes[0] == opcode);
+        if (opcode == 0x00 || opcode == 0x20 || opcode == 0x40 || opcode == 0x60
+            || opcode == 0x4C || opcode == 0x6C || strstr(result.text, "STP")) continue;
+        CHECK(cpu_step(&cpu) > 0);
+        if (cpu.pc != 0x0600u + result.length) {
+            fprintf(stderr, "Opcode %02X: PC %04X disagrees with %s (%u bytes)\n",
+                    opcode, (unsigned)cpu.pc, result.text, (unsigned)result.length);
+            return 1;
+        }
+    }
+    write_mem(0x0600, 0xD0);
+    write_mem(0x0601, 0xFC);
+    DebugDisassembly result;
+    CHECK(debugger_disassemble(0x0600, &result) && strstr(result.text, "BNE $05FE"));
+    /* The CPU's internal RAM mirrors through $1FFF. */
+    write_mem(0x0000, 0xA9);
+    write_mem(0x0001, 0xA5);
+    CHECK(debugger_disassemble(0x1800, &result) && strstr(result.text, "LDA #$A5"));
+    CHECK(!debugger_disassemble(0, NULL));
+    return 0;
+}
+
+static void temporary_frontend_runtime(void) {
+    FrontendExecutionRuntime temporary;
+    frontend_execution_init(&temporary, NULL, 44100, "fixture.nes", NULL, NULL, NULL);
+}
+
+static void count_pause(bool paused, void *userdata) {
+    (void)paused;
+    ++*(unsigned *)userdata;
+}
+
+static int frontend_debugger_lifetime(void) {
+    CHECK(start_debug_machine() == 0);
+    temporary_frontend_runtime();
+    debugger_pause();
+    CHECK(debugger_is_paused());
+    debugger_resume();
+
+    FrontendExecutionRuntime runtime;
+    frontend_execution_init(&runtime, NULL, 44100, "fixture.nes", NULL, NULL, NULL);
+    CHECK(frontend_execution_register_commands(&runtime));
+    uint32_t breakpoint = debugger_add_breakpoint(DEBUG_BREAK_EXECUTE, 0x8000, 0x8000);
+    CHECK(breakpoint);
+    CHECK(!frontend_execution_run_frame(&runtime) && frontend_execution_paused(&runtime));
+    CHECK(cpu.pc == 0x8000 && debugger_is_paused());
+    CHECK(debugger_step_into());
+    CHECK(!frontend_execution_run_frame(&runtime));
+    CHECK(cpu.pc == 0x8002 && debugger_is_paused() && frontend_execution_paused(&runtime));
+    CHECK(debugger_remove_breakpoint(breakpoint));
+    char error[128];
+    CHECK(frontend_command_invoke(FRONTEND_COMMAND_FRAME_ADVANCE, error, sizeof(error)));
+    CHECK(frontend_execution_run_frame(&runtime) && !debugger_is_paused());
+    CHECK(frontend_execution_paused(&runtime));
+    CHECK(!frontend_execution_run_frame(&runtime));
+    CHECK(frontend_command_invoke(FRONTEND_COMMAND_PAUSE, error, sizeof(error)));
+    CHECK(!frontend_execution_paused(&runtime) && frontend_execution_run_frame(&runtime));
+    frontend_commands_reset();
+
+    unsigned calls = 0;
+    debugger_set_pause_callback(count_pause, &calls);
+    debugger_pause();
+    CHECK(calls == 1);
+    debugger_shutdown();
+    debugger_pause();
+    CHECK(calls == 1);
+    debugger_init();
+    return 0;
+}
+
+static int dual_debugger_pause(void) {
+    static uint8_t dual[16 + 0x10000 + 0x8000];
+    CHECK(unload_rom());
+    memset(dual, 0, sizeof(dual));
+    memcpy(dual, "NES\x1A", 4);
+    dual[4] = 4;
+    dual[5] = 4;
+    dual[6] = 0x30;
+    dual[7] = 0x61;
+    for (unsigned side = 0; side < 2; ++side) {
+        uint8_t *program = dual + 16 + side * 0x8000u;
+        unsigned offset = side ? 0x1000 : 0;
+        program[offset] = 0x4C;
+        program[offset + 1] = 0;
+        program[offset + 2] = (uint8_t)(0x80 + side * 0x10);
+        for (unsigned vector = 0x7FFA; vector <= 0x7FFE; vector += 2) {
+            program[vector] = 0;
+            program[vector + 1] = (uint8_t)(0x80 + side * 0x10);
+        }
+    }
+    CHECK(load_rom_memory(dual, sizeof(dual)) == 0 && vs_dual_system());
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    CHECK(cpu_power_on(&cpu));
+    vs_power_on_secondary();
+    debugger_init();
+    uint32_t breakpoint = debugger_add_breakpoint(DEBUG_BREAK_EXECUTE, 0x9000, 0x9000);
+    CHECK(breakpoint);
+    for (unsigned i = 0; i < 10 && !debugger_is_paused(); ++i) (void)vs_cpu_step();
+    CHECK(debugger_is_paused() && debugger_last_stop().address == 0x9000);
+    CHECK(vs_active_side() == 0);
+    uint64_t main_cycles = cpu_total_cycles, second_cycles = vs_side_cpu_cycles(1);
+    CHECK(vs_cpu_step() == 0);
+    CHECK(cpu_total_cycles == main_cycles && vs_side_cpu_cycles(1) == second_cycles);
+    CHECK(debugger_remove_breakpoint(breakpoint));
+    debugger_resume();
+    CHECK(vs_cpu_step() > 0 && vs_side_cpu_cycles(1) > second_cycles);
+    CHECK(vs_active_side() == 0);
+    CHECK(unload_rom());
+    debugger_init();
+    return 0;
+}
+
 static int lua_callbacks_errors_and_overlay(void) {
     CHECK(start_debug_machine() == 0);
     static const char script[] =
@@ -297,6 +466,9 @@ int test_debugger_accuracy(void) {
     failures += breakpoints_and_steps();
     failures += bank_switch_breakpoint();
     failures += inspection_trace_and_watches();
+    failures += disassembly_formats_and_lengths();
+    failures += frontend_debugger_lifetime();
+    failures += dual_debugger_pause();
     failures += lua_callbacks_errors_and_overlay();
     failures += fds_peek_side_effects();
     debugger_shutdown();

@@ -22,6 +22,7 @@ typedef struct {
     const char *fds_bios_path;
     const char *studybox_bios_path;
     size_t *fds_side;
+    uint64_t debugger_pause_revision;
     bool (*before_machine_change)(void *context, char *error, size_t error_size);
     void *machine_change_context;
 } FrontendExecutionRuntime;
@@ -34,6 +35,7 @@ bool frontend_execution_register_commands(FrontendExecutionRuntime *runtime);
 bool frontend_execution_handle_shortcut(FrontendExecutionRuntime *runtime,
                                         const SDL_KeyboardEvent *event);
 bool frontend_execution_run_frame(FrontendExecutionRuntime *runtime);
+void frontend_execution_sync_debugger(FrontendExecutionRuntime *runtime);
 bool frontend_execution_paused(const FrontendExecutionRuntime *runtime);
 double frontend_execution_speed(const FrontendExecutionRuntime *runtime);
 
