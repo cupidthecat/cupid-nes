@@ -648,7 +648,7 @@ static NesMovieResult movie_parse_file(const char *path, ParsedMovie *parsed) {
     }
 
     if (event_count) {
-        if ((size_t)event_count > SIZE_MAX / sizeof(*parsed->events)) {
+        if (sizeof(*parsed->events) > SIZE_MAX / (size_t)event_count) {
             free(data);
             movie_parsed_destroy(parsed);
             return NES_MOVIE_LIMIT_REACHED;
