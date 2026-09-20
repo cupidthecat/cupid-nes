@@ -100,5 +100,6 @@ bool vs_set_service(unsigned side, bool pressed);
 bool vs_ppu_is_2c05(void);
 bool vs_ppu_status_signature(uint8_t *signature);
 bool vs_ppu_rgb_color(uint8_t color, uint8_t mask, uint32_t *argb);
+uint8_t vs_ppu_light_sensor_index(uint8_t color);
 
 #endif

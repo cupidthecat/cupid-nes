@@ -535,6 +535,20 @@ static const uint8_t rgb_lut[5][64] = {
     {24,3,28,40,46,53,1,23,16,31,42,14,54,55,11,57,37,30,18,52,46,29,6,38,62,27,34,25,4,46,58,33,5,10,7,2,19,20,0,21,12,61,17,15,13,56,45,36,51,32,8,22,63,43,32,60,46,39,35,49,41,50,44,9}
 };
 
+uint8_t vs_ppu_light_sensor_index(uint8_t color) {
+    color &= 0x3F;
+    if (!vs_enabled()) {
+        return color;
+    }
+
+    unsigned palette = 0;
+    if (vs.config.ppu_model >= VS_PPU_2C04_0001 && vs.config.ppu_model <= VS_PPU_2C04_0004) {
+        palette = (unsigned)(vs.config.ppu_model - VS_PPU_2C04_0001) + 1;
+    }
+
+    return rgb_lut[palette][color];
+}
+
 bool vs_ppu_rgb_color(uint8_t color, uint8_t mask, uint32_t *argb) {
     if (!vs_enabled() || !argb) return false;
     color &= 0x3F;

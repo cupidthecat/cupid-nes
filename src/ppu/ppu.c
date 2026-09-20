@@ -1126,17 +1126,17 @@ void ppu_step(int cpu_cycles) {
 }
 
 uint16_t ppu_pixel_brightness(unsigned x, unsigned y) {
-    // Fixed RGB-sum approximation for the light sensor. Display palette edits
-    // do not change the emulated signal, and emphasis is not resolved here.
-    static const uint16_t brightness[64] = {
-        306, 178, 205, 223, 218, 174, 114, 115, 104, 83, 82, 87, 141, 0, 0, 0,
-        519, 333, 385, 410, 390, 336, 262, 231, 216, 191, 159, 193, 265, 0, 0, 0,
-        764, 531, 545, 571, 604, 568, 495, 426, 378, 352, 368, 423, 499, 237, 0, 0,
-        764, 670, 676, 687, 700, 684, 655, 628, 605, 596, 604, 626, 658, 552, 0, 0
-    };
-    if (x >= 256 || y >= 240) return 0;
+    // The sensor uses a fixed RGB-sum approximation after the PPU's palette
+    // remap. Display palette edits and emphasis do not change that signal.
+    static const uint16_t brightness[64] = {306, 178, 205, 223, 218, 174, 114, 115, 104, 83,  82,  87,  141, 0,   0, 0,
+                                            519, 333, 385, 410, 390, 336, 262, 231, 216, 191, 159, 193, 265, 0,   0, 0,
+                                            764, 531, 545, 571, 604, 568, 495, 426, 378, 352, 368, 423, 499, 237, 0, 0,
+                                            764, 670, 676, 687, 700, 684, 655, 628, 605, 596, 604, 626, 658, 552, 0, 0};
+    if (x >= 256 || y >= 240) {
+        return 0;
+    }
     uint8_t color = ppu.pixel_indices[y * 256 + x] & ((ppu.mask & 1u) ? 0x30 : 0x3F);
-    return brightness[color];
+    return brightness[vs_ppu_light_sensor_index(color)];
 }
 
 uint32_t get_color(uint8_t idx) {
