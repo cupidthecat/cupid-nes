@@ -58,7 +58,7 @@ $coreSources = @('src/system/timing.c', 'src/system/hardware.c', 'src/system/vs_
                  'src/rom/eeprom.c', 'src/rom/namco163.c', 'src/rom/sunsoft5b.c',
                  'src/joypad/joypad.c', 'src/joypad/family_basic.c', 'src/joypad/special_peripherals.c',
                  'src/apu/apu.c', 'src/third_party/blip_buf.c', 'src/video/ntsc_composite.c', 'src/ui/palette_tool.c',
-                 'src/ui/nsf_frontend.c')
+                 'src/ui/nsf_frontend.c', 'src/ui/game_database.c')
 $cppSources = @('src/apu/epsm.cpp', 'src/third_party/ymfm/ymfm_opn.cpp',
                 'src/third_party/ymfm/ymfm_ssg.cpp', 'src/third_party/ymfm/ymfm_adpcm.cpp',
                 'src/rom/game_db.cpp', 'src/rom/boards/runtime.cpp', 'src/rom/boards/factory.cpp')
@@ -85,7 +85,7 @@ $testSources = @('src/tests/accuracy_test.c', 'src/tests/cpu_accuracy.c', 'src/t
                  'src/tests/board_unlicensed_112_accuracy.c', 'src/tests/board_txc_107_accuracy.c',
                  'src/tests/board_unlicensed_113_accuracy.c', 'src/tests/board_unlicensed_114_accuracy.c',
                  'src/tests/board_unlicensed_110_accuracy.c', 'src/tests/board_unlicensed_115_accuracy.c',
-                 'src/tests/rom_database_defaults_accuracy.c', 'src/tests/unif_accuracy.c',
+                 'src/tests/rom_database_defaults_accuracy.c', 'src/tests/game_database_discovery_accuracy.c', 'src/tests/unif_accuracy.c',
                  'src/tests/board_waixing_116_accuracy.c', 'src/tests/board_whirlwind_117_accuracy.c',
                  'src/tests/mmc5_extended_geometry_accuracy.c', 'src/tests/native_ram_accuracy.c',
                  'src/tests/board_irem77_accuracy.c', 'src/tests/default_prg_ram_geometry_accuracy.c',
