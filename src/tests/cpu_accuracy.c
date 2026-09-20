@@ -1460,13 +1460,15 @@ static int cpu_diagnostic_output_reads(void) {
     return 0;
 }
 
+#include "cpu_accuracy_reset_nmi.h"
+
 int test_cpu_accuracy(void) {
     static int (*const tests[])(void) = {
         controller_latching, open_bus_and_cart_decoding, nop_and_zero_page_cycles,
         xaa_immediate, unofficial_immediate_semantics, indexed_read_penalties,
         indexed_rmw_bus_order, branch_bus_order, stack_and_indirect_jump,
         interrupt_entry, irq_mask_latency, frame_irq_acknowledgment, masked_store_addresses,
-        reset_bus_sequence, halt_and_reset, regional_bus_timing_and_pal_dma,
+        reset_bus_sequence, reset_nmi_window, halt_and_reset, regional_bus_timing_and_pal_dma,
         bus_cycle_interrupt_polling, dma_arbitration, dmc_revision_dma, dma_cycle_accounting,
         startup_phase_selection, seeded_startup_alignment, startup_phase_register_race,
         cpu_diagnostic_output_latches, cpu_diagnostic_output_reads,

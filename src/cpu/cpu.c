@@ -262,6 +262,11 @@ static void cpu_reset_sequence(CPU* cpu) {
     in_bus_cycle = false;
     joypad_read_valid = false;
 
+    /* Keep NMI edges clocked during reset, after discarding earlier requests. */
+    cpu_nmi_pending = false;
+    cpu_nmi_previous_line = cpu_nmi_line;
+    cpu_nmi_ready = cpu_nmi_injected = false;
+
     (void)reset_bus_read(cpu->pc);
     (void)reset_bus_read(cpu->pc);
     (void)reset_bus_read((uint16_t)(0x0100u | cpu->sp));
@@ -277,9 +282,6 @@ static void cpu_reset_sequence(CPU* cpu) {
     running_cpu = NULL;
     in_bus_cycle = false;
     cpu->halted = false;
-    cpu_nmi_pending = false;
-    cpu_nmi_previous_line = cpu_nmi_line;
-    cpu_nmi_ready = cpu_nmi_injected = false;
     cpu_irq_polled = cpu_irq_ready = false;
     cpu_oam_dma_pending = false;
     joypad_read_valid = false;
