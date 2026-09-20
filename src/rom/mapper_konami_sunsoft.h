@@ -101,7 +101,7 @@ static uint8_t vrc1_ppu_read(uint16_t a) {
     if (slot >= 2 || !vrc1.chr_mapped[slot]) return chr_default_read(a, CHR_BANK_4K);
     size_t banks = C.chr_sz / page_size;
     size_t bank = vrc1.chr[slot] % banks;
-    return C.chr[bank * page_size + (a % page_size)];
+    return chr_read_byte(bank * page_size + (a % page_size));
 }
 
 static void vrc1_ppu_write(uint16_t a, uint8_t value) {
@@ -303,7 +303,7 @@ static uint8_t sunsoft3_ppu_read(uint16_t a) {
     if (!chr_bank_slot_offset(a, CHR_BANK_2K, 4, sunsoft3.chr, &offset)) {
         return chr_default_read(a, CHR_BANK_2K);
     }
-    return C.chr[offset];
+    return chr_read_byte(offset);
 }
 
 static void sunsoft3_ppu_write(uint16_t a, uint8_t value) {
@@ -422,7 +422,7 @@ static uint8_t sunsoft4_ppu_read(uint16_t a) {
     if (!chr_bank_slot_offset(a, CHR_BANK_2K, 4, sunsoft4.chr, &offset)) {
         return chr_default_read(a, CHR_BANK_2K);
     }
-    return C.chr[offset];
+    return chr_read_byte(offset);
 }
 
 static void sunsoft4_ppu_write(uint16_t a, uint8_t value) {
@@ -508,7 +508,7 @@ static uint8_t sunsoft89_ppu_read(uint16_t a) {
     if (!page_size || a >= page_size) return chr_default_read(a, CHR_BANK_8K);
     size_t banks = C.chr_sz / page_size;
     size_t bank = sunsoft89.chr_bank % banks;
-    return C.chr[bank * page_size + a];
+    return chr_read_byte(bank * page_size + a);
 }
 
 static void sunsoft89_ppu_write(uint16_t a, uint8_t value) {
@@ -560,7 +560,7 @@ static uint8_t sunsoft93_ppu_read(uint16_t a) {
     if (!sunsoft93.chr_enabled) return (uint8_t)a;
     if (sunsoft93.chr_startup_aliases) return chr_default_read(a, CHR_BANK_8K);
     size_t page_size = shrunk_chr_page_size(CHR_BANK_8K);
-    return page_size && a < page_size ? C.chr[a] : (uint8_t)a;
+    return page_size && a < page_size ? chr_read_byte(a) : (uint8_t)a;
 }
 
 static void sunsoft93_ppu_write(uint16_t a, uint8_t value) {
@@ -602,7 +602,7 @@ static uint8_t sunsoft184_ppu_read(uint16_t a) {
     size_t offset;
     if (!chr_bank_slot_offset(a, CHR_BANK_4K, 2, sunsoft184.chr, &offset))
         return chr_default_read(a, CHR_BANK_4K);
-    return C.chr[offset];
+    return chr_read_byte(offset);
 }
 
 static void sunsoft184_ppu_write(uint16_t a, uint8_t value) {

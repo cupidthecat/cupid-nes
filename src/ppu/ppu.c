@@ -31,6 +31,7 @@
 #include "../system/hardware.h"
 #include "../system/timing.h"
 #include "../system/vs_system.h"
+#include "../video/video_trace.h"
 #include "../ui/palette_tool.h"
 #include <stdbool.h>
 #include <stdio.h>
@@ -195,6 +196,7 @@ static uint8_t ppu_bus_read_phase(uint16_t par_address, CartPpuFetchSource sourc
     uint16_t address = (par_address & 0x3F00) | ppu.vram_address_latch;
     uint8_t value;
     cart_set_ppu_fetch_source(source);
+    if (nes_video_trace_active) nes_video_trace_begin_read(vs_active_side());
     if (address < 0x2000) {
         value = cart_ppu_read(address);
     } else {
@@ -671,6 +673,7 @@ void start_frame(void) {
 }
 
 void ppu_power_on(PPU *state) {
+    if (nes_video_trace_active) nes_video_trace_reset_side(vs_active_side());
     memset(state, 0, sizeof(*state));
     memset(state->pixel_indices, 0x0F, sizeof(state->pixel_indices));
     for (unsigned pixel = 0; pixel < 256u * 240u; ++pixel) state->pixel_signal[pixel] = 0x0F;
@@ -855,6 +858,8 @@ static void ppu_evaluate_sprites(void) {
     ppu.oam_addr = (n << 2) | m;
 }
 
+#include "ppu_video_trace.h"
+
 static void ppu_fetch_sprite(void) {
     int index = (ppu.dot - 257) / 8;
     int phase = (ppu.dot - 257) & 7;
@@ -906,11 +911,13 @@ static void ppu_fetch_sprite(void) {
     } else if (phase == 5) {
         uint8_t value = ppu_bus_read_phase(ppu.sprite_fetch_addr, CART_PPU_FETCH_SPRITE);
         ppu.sprite_pattern_lo[index] = ppu.sprite_fetch_valid ? value : 0;
+        if (nes_video_trace_active) ppu_trace_pattern(true, (unsigned)index, false, value);
     } else if (phase == 6) {
         ppu_bus_address_phase(ppu.sprite_fetch_addr + 8);
     } else if (phase == 7) {
         uint8_t value = ppu_bus_read_phase(ppu.sprite_fetch_addr + 8, CART_PPU_FETCH_SPRITE);
         ppu.sprite_pattern_hi[index] = ppu.sprite_fetch_valid ? value : 0;
+        if (nes_video_trace_active) ppu_trace_pattern(true, (unsigned)index, true, value);
     }
 }
 
@@ -942,23 +949,27 @@ static void ppu_fetch_background(void) {
             break;
         case 6:
             ppu.pt_lo = ppu_bus_read_phase(ppu.bg_tile_addr, source);
+            if (nes_video_trace_active) ppu_trace_pattern(false, 0, false, ppu.pt_lo);
             break;
         case 7:
             ppu_bus_address_phase(ppu.bg_tile_addr + 8);
             break;
         case 0:
             ppu.pt_hi = ppu_bus_read_phase(ppu.bg_tile_addr + 8, source);
+            if (nes_video_trace_active) ppu_trace_pattern(false, 0, true, ppu.pt_hi);
             break;
         default:
             break;
     }
     if (ppu.scanline < 240 || ppu.dot >= 321) {
+        if (nes_video_trace_active) ppu_trace_shift_background();
         ppu.bg_shift_lo <<= 1;
         ppu.bg_shift_hi = (uint16_t)((ppu.bg_shift_hi << 1) | 1);
         ppu.at_shift_lo <<= 1;
         ppu.at_shift_hi <<= 1;
     }
     if ((ppu.dot & 7) == 0) {
+        if (nes_video_trace_active) ppu_trace_load_background();
         ppu.bg_shift_lo = (ppu.bg_shift_lo & 0xFF00) | ppu.pt_lo;
         ppu.bg_shift_hi = (ppu.bg_shift_hi & 0xFF00) | ppu.pt_hi;
         ppu.at_shift_lo = (ppu.at_shift_lo & 0xFF00) | ((ppu.at_byte & 1) ? 0xFF : 0);
@@ -989,16 +1000,22 @@ static void ppu_render_dot(int x, int y) {
         background = ((ppu.bg_shift_lo & bit) ? 1 : 0) | ((ppu.bg_shift_hi & bit) ? 2 : 0);
         background_palette = ((ppu.at_shift_lo & bit) ? 1 : 0) | ((ppu.at_shift_hi & bit) ? 2 : 0);
     }
+    NesVideoPixel *presentation = nes_video_trace_active
+        ? ppu_trace_begin_pixel(x, y, background, background_palette) : NULL;
     if (ppu.fetches_enabled) {
         uint8_t active = ppu.sprite_skip_clocks ? ppu.sprite_valid_mask : ppu.sprite_active_mask;
         bool show_sprites = (ppu.mask & 0x10) && (x >= 8 || (ppu.mask & 4));
         for (unsigned i = 0; i < 8; ++i) {
             uint8_t slot = (uint8_t)(1u << i);
-            if (!(active & slot)) continue;
+            if (!(active & slot)) {
+                if (presentation) ppu_trace_blank_sprite(presentation, i, x, show_sprites);
+                continue;
+            }
             uint8_t attr = ppu.sprite_attributes[i];
             int bit = (attr & 0x40) ? 0 : 7;
             uint8_t pixel = ((ppu.sprite_pattern_lo[i] >> bit) & 1)
                           | (((ppu.sprite_pattern_hi[i] >> bit) & 1) << 1);
+            if (presentation) ppu_trace_sprite_pixel(presentation, i, pixel, show_sprites);
             if (attr & 0x40) {
                 ppu.sprite_pattern_lo[i] >>= 1;
                 ppu.sprite_pattern_hi[i] >>= 1;
@@ -1029,6 +1046,18 @@ static void ppu_render_dot(int x, int y) {
     if (ppu.mask & 0x80u) signal |= 0x100u;
     ppu.pixel_signal[y * 256 + x] = signal;
     active_framebuffer[y * 256 + x] = get_color(color);
+    if (presentation) {
+        presentation->original_rgb = active_framebuffer[y * 256 + x];
+        presentation->original_signal = signal;
+        presentation->selected_sprite_index = sprite;
+        presentation->selected_sprite_color = active_ppu_palette[0x10u + sprite_palette * 4u + sprite];
+        presentation->selected_sprite_rgb = get_color(presentation->selected_sprite_color);
+        presentation->selected_sprite_attributes = sprite_behind ? 0x20 : 0;
+        if (!ppu.rendering_enabled) {
+            presentation->backdrop = color;
+            presentation->backdrop_rgb = presentation->original_rgb;
+        }
+    }
 }
 
 void ppu_step_dots(int ppu_cycles) {
@@ -1188,6 +1217,7 @@ void ppu_step_dots(int ppu_cycles) {
                 ppu.odd_frame = !ppu.odd_frame;
                 ppu.frame_complete = true;
                 ppu.frame_count++;
+                if (nes_video_trace_active) nes_video_trace_complete(vs_active_side(), ppu.frame_count);
             }
             if (ppu.startup_writes_restricted
                 && ppu.scanline == (int)nes_timing()->scanlines - 1)

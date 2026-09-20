@@ -48,6 +48,7 @@
 #include "../system/vs_system.h"
 #include "../util/file_io.h"
 #include "../system/execution_policy.h"
+#include "../video/video_trace.h"
 
 extern uint64_t cpu_total_cycles;
 extern uint64_t cpu_get_bus_cycle(void);
@@ -96,6 +97,11 @@ static CartPpuFetchSource cart_ppu_fetch_source = CART_PPU_FETCH_CPU;
 static bool mmc3_revision_a_profile = false;
 static unsigned cart_dip_value = 0;
 static bool cart_cpu_cycle_is_write = false;
+static uint8_t chr_read_byte(size_t offset) {
+    if (nes_video_trace_active)
+        nes_video_trace_chr_read(C.chr, C.chr_sz, offset, C.chr_is_ram);
+    return C.chr[offset];
+}
 static void mmc3_irq_clock(void);
 static float vrc7_expansion_output(void);
 static void vrc7_shutdown(void);
@@ -743,7 +749,7 @@ static size_t chr_default_offset(uint16_t address, size_t native_page_size) {
 
 static uint8_t chr_default_read(uint16_t address, size_t native_page_size) {
     size_t offset = chr_default_offset(address, native_page_size);
-    return offset < C.chr_sz ? C.chr[offset] : (uint8_t)address;
+    return offset < C.chr_sz ? chr_read_byte(offset) : (uint8_t)address;
 }
 
 static void chr_default_write(uint16_t address, size_t native_page_size, uint8_t value) {

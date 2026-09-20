@@ -125,10 +125,10 @@ static uint8_t cprom_ppu_read(uint16_t a) {
     size_t page_size = shrunk_chr_page_size(CHR_BANK_4K);
     if (!page_size) return chr_default_read(a, CHR_BANK_4K);
     size_t slot = a / page_size;
-    if (slot == 0) return C.chr[a % page_size];
+    if (slot == 0) return chr_read_byte(a % page_size);
     if (slot == 1 && cprom.chr_bank_mapped) {
         size_t bank = cprom.chr_bank % (C.chr_sz / page_size);
-        return C.chr[bank * page_size + (a % page_size)];
+        return chr_read_byte(bank * page_size + (a % page_size));
     }
     return chr_default_read(a, CHR_BANK_4K);
 }
@@ -310,7 +310,7 @@ static uint8_t bandai_ppu_read(uint16_t address) {
     if (!shrunk_chr_slot_geometry(address, CHR_BANK_1K, 8, &slot, &page_size, &page_count))
         return chr_default_read(address, CHR_BANK_1K);
     if (!(bandai.chr_mapped & (1u << slot))) return (uint8_t)address;
-    return C.chr[shrunk_chr_bank_offset(address, page_size, page_count, bandai.chr_banks[slot])];
+    return chr_read_byte(shrunk_chr_bank_offset(address, page_size, page_count, bandai.chr_banks[slot]));
 }
 
 static void bandai_ppu_write(uint16_t address, uint8_t value) {
@@ -559,7 +559,7 @@ static void nsf_after_reset(void) {
     nsf_player.track_start_cycle = cpu_total_cycles;
 }
 
-static uint8_t nsf_ppu_read(uint16_t address) { return C.chr[address & 0x1FFFu]; }
+static uint8_t nsf_ppu_read(uint16_t address) { return chr_read_byte(address & 0x1FFFu); }
 static void nsf_ppu_write(uint16_t address, uint8_t value) { C.chr[address & 0x1FFFu] = value; }
 static Mirroring nsf_mirroring(void) { return MIRROR_HORIZONTAL; }
 
@@ -1223,7 +1223,7 @@ static uint8_t jaleco18_ppu_read(uint16_t a) {
     if (!shrunk_chr_slot_geometry(a, CHR_BANK_1K, 8, &slot, &page_size, &page_count)
         || !(jaleco18.chr_mapped & (1u << slot)))
         return chr_default_read(a, CHR_BANK_1K);
-    return C.chr[shrunk_chr_bank_offset(a, page_size, page_count, jaleco18.chr_banks[slot])];
+    return chr_read_byte(shrunk_chr_bank_offset(a, page_size, page_count, jaleco18.chr_banks[slot]));
 }
 
 static void jaleco18_ppu_write(uint16_t a, uint8_t v) {

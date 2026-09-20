@@ -52,7 +52,7 @@ static uint8_t nrom_ppu_read(uint16_t a) {
     a &= 0x1FFFu;
     if (C.chr_is_ram) return chr_default_read(a, CHR_BANK_8K);
     size_t mapped = C.chr_sz < CHR_BANK_8K ? C.chr_sz : CHR_BANK_8K;
-    return a < mapped ? C.chr[a] : (uint8_t)a;
+    return a < mapped ? chr_read_byte(a) : (uint8_t)a;
 }
 static void nrom_ppu_write(uint16_t a, uint8_t v) {
     chr_default_write(a, CHR_BANK_8K, v);
@@ -189,7 +189,7 @@ static bool mmc1_chr_offset(uint16_t a, size_t *offset) {
 
 static uint8_t mmc1_ppu_read(uint16_t a) {
     size_t offset;
-    return mmc1_chr_offset(a, &offset) ? C.chr[offset] : chr_default_read(a, CHR_BANK_4K);
+    return mmc1_chr_offset(a, &offset) ? chr_read_byte(offset) : chr_default_read(a, CHR_BANK_4K);
 }
 
 static void mmc1_ppu_write(uint16_t a, uint8_t v) {
@@ -396,7 +396,7 @@ static uint8_t m96_ppu_read(uint16_t a) {
     size_t page_size, page_count;
     if (!shrunk_chr_slot_geometry(a, CHR_BANK_4K, 2, &slot, &page_size, &page_count))
         return chr_default_read(a, CHR_BANK_4K);
-    return C.chr[shrunk_chr_bank_offset(a, page_size, page_count, m96_chr_bank(slot))];
+    return chr_read_byte(shrunk_chr_bank_offset(a, page_size, page_count, m96_chr_bank(slot)));
 }
 
 static void m96_ppu_write(uint16_t a, uint8_t v) {
@@ -433,11 +433,11 @@ static uint8_t discrete_chr8_read(uint16_t a, uint8_t bank) {
     a &= 0x1FFFu;
     if (C.chr_sz < CHR_BANK_8K) {
         if (C.chr_is_ram) return chr_default_read(a, CHR_BANK_8K);
-        return a < C.chr_sz ? C.chr[a] : (uint8_t)a;
+        return a < C.chr_sz ? chr_read_byte(a) : (uint8_t)a;
     }
     size_t banks = C.chr_sz / CHR_BANK_8K;
     if (!banks) return (uint8_t)a;
-    return C.chr[(bank % banks) * CHR_BANK_8K + a];
+    return chr_read_byte((bank % banks) * CHR_BANK_8K + a);
 }
 
 static void discrete_chr8_write(uint16_t a, uint8_t bank, uint8_t value) {
@@ -499,7 +499,7 @@ static uint8_t cnrom_ppu_read(uint16_t a) {
     size_t page_size = shrunk_chr_page_size(CHR_BANK_8K);
     if (!page_size || a >= page_size) return chr_default_read(a, CHR_BANK_8K);
     size_t bank = cn.chr_bank % (C.chr_sz / page_size);
-    return C.chr[bank * page_size + a];
+    return chr_read_byte(bank * page_size + a);
 }
 static void cnrom_ppu_write(uint16_t a, uint8_t v) {
     if (C.chr_is_ram) {
@@ -545,7 +545,7 @@ static uint8_t cnrom185_ppu_read(uint16_t a) {
     size_t page_size = shrunk_chr_page_size(CHR_BANK_8K);
     size_t coverage = cnrom185_initial_ram_mapping && page_size
                     ? CHR_BANK_8K / page_size * page_size : page_size;
-    return page_size && a < coverage ? C.chr[a % page_size] : (uint8_t)a;
+    return page_size && a < coverage ? chr_read_byte(a % page_size) : (uint8_t)a;
 }
 
 static void cnrom185_ppu_write(uint16_t a, uint8_t value) {

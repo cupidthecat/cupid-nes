@@ -26,6 +26,7 @@
 #include "fds.h"
 #include "../system/hardware.h"
 #include "../system/execution_policy.h"
+#include "../video/video_trace.h"
 #include "../cpu/cpu.h"
 #include "../ppu/ppu.h"
 #include "../media/patch.h"
@@ -807,6 +808,8 @@ void fds_nsf_audio_write(uint16_t addr, uint8_t value) { audio_write(&fds.audio,
 float fds_nsf_audio_output(void) { return -(float)fds.audio.output * (20.0f / 5000.0f); }
 
 uint8_t fds_ppu_read(uint16_t addr) {
+    if (nes_video_trace_active)
+        nes_video_trace_chr_read(fds.chr_ram, sizeof(fds.chr_ram), addr & 0x1FFFu, true);
     return fds.chr_ram[addr & 0x1FFF];
 }
 

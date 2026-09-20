@@ -15,6 +15,7 @@
 #include "studybox.hpp"
 #include "../../util/file_io.h"
 #include "../../system/execution_policy.h"
+#include "../../video/video_trace.h"
 #include <cstdio>
 #include <limits>
 #include <stdexcept>
@@ -431,6 +432,18 @@ void Board::WriteRam(uint16_t addr, uint8_t value) {
 uint8_t Board::InternalReadVram(uint16_t addr) const {
     addr &= 0x3FFF;
     const Page &page = _ppuPages[addr >> 8];
+    if (nes_video_trace_active && (page.access & Read) && page.data) {
+        uintptr_t pointer = reinterpret_cast<uintptr_t>(page.data) + (addr & 0xFF);
+        auto record = [&](const uint8_t *base, size_t size, bool ram) {
+            uintptr_t start = reinterpret_cast<uintptr_t>(base);
+            if (!base || pointer < start || pointer - start >= size) return false;
+            nes_video_trace_chr_read(base, size, pointer - start, ram);
+            return true;
+        };
+        if (!record(_chrRom, _chrRomSize, false) && !record(_chrRam, _chrRamSize, true)) {
+            (void)record(_mapperRam, _mapperRamSize, true);
+        }
+    }
     return page.access & Read ? page.data[addr & 0xFF] : static_cast<uint8_t>(addr);
 }
 

@@ -15,7 +15,7 @@ CORE_SRC = src/system/timing.c src/system/hardware.c src/system/vs_system.c src/
            src/rom/vrc7_audio.c src/rom/emu2413.c \
            src/rom/eeprom.c src/rom/namco163.c src/rom/sunsoft5b.c \
            src/joypad/joypad.c src/joypad/family_basic.c src/joypad/special_peripherals.c \
-           src/apu/apu.c src/third_party/blip_buf.c src/video/ntsc_composite.c src/ui/palette_tool.c src/ui/nsf_frontend.c \
+           src/apu/apu.c src/third_party/blip_buf.c src/video/ntsc_composite.c src/video/video_trace.c src/ui/palette_tool.c src/ui/nsf_frontend.c \
            src/ui/frontend_commands.c src/ui/execution_control.c src/ui/machine_actions.c src/ui/app_paths.c \
            src/ui/frontend_execution.c src/ui/frontend_panels.c src/ui/frontend_session.c \
            src/ui/platform_frontend.c src/ui/settings.c src/ui/game_database.c
@@ -80,7 +80,7 @@ TEST_SRC = src/tests/accuracy_test.c src/tests/cpu_accuracy.c \
 TEST_SRC += src/tests/patch_accuracy.c src/tests/media_accuracy.c src/tests/fds_options_accuracy.c \
             src/tests/fds_automation_accuracy.c src/tests/execution_policy_accuracy.c \
             src/tests/nsf_player_accuracy.c src/tests/capture_container_accuracy.c \
-            src/tests/capture_session_accuracy.c
+            src/tests/capture_session_accuracy.c src/tests/video_trace_accuracy.c
 CORE_OBJ = $(CORE_SRC:.c=.o) $(CORE_CXX_SRC:.cpp=.o)
 TEST_OBJ = $(TEST_SRC:.c=.o)
 OBJ = $(CORE_OBJ) $(TEST_OBJ) src/main.o

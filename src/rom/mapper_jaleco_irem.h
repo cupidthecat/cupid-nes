@@ -217,7 +217,7 @@ static uint8_t irem32_ppu_read(uint16_t a) {
     if (!shrunk_chr_slot_geometry(a, CHR_BANK_1K, 8, &slot, &page_size, &page_count)
         || !(irem32.chr_mapped & (1u << slot)))
         return chr_default_read(a, CHR_BANK_1K);
-    return C.chr[shrunk_chr_bank_offset(a, page_size, page_count, irem32.chr_banks[slot])];
+    return chr_read_byte(shrunk_chr_bank_offset(a, page_size, page_count, irem32.chr_banks[slot]));
 }
 
 static void irem32_ppu_write(uint16_t a, uint8_t v) {
@@ -299,7 +299,7 @@ static uint8_t irem65_ppu_read(uint16_t a) {
     if (!shrunk_chr_slot_geometry(a, CHR_BANK_1K, 8, &slot, &page_size, &page_count)
         || !(irem65.chr_mapped & (1u << slot)))
         return chr_default_read(a, CHR_BANK_1K);
-    return C.chr[shrunk_chr_bank_offset(a, page_size, page_count, irem65.chr_banks[slot])];
+    return chr_read_byte(shrunk_chr_bank_offset(a, page_size, page_count, irem65.chr_banks[slot]));
 }
 
 static void irem65_ppu_write(uint16_t a, uint8_t v) {
@@ -510,7 +510,7 @@ static uint8_t vrc24_ppu_read(uint16_t a) {
     if (!shrunk_chr_slot_geometry(a, CHR_BANK_1K, 8, &slot, &page_size, &page_count))
         return chr_default_read(a, CHR_BANK_1K);
     size_t bank = vrc24_chr_bank(slot, page_count);
-    return C.chr[bank * page_size + (a % page_size)];
+    return chr_read_byte(bank * page_size + (a % page_size));
 }
 
 static void vrc24_ppu_write(uint16_t a, uint8_t value) {
@@ -654,7 +654,7 @@ static uint8_t vrc7_ppu_read(uint16_t addr) {
     if (!shrunk_chr_slot_geometry(addr, CHR_BANK_1K, 8, &slot, &page_size, &page_count)
         || !vrc7.chr_selected[slot])
         return chr_default_read(addr, CHR_BANK_1K);
-    return C.chr[shrunk_chr_bank_offset(addr, page_size, page_count, vrc7.chr[slot])];
+    return chr_read_byte(shrunk_chr_bank_offset(addr, page_size, page_count, vrc7.chr[slot]));
 }
 
 static void vrc7_ppu_write(uint16_t addr, uint8_t value) {
@@ -733,7 +733,7 @@ static uint8_t m99_ppu_read(uint16_t addr) {
     size_t pages = C.chr_sz / page_size;
     bank %= pages;
     if (!C.chr_is_ram && addr >= page_size) return (uint8_t)addr;
-    return C.chr[bank * page_size + (addr % page_size)];
+    return chr_read_byte(bank * page_size + (addr % page_size));
 }
 
 static void m99_ppu_write(uint16_t addr, uint8_t value) {

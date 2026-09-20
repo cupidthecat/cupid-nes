@@ -494,7 +494,7 @@ static void mmc5_begin_ppu_read(uint16_t addr) {
 }
 
 static uint8_t mmc5_read_chr_raw(size_t offset) {
-    return C.chr_sz ? C.chr[offset & (C.chr_sz - 1)] : 0;
+    return C.chr_sz ? chr_read_byte(offset & (C.chr_sz - 1)) : 0;
 }
 
 static unsigned mmc5_split_vertical_scroll(void) {
@@ -793,7 +793,7 @@ static uint8_t mmc5_ppu_read(uint16_t a) {
     if (chr_1k_banks == 0) return nrom_ppu_read(a);
 
     size_t bank = mmc5_map_chr_bank_1k(a);
-    return C.chr[bank * CHR_BANK_1K + (a & 0x03FF)];
+    return chr_read_byte(bank * CHR_BANK_1K + (a & 0x03FF));
 }
 
 static void mmc5_ppu_write(uint16_t a, uint8_t v) {

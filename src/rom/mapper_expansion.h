@@ -269,7 +269,7 @@ static uint8_t vrc6_ppu_read(uint16_t addr) {
     if (!vrc6.ppu_initialized
         || !shrunk_chr_slot_geometry(addr, CHR_BANK_1K, 8, &slot, &page_size, &page_count))
         return chr_default_read(addr, CHR_BANK_1K);
-    return C.chr[shrunk_chr_bank_offset(addr, page_size, page_count, vrc6_chr_bank(slot))];
+    return chr_read_byte(shrunk_chr_bank_offset(addr, page_size, page_count, vrc6_chr_bank(slot)));
 }
 
 static void vrc6_ppu_write(uint16_t addr, uint8_t value) {
@@ -340,7 +340,7 @@ uint8_t cart_nt_read(uint16_t addr, uint8_t *nt_ram) {
                 || (jy.nt_low[slot] & 0x80u) != (jy.nt_ram_select_bit & 0x80u))) {
             size_t page = (size_t)jy.nt_low[slot] | ((size_t)jy.nt_high[slot] << 8);
             size_t offset = page * CHR_BANK_1K + in;
-            return !C.chr_is_ram && offset < C.chr_sz ? C.chr[offset] : 0;
+            return !C.chr_is_ram && offset < C.chr_sz ? chr_read_byte(offset) : 0;
         }
         return nt_ram[(size_t)jy_ciram_page(slot) * CHR_BANK_1K + in];
     }
@@ -350,7 +350,7 @@ uint8_t cart_nt_read(uint16_t addr, uint8_t *nt_ram) {
     }
     if (cart == &mapper_unrom512 && unrom512_four_screen_chr) {
         size_t offset = 0x6000u + ((addr - 0x2000u) & 0x1FFFu);
-        if (C.chr_is_ram) return C.chr[offset];
+        if (C.chr_is_ram) return chr_read_byte(offset);
         RamBlock *ram = chr_save_ram.size ? &chr_save_ram : &chr_work_ram;
         return ram->data[offset];
     }
@@ -358,11 +358,11 @@ uint8_t cart_nt_read(uint16_t addr, uint8_t *nt_ram) {
         uint16_t off = (uint16_t)((addr - 0x2000u) & 0x0FFFu);
         unsigned chunk = off >> 8;
         size_t offset = vrc6.nt_offsets[chunk] + (off & 0xFFu);
-        return vrc6.nt_chr[chunk] ? C.chr[offset] : nt_ram[offset];
+        return vrc6.nt_chr[chunk] ? chr_read_byte(offset) : nt_ram[offset];
     }
     if (cart == &mapper_sunsoft4 && sunsoft4.use_chr_nt) {
         size_t offset = sunsoft4_nt_chr_offset(addr);
-        return offset < C.chr_sz ? C.chr[offset] : (uint8_t)addr;
+        return offset < C.chr_sz ? chr_read_byte(offset) : (uint8_t)addr;
     }
     if (cart == &mapper_mmc5) {
         mmc5_begin_ppu_read(addr);
@@ -394,7 +394,7 @@ uint8_t cart_nt_read(uint16_t addr, uint8_t *nt_ram) {
             if (namco_ppu_source[chunk] == NAMCO_PPU_CIRAM)
                 return nt_ram[offset & 0x07FFu];
             if (namco_ppu_source[chunk] == NAMCO_PPU_CHR)
-                return offset < C.chr_sz ? C.chr[offset] : (uint8_t)addr;
+                return offset < C.chr_sz ? chr_read_byte(offset) : (uint8_t)addr;
         }
     }
     if (cart == &mapper_namco108 && C.mapper_no == 95 && namco108.nametables_selected) {
@@ -640,7 +640,7 @@ static uint8_t mmc2_ppu_read(uint16_t a) {
     uint8_t val = chr_default_read(a, CHR_BANK_4K);
     if (slot < 2 && mmc2.chr_mapped[slot]) {
         size_t bank = mmc2.selected_chr_bank[slot] % (C.chr_sz / page_size);
-        val = C.chr[bank * page_size + (a % page_size)];
+        val = chr_read_byte(bank * page_size + (a % page_size));
     }
     return val;
 }
@@ -732,7 +732,7 @@ static uint8_t mmc4_ppu_read(uint16_t a) {
     uint8_t val = chr_default_read(a, CHR_BANK_4K);
     if (slot < 2 && mmc4.chr_mapped[slot]) {
         size_t bank = mmc4.selected_chr_bank[slot] % (C.chr_sz / page_size);
-        val = C.chr[bank * page_size + (a % page_size)];
+        val = chr_read_byte(bank * page_size + (a % page_size));
     }
     return val;
 }
@@ -937,7 +937,7 @@ static uint8_t namco_ppu_read(uint16_t address) {
     if (namco_ppu_source[chunk] == NAMCO_PPU_CIRAM)
         return ppu_vram[offset & 0x07FFu];
     if (namco_ppu_source[chunk] == NAMCO_PPU_CHR)
-        return offset < C.chr_sz ? C.chr[offset] : (uint8_t)address;
+        return offset < C.chr_sz ? chr_read_byte(offset) : (uint8_t)address;
     return chr_default_read(address, CHR_BANK_1K);
 }
 
@@ -1127,7 +1127,7 @@ static uint8_t namco108_ppu_read(uint16_t address) {
     if (slot >= slot_count) return chr_default_read(address, native_page);
     size_t banks = C.chr_sz / page_size;
     size_t bank = namco108_chr_bank_slot(slot) % banks;
-    return C.chr[bank * page_size + (address % page_size)];
+    return chr_read_byte(bank * page_size + (address % page_size));
 }
 
 static void namco108_ppu_write(uint16_t address, uint8_t value) {
