@@ -67,20 +67,28 @@ void frontend_draw_text(SDL_Renderer *renderer, int x, int y, int scale,
     if (!renderer || !text || scale < 1) return;
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
     SDL_SetRenderDrawColor(renderer, r, g, b, a);
+    float sx, sy;
+    SDL_RenderGetScale(renderer, &sx, &sy);
+    SDL_RenderSetScale(renderer, 1.0f, 1.0f);
     for (const char *p = text; *p; ++p, x += 6 * scale) {
         if (*p == ' ') continue;
         const Uint8 *rows = glyph_rows(*p);
         if (!rows) {
-            SDL_Rect box = {x, y, 5 * scale, 7 * scale};
+            SDL_Rect box = {(int)(x*sx), (int)(y*sy), (int)((x+5*scale)*sx)-(int)(x*sx),
+                            (int)((y+7*scale)*sy)-(int)(y*sy)};
             SDL_RenderDrawRect(renderer, &box);
             continue;
         }
         for (int row = 0; row < 7; ++row) {
             for (int column = 0; column < 5; ++column) {
                 if (!(rows[row] & (1u << (4 - column)))) continue;
-                SDL_Rect pixel = {x + column * scale, y + row * scale, scale, scale};
+                int px = x + column * scale, py = y + row * scale;
+                SDL_Rect pixel = {(int)(px*sx), (int)(py*sy),
+                                  (int)((px+scale)*sx)-(int)(px*sx),
+                                  (int)((py+scale)*sy)-(int)(py*sy)};
                 SDL_RenderFillRect(renderer, &pixel);
             }
         }
     }
+    SDL_RenderSetScale(renderer, sx, sy);
 }
