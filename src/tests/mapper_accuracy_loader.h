@@ -205,11 +205,10 @@ static int test_mmc1a_ram_layouts_and_loader(void) {
     cart_cpu_write(0x6000, 0x96);
     uint8_t *previous_prg = prg_rom;
     uint8_t *previous_chr = chr_rom;
-    iNESHeader invalid[] = {h, h, h, h};
+    iNESHeader invalid[] = {h, h, h};
     invalid[0].prg_ram_size = 0x50; // Fixed-PRG submapper 5 belongs to mapper 1.
     invalid[1].flags10 = 10;        // More than 32KB of PRG-RAM.
-    invalid[2].zero[0] = 0x77;     // Separate volatile and nonvolatile CHR chips.
-    invalid[3].flags6 &= (uint8_t)~2u;
+    invalid[2].flags6 &= (uint8_t)~2u;
     for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
         image = image_for(&invalid[i], 0x80000, 0, &size);
         CHECK(image != NULL);
@@ -218,6 +217,14 @@ static int test_mmc1a_ram_layouts_and_loader(void) {
         CHECK(loaded == -1 && prg_rom == previous_prg && chr_rom == previous_chr);
         CHECK(cart_cpu_read(0x6000) == 0x96);
     }
+
+    iNESHeader mixed_chr = h;
+    mixed_chr.zero[0] = 0x77;
+    image = image_for(&mixed_chr, 0x80000, 0, &size);
+    CHECK(image != NULL);
+    loaded = load_rom_memory(image, size);
+    free(image);
+    CHECK(loaded == 0 && chr_size == 0x4000);
 
     h.flags6 &= (uint8_t)~2u;
     h.flags10 = 0;

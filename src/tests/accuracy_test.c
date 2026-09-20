@@ -78,6 +78,7 @@ int test_board_irem77_accuracy(void);
 int test_default_prg_ram_geometry_accuracy(void);
 int test_board_nina_fme7_accuracy(void);
 int test_native_chr_capacity_accuracy(void);
+int test_native_mixed_chr_accuracy(void);
 int test_bandai_accuracy(void);
 int test_fds_accuracy(void);
 int test_studybox_accuracy(void);
@@ -182,6 +183,7 @@ int main(int argc, char **argv) {
     failures += test_default_prg_ram_geometry_accuracy();
     failures += test_board_nina_fme7_accuracy();
     failures += test_native_chr_capacity_accuracy();
+    failures += test_native_mixed_chr_accuracy();
     failures += test_bandai_accuracy();
     failures += test_fds_accuracy();
     failures += test_studybox_accuracy();

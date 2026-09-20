@@ -25,10 +25,6 @@
 #define MAPPER_NINTENDO_H
 
 // Mapper 0: NROM.
-static uint8_t *chr_nvram_data(void) {
-    return chr_save_ram.size ? chr_save_ram.data : C.chr;
-}
-
 static uint8_t repeated_prg_window_read(uint16_t address, uint16_t start, size_t window_size) {
     if (address < start || !C.prg_sz) return cart_cpu_bus_input;
     size_t offset = (size_t)(address - start);

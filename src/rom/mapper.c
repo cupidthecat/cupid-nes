@@ -326,6 +326,24 @@ static inline void prg_ram_write(uint16_t addr, uint8_t value) {
     if (offset < prg_ram_window_coverage(ram)) ram_write(ram, offset, value);
 }
 
+static size_t chr_nvram_offset(void) {
+    return C.chr_is_ram ? C.ram.chr_ram : 0;
+}
+
+static bool chr_nvram_contains(size_t index) {
+    if (!C.chr_is_ram || !C.ram.chr_nvram) return false;
+    size_t offset = chr_nvram_offset();
+    return index >= offset && index - offset < C.ram.chr_nvram;
+}
+
+static uint8_t *chr_nvram_data(void) {
+    if (chr_save_ram.size) return chr_save_ram.data;
+    if (!C.ram.chr_nvram || !C.chr) return NULL;
+    size_t offset = chr_nvram_offset();
+    if (offset > C.chr_sz || C.ram.chr_nvram > C.chr_sz - offset) return NULL;
+    return C.chr + offset;
+}
+
 static uint8_t prg_ram_internal_read(uint16_t addr) {
     if (addr < 0x6000u || addr > 0x7FFFu) return 0;
     RamBlock *ram = default_prg_ram();
@@ -337,7 +355,7 @@ static uint8_t prg_ram_internal_read(uint16_t addr) {
 static void chr_ram_write(size_t index, uint8_t value) {
     if (!C.chr_is_ram || index >= C.chr_sz || C.chr[index] == value) return;
     C.chr[index] = value;
-    if (index < C.ram.chr_nvram && battery_enabled) chr_ram_dirty = true;
+    if (battery_enabled && chr_nvram_contains(index)) chr_ram_dirty = true;
 }
 
 static char *build_save_path(const char *rom_path, const char *suffix) {

@@ -122,7 +122,8 @@ static bool ram_geometry_supported(int mapper_no, bool nes2, const RomRamSizes *
     // has no register path that selects it. Keep those chips independent
     // for persistence without replacing the ROM-backed PPU mapping.
     bool unmapped_chr_storage = !chr_is_ram && chr_total;
-    if (chr_is_ram && ram->chr_ram && ram->chr_nvram) return false;
+    // Without CHR ROM, work and save CHR share one linear allocation. The
+    // board-specific limits below still decide how much of it is addressable.
     if (nes2 && chr_is_ram && chr_total != chr_sz) return false;
     if (unmapped_chr_storage) return true;
     size_t chr_limit;
