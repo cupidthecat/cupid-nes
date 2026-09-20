@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Cupid NES Emulator
 
 Cupid runs NES and Famicom cartridges, UNIF images, NSF and NSFe music, Famicom
