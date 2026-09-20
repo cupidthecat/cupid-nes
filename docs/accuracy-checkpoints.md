@@ -2,7 +2,7 @@
 
 [Documentation index](README.md)
 
-The [hardware revision and CHR checkpoints](#hardware-revision-and-chr-checkpoints) record issues #125 through #130 and #139. Earlier cartridge and media work is recorded in [cartridge and media checkpoints](cartridge-checkpoints.md). The earlier core implementation and validation history remains below.
+The [hardware revision and CHR checkpoints](#hardware-revision-and-chr-checkpoints) record issues #125 through #130 and #139. The [partial CHR window](#partial-chr-window-checkpoint) and [regional timing](#regional-timing-checkpoint) checkpoints record the remaining #139 cases and #140. Earlier cartridge and media work is recorded in [cartridge and media checkpoints](cartridge-checkpoints.md). The earlier core implementation and validation history remains below.
 
 Each issue or review checkpoint below passed the production hardware regressions and the full pinned AccuracyCoin cartridge: 144/144 passed, zero skipped, and zero unfinished. These records identify the commits tested after integration. Later fixes require their own checks, and the final pull-request commit must pass the complete CI workflow.
 
@@ -186,6 +186,18 @@ Revision `dcdac463aac1d426c7c419b2b59e2b5214e11b03` corrects the remaining parti
 Before the fix, the added regressions produced 19 failures across pattern reads, save persistence, VRC6 nametables, and Sunsoft 4 nametables. They check every pattern-table address for the selected layouts, verify that unmapped writes leave the backing allocation unchanged, compare complete save files, and exercise nametable writes, mirrors, bank changes and CPU reset. Aligned 768-byte RAM and unaligned 384-byte RAM have separate expected mappings; the latter cannot establish a native bank mapping.
 
 The committed revision passed strict Windows builds and the complete production hardware suite with normal and AddressSanitizer/UndefinedBehaviorSanitizer settings. The native mixed-CHR suite passed all nine groups. Both builds passed AccuracyCoin 144/144 with zero skipped or unfinished tests in 4,182 frames, matching the cartridge's tally. This revision includes the disk-adapter RAM initialization above. The ROM pins, SHA-256 and result requirements were unchanged.
+
+## Regional timing checkpoint
+
+Revision `7e2ab28275e3e81f41efef3077554b6206005058` adds `--region auto|ntsc|pal|dendy` through the production image loaders. Auto keeps image and database timing rules; explicit choices take precedence without rewriting that metadata. The selection affects the next successful load. Reset retains the loaded timing, and rejected replacements preserve the active machine. VS, FDS and StudyBox require effective NTSC timing.
+
+The region suite passes 511 checks across iNES, NES 2.0, UNIF, database-corrected and recognized headerless images, startup-alignment failures, rejected replacements and fixed-timing hardware. Loaded-machine tests execute CPU instructions to verify the PPU divider ratio, check frame lengths and vblank boundaries, distinguish PAL APU periods from Dendy's NTSC periods, and check audio sample conversion through reset. Eleven launch cases exercise the production argument parser and loader; CI runs them with both compiler configurations.
+
+NSF and NSFe INIT receive `X=1` only in PAL mode; NTSC and Dendy receive `X=0`. A synthetic music program records INIT registers and increments RAM on each PLAY call. Fixed expected cycle intervals check successive calls at the selected clock, alongside reset, track changes, metadata preservation and image replacement. With the preceding INIT-X expression restored, the classic NSF Dendy case failed while the remaining hardware groups and all 511 region checks passed.
+
+The committed source passed strict Windows builds with normal and AddressSanitizer/UndefinedBehaviorSanitizer settings. Both builds passed the full hardware suite, eleven launch cases, the canonical CPU trace's 8,991 states, all 91 pinned diagnostic ROMs, and AccuracyCoin 144/144. Each AccuracyCoin run reported zero skipped and zero unfinished tests in 4,182 frames, matching the cartridge's tally. The test ROM revisions, SHA-256 and pass requirements were unchanged.
+
+This revision includes the partial CHR, disk-adapter RAM, NSF multiplier, VRC7 reset and NMI during reset corrections above. Their separate checkpoints retain the results for each fix and the seven earlier hardware issues. These local results belong to the named implementation revision. Later documentation commits retain that source; the final pull-request revision must pass its own GCC and Clang sanitizer CI jobs.
 
 ## Reproducing a checkpoint
 

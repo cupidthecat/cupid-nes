@@ -7,7 +7,7 @@ video, audio, and controllers. The CPU and PPU core is C11; cartridge board modu
 and the EPSM YMF288 sound engine use C++17.
 
 The core implements NTSC, PAL, and Dendy timing. The
-[tested implementation](docs/accuracy-checkpoints.md#nmi-during-cpu-reset-checkpoint) passes
+[tested implementation](docs/accuracy-checkpoints.md#regional-timing-checkpoint) passes
 all 144 AccuracyCoin tests with zero skipped or unfinished results, the 91-ROM
 diagnostic collection, and the 8,991-state canonical CPU trace in normal and
 sanitizer builds. The
@@ -56,6 +56,8 @@ VRC7 cartridges reset their FM synthesizer on console reset and retain their
 bank and IRQ registers.
 CPU reset preserves NMI edges raised during its bus cycles, including vblank
 edges when PPU reset suppression keeps the raster running.
+Disk-adapter work RAM and CHR RAM use the selected power-on profile when a disk
+is loaded and retain their contents across soft reset.
 
 Device selection and timing follow the ROM header and
 [command-line options](docs/configuration.md). `--region auto` uses image metadata
@@ -198,8 +200,9 @@ AccuracyCoin.
 
 The [accuracy workflow](.github/workflows/accuracy.yml) builds with strict GCC
 and Clang sanitizer settings on pushes and pull requests. Both jobs run the
-hardware suite, CPU trace, all 91 diagnostic ROMs, and AccuracyCoin. The Clang job
-enables AddressSanitizer, UndefinedBehaviorSanitizer, and Linux leak detection.
+hardware suite, eleven region launch cases, CPU trace, all 91 diagnostic ROMs,
+and AccuracyCoin. The Clang job enables AddressSanitizer,
+UndefinedBehaviorSanitizer, and Linux leak detection.
 
 Test results apply to the checked commit and configuration. The baseline uses
 the default startup alignment. Explicit phases, seeded startup choices, and
