@@ -12,6 +12,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include "../state/state.h"
+#include "../video/video_trace.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -78,7 +79,13 @@ NesReplayResult nes_runahead_execute(unsigned run_ahead_frames,
  * authoritative PPU framebuffer serialized by save states. The pointer stays
  * valid until the next run-ahead call or explicit clear. */
 const uint32_t *nes_runahead_presented_frame(unsigned *width, unsigned *height);
+/* These signals and tile observations belong to the same speculative frame as
+ * the pixels above. They remain valid after restoring the authoritative PPU and
+ * after the live trace buffers are reused. A missing tile trace returns NULL. */
+const uint16_t *nes_runahead_presented_signal(unsigned side, unsigned *phase);
+const NesVideoTraceFrame *nes_runahead_presented_trace(unsigned side);
 void nes_runahead_clear_presented_frame(void);
+void nes_runahead_shutdown(void);
 
 const char *nes_replay_result_string(NesReplayResult result);
 bool nes_replay_host_state_supported(void);

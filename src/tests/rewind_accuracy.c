@@ -147,7 +147,7 @@ static int test_rewind_forward_determinism(void) {
 
     NesStateBlob expected = {0}, replayed = {0};
     CHECK(nes_state_capture(&expected) == NES_STATE_OK);
-    uint32_t expected_video[SCREEN_WIDTH * SCREEN_HEIGHT];
+    static uint32_t expected_video[SCREEN_WIDTH * SCREEN_HEIGHT];
     memcpy(expected_video, framebuffer, sizeof(expected_video));
     float expected_audio[256], replayed_audio[256];
     apu_audio_pull(&apu, expected_audio, 256);
@@ -208,6 +208,7 @@ static int test_runahead_authoritative_machine_video_audio(void) {
     CHECK(power_machine());
     vs_audio_init(48000);
     CHECK(nes_execution_set_policy(NES_EXECUTION_LIVE));
+    CHECK(nes_video_trace_use(NES_VIDEO_TRACE_EXPORT, true));
     apply_frame_action(3);
 
     NesStateBlob start = {0}, expected = {0}, actual = {0};
@@ -215,15 +216,25 @@ static int test_runahead_authoritative_machine_video_audio(void) {
 
     CHECK(run_frame(NULL));
     CHECK(nes_state_capture(&expected) == NES_STATE_OK);
-    uint32_t expected_authoritative[SCREEN_WIDTH * SCREEN_HEIGHT];
+    static uint32_t expected_authoritative[SCREEN_WIDTH * SCREEN_HEIGHT];
     memcpy(expected_authoritative, framebuffer, sizeof(expected_authoritative));
     float expected_audio[256], actual_audio[256];
     apu_audio_pull(&apu, expected_audio, 256);
 
     CHECK(nes_state_restore(start.data, start.size) == NES_STATE_OK);
     CHECK(run_frame(NULL) && run_frame(NULL) && run_frame(NULL));
-    uint32_t expected_presented[SCREEN_WIDTH * SCREEN_HEIGHT];
-    memcpy(expected_presented, framebuffer, sizeof(expected_presented));
+    static uint32_t expected_presented[SCREEN_WIDTH * SCREEN_HEIGHT];
+    CHECK(vs_video_copy_completed_frame(expected_presented, SCREEN_WIDTH * SCREEN_HEIGHT));
+    static uint16_t expected_signals[SCREEN_WIDTH * SCREEN_HEIGHT];
+    unsigned expected_phase = 99;
+    memcpy(expected_signals, vs_video_completed_signal(0, &expected_phase), sizeof(expected_signals));
+    const NesVideoTraceFrame *completed = nes_video_trace_frame(0);
+    CHECK(completed && completed->complete);
+    uint64_t expected_frame_number = completed->frame_number;
+    size_t tile_bytes = sizeof(NesVideoPixel) * SCREEN_WIDTH * SCREEN_HEIGHT;
+    NesVideoPixel *expected_tiles = malloc(tile_bytes);
+    CHECK(expected_tiles != NULL);
+    memcpy(expected_tiles, completed->pixels, tile_bytes);
 
     CHECK(nes_state_restore(start.data, start.size) == NES_STATE_OK);
     RunAheadProbe probe = {0, true, joypad_player(0)->buttons};
@@ -241,10 +252,91 @@ static int test_runahead_authoritative_machine_video_audio(void) {
     const uint32_t *future = nes_runahead_presented_frame(&future_width, &future_height);
     CHECK(future != NULL && future_width == SCREEN_WIDTH && future_height == SCREEN_HEIGHT);
     CHECK(memcmp(expected_presented, future, sizeof(expected_presented)) == 0);
+    unsigned future_phase = 99;
+    const uint16_t *future_signal = nes_runahead_presented_signal(0, &future_phase);
+    CHECK(future_signal && future_phase == expected_phase);
+    CHECK(!memcmp(expected_signals, future_signal, sizeof(expected_signals)));
+    const NesVideoTraceFrame *future_trace = nes_runahead_presented_trace(0);
+    CHECK(future_trace && future_trace->complete && future_trace->frame_number == expected_frame_number);
+    CHECK(!memcmp(expected_tiles, future_trace->pixels, tile_bytes));
+    CHECK(future_trace->pixels != nes_video_trace_frame(0)->pixels);
+    CHECK(!nes_runahead_presented_signal(1, &future_phase) && future_phase == 0);
+    CHECK(!nes_runahead_presented_trace(1) && !nes_runahead_presented_trace(2));
+
+    /* The next real frames reuse both live trace buffers. Presentation must keep
+     * the complete speculative frame, including its original composite phase. */
+    CHECK(run_frame(NULL) && run_frame(NULL));
+    CHECK(!memcmp(expected_tiles, future_trace->pixels, tile_bytes));
+    CHECK(!memcmp(expected_signals, nes_runahead_presented_signal(0, &future_phase), sizeof(expected_signals)));
+    CHECK(future_phase == expected_phase);
+    CHECK(nes_video_trace_use(NES_VIDEO_TRACE_EXPORT, false));
+    CHECK(!memcmp(expected_tiles, future_trace->pixels, tile_bytes));
+    free(expected_tiles);
+    nes_runahead_shutdown();
+    CHECK(!nes_runahead_presented_frame(NULL, NULL));
+    CHECK(!nes_runahead_presented_signal(0, NULL) && !nes_runahead_presented_trace(0));
 
     nes_state_blob_free(&actual);
     nes_state_blob_free(&expected);
     nes_state_blob_free(&start);
+    CHECK(unload_rom());
+    board_image_free(&image);
+    return 0;
+}
+
+static int test_runahead_dual_video_metadata(void) {
+    BoardImage image = {0};
+    CHECK(board_image_create(&image, 99, 0x10000, 0x8000, false));
+    image.data[7] |= 1u;
+    const uint8_t program[] = {
+        0xE6,0x00, 0xA9,0x3F, 0x8D,0x06,0x20,
+        0xA9,0x00, 0x8D,0x06,0x20, 0xA5,0x00,
+        0x8D,0x07,0x20, 0x4C,0x00,0x80
+    };
+    for (unsigned side = 0; side < 2; ++side) {
+        uint8_t *prg = image.data + 16 + side * 0x8000u;
+        memcpy(prg, program, sizeof(program));
+        for (unsigned vector = 0x7FFA; vector <= 0x7FFE; vector += 2) {
+            prg[vector] = 0;
+            prg[vector + 1] = 0x80;
+        }
+    }
+    CHECK(board_image_load(&image) == 0 && vs_dual_system() && power_machine());
+    CHECK(nes_video_trace_use(NES_VIDEO_TRACE_EXPORT, true));
+    NesStateResult state_result;
+    CHECK(nes_runahead_execute(2, run_frame, NULL, &state_result) == NES_REPLAY_OK);
+    unsigned width = 0, height = 0;
+    const uint32_t *pixels = nes_runahead_presented_frame(&width, &height);
+    CHECK(pixels && width == 512 && height == 240);
+    for (unsigned side = 0; side < 2; ++side) {
+        unsigned phase = 99;
+        const uint16_t *signal = nes_runahead_presented_signal(side, &phase);
+        const NesVideoTraceFrame *trace = nes_runahead_presented_trace(side);
+        CHECK(signal && phase < 3 && trace && trace->complete);
+        CHECK(trace->frame_number > vs_side_frame_count(side));
+        for (unsigned y = 0; y < 240; ++y) {
+            for (unsigned x = 0; x < 256; ++x) {
+                unsigned index = y * 256 + x;
+                if (trace->pixels[index].original_rgb != pixels[y * width + side * 256 + x]) {
+                    const PPU *side_ppu = vs_side_ppu(side);
+                    fprintf(stderr, "Run-ahead side %u pixel %u,%u: trace=%08X frame=%08X signal=%04X/%04X trace-frame=%llu current-frame=%llu beam=%d:%d\n",
+                            side, x, y, (unsigned)trace->pixels[index].original_rgb,
+                            (unsigned)pixels[y * width + side * 256 + x],
+                            (unsigned)trace->pixels[index].original_signal, (unsigned)signal[index],
+                            (unsigned long long)trace->frame_number,
+                            (unsigned long long)vs_side_frame_count(side),
+                            side_ppu->scanline, side_ppu->dot);
+                }
+                CHECK(trace->pixels[index].original_rgb == pixels[y * width + side * 256 + x]);
+                CHECK(trace->pixels[index].original_signal == signal[index]);
+            }
+        }
+    }
+    nes_runahead_clear_presented_frame();
+    CHECK(!nes_runahead_presented_trace(0) && !nes_runahead_presented_trace(1));
+    CHECK(!nes_runahead_presented_signal(0, NULL) && !nes_runahead_presented_signal(1, NULL));
+    nes_runahead_shutdown();
+    CHECK(nes_video_trace_use(NES_VIDEO_TRACE_EXPORT, false));
     CHECK(unload_rom());
     board_image_free(&image);
     return 0;
@@ -423,12 +515,13 @@ int test_rewind_accuracy(void) {
 
     int failures = test_rewind_forward_determinism()
                  + test_runahead_authoritative_machine_video_audio()
+                 + test_runahead_dual_video_metadata()
                  + test_rewind_bounds_and_execution_conflicts()
                  + test_runahead_restore_allocation_failure()
                  + test_replay_frontend_contract();
 
     if (!nes_execution_set_policy(old_policy)) ++failures;
     if (!nes_set_ram_power_on_state(old_power)) ++failures;
-    printf("Rewind/run-ahead: 5 groups, %d failures\n", failures);
+    printf("Rewind/run-ahead: 6 groups, %d failures\n", failures);
     return failures;
 }

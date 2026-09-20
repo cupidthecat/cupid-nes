@@ -25,7 +25,7 @@ CORE_SRC = src/system/timing.c src/system/hardware.c src/system/vs_system.c src/
            src/ui/idle_frontend.c src/ui/image_open.c src/ui/session_actions.c \
            src/ui/ui_font.c src/ui/desktop_ui.c src/ui/state_frontend.c src/ui/state_runtime.c \
            src/ui/debug_frontend.c src/ui/host_input.c
-CORE_SRC += src/system/execution_policy.c src/replay/rewind.c \
+CORE_SRC += src/system/execution_policy.c src/replay/rewind.c src/video/frame_snapshot.c \
             src/audio/audio_observer.c src/audio/audio_mix.c src/video/presentation.c \
             src/ui/nsf_player.c src/ui/nsf_player_ui.c \
             src/ui/nsf_player_runtime.c \

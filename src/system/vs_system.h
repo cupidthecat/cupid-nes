@@ -20,6 +20,7 @@
 #include "../ppu/ppu.h"
 #include "../rom/rom.h"
 #include "../state/state_io.h"
+#include "../video/video_trace.h"
 #include "timing.h"
 
 typedef enum {
@@ -84,6 +85,13 @@ const uint32_t *vs_video_framebuffer(void);
  * identity; run-ahead uses them to keep the speculative picture after the
  * authoritative machine snapshot is restored. */
 bool vs_video_copy_frame(uint32_t *out, size_t pixels);
+/* Display pixels, signals and optional tile observations from the same completed
+ * frame. After a state restore, pixels/signals fall back to the restored raw
+ * buffers and the trace stays unavailable until a complete frame is observed. */
+const uint32_t *vs_video_completed_framebuffer(void);
+bool vs_video_copy_completed_frame(uint32_t *out, size_t pixels);
+const uint16_t *vs_video_completed_signal(unsigned side, unsigned *phase);
+const NesVideoTraceFrame *vs_video_completed_trace(unsigned side);
 APU *vs_side_apu(unsigned side);
 PPU *vs_side_ppu(unsigned side);
 void vs_audio_init(int sample_rate);

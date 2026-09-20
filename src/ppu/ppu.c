@@ -32,6 +32,7 @@
 #include "../system/timing.h"
 #include "../system/vs_system.h"
 #include "../video/video_trace.h"
+#include "../video/frame_snapshot.h"
 #include "../ui/palette_tool.h"
 #include <stdbool.h>
 #include <stdio.h>
@@ -673,6 +674,7 @@ void start_frame(void) {
 }
 
 void ppu_power_on(PPU *state) {
+    nes_video_snapshot_reset(vs_active_side());
     if (nes_video_trace_active) nes_video_trace_reset_side(vs_active_side());
     memset(state, 0, sizeof(*state));
     memset(state->pixel_indices, 0x0F, sizeof(state->pixel_indices));
@@ -1217,6 +1219,9 @@ void ppu_step_dots(int ppu_cycles) {
                 ppu.odd_frame = !ppu.odd_frame;
                 ppu.frame_complete = true;
                 ppu.frame_count++;
+                nes_video_snapshot_complete(vs_active_side(), active_framebuffer,
+                                             ppu.pixel_signal, ppu.completed_video_phase,
+                                             ppu.frame_count);
                 if (nes_video_trace_active) nes_video_trace_complete(vs_active_side(), ppu.frame_count);
             }
             if (ppu.startup_writes_restricted

@@ -20,6 +20,7 @@
 #include "../debugger/debugger.h"
 #include "../joypad/joypad.h"
 #include "../ppu/ppu.h"
+#include "../video/frame_snapshot.h"
 #include "timing.h"
 #include "../../include/globals.h"
 #include <stdio.h>
@@ -48,6 +49,7 @@ typedef struct {
 } VsState;
 
 static VsState vs;
+static uint32_t completed_dual_framebuffer[2 * SCREEN_WIDTH * SCREEN_HEIGHT];
 
 static void advance_coin_pulse(unsigned slot) {
     if (slot >= 4 || !vs.coin_frames[slot]) return;
@@ -200,6 +202,7 @@ static void select_side(unsigned side) {
 }
 
 void vs_commit_config(const VsRomConfig *config) {
+    nes_video_snapshot_reset_all();
     select_side(0);
     apu_audio_shutdown_state(&vs.sub_apu);
     memset(&vs, 0, sizeof(vs));
@@ -208,6 +211,7 @@ void vs_commit_config(const VsRomConfig *config) {
 }
 
 void vs_clear_config(void) {
+    nes_video_snapshot_reset_all();
     select_side(0);
     apu_audio_shutdown_state(&vs.sub_apu);
     memset(&vs, 0, sizeof(vs));
@@ -293,6 +297,47 @@ bool vs_video_copy_frame(uint32_t *out, size_t pixels) {
     if (!out || pixels < required) return false;
     memcpy(out, vs_video_framebuffer(), required * sizeof(*out));
     return true;
+}
+
+const uint32_t *vs_video_completed_framebuffer(void) {
+    const NesCompletedVideoFrame *main_frame = nes_video_snapshot_frame(0);
+    const uint32_t *main_pixels = main_frame ? main_frame->pixels : framebuffer;
+    if (!vs_dual_system()) return main_pixels;
+    const NesCompletedVideoFrame *sub_frame = nes_video_snapshot_frame(1);
+    const uint32_t *sub_pixels = sub_frame ? sub_frame->pixels : vs.sub_framebuffer;
+    for (size_t row = 0; row < SCREEN_HEIGHT; ++row) {
+        uint32_t *output = completed_dual_framebuffer + row * 2 * SCREEN_WIDTH;
+        memcpy(output, main_pixels + row * SCREEN_WIDTH, SCREEN_WIDTH * sizeof(*output));
+        memcpy(output + SCREEN_WIDTH, sub_pixels + row * SCREEN_WIDTH,
+               SCREEN_WIDTH * sizeof(*output));
+    }
+    return completed_dual_framebuffer;
+}
+
+bool vs_video_copy_completed_frame(uint32_t *out, size_t pixels) {
+    size_t required = (size_t)vs_video_width() * SCREEN_HEIGHT;
+    if (!out || pixels < required) return false;
+    memcpy(out, vs_video_completed_framebuffer(), required * sizeof(*out));
+    return true;
+}
+
+const uint16_t *vs_video_completed_signal(unsigned side, unsigned *phase) {
+    const PPU *state = vs_side_ppu(side);
+    if (!state) {
+        if (phase) *phase = 0;
+        return NULL;
+    }
+    const NesCompletedVideoFrame *frame = nes_video_snapshot_frame(side);
+    if (phase) *phase = frame ? frame->phase : state->completed_video_phase;
+    return frame ? frame->signal : state->pixel_signal;
+}
+
+const NesVideoTraceFrame *vs_video_completed_trace(unsigned side) {
+    if (!vs_side_ppu(side)) return NULL;
+    const NesCompletedVideoFrame *frame = nes_video_snapshot_frame(side);
+    const NesVideoTraceFrame *trace = nes_video_trace_frame(side);
+    return frame && trace && trace->complete && trace->frame_number == frame->frame_number
+        ? trace : NULL;
 }
 
 APU *vs_side_apu(unsigned side) {

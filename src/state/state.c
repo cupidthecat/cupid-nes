@@ -29,6 +29,7 @@
 #include "../system/timing.h"
 #include "../system/vs_system.h"
 #include "../util/file_io.h"
+#include "../video/frame_snapshot.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -290,6 +291,7 @@ static bool state_apply_chunks(const StateChunk chunks[NES_STATE_COMPONENT_COUNT
             || nes_state_reader_remaining(&reader) != 0)
             return false;
     }
+    nes_video_snapshot_reset_all();
     return true;
 }
 

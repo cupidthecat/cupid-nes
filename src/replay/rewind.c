@@ -33,6 +33,10 @@ static uint32_t runahead_presentation[RUNAHEAD_PRESENTATION_MAX_WIDTH
                                       * RUNAHEAD_PRESENTATION_HEIGHT];
 static unsigned runahead_presentation_width;
 static bool runahead_presentation_valid;
+static uint16_t runahead_signals[2][NES_VIDEO_TRACE_WIDTH * NES_VIDEO_TRACE_HEIGHT];
+static unsigned runahead_phases[2];
+static NesVideoPixel *runahead_tiles[2];
+static NesVideoTraceFrame runahead_traces[2];
 
 static void set_state_result(NesStateResult *out, NesStateResult result) {
     if (out) *out = result;
@@ -45,12 +49,63 @@ static bool live_timeline(void) {
 void nes_runahead_clear_presented_frame(void) {
     runahead_presentation_valid = false;
     runahead_presentation_width = 0;
+    memset(runahead_traces, 0, sizeof(runahead_traces));
+    memset(runahead_phases, 0, sizeof(runahead_phases));
 }
 
 const uint32_t *nes_runahead_presented_frame(unsigned *width, unsigned *height) {
     if (width) *width = runahead_presentation_valid ? runahead_presentation_width : 0;
     if (height) *height = runahead_presentation_valid ? RUNAHEAD_PRESENTATION_HEIGHT : 0;
     return runahead_presentation_valid ? runahead_presentation : NULL;
+}
+
+const uint16_t *nes_runahead_presented_signal(unsigned side, unsigned *phase) {
+    bool valid = runahead_presentation_valid && side < 2
+        && side < runahead_presentation_width / NES_VIDEO_TRACE_WIDTH;
+    if (phase) *phase = valid ? runahead_phases[side] : 0;
+    return valid ? runahead_signals[side] : NULL;
+}
+
+const NesVideoTraceFrame *nes_runahead_presented_trace(unsigned side) {
+    if (!runahead_presentation_valid || side >= 2
+        || side >= runahead_presentation_width / NES_VIDEO_TRACE_WIDTH
+        || !runahead_traces[side].complete) return NULL;
+    return &runahead_traces[side];
+}
+
+void nes_runahead_shutdown(void) {
+    nes_runahead_clear_presented_frame();
+    for (unsigned side = 0; side < 2; ++side) {
+        free(runahead_tiles[side]);
+        runahead_tiles[side] = NULL;
+    }
+}
+
+static bool prepare_presentation_storage(void) {
+    if (!nes_video_trace_active) return true;
+    unsigned screens = vs_dual_system() ? 2u : 1u;
+    for (unsigned side = 0; side < screens; ++side) {
+        if (!runahead_tiles[side]) {
+            runahead_tiles[side] = malloc(sizeof(*runahead_tiles[side])
+                * NES_VIDEO_TRACE_WIDTH * NES_VIDEO_TRACE_HEIGHT);
+            if (!runahead_tiles[side]) return false;
+        }
+    }
+    return true;
+}
+
+static void capture_presentation_metadata(unsigned screens) {
+    for (unsigned side = 0; side < screens; ++side) {
+        const uint16_t *signal = vs_video_completed_signal(side, &runahead_phases[side]);
+        memcpy(runahead_signals[side], signal, sizeof(runahead_signals[side]));
+        const NesVideoTraceFrame *trace = vs_video_completed_trace(side);
+        if (trace && trace->complete && trace->pixels && runahead_tiles[side]) {
+            memcpy(runahead_tiles[side], trace->pixels,
+                   sizeof(*trace->pixels) * NES_VIDEO_TRACE_WIDTH * NES_VIDEO_TRACE_HEIGHT);
+            runahead_traces[side] = *trace;
+            runahead_traces[side].pixels = runahead_tiles[side];
+        }
+    }
 }
 
 bool nes_replay_host_state_supported(void) {
@@ -228,6 +283,14 @@ NesReplayResult nes_runahead_execute(unsigned run_ahead_frames,
         return NES_REPLAY_STATE_ERROR;
     }
 
+    /* Allocate host trace storage before running speculative instructions. The
+     * prepared machine restore remains allocation-free throughout speculation. */
+    if (!prepare_presentation_storage()) {
+        nes_state_restore_free(restore);
+        set_state_result(state_result, NES_STATE_ERROR_OUT_OF_MEMORY);
+        return NES_REPLAY_STATE_ERROR;
+    }
+
     uint32_t previous_policy = nes_execution_policy();
     if (!nes_execution_set_policy(previous_policy | NES_EXECUTION_SPECULATIVE)) {
         nes_state_restore_free(restore);
@@ -246,11 +309,12 @@ NesReplayResult nes_runahead_execute(unsigned run_ahead_frames,
     size_t presentation_pixels = (size_t)presentation_width * RUNAHEAD_PRESENTATION_HEIGHT;
     if (result == NES_REPLAY_OK) {
         if (presentation_width > RUNAHEAD_PRESENTATION_MAX_WIDTH
-            || !vs_video_copy_frame(runahead_presentation, presentation_pixels)) {
+            || !vs_video_copy_completed_frame(runahead_presentation, presentation_pixels)) {
             result = NES_REPLAY_STATE_ERROR;
             set_state_result(state_result, NES_STATE_ERROR_UNSUPPORTED);
         } else {
             runahead_presentation_width = presentation_width;
+            capture_presentation_metadata(presentation_width / NES_VIDEO_TRACE_WIDTH);
             runahead_presentation_valid = true;
         }
     }

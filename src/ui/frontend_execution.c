@@ -531,7 +531,7 @@ void frontend_execution_shutdown(FrontendExecutionRuntime *runtime) {
     if (!runtime) return;
     replay_frontend_unregister();
     nes_rewind_destroy(&runtime->rewind);
-    nes_runahead_clear_presented_frame();
+    nes_runahead_shutdown();
     runtime->rewind_seconds = 0;
     runtime->run_ahead_frames = 0;
 }
@@ -539,7 +539,7 @@ void frontend_execution_shutdown(FrontendExecutionRuntime *runtime) {
 bool frontend_execution_set_run_ahead(FrontendExecutionRuntime *runtime, unsigned frames) {
     if (!runtime || frames > 4) return false;
     runtime->run_ahead_frames = frames;
-    if (!frames) nes_runahead_clear_presented_frame();
+    if (!frames) nes_runahead_shutdown();
     runtime->replay_status = NES_REPLAY_OK;
     runtime->replay_state_status = NES_STATE_OK;
     return true;
