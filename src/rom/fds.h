@@ -52,6 +52,7 @@ void fds_shutdown(void);
 bool fds_active(void);
 
 uint8_t fds_cpu_read_bus(uint16_t addr, uint8_t open_bus);
+uint8_t fds_cpu_peek_bus(uint16_t addr, uint8_t open_bus);
 void fds_cpu_write(uint16_t addr, uint8_t value);
 uint8_t fds_ppu_read(uint16_t addr);
 void fds_ppu_write(uint16_t addr, uint8_t value);

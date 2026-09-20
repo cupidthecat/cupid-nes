@@ -55,6 +55,7 @@ $cppFlags = @($flags | Where-Object { $_ -ne '-std=c11' }) + @('-std=c++17')
 
 $coreSources = @('src/system/timing.c', 'src/system/hardware.c', 'src/system/vs_system.c', 'src/state/state.c', 'src/state/state_io.c', 'src/state/state_alloc.c', 'src/cpu/cpu.c', 'src/ppu/ppu.c', 'src/rom/rom.c', 'src/rom/mapper.c',
                  'src/rom/fds.c', 'src/rom/nsf.c', 'src/util/file_io.c',
+                 'src/debugger/debugger.c', 'src/debugger/lua_runtime.c',
                  'src/rom/vrc7_audio.c', 'src/rom/emu2413.c',
                  'src/rom/eeprom.c', 'src/rom/namco163.c', 'src/rom/sunsoft5b.c',
                  'src/joypad/joypad.c', 'src/joypad/family_basic.c', 'src/joypad/special_peripherals.c',
@@ -79,6 +80,15 @@ $coreSources += @('src/system/execution_policy.c',
                   'src/third_party/lzma/CpuArch.c', 'src/third_party/lzma/Delta.c',
                   'src/third_party/lzma/Lzma2Dec.c', 'src/third_party/lzma/LzmaDec.c',
                   'src/third_party/lzma/Ppmd7.c', 'src/third_party/lzma/Ppmd7Dec.c')
+$coreSources += @('src/third_party/lua/lapi.c', 'src/third_party/lua/lauxlib.c', 'src/third_party/lua/lbaselib.c',
+                  'src/third_party/lua/lcode.c', 'src/third_party/lua/lcorolib.c', 'src/third_party/lua/lctype.c',
+                  'src/third_party/lua/ldebug.c', 'src/third_party/lua/ldo.c', 'src/third_party/lua/ldump.c',
+                  'src/third_party/lua/lfunc.c', 'src/third_party/lua/lgc.c', 'src/third_party/lua/llex.c',
+                  'src/third_party/lua/lmathlib.c', 'src/third_party/lua/lmem.c', 'src/third_party/lua/lobject.c',
+                  'src/third_party/lua/lopcodes.c', 'src/third_party/lua/lparser.c', 'src/third_party/lua/lstate.c',
+                  'src/third_party/lua/lstring.c', 'src/third_party/lua/lstrlib.c', 'src/third_party/lua/ltable.c',
+                  'src/third_party/lua/ltablib.c', 'src/third_party/lua/ltm.c', 'src/third_party/lua/lundump.c',
+                  'src/third_party/lua/lutf8lib.c', 'src/third_party/lua/lvm.c', 'src/third_party/lua/lzio.c')
 $cppSources = @('src/apu/epsm.cpp', 'src/third_party/ymfm/ymfm_opn.cpp',
                 'src/third_party/ymfm/ymfm_ssg.cpp', 'src/third_party/ymfm/ymfm_adpcm.cpp',
                 'src/rom/game_db.cpp', 'src/rom/boards/runtime.cpp', 'src/rom/boards/factory.cpp',
@@ -116,6 +126,7 @@ $testSources = @('src/tests/accuracy_test.c', 'src/tests/cpu_accuracy.c', 'src/t
                  'src/tests/board_irem77_accuracy.c', 'src/tests/default_prg_ram_geometry_accuracy.c',
                  'src/tests/native_chr_capacity_accuracy.c', 'src/tests/native_mixed_chr_accuracy.c',
                  'src/tests/board_nina_fme7_accuracy.c', 'src/tests/board_state_accuracy.c', 'src/tests/state_accuracy.c',
+                 'src/tests/debugger_accuracy.c',
                  'src/tests/frontend_accuracy.c')
 $application = Join-Path $outputDirectory 'cupid-nes.exe'
 $testProgram = Join-Path $outputDirectory 'accuracy-tests.exe'

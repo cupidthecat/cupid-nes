@@ -414,6 +414,27 @@ uint8_t cart_nt_read(uint16_t addr, uint8_t *nt_ram) {
     return nt_ram[base_nt_index(addr)];
 }
 
+uint8_t cart_nt_peek(uint16_t addr, uint8_t *nt_ram) {
+    if (active_board) return board_ppu_peek(active_board, addr);
+    if (cart == &mapper_jy) {
+        uint8_t saved_source = jy.irq_source;
+        jy.irq_source = JY_IRQ_CPU_CLOCK;
+        uint8_t value = cart_nt_read(addr, nt_ram);
+        jy.irq_source = saved_source;
+        return value;
+    }
+    if (cart == &mapper_mmc5) {
+        unsigned char saved[sizeof(mmc5)];
+        bool saved_irq = mapper_irq_line;
+        memcpy(saved, &mmc5, sizeof(mmc5));
+        uint8_t value = cart_nt_read(addr, nt_ram);
+        memcpy(&mmc5, saved, sizeof(mmc5));
+        mapper_irq_line = saved_irq;
+        return value;
+    }
+    return cart_nt_read(addr, nt_ram);
+}
+
 void cart_nt_write(uint16_t addr, uint8_t v, uint8_t *nt_ram) {
     if (active_board) {
         board_ppu_write(active_board, addr, v);
@@ -787,8 +808,10 @@ static bool namco_ram_read_allowed(void) {
 
 static uint8_t namco_cpu_read(uint16_t address) {
     uint16_t reg = address & 0xF800u;
-    if (reg == 0x4800u && namco.variant == NAMCO_VARIANT_163)
+    if (reg == 0x4800u && namco.variant == NAMCO_VARIANT_163) {
+        if (cart_debug_peek_mode) return namco163_audio.ram[namco163_audio.ram_position];
         return namco163_audio_read_data(&namco163_audio);
+    }
     if (reg == 0x5000u && namco.variant == NAMCO_VARIANT_163)
         return (uint8_t)namco.irq_counter;
     if (reg == 0x5800u && namco.variant == NAMCO_VARIANT_163)

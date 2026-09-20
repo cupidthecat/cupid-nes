@@ -421,6 +421,14 @@ uint8_t vs_read_controller_port(unsigned port) {
     return (uint8_t)(bit | (local_dips & 0xFC));
 }
 
+uint8_t vs_debug_peek_controller_port(unsigned port) {
+    if (!vs_enabled() || port > 1) return 0;
+    VsState saved = vs;
+    uint8_t value = vs_read_controller_port(port);
+    vs = saved;
+    return value;
+}
+
 bool vs_set_dip_switches(uint16_t value) {
     if (!vs_enabled()) return false;
     vs.dips = value;

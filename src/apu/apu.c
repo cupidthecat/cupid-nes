@@ -459,6 +459,19 @@ static inline uint8_t apu_read_4015(APU *a) {
     return s;
 }
 
+uint8_t apu_debug_peek_status(void) {
+    APU *a = apu_active_state();
+    uint8_t s = 0;
+    if (a->pulse1.lc.length) s |= 0x01;
+    if (a->pulse2.lc.length) s |= 0x02;
+    if (a->tri.lc.length) s |= 0x04;
+    if (a->noise.lc.length) s |= 0x08;
+    if (a->dmc.bytes_remaining > 0) s |= 0x10;
+    if (a->frame_irq) s |= 0x40;
+    if (a->dmc.irq_flag) s |= 0x80;
+    return s;
+}
+
 static void dmc_restart_sample(DMC* d) {
     d->current_addr = d->sample_addr;
     d->bytes_remaining = d->sample_len;

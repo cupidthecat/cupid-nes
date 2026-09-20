@@ -87,6 +87,7 @@ void vs_audio_callback(void *userdata, uint8_t *stream, int len);
 
 void vs_write_4016(uint8_t value);
 uint8_t vs_read_controller_port(unsigned port);
+uint8_t vs_debug_peek_controller_port(unsigned port);
 bool vs_protection_read(uint16_t address, uint8_t *value);
 uint8_t vs_prg_chr_select_bit(void);
 bool vs_shared_ram_access_allowed(void);

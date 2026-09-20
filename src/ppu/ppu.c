@@ -357,6 +357,40 @@ uint8_t ppu_read(uint16_t addr) {
     return ppu_bus_read(addr, CART_PPU_FETCH_CPU);
 }
 
+uint8_t ppu_debug_peek(uint16_t addr) {
+    addr &= 0x3FFF;
+    if (addr >= 0x3F00) {
+        uint16_t palette_addr = addr & 0x1F;
+        if ((palette_addr & 3) == 0) palette_addr &= 0x0F;
+        return active_ppu_palette[palette_addr];
+    }
+    if (addr < 0x2000) return cart_ppu_peek(addr);
+    return cart_nt_peek(addr, active_ppu_vram);
+}
+
+uint8_t ppu_debug_peek_register(uint16_t reg) {
+    switch (reg & 7u) {
+        case 0: return ppu.ctrl;
+        case 1: return ppu.mask;
+        case 2: return (uint8_t)((ppu.status & 0xE0) | (ppu.open_bus & 0x1F));
+        case 3: return ppu.oam_addr;
+        case 4: {
+            uint8_t value = ppu.oam[ppu.oam_addr];
+            if ((ppu.oam_addr & 3u) == 2u) value &= 0xE3;
+            return value;
+        }
+        case 7: {
+            uint16_t addr = ppu.bus_address & 0x3FFF;
+            if (addr >= 0x3F00 && !palette_readback_disabled) {
+                uint8_t mask = (ppu.mask & 1) ? 0x30 : 0x3F;
+                return (uint8_t)((ppu_debug_peek(addr) & mask) | (ppu.open_bus & 0xC0));
+            }
+            return ppu.ppudata_buffer;
+        }
+        default: return ppu.open_bus;
+    }
+}
+
 void ppu_write(uint16_t addr, uint8_t value) {
     addr &= 0x3FFF;
     if (addr >= 0x3F00) {

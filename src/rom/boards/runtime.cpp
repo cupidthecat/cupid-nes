@@ -445,6 +445,11 @@ uint8_t Board::ReadCpu(uint16_t addr, uint8_t openBus) {
     return _customCpuRead || addr < 0x6000 ? ReadRam(addr) : InternalRead(addr);
 }
 
+uint8_t Board::PeekCpu(uint16_t addr, uint8_t openBus) const {
+    const Page &page = _cpuPages[addr >> 8];
+    return page.data && (page.access & Read) ? page.data[addr & 0xFF] : openBus;
+}
+
 void Board::WriteCpu(uint16_t addr, uint8_t value) {
     _openBus = value;
     WriteRam(addr, value);
@@ -453,6 +458,13 @@ void Board::WriteCpu(uint16_t addr, uint8_t value) {
 uint8_t Board::ReadPpu(uint16_t addr, unsigned fetchSource) {
     MemoryOperationType type = fetchSource ? MemoryOperationType::PpuRenderingRead : MemoryOperationType::Read;
     return _customRead ? MapperReadVram(addr & 0x3FFF, type) : InternalReadVram(addr);
+}
+
+uint8_t Board::PeekPpu(uint16_t addr) const {
+    addr &= 0x3FFF;
+    const Page &page = _ppuPages[addr >> 8];
+    return page.data && (page.access & Read) ? page.data[addr & 0xFF]
+                                              : static_cast<uint8_t>(addr);
 }
 
 void Board::ClockCpu(bool writeCycle) {
@@ -724,6 +736,9 @@ uint8_t *board_cpu_ram_8k(CartridgeBoard *board) {
 uint8_t board_cpu_read(CartridgeBoard *board, uint16_t address, uint8_t openBus) {
     return board ? board->instance->ReadCpu(address, openBus) : openBus;
 }
+uint8_t board_cpu_peek(const CartridgeBoard *board, uint16_t address, uint8_t openBus) {
+    return board ? board->instance->PeekCpu(address, openBus) : openBus;
+}
 void board_cpu_write(CartridgeBoard *board, uint16_t address, uint8_t value) {
     if (board) board->instance->WriteCpu(address, value);
 }
@@ -735,6 +750,9 @@ void board_observe_cpu_write(CartridgeBoard *board, uint16_t address, uint8_t va
 }
 uint8_t board_ppu_read(CartridgeBoard *board, uint16_t address, unsigned source) {
     return board ? board->instance->ReadPpu(address, source) : static_cast<uint8_t>(address);
+}
+uint8_t board_ppu_peek(const CartridgeBoard *board, uint16_t address) {
+    return board ? board->instance->PeekPpu(address) : static_cast<uint8_t>(address);
 }
 void board_ppu_write(CartridgeBoard *board, uint16_t address, uint8_t value) {
     if (board) board->instance->MapperWriteVram(address & 0x3FFF, value);

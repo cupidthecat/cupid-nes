@@ -65,6 +65,7 @@ uint8_t *cart_cpu_ram_8k(void);
 uint8_t cart_cpu_read (uint16_t addr);
 // Resolve floating data lines against the CPU latch, without a data-byte sentinel.
 uint8_t cart_cpu_read_bus(uint16_t addr, uint8_t open_bus);
+uint8_t cart_cpu_peek_bus(uint16_t addr, uint8_t open_bus);
 void    cart_cpu_write(uint16_t addr, uint8_t v);
 bool cart_read_cpu_register(uint16_t address, uint8_t *value);
 void cart_observe_cpu_write(uint16_t address, uint8_t value);
@@ -72,6 +73,7 @@ void cart_observe_cpu_write(uint16_t address, uint8_t value);
 // whose counters can select CPU-write cycles as their clock source.
 void    cart_clock_cpu_cycle(bool write_cycle);
 uint8_t cart_ppu_read (uint16_t addr);
+uint8_t cart_ppu_peek(uint16_t addr);
 void    cart_ppu_write(uint16_t addr, uint8_t v);
 void    cart_set_ppu_fetch_source(CartPpuFetchSource src);
 // Notify an exact CPU write to $2000. MMC5 does not observe PPU register mirrors.
@@ -100,6 +102,7 @@ bool cart_set_karaoke_input(CartKaraokeInput input, bool pressed);
 
 // Mapper-aware nametable access ($2000-$2FFF decoded by PPU)
 uint8_t cart_nt_read (uint16_t addr, uint8_t *nt_ram);
+uint8_t cart_nt_peek(uint16_t addr, uint8_t *nt_ram);
 void    cart_nt_write(uint16_t addr, uint8_t v, uint8_t *nt_ram);
 
 // Mapper IRQ line helpers (for IRQ-capable mappers such as MMC3)

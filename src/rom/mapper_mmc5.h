@@ -621,12 +621,14 @@ static RamBlock *mmc5_ram_location(uint16_t a, size_t *offset) {
 }
 
 static uint8_t mmc5_cpu_read(uint16_t a) {
-    if (a == 0xFFFA || a == 0xFFFB) mmc5_clear_frame_irq_on_nmi_vector();
+    if (!cart_debug_peek_mode && (a == 0xFFFA || a == 0xFFFB)) mmc5_clear_frame_irq_on_nmi_vector();
     if (a == 0x5010) {
         uint8_t status = (uint8_t)((mmc5.pcm_irq_enabled && mmc5.pcm_irq_pending) ? 0x80u : 0u);
         status |= 0x01u;
-        mmc5.pcm_irq_pending = false;
-        mmc5_update_irq_line();
+        if (!cart_debug_peek_mode) {
+            mmc5.pcm_irq_pending = false;
+            mmc5_update_irq_line();
+        }
         return status;
     }
     if (a == 0x5015) {
@@ -642,8 +644,10 @@ static uint8_t mmc5_cpu_read(uint16_t a) {
         uint8_t status = 0;
         if (mmc5.irq_pending) status |= 0x80;
         if (mmc5.in_frame) status |= 0x40;
-        mmc5.irq_pending = false;
-        mmc5_update_irq_line();
+        if (!cart_debug_peek_mode) {
+            mmc5.irq_pending = false;
+            mmc5_update_irq_line();
+        }
         return status;
     }
     if (a == 0x5205) {
@@ -781,7 +785,7 @@ static void mmc5_cpu_write(uint16_t a, uint8_t v) {
 
 static uint8_t mmc5_ppu_read(uint16_t a) {
     a &= 0x1FFF;
-    mmc5_begin_ppu_read(a);
+    if (!cart_debug_peek_mode) mmc5_begin_ppu_read(a);
     uint8_t value;
     if (mmc5_split_chr_read(a, &value)) return value;
     if (mmc5_extended_attr_read(a, false, &value)) return value;

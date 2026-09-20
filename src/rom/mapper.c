@@ -88,6 +88,7 @@ static Mapper mapper_namco, mapper_gxrom, mapper_m71, mapper_namco108;
 static Mapper mapper_vs99, mapper_jy, mapper_nina;
 static Mapper mapper_board, mapper_nsf;
 static CartridgeBoard *active_board = NULL;
+static bool cart_debug_peek_mode;
 Mapper *cart = NULL;
 static bool mapper_irq_line = false;
 static uint8_t cart_cpu_bus_input = 0xFF;
@@ -784,6 +785,17 @@ uint8_t cart_cpu_read_bus(uint16_t a, uint8_t open_bus) {
     if (cart == &mapper_mmc5 && a == 0x5204) value |= open_bus & 0x3F;
     return value;
 }
+
+uint8_t cart_cpu_peek_bus(uint16_t a, uint8_t open_bus) {
+    if (!cart) return open_bus;
+    if (active_board) return board_cpu_peek(active_board, a, open_bus);
+    if (cart == &mapper_fds) return fds_cpu_peek_bus(a, open_bus);
+    bool previous_peek = cart_debug_peek_mode;
+    cart_debug_peek_mode = true;
+    uint8_t value = cart_cpu_read_bus(a, open_bus);
+    cart_debug_peek_mode = previous_peek;
+    return value;
+}
 bool cart_read_cpu_register(uint16_t address, uint8_t *value) {
     return board_read_cpu_register(active_board, address, value);
 }
@@ -812,6 +824,16 @@ void cart_clock_cpu_cycle(bool write_cycle) {
     cart_cpu_cycle_is_write = false;
 }
 uint8_t cart_ppu_read(uint16_t a) { return cart ? cart->ppu_read(a) : 0x00; }
+uint8_t cart_ppu_peek(uint16_t a) {
+    if (!cart) return 0;
+    if (active_board) return board_ppu_peek(active_board, a);
+    if (cart == &mapper_fds) return fds_ppu_read(a);
+    bool previous_peek = cart_debug_peek_mode;
+    cart_debug_peek_mode = true;
+    uint8_t value = cart->ppu_read(a);
+    cart_debug_peek_mode = previous_peek;
+    return value;
+}
 void cart_ppu_write(uint16_t a, uint8_t v) { if (cart) cart->ppu_write(a, v); }
 void cart_set_ppu_fetch_source(CartPpuFetchSource src) { cart_ppu_fetch_source = src; }
 bool cart_irq_pending(void) {

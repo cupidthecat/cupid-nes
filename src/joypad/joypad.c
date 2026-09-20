@@ -475,6 +475,21 @@ uint8_t joypad_read_port(Joypad *jp, unsigned port) {
     return value;
 }
 
+uint8_t joypad_debug_peek_port(const Joypad *jp, unsigned port) {
+    if (!jp || port > 1) return 0;
+    /* The common pad path is read directly so inspection never advances its
+       serial register. More complex devices fall back to a conservative
+       non-driving value instead of invoking their stateful read callbacks. */
+    if (input_adapter == NES_ADAPTER_NONE && port_devices[port] == NES_PORT_GAMEPAD
+        && expansion_device == NES_EXPANSION_NONE) {
+        uint8_t value = jp->strobe ? jp->buttons : jp->shift;
+        return value & 1u;
+    }
+    if (input_adapter == NES_ADAPTER_NONE && port_devices[port] == NES_PORT_NONE
+        && expansion_device == NES_EXPANSION_NONE) return 0;
+    return 0;
+}
+
 uint8_t joypad_open_bus_mask(unsigned port) {
     if (port != 0) return 0xE0;
     switch (nes_console_model()) {

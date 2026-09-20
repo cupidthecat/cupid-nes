@@ -318,7 +318,8 @@ static void jy_cpu_write(uint16_t addr, uint8_t value) {
 }
 
 static uint8_t jy_ppu_read(uint16_t addr) {
-    if (jy.irq_source == JY_IRQ_PPU_READ && cart_ppu_fetch_source != CART_PPU_FETCH_CPU)
+    if (!cart_debug_peek_mode && jy.irq_source == JY_IRQ_PPU_READ
+        && cart_ppu_fetch_source != CART_PPU_FETCH_CPU)
         jy_irq_tick();
     addr &= 0x1FFFu;
     unsigned slot;

@@ -101,6 +101,7 @@ int test_epsm_accuracy(void);
 int test_frontend_accuracy(void);
 int test_board_state_accuracy(void);
 int test_state_accuracy(void);
+int test_debugger_accuracy(void);
 int test_cpu_trace(const char *rom_path, const char *trace_path);
 int run_diagnostic_rom(const char *path, unsigned frame_limit);
 int run_mmc3_diagnostic_rom(const char *path, unsigned frame_limit);
@@ -220,6 +221,7 @@ int main(int argc, char **argv) {
     failures += test_fds_options_accuracy();
     failures += test_fds_automation_accuracy();
     failures += test_execution_policy_accuracy();
+    failures += test_debugger_accuracy();
     failures += test_frontend_accuracy();
     unload_rom();
     printf("Hardware regressions: %s (%d failures)\n", failures ? "FAIL" : "PASS", failures);

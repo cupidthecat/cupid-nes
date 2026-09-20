@@ -221,6 +221,7 @@ bool apu_swap_duty_cycles_enabled(void);
 // memory-mapped access
 void apu_write(uint16_t addr, uint8_t val);
 uint8_t apu_read(uint16_t addr);
+uint8_t apu_debug_peek_status(void);
 // Raw channel DAC values used by the optional CPU diagnostic-read profile.
 uint8_t apu_read_test_output(uint16_t addr);
 

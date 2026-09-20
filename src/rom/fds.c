@@ -851,6 +851,38 @@ uint8_t fds_cpu_read_bus(uint16_t addr, uint8_t open_bus) {
     }
 }
 
+uint8_t fds_cpu_peek_bus(uint16_t addr, uint8_t open_bus) {
+    if (!fds.image) return open_bus;
+    if (addr >= 0x6000 && addr <= 0xDFFF) return fds.work_ram[addr - 0x6000];
+    if (addr >= 0xE000) return fds.image->bios[addr - 0xE000];
+    if (addr >= 0x4040 && addr <= 0x4097) {
+        FdsAudio saved = fds.audio;
+        uint8_t value = audio_read(&fds.audio, addr, open_bus);
+        fds.audio = saved;
+        return value;
+    }
+    switch (addr) {
+        case 0x4030: {
+            uint8_t value = open_bus & 0x24;
+            if (fds.timer_irq) value |= 0x01;
+            if (fds.mirroring == MIRROR_HORIZONTAL) value |= 0x08;
+            if (fds.image->qd_format && fds.bad_crc) value |= 0x10;
+            if (fds.transfer_complete) value |= 0x80;
+            return value;
+        }
+        case 0x4031: return fds.read_data;
+        case 0x4032: {
+            uint8_t value = open_bus & 0xF8;
+            if (!fds_disk_inserted()) value |= 0x01;
+            if (!fds_disk_inserted() || !fds.scanning) value |= 0x02;
+            if (!fds_disk_inserted() || fds.image->write_protected) value |= 0x04;
+            return value;
+        }
+        case 0x4033: return (uint8_t)(fds.ext_connector | (fds.motor_on ? 0x80 : 0));
+        default: return open_bus;
+    }
+}
+
 void fds_cpu_write(uint16_t addr, uint8_t value) {
     if (!fds.image) return;
     if (addr >= 0x6000 && addr <= 0xDFFF) {

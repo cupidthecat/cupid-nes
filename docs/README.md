@@ -13,6 +13,7 @@ Cupid has an SDL application for running games and music and a separate executab
 | [Saves and media](saves.md) | Cartridge saves, EEPROM and flash, Turbo File/BattleBox storage, disk images, tapes, and save failures |
 | [Music player](music.md) | NSF/NSFe track selection, pause and stop, metadata, fades, silence detection, repeat, and shuffle |
 | [Screenshots and recordings](capture.md) | PNG screenshots, stereo WAV and AVI recording, capture timing, output paths, and file limits |
+| [Debugger and Lua](debugging.md) | Breakpoints, stepping, side-effect-free hardware inspection, Lua callbacks, and overlays |
 | [Troubleshooting](troubleshooting.md) | Common error messages and the information needed for a reproducible report |
 
 ## Working on the core

@@ -36,6 +36,7 @@
 #include "../system/hardware.h"
 #include "../system/timing.h"
 #include "../system/vs_system.h"
+#include "../debugger/debugger.h"
 
 uint8_t ram[0x0800];        // 2KB internal RAM
 #define APU_IO_SIZE 0x20              // cover $4000-$401F
@@ -146,6 +147,29 @@ uint64_t cpu_get_bus_cycle(void) {
 uint8_t cpu_peek_internal_ram(uint16_t addr) {
     uint8_t *expanded = cart_cpu_ram_8k();
     return expanded ? expanded[addr & 0x1FFF] : cpu_ram[addr & 0x07FF];
+}
+
+uint8_t cpu_debug_peek(uint16_t addr) {
+    if (addr <= 0x1FFF) return cpu_peek_internal_ram(addr);
+    if (addr <= 0x3FFF) return ppu_debug_peek_register((uint16_t)(0x2000 | (addr & 7u)));
+    if (addr >= 0x4000 && addr <= 0x4017) {
+        if (addr == 0x4015) {
+            uint8_t status = apu_debug_peek_status();
+            return (uint8_t)((status & 0xDFu) | (bus_get_internal() & 0x20u));
+        }
+        if (addr == 0x4016 || addr == 0x4017) {
+            unsigned port = addr - 0x4016u;
+            uint8_t raw = vs_enabled() ? vs_debug_peek_controller_port(port)
+                                       : joypad_debug_peek_port(port ? &pad2 : &pad1, port);
+            uint8_t mask = vs_enabled() ? 0u : joypad_open_bus_mask(port);
+            return (uint8_t)((bus_get() & mask) | (raw & (uint8_t)~mask));
+        }
+        return bus_get();
+    }
+    if (cpu_test_mode && addr >= 0x4018 && addr <= 0x401A)
+        return apu_read_test_output(addr);
+    if (addr >= 0x4020) return cart_cpu_peek_bus(addr, bus_get());
+    return bus_get();
 }
 
 void cpu_select_machine(CpuMachineContext *context) {
@@ -434,10 +458,11 @@ static uint8_t finish_bus_read_target(uint16_t addr, BusLatchTarget target, uint
         value = ppu_reg_read_finish((uint16_t)(0x2000 | (addr & 7)), value);
         bus_latch(target, value);
     }
+    debugger_on_cpu_read(addr, &value);
     return value;
 }
 
-static void write_bus(uint16_t addr, uint8_t value) {
+static void write_bus_raw(uint16_t addr, uint8_t value) {
     uint8_t previous_bus = bus_get();
     bus_set(value); // writes still put value on the CPU bus latch
 
@@ -488,6 +513,11 @@ static void write_bus(uint16_t addr, uint8_t value) {
         cart_cpu_write(addr, value);
         apu_audio_refresh(apu_active_state());
     }
+}
+
+static void write_bus(uint16_t addr, uint8_t value) {
+    write_bus_raw(addr, value);
+    debugger_on_cpu_write(addr, value);
 }
 
 static uint8_t read_mem_cycle(uint16_t addr, bool opcode_fetch) {
@@ -911,6 +941,10 @@ static void process_pending_dma(uint16_t read_addr, bool opcode_fetch) {
 int cpu_step(CPU* cpu) {
     uint64_t start = active_cpu_cycles;
     running_cpu = cpu;
+    if (!debugger_before_instruction(cpu)) {
+        running_cpu = NULL;
+        return 0;
+    }
     if (cpu->halted) {
         (void)read_mem_cycle(cpu->pc, true);
     } else if (cpu_nmi_injected) {

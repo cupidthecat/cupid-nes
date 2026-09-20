@@ -9,6 +9,7 @@
 #include "frontend_execution.h"
 #include "frontend_commands.h"
 #include "machine_actions.h"
+#include "../debugger/debugger.h"
 #include "../joypad/joypad.h"
 #include "../ppu/ppu.h"
 #include "../rom/fds.h"
@@ -36,6 +37,13 @@ static void refresh_audio(FrontendExecutionRuntime *runtime) {
     if (!runtime->execution.paused) SDL_PauseAudioDevice(device, 0);
 }
 
+static void debugger_pause_changed(bool paused, void *userdata) {
+    FrontendExecutionRuntime *runtime = (FrontendExecutionRuntime *)userdata;
+    if (!runtime) return;
+    execution_control_set_paused(&runtime->execution, paused);
+    frontend_command_set_checked(FRONTEND_COMMAND_PAUSE, paused);
+}
+
 static void lock_audio_for_machine_change(FrontendExecutionRuntime *runtime) {
     if (!runtime || !runtime->audio_device || !*runtime->audio_device) return;
     SDL_PauseAudioDevice(*runtime->audio_device, 1);
@@ -52,6 +60,11 @@ static bool command_pause(void *userdata, char *error, size_t error_size) {
     (void)error;
     (void)error_size;
     FrontendExecutionRuntime *runtime = (FrontendExecutionRuntime *)userdata;
+    if (debugger_is_paused()) {
+        debugger_resume();
+        refresh_audio(runtime);
+        return true;
+    }
     execution_control_toggle_paused(&runtime->execution);
     frontend_command_set_checked(FRONTEND_COMMAND_PAUSE, runtime->execution.paused);
     refresh_audio(runtime);
@@ -193,6 +206,8 @@ void frontend_execution_init(FrontendExecutionRuntime *runtime,
     runtime->fds_bios_path = fds_bios_path;
     runtime->studybox_bios_path = studybox_bios_path;
     runtime->fds_side = fds_side;
+    debugger_init();
+    debugger_set_pause_callback(debugger_pause_changed, runtime);
 }
 
 bool frontend_execution_register_commands(FrontendExecutionRuntime *runtime) {
@@ -296,14 +311,14 @@ bool frontend_execution_handle_shortcut(FrontendExecutionRuntime *runtime,
 static bool run_emulation_frame(void *userdata) {
     (void)userdata;
     vs_start_frame();
-    while (!ppu.frame_complete) vs_cpu_step();
-    return true;
+    while (!ppu.frame_complete && !debugger_is_paused()) vs_cpu_step();
+    return ppu.frame_complete;
 }
 
 bool frontend_execution_run_frame(FrontendExecutionRuntime *runtime) {
     if (!runtime) return false;
     bool ran = execution_control_run_frame(&runtime->execution, run_emulation_frame, NULL);
-    if (ran && runtime->execution.paused) refresh_audio(runtime);
+    if (runtime->execution.paused) refresh_audio(runtime);
     return ran;
 }
 
