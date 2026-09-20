@@ -72,9 +72,10 @@ static void refresh_audio(FrontendExecutionRuntime *runtime) {
 }
 
 static void update_audio_pause(FrontendExecutionRuntime *runtime) {
-    if (runtime && !runtime->machine_change_depth && runtime->audio_device && *runtime->audio_device)
-        SDL_PauseAudioDevice(*runtime->audio_device,
-                             runtime->execution.paused || runtime->muted ? 1 : 0);
+    if(!runtime||runtime->machine_change_depth||!runtime->audio_device||!*runtime->audio_device)return;
+    bool paused=runtime->execution.paused||runtime->muted;
+    SDL_AudioStatus desired=paused?SDL_AUDIO_PAUSED:SDL_AUDIO_PLAYING;
+    if(SDL_GetAudioDeviceStatus(*runtime->audio_device)!=desired)SDL_PauseAudioDevice(*runtime->audio_device,paused?1:0);
 }
 
 void frontend_execution_sync_debugger(FrontendExecutionRuntime *runtime) {
@@ -90,7 +91,6 @@ static void lock_audio_for_machine_change(FrontendExecutionRuntime *runtime) {
     if (!runtime || runtime->machine_change_depth++) return;
     runtime->machine_audio_device=runtime->audio_device?*runtime->audio_device:0;
     if(runtime->machine_audio_device){
-        SDL_PauseAudioDevice(runtime->machine_audio_device,1);
         SDL_LockAudioDevice(runtime->machine_audio_device);
     }
 }

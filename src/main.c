@@ -937,8 +937,9 @@ static int application_main(int argc, char *argv[]) {
     palette_tool_init();
     const double performance_frequency = (double)SDL_GetPerformanceFrequency();
     double frame_deadline = (double)SDL_GetPerformanceCounter();
+    double fps_started = frame_deadline;
+    unsigned fps_frames = 0;
     while (running) {
-        Uint32 frameStart = SDL_GetTicks();
         while (SDL_PollEvent(&e)) {
             if (!frontend_desktop_input_captured(&desktop_ui))
                 frontend_host_input_event(&e, &frontend_settings, &execution_runtime);
@@ -1093,7 +1094,6 @@ static int application_main(int argc, char *argv[]) {
                 }
                 if (frontend_host_input_bound_player_key(profile, &e.key)) continue;
             }
-            palette_tool_handle_event(&e, renderer);
             
             if (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP) {
                 int down = (e.type == SDL_KEYDOWN);
@@ -1121,7 +1121,7 @@ static int application_main(int argc, char *argv[]) {
                         if (down) { palette_tool_toggle_overlay(); }
                         break;
                     case SDLK_F6:
-                        if (down) { ppu_palette_reset_default(); palette_tool_flash(true); }
+                        if (down) { ppu_palette_reset_default(); frontend_desktop_set_status(&desktop_ui,"Palette reset"); }
                         break;
                     case SDLK_5: if (vs_enabled()) vs_set_coin(0, down != 0); break;
                     case SDLK_6: if (vs_enabled()) vs_set_coin(1, down != 0); break;
@@ -1144,7 +1144,7 @@ static int application_main(int argc, char *argv[]) {
                             char *txt = SDL_GetClipboardText();
                             if (txt) {
                                 int rc = ppu_palette_load_hex_string(txt);
-                                palette_tool_flash(rc == 0);
+                                frontend_desktop_set_status(&desktop_ui,rc==0?"Palette loaded":"Invalid palette");
                                 SDL_free(txt);
                                 if (rc != 0) {
                                     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "Palette Paste Error",
@@ -1162,7 +1162,7 @@ static int application_main(int argc, char *argv[]) {
                     const char *dot = strrchr(dropped_f, '.');
                     if (dot && SDL_strcasecmp(dot, ".pal") == 0) {
                         int rc = ppu_palette_load_pal_file(dropped_f);
-                        palette_tool_flash(rc == 0);
+                        frontend_desktop_set_status(&desktop_ui,rc==0?"Palette loaded":"Invalid palette");
                         if (rc != 0)
                             SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Palette Load Error",
                                 "Failed to load .pal file. Expected 192 or 1536 bytes.", window);
@@ -1260,7 +1260,6 @@ static int application_main(int argc, char *argv[]) {
         frontend_desktop_game_rect(&desktop_ui, ww, hh, video_width, video_height,
                                            frontend_settings.integer_scaling, &game_rect);
         SDL_RenderCopy(renderer, frontend_video_runtime_texture(&video_runtime), NULL, &game_rect);
-        if (palette_tool_is_visible()) { palette_tool_draw(renderer, ww, hh); }
         frontend_desktop_render(&desktop_ui, video_width, video_height,
             frontend_session.current_result.title,
             nes_region_name(nes_timing()->region),
@@ -1270,9 +1269,12 @@ static int application_main(int argc, char *argv[]) {
                 : frontend_execution_paused(&execution_runtime) ? "Paused" : "Running");
         SDL_RenderPresent(renderer);
     
-        Uint32 frameTime = SDL_GetTicks() - frameStart;
-        palette_tool_tick(frameTime);
-        frontend_desktop_set_fps(&desktop_ui, frameTime ? 1000.0 / frameTime : 0.0);
+        double fps_now = (double)SDL_GetPerformanceCounter();
+        if (ran_frame) ++fps_frames;
+        if (fps_now - fps_started >= performance_frequency * 0.5) {
+            frontend_desktop_set_fps(&desktop_ui, fps_frames * performance_frequency / (fps_now - fps_started));
+            fps_frames = 0; fps_started = fps_now;
+        }
         double speed = frontend_execution_speed(&execution_runtime);
         if (ran_frame) {
             frame_deadline += (double)frame_elapsed_cycles

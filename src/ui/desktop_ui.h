@@ -28,6 +28,12 @@ typedef enum {
 } FrontendIdleResult;
 
 typedef struct {
+    struct DesktopClay *clay;
+    const FrontendSession *idle_session;
+    int idle_recent_index;
+    int visible_rows;
+    int palette_index;
+    bool edit_select_all;
     SDL_Window *window;
     SDL_Renderer *renderer;
     FrontendSettings *settings;

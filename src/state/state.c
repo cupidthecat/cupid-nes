@@ -10,6 +10,7 @@
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  */
+#include "crc32_table.h"
 #include "state.h"
 #include "state_io.h"
 #include "state_alloc.h"
@@ -120,12 +121,17 @@ struct NesStateRestore {
 };
 
 static uint32_t state_crc32(const uint8_t *data, size_t size) {
-    uint32_t crc = 0xFFFFFFFFu;
-    for (size_t i = 0; i < size; ++i) {
-        crc ^= data[i];
-        for (unsigned bit = 0; bit < 8; ++bit)
-            crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+    uint32_t crc=UINT32_MAX;
+    /* Slice eight bytes at a time without unaligned loads or host-endian assumptions. */
+    while(size>=8){
+        uint32_t low=crc^(uint32_t)data[0]^((uint32_t)data[1]<<8)^((uint32_t)data[2]<<16)^((uint32_t)data[3]<<24);
+        crc=state_crc_table[7][low&255]^state_crc_table[6][(low>>8)&255]
+            ^state_crc_table[5][(low>>16)&255]^state_crc_table[4][low>>24]
+            ^state_crc_table[3][data[4]]^state_crc_table[2][data[5]]
+            ^state_crc_table[1][data[6]]^state_crc_table[0][data[7]];
+        data+=8;size-=8;
     }
+    while(size--){crc=(crc>>8)^state_crc_table[0][(crc^*data++)&255];}
     return ~crc;
 }
 

@@ -45,6 +45,12 @@ extern uint64_t cpu_total_cycles;
     } \
 } while (0)
 
+static uint32_t reference_crc32(const uint8_t *data,size_t size) {
+    uint32_t crc=UINT32_MAX;
+    for(size_t i=0;i<size;++i){crc^=data[i];for(unsigned bit=0;bit<8;++bit)crc=(crc>>1)^(0xEDB88320u&(0u-(crc&1u)));}
+    return ~crc;
+}
+
 static bool blobs_equal(const NesStateBlob *a, const NesStateBlob *b) {
     return a && b && a->size == b->size
         && (!a->size || memcmp(a->data, b->data, a->size) == 0);
@@ -174,6 +180,7 @@ static int test_state_replay_and_failure_atomicity(void) {
 
     NesStateBlob start = {0}, expected = {0}, actual = {0}, before_failure = {0};
     CHECK(nes_state_capture(&start) == NES_STATE_OK);
+    CHECK(start.size>20 && state_test_u32(start.data+16)==reference_crc32(start.data+20,start.size-20));
     CHECK(run_cpu_steps(160));
     CHECK(nes_state_capture(&expected) == NES_STATE_OK);
     CHECK(nes_state_restore(start.data, start.size) == NES_STATE_OK);

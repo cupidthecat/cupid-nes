@@ -123,7 +123,14 @@ int render_diagnostic_rom(const char *path, unsigned frames, const char *output)
 int run_accuracycoin_rom(const char *path, unsigned frames, const char *output);
 
 int test_netplay_peer(const char *role, unsigned port, const char *scenario);
+int benchmark_frontend(unsigned frames, const char *path);
 int main(int argc, char **argv) {
+    if(argc==2 && !strcmp(argv[1],"--desktop"))return test_desktop_accuracy()?1:0;
+    if(argc==4 && !strcmp(argv[1],"--benchmark-frontend")){
+        char *end=NULL;unsigned long frames=strtoul(argv[2],&end,10);
+        if(!frames||frames>100000||!end||*end)return 2;
+        return benchmark_frontend((unsigned)frames,argv[3]);
+    }
     if (argc == 5 && !strcmp(argv[1], "--netplay-peer"))
         return test_netplay_peer(argv[2], (unsigned)strtoul(argv[3], NULL, 10), argv[4]);
     if (argc > 1) {
@@ -164,7 +171,7 @@ int main(int argc, char **argv) {
             printf("Diagnostic ROMs: %d passed, %d failed or unfinished\n", argc - 3 - failed, failed);
             return failed ? 1 : 0;
         }
-        fprintf(stderr, "Usage: %s [--trace ROM LOG | --rom FRAMES ROM... | --mmc3-rom FRAMES ROM... | --legacy-pal-rom FRAMES ROM... | --legacy-rom FRAMES ROM... | --render FRAMES ROM OUTPUT.ppm | --accuracycoin FRAMES ROM [OUTPUT.ppm]]\n", argv[0]);
+        fprintf(stderr, "Usage: %s [--desktop | --benchmark-frontend FRAMES ROM | --trace ROM LOG | --rom FRAMES ROM... | --mmc3-rom FRAMES ROM... | --legacy-pal-rom FRAMES ROM... | --legacy-rom FRAMES ROM... | --render FRAMES ROM OUTPUT.ppm | --accuracycoin FRAMES ROM [OUTPUT.ppm]]\n", argv[0]);
         return 2;
     }
     int failures = 0;

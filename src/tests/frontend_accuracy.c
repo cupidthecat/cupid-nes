@@ -593,6 +593,8 @@ static int settings_text_editing(void) {
 
     event.key.keysym.scancode = SDL_SCANCODE_RIGHT;
     CHECK(frontend_desktop_handle_event(&ui, &event));
+    event.key.keysym.scancode = SDL_SCANCODE_END;
+    CHECK(frontend_desktop_handle_event(&ui, &event));
     strcpy(ui.edit_text, "aé猫🎮");
     event.key.keysym.scancode = SDL_SCANCODE_BACKSPACE;
     const char *expected[] = {"aé猫", "aé", "a", "", ""};

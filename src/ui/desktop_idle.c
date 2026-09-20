@@ -3,7 +3,6 @@
 #include "frontend_commands.h"
 #include "frontend_panels.h"
 #include "platform_frontend.h"
-#include "ui_font.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -13,11 +12,6 @@ static bool choose(void *context,char *error,size_t size) {
     if(!frontend_open_image_dialog(path,sizeof(path),error,size))return false;
     selection->selected=frontend_image_request_init(selection->request,path);
     return selection->selected;
-}
-static bool hit(int x,int y,SDL_Rect rect){return x>=rect.x&&y>=rect.y&&x<rect.x+rect.w&&y<rect.y+rect.h;}
-static void button(SDL_Renderer *renderer,SDL_Rect rect,const char *label){
-    SDL_SetRenderDrawColor(renderer,65,75,95,255);SDL_RenderFillRect(renderer,&rect);
-    frontend_draw_text(renderer,rect.x+(rect.w-frontend_text_width(label,1))/2,rect.y+14,1,label,240,240,245,255);
 }
 FrontendIdleResult frontend_desktop_idle_open(FrontendSettings *settings,const FrontendSession *session,
     const char *settings_path,FrontendImageRequest *request,SDL_Window **window,SDL_Renderer **renderer,
@@ -31,6 +25,7 @@ FrontendIdleResult frontend_desktop_idle_open(FrontendSettings *settings,const F
     if(!*renderer)*renderer=SDL_CreateRenderer(*window,-1,SDL_RENDERER_SOFTWARE);
     if(!*renderer)goto failure;
     FrontendDesktopUi ui;frontend_desktop_init(&ui,*window,*renderer,settings,NULL,NULL,settings_path);
+    ui.idle_session=session;
     if(error&&error_size&&error[0])frontend_desktop_set_status(&ui,error);
     frontend_commands_reset();frontend_panels_reset();
     IdleSelection selection={request,false};
@@ -41,35 +36,21 @@ FrontendIdleResult frontend_desktop_idle_open(FrontendSettings *settings,const F
     }
     bool running=true;
     while(running&&!selection.selected){
-        int w,h;SDL_GetWindowSize(*window,&w,&h);
-        SDL_Rect open_button={w/2-110,110,220,40},settings_button={w/2-110,164,220,38};
         SDL_Event event;
         while(SDL_PollEvent(&event)){
             if(event.type==SDL_QUIT){running=false;break;}
-            if(frontend_desktop_handle_event(&ui,&event))continue;
+            if(frontend_desktop_handle_event(&ui,&event)){
+                if(ui.idle_recent_index>=0){*request=*frontend_session_recent(session,(size_t)ui.idle_recent_index);selection.selected=true;}
+                continue;
+            }
             if(event.type==SDL_DROPFILE){
                 if(event.drop.file){selection.selected=frontend_image_request_init(request,event.drop.file);SDL_free(event.drop.file);}
             } else if(event.type==SDL_KEYDOWN&&(event.key.keysym.scancode==SDL_SCANCODE_RETURN
                 || ((event.key.keysym.mod&KMOD_CTRL)&&event.key.keysym.scancode==SDL_SCANCODE_O))){
                 if(!choose(&selection,error,error_size)&&error&&error[0])frontend_desktop_set_status(&ui,error);
-            } else if(event.type==SDL_MOUSEBUTTONDOWN&&event.button.button==SDL_BUTTON_LEFT){
-                int x=event.button.x,y=event.button.y;
-                if(hit(x,y,open_button)){
-                    if(!choose(&selection,error,error_size)&&error&&error[0])frontend_desktop_set_status(&ui,error);
-                } else if(hit(x,y,settings_button))frontend_command_invoke(FRONTEND_COMMAND_SETTINGS,NULL,0);
-                else for(size_t i=0;i<frontend_session_recent_count(session)&&i<6;++i){
-                    SDL_Rect recent={w/2-240,224+(int)i*28,480,24};
-                    if(hit(x,y,recent)){*request=*frontend_session_recent(session,i);selection.selected=true;break;}
-                }
             }
         }
-        SDL_SetRenderDrawColor(*renderer,18,20,24,255);SDL_RenderClear(*renderer);
-        button(*renderer,open_button,"Open Game...");button(*renderer,settings_button,"Settings");
-        for(size_t i=0;i<frontend_session_recent_count(session)&&i<6;++i){
-            const FrontendImageRequest *recent=frontend_session_recent(session,i);char label[80];
-            snprintf(label,sizeof(label),"Recent: %.68s",recent->archive_member[0]?recent->archive_member:recent->path);
-            frontend_draw_text(*renderer,w/2-230,232+(int)i*28,1,label,180,205,235,255);
-        }
+        SDL_SetRenderDrawColor(*renderer,14,18,27,255);SDL_RenderClear(*renderer);
         frontend_desktop_render(&ui,256,240,NULL,NULL,"Idle");SDL_RenderPresent(*renderer);SDL_Delay(10);
     }
     frontend_desktop_update_window_settings(&ui);frontend_desktop_shutdown(&ui);

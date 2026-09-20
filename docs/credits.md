@@ -86,3 +86,11 @@ HD graphics use libspng for PNG decoding under its
 bundled miniz interface. Ogg Vorbis decoding uses
 [stb_vorbis](../src/third_party/stb/stb_vorbis.cpp), whose license choices and
 copyright notices remain in the source file.
+
+## Desktop layout and text
+
+The desktop uses Nic Barker's [Clay](https://github.com/nicbarker/clay) layout
+library under its [zlib/libpng license](../src/third_party/clay/LICENSE.md).
+Text rendering uses stb_truetype and an embedded DejaVu Sans font. Their pins,
+license files, and font checksum are listed in the
+[desktop component notes](../src/third_party/desktop-components.md).

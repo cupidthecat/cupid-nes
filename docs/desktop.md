@@ -14,13 +14,21 @@ status bar shows the title, effective region, execution state, active capture
 or movie, and disk activity where applicable. Netplay supplies its connection
 status while listening or connected.
 
+The startup screen, menus, settings, feature panels, palette editor, and text
+entry use Clay layouts with cached TrueType text. Controls follow the layout
+when the window or display scale changes. No separate font installation is
+needed.
+
 ## Settings
 
 Ctrl+Comma opens Settings. The eight categories cover General, Emulation,
 Video, Audio, Controllers, Media and firmware, Files and storage, and Advanced
 hardware. Arrow keys select and change a row. Ctrl+Tab changes categories;
 Tab moves among rows, buttons, and the category list. Enter starts text or
-binding entry and commits entered text. Escape cancels an edit or closes the
+binding entry and commits entered text. Click the minus/plus buttons to adjust
+a value, or click its value field. Text fields start with their contents selected;
+typing replaces them. Ctrl+A selects all, Ctrl+C copies the selection, Ctrl+V
+pastes, and End lets you append. Escape cancels an edit or closes the
 window. F4 opens a picker for supported file-path rows. Lists scroll to keep
 the selected row visible.
 
@@ -64,7 +72,34 @@ after menus, aspect scaling, overscan, HD rendering, and dual-display layout.
 Panels use Up/Down or Tab to select a row and Enter to activate it. Text rows
 accept paths or values, choice rows cycle through their entries, and long panels
 scroll. A disabled action belongs to hardware or a session that is unavailable;
-its panel status explains relevant conflicts.
+its panel status explains relevant conflicts. Use the visible Edit, Toggle, or
+Run buttons with the mouse; minus and plus buttons move through choices.
+
+View > Palette editor (F7) shows all 64 colors. Select a swatch, drag an RGB
+slider, or use its minus/plus buttons. Load palette opens a `.pal` file; Reset
+palette restores the default colors. Ctrl+V accepts palette text while the
+editor is open. Escape or Close returns to the game.
+
+## Frame and audio performance
+
+Rewind snapshots lock audio state briefly without pausing and restarting the
+output device every frame. Snapshot checksums process eight bytes at a time;
+the saved-state format and checksum value are unchanged. The desktop caches
+glyphs in a texture atlas instead of drawing each character as individual
+pixel rectangles. The FPS counter measures completed emulated frames over
+elapsed wall time, including pacing delays.
+
+To measure uncapped frontend work with a local ROM:
+
+```powershell
+.\build\windows\accuracy-tests.exe --benchmark-frontend 600 "C:\Games\game.nes"
+```
+
+This diagnostic measures 600 frames with rewind disabled and with ten seconds
+of history configured, then times the desktop renderer separately. It uses
+SDL's dummy audio/video drivers and a software renderer. It does not write
+cartridge saves, measure display latency, or establish how a physical audio
+device sounds. Run it without other heavy work for a useful comparison.
 
 Storage locations shows the configuration directory, cartridge save identity,
 disk overlay, state and movie paths, three capture paths, current patch, HD root,
@@ -79,7 +114,11 @@ These images come from the production SDL renderer driven by the desktop
 regression harness. They use synthetic session labels and contain no game ROM
 artwork. They are automated render checks, not records of manual desktop use.
 
+![Startup window](images/desktop-startup.png)
+
 ![Main window](images/desktop-main.png)
+
+[Palette editor](images/desktop-palette.png) · [Text entry](images/desktop-text-entry.png)
 
 | Category | Render |
 | --- | --- |
@@ -93,10 +132,13 @@ artwork. They are automated render checks, not records of manual desktop use.
 | Advanced hardware | [View](images/desktop-category-7.png) |
 
 The event tests cover keyboard navigation, category defaults and cancellation,
-scrolling, nested audio locks, settings-write rollback, storage selection, tape
+scrolling, mouse targets at three scales, palette changes, text replacement,
+window-close events during dialogs, uninterrupted audio-device state during
+snapshot locks, settings-write rollback, storage selection, tape
 transport, and barcode input. Render checks exercise [100%](images/desktop-settings.png),
 [150%](images/desktop-settings-150.png), and [200%](images/desktop-settings-2x.png) layout
-and game rectangles. The broader hardware suite covers regional and dual-system
+and game rectangles. Run just the desktop checks with
+`accuracy-tests --desktop`. The broader hardware suite covers regional and dual-system
 execution. Manual Windows/Linux checks with physical controllers, native file
 dialogs, display-DPI changes, and representative games remain separate acceptance
 work; automated rendering does not establish those results.
