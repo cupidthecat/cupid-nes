@@ -57,18 +57,22 @@ static void refresh_audio(FrontendExecutionRuntime *runtime) {
     if (!runtime || !runtime->audio_device || !*runtime->audio_device
         || runtime->audio_output_rate <= 0) return;
     SDL_AudioDeviceID device = *runtime->audio_device;
-    SDL_PauseAudioDevice(device, 1);
-    SDL_LockAudioDevice(device);
+    if (!runtime->machine_change_depth) {
+        SDL_PauseAudioDevice(device, 1);
+        SDL_LockAudioDevice(device);
+    }
     double speed = execution_control_effective_speed(&runtime->execution);
     int emulated_sample_rate = (int)lround((double)runtime->audio_output_rate / speed);
     if (emulated_sample_rate < 1000) emulated_sample_rate = 1000;
     vs_audio_init(emulated_sample_rate);
-    SDL_UnlockAudioDevice(device);
-    if (!runtime->execution.paused && !runtime->muted) SDL_PauseAudioDevice(device, 0);
+    if (!runtime->machine_change_depth) {
+        SDL_UnlockAudioDevice(device);
+        if (!runtime->execution.paused && !runtime->muted) SDL_PauseAudioDevice(device, 0);
+    }
 }
 
 static void update_audio_pause(FrontendExecutionRuntime *runtime) {
-    if (runtime && runtime->audio_device && *runtime->audio_device)
+    if (runtime && !runtime->machine_change_depth && runtime->audio_device && *runtime->audio_device)
         SDL_PauseAudioDevice(*runtime->audio_device,
                              runtime->execution.paused || runtime->muted ? 1 : 0);
 }
@@ -83,22 +87,27 @@ void frontend_execution_sync_debugger(FrontendExecutionRuntime *runtime) {
 }
 
 static void lock_audio_for_machine_change(FrontendExecutionRuntime *runtime) {
-    if (!runtime || !runtime->audio_device || !*runtime->audio_device) return;
-    SDL_PauseAudioDevice(*runtime->audio_device, 1);
-    SDL_LockAudioDevice(*runtime->audio_device);
+    if (!runtime || runtime->machine_change_depth++) return;
+    runtime->machine_audio_device=runtime->audio_device?*runtime->audio_device:0;
+    if(runtime->machine_audio_device){
+        SDL_PauseAudioDevice(runtime->machine_audio_device,1);
+        SDL_LockAudioDevice(runtime->machine_audio_device);
+    }
+}
+
+static bool release_machine_lock(FrontendExecutionRuntime *runtime) {
+    if(!runtime || !runtime->machine_change_depth || --runtime->machine_change_depth)return false;
+    if(runtime->machine_audio_device)SDL_UnlockAudioDevice(runtime->machine_audio_device);
+    runtime->machine_audio_device=0;
+    return true;
 }
 
 static void unlock_audio_after_machine_change(FrontendExecutionRuntime *runtime) {
-    if (!runtime || !runtime->audio_device || !*runtime->audio_device) return;
-    SDL_UnlockAudioDevice(*runtime->audio_device);
-    refresh_audio(runtime);
+    if(release_machine_lock(runtime))refresh_audio(runtime);
 }
 
 static void unlock_audio_without_refresh(FrontendExecutionRuntime *runtime) {
-    if (!runtime || !runtime->audio_device || !*runtime->audio_device) return;
-    SDL_UnlockAudioDevice(*runtime->audio_device);
-    if (!runtime->execution.paused && !runtime->muted)
-        SDL_PauseAudioDevice(*runtime->audio_device, 0);
+    if(release_machine_lock(runtime))update_audio_pause(runtime);
 }
 
 static bool command_pause(void *userdata, char *error, size_t error_size) {

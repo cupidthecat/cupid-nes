@@ -867,6 +867,10 @@ extern "C" bool nes_hd_runtime_switch(NesHdRuntime *handle, size_t candidate_ind
     return nes_hd_runtime_load(handle, handle->impl.candidates[candidate_index].path.c_str(), error, error_size);
 }
 
+extern "C" void nes_hd_runtime_reset_audio(NesHdRuntime *handle) {
+    if (handle) stop_audio(handle->impl);
+}
+
 extern "C" bool nes_hd_runtime_enable(NesHdRuntime *handle, bool enabled,
                                        char *error, size_t error_size) {
     clear_error(error, error_size);

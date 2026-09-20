@@ -90,6 +90,8 @@ typedef struct {
 NesHdRuntime *nes_hd_runtime_create(const char *pack_root,
                                     char *error, size_t error_size);
 void nes_hd_runtime_destroy(NesHdRuntime *runtime);
+/* Restoring machine state discards host audio voices from the old timeline. */
+void nes_hd_runtime_reset_audio(NesHdRuntime *runtime);
 
 bool nes_hd_runtime_set_game(NesHdRuntime *runtime, const NesHdGameInfo *game,
                              char *error, size_t error_size);

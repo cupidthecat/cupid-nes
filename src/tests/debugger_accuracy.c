@@ -16,6 +16,7 @@
 #include "../rom/mapper.h"
 #include "../rom/rom.h"
 #include "../system/hardware.h"
+#include "../system/execution_policy.h"
 #include "../system/timing.h"
 #include "../system/vs_system.h"
 #include "../ui/frontend_execution.h"
@@ -462,6 +463,25 @@ static int fds_peek_side_effects(void) {
     return 0;
 }
 
+static int replay_debugger_guards(void) {
+    CHECK(start_debug_machine() == 0);
+    CHECK(debugger_add_breakpoint(DEBUG_BREAK_EXECUTE, 0x8000, 0x8000));
+    CHECK(debugger_add_breakpoint(DEBUG_BREAK_WRITE, 0x10, 0x10));
+    CHECK(nes_execution_set_policy(NES_EXECUTION_NETPLAY));
+    debugger_pause();
+    CHECK(!debugger_is_paused());
+    CHECK(!debugger_step_into());
+    CHECK(!debugger_set_cpu_register("A", 42));
+    CHECK(!debugger_lua_load("blocked", "emu.setState({a=42})"));
+    CHECK(debugger_before_instruction(&cpu));
+    debugger_on_cpu_write(0x10, 42);
+    CHECK(!debugger_is_paused());
+    CHECK(nes_execution_set_policy(NES_EXECUTION_LIVE));
+    CHECK(!debugger_before_instruction(&cpu));
+    CHECK(debugger_is_paused());
+    return 0;
+}
+
 int test_debugger_accuracy(void) {
     debugger_checks = 0;
     int failures = 0;
@@ -473,6 +493,7 @@ int test_debugger_accuracy(void) {
     failures += dual_debugger_pause();
     failures += lua_callbacks_errors_and_overlay();
     failures += fds_peek_side_effects();
+    failures += replay_debugger_guards();
     debugger_shutdown();
     unload_rom();
     printf("Debugger/Lua: %u checks, %d failures\n", debugger_checks, failures);

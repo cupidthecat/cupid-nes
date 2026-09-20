@@ -29,6 +29,8 @@ typedef struct FrontendExecutionRuntime {
     ExecutionControl execution;
     const FrontendSettings *settings;
     SDL_AudioDeviceID *audio_device;
+    SDL_AudioDeviceID machine_audio_device;
+    unsigned machine_change_depth;
     int audio_output_rate;
     bool muted;
     const char *rom_path;

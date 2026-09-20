@@ -7,6 +7,8 @@
  * GNU General Public License, version 3 or any later version.
  */
 #include "desktop_ui.h"
+#include "host_input.h"
+#include "../rom/fds.h"
 #include "../system/execution_policy.h"
 #include "app_paths.h"
 #include "frontend_commands.h"
@@ -76,7 +78,7 @@ void frontend_desktop_set_fps(FrontendDesktopUi *ui, double fps) {
 
 static void ui_dimensions(const FrontendDesktopUi *ui, int *w, int *h) {
     SDL_GetWindowSize(ui->window, w, h);
-    int scale=ui->ui_scale>0?ui->ui_scale:1;
+    float scale=ui->ui_scale>0?ui->ui_scale:1;
     *w/=scale;*h/=scale;
 }
 
@@ -88,7 +90,8 @@ static void sync_scale(FrontendDesktopUi *ui) {
     float ddpi = 96.0f;
     int display = SDL_GetWindowDisplayIndex(ui->window);
     if (display >= 0) (void)SDL_GetDisplayDPI(display, &ddpi, NULL, NULL);
-    ui->ui_scale = ddpi >= 144.0f && w >= 1280 && h >= 960 ? 2 : 1;
+    ui->ui_scale = ddpi >= 180.0f && w >= 1280 && h >= 960 ? 2.0f
+        : ddpi >= 132.0f && w >= 960 && h >= 720 ? 1.5f : 1.0f;
     SDL_SetWindowMinimumSize(ui->window, 640, 480);
 }
 
@@ -115,7 +118,7 @@ void frontend_desktop_compute_game_rect(int ww, int wh, int vw, int vh,
 
 void frontend_desktop_game_rect(const FrontendDesktopUi *ui, int ww, int wh,
                                  int vw, int vh, bool integer_scaling, SDL_Rect *rect) {
-    int scale=ui && ui->ui_scale>0?ui->ui_scale:1;
+    float scale=ui && ui->ui_scale>0?ui->ui_scale:1;
     frontend_desktop_compute_game_rect(ww,wh-(scale-1)*(MENU_H+TOOLBAR_H+STATUS_H),vw,vh,integer_scaling,rect);
     rect->y+=(scale-1)*(MENU_H+TOOLBAR_H);
 }
@@ -132,6 +135,9 @@ static void set_settings_open(FrontendDesktopUi *ui, bool open) {
     if (open) {
         ui->open_menu=-1;
         ui->settings_focus=ui->settings_button=0;
+        if(ui->capture){ui->settings->capture=ui->capture->options;memcpy(ui->settings->capture_paths,ui->capture->paths,sizeof(ui->settings->capture_paths));}
+        if(ui->devices){snprintf(ui->settings->tape_play_path,sizeof(ui->settings->tape_play_path),"%s",ui->devices->tape_input);snprintf(ui->settings->tape_record_path,sizeof(ui->settings->tape_record_path),"%s",ui->devices->tape_output);}
+        if(ui->music)ui->settings->nsf_player=ui->music->options;
         ui->staged = *ui->settings;
         ui->settings_category = 0;
         ui->settings_row = 0;
@@ -160,6 +166,7 @@ static void restore_runtime_settings(FrontendDesktopUi *ui,
                                      const FrontendSettings *previous) {
     if (!ui || !previous) return;
     char ignored[160] = {0};
+    (void)frontend_desktop_apply_features(ui,previous,ignored,sizeof(ignored));
     (void)frontend_settings_apply_core(previous, ignored, sizeof(ignored));
     (void)nes_video_presentation_set(&previous->presentation, ignored, sizeof(ignored));
     (void)nes_audio_mix_set(&previous->audio_mix, ignored, sizeof(ignored));
@@ -236,6 +243,8 @@ static bool save_settings(FrontendDesktopUi *ui) {
         return false;
     }
 
+    frontend_execution_begin_machine_change(ui->execution);
+    if (!frontend_desktop_apply_features(ui,&ui->staged,error,sizeof(error)))goto rollback;
     if (!frontend_settings_apply_core(&ui->staged, error, sizeof(error))) goto rollback;
     if (ui->execution) {
         if (!frontend_execution_set_speeds(ui->execution, ui->staged.speed,
@@ -263,17 +272,23 @@ static bool save_settings(FrontendDesktopUi *ui) {
         }
     }
 
+    frontend_execution_end_machine_change_preserving_audio(ui->execution);
     frontend_audio_runtime_commit(ui->audio, &prepared_audio);
+    if (memcmp(previous.device_guid, ui->staged.device_guid, sizeof(previous.device_guid))) {
+        frontend_host_input_shutdown();
+        frontend_host_input_open_controllers(&ui->staged);
+    }
     *ui->settings = ui->staged;
     if (ui->video) ui->video->settings = ui->settings;
     (void)frontend_command_set_checked(FRONTEND_COMMAND_FULLSCREEN, ui->settings->fullscreen);
     (void)frontend_command_set_checked(FRONTEND_COMMAND_MUTE, ui->settings->muted);
-    copy_status(ui, "Settings applied. Timing/firmware: next load; startup: next power cycle.");
+    copy_status(ui, "Applied. Timing: reload. Startup: power cycle. Firmware: restart.");
     return true;
 
 rollback:
     frontend_audio_runtime_cancel(&prepared_audio);
     restore_runtime_settings(ui, &previous);
+    frontend_execution_end_machine_change_preserving_audio(ui->execution);
     if (trace_prepared && !previous_layers)
         (void)nes_video_trace_use(NES_VIDEO_TRACE_LAYERS, false);
     copy_status(ui, error[0] ? error : "Settings could not be applied");
@@ -343,7 +358,8 @@ static bool command_palette_load(void *context, char *error, size_t size) {
     (void)context;char path[4096]={0};
     if(!frontend_open_file_dialog(FRONTEND_OPEN_PALETTE,path,sizeof(path),error,size))return false;
     if(ppu_palette_load_pal_file(path)==0)return true;
-    if(error&&size)snprintf(error,size,"Palette must contain 64 or 512 RGB colors");return false;
+    if(error&&size)snprintf(error,size,"Palette must contain 64 or 512 RGB colors");
+    return false;
 }
 static bool command_palette_reset(void *context, char *error, size_t size) {
     (void)context;(void)error;(void)size;ppu_palette_reset_default();return true;
@@ -768,6 +784,7 @@ static void render_settings(FrontendDesktopUi *ui) {
         int row=start+visible, y=box.y+50+visible*24; SDL_Rect rr={box.x+174,y,430,22}; if(row==ui->settings_row) fill(ui->renderer,rr,55,60,72,255);
         char label[96], value[160]; setting_text(ui,row,label,sizeof(label),value,sizeof(value)); char short_label[35],short_value[30];visible_text(short_label,sizeof(short_label),label);visible_text(short_value,sizeof(short_value),value); frontend_draw_text(ui->renderer,rr.x+5,rr.y+7,1,short_label,220,220,225,255); int tw=frontend_text_width(short_value,1); frontend_draw_text(ui->renderer,rr.x+rr.w-tw-6,rr.y+7,1,short_value,170,205,255,255);
     }
+    if(ui->staged.cli_overrides)frontend_draw_text(ui->renderer,box.x+180,box.y+354,1,"Explicit launch overrides remain effective",255,210,120,255);
     const char *buttons[] = {"Apply", "OK", "Cancel", "Defaults", "Reset all"};
     for(int i=0;i<5;i++){ SDL_Rect b={box.x+175+i*84,box.y+390,78,26}; fill(ui->renderer,b,ui->settings_focus==1&&i==ui->settings_button?95:65,70,80,255); frontend_draw_text(ui->renderer,b.x+8,b.y+8,1,buttons[i],235,235,235,255); }
     if (!ui->capture_binding&&!ui->edit_text_active)frontend_draw_text(ui->renderer,box.x+180,box.y+370,1,"F4 browse paths | Ctrl+Tab categories",160,180,205,255);
@@ -912,7 +929,7 @@ void frontend_desktop_render(FrontendDesktopUi *ui, int video_width, int video_h
     (void)video_width; (void)video_height;
     if (!ui || !ui->renderer || !ui->window) return;
     float scale_x,scale_y;SDL_RenderGetScale(ui->renderer,&scale_x,&scale_y);
-    int scale=ui->ui_scale>0?ui->ui_scale:1;
+    float scale=ui->ui_scale>0?ui->ui_scale:1;
     SDL_RenderSetScale(ui->renderer,scale_x*scale,scale_y*scale);
     int ww=0,wh=0; ui_dimensions(ui, &ww, &wh);
     fill(ui->renderer,(SDL_Rect){0,0,ww,MENU_H},28,30,34,255);
@@ -920,7 +937,23 @@ void frontend_desktop_render(FrontendDesktopUi *ui, int video_width, int video_h
     fill(ui->renderer,(SDL_Rect){0,MENU_H,ww,TOOLBAR_H},42,45,52,255);
     const struct {const char *label; unsigned id;} tb[]={{"Open",FRONTEND_COMMAND_OPEN},{"Pause",FRONTEND_COMMAND_PAUSE},{"Reset",FRONTEND_COMMAND_SOFT_RESET},{"Settings",FRONTEND_COMMAND_SETTINGS}};
     x=10; for(size_t i=0;i<4;i++){ FrontendCommandInfo info={0}; bool ok=frontend_command_get(tb[i].id,&info)&&info.enabled; SDL_Rect b={x,MENU_H+5,82,26}; fill(ui->renderer,b,ok?65:48,ok?70:48,ok?82:48,255); frontend_draw_text(ui->renderer,b.x+8,b.y+8,1,(tb[i].id==FRONTEND_COMMAND_PAUSE&&info.checked)?"Resume":tb[i].label,ok?235:120,ok?235:120,ok?240:120,255); x+=88; }
-    fill(ui->renderer,(SDL_Rect){0,wh-STATUS_H,ww,STATUS_H},28,30,34,255); char status[320]; snprintf(status,sizeof(status),"%s | %s | %s%s%s",title&&*title?title:"No image",region?region:"-",run_state?run_state:"Idle",ui->settings&&ui->settings->show_fps?" | ":"",ui->settings&&ui->settings->show_fps?"FPS":""); frontend_draw_text(ui->renderer,8,wh-STATUS_H+8,1,status,205,205,210,255); if(ui->settings&&ui->settings->show_fps){char f[24];snprintf(f,sizeof(f),"%.1f",ui->fps);frontend_draw_text(ui->renderer,ww-frontend_text_width(f,1)-10,wh-STATUS_H+8,1,f,170,205,255,255);} if(ui->status[0] && SDL_GetTicks()<ui->status_until) frontend_draw_text(ui->renderer,ww/2-frontend_text_width(ui->status,1)/2,wh-STATUS_H+8,1,ui->status,255,210,120,255);
+    fill(ui->renderer,(SDL_Rect){0,wh-STATUS_H,ww,STATUS_H},28,30,34,255);
+    char status[320], activity[96] = {0};
+    const char *movie = ui->execution && nes_movie_mode(ui->execution->movie) != NES_MOVIE_IDLE
+        ? nes_movie_mode(ui->execution->movie) == NES_MOVIE_RECORDING ? " | Movie REC" : " | Movie PLAY" : "";
+    snprintf(activity,sizeof(activity),"%s%s%s",ui->capture && ui->capture->session.info.recording ? " | REC" : "",
+        movie,fds_active() ? fds_loading_fast_forward() ? " | Disk loading" : fds_disk_dirty() ? " | Disk modified" : " | Disk" : "");
+    snprintf(status,sizeof(status),"%.28s | %s | %.45s%s",title&&*title?title:"No image",region?region:"-",run_state?run_state:"Idle",activity);
+    bool message = ui->status[0] && SDL_GetTicks()<ui->status_until;
+    if(message)snprintf(status,sizeof(status),"%s",ui->status);
+    size_t columns=(size_t)(ww>16?(ww-16)/6:0);
+    if(columns<sizeof(status))status[columns]='\0';
+    frontend_draw_text(ui->renderer,8,wh-STATUS_H+8,1,status,message?255:205,message?210:205,message?120:210,255);
+    if(ui->settings&&ui->settings->show_fps&&!message){
+        char f[24];snprintf(f,sizeof(f),"%.1f FPS",ui->fps);int fw=frontend_text_width(f,1);
+        fill(ui->renderer,(SDL_Rect){ww-fw-16,wh-STATUS_H,fw+16,STATUS_H},28,30,34,255);
+        frontend_draw_text(ui->renderer,ww-fw-8,wh-STATUS_H+8,1,f,170,205,255,255);
+    }
     render_menu(ui); if(ui->settings_open)render_settings(ui); if(ui->panel_open)render_panel(ui); if(ui->info_open)render_info(ui);
     SDL_RenderSetScale(ui->renderer,scale_x,scale_y);
 }
@@ -1187,4 +1220,3 @@ bool frontend_desktop_input_captured(const FrontendDesktopUi *ui){return ui&&(ui
 bool frontend_desktop_quit_requested(const FrontendDesktopUi *ui){return ui&&ui->quit_requested;}
 void frontend_desktop_update_window_settings(FrontendDesktopUi *ui){if(!ui||!ui->window||!ui->settings||!ui->settings->remember_window_size)return;int w,h;SDL_GetWindowSize(ui->window,&w,&h);if(w>0&&h>0){ui->settings->window_width=(unsigned)w;ui->settings->window_height=(unsigned)h;}}
 void frontend_desktop_shutdown(FrontendDesktopUi *ui){if(!ui)return;set_settings_open(ui,false);SDL_StopTextInput();}
-

@@ -34,7 +34,7 @@ static void sync_pause(FrontendNetplay *ui) {
     execution_control_set_paused(&execution->execution, paused);
     execution->execution.frame_advance_pending = false;
     frontend_command_set_checked(FRONTEND_COMMAND_PAUSE, paused);
-    if (execution->audio_device && *execution->audio_device)
+    if (!execution->machine_change_depth && execution->audio_device && *execution->audio_device)
         SDL_PauseAudioDevice(*execution->audio_device, paused || execution->muted);
 }
 

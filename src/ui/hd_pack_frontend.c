@@ -43,17 +43,21 @@ static void format_path(char *output, size_t output_size,
     size_t prefix_size = strlen(prefix);
     size_t path_size = strlen(path);
     if (prefix_size + path_size < output_size) {
-        snprintf(output, output_size, "%s%s", prefix, path);
+        memcpy(output,prefix,prefix_size);
+        memcpy(output+prefix_size,path,path_size+1);
         return;
     }
     if (prefix_size + 4 >= output_size) {
-        snprintf(output, output_size, "%s", prefix);
+        size_t n=prefix_size<output_size-1?prefix_size:output_size-1;
+        memcpy(output,prefix,n);output[n]='\0';
         return;
     }
     size_t tail_size = output_size - prefix_size - 4;
     const char *tail = path + path_size - tail_size;
     while (*tail && (((unsigned char)*tail & 0xC0u) == 0x80u)) ++tail;
-    snprintf(output, output_size, "%s...%s", prefix, tail);
+    memcpy(output,prefix,prefix_size);
+    memcpy(output+prefix_size,"...",3);
+    memcpy(output+prefix_size+3,tail,strlen(tail)+1);
 }
 
 static bool complete_capture_source(const NesHdFrameSource *source) {

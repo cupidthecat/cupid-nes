@@ -62,10 +62,10 @@ $coreSources = @('src/system/timing.c', 'src/system/hardware.c', 'src/system/vs_
                  'src/apu/apu.c', 'src/third_party/blip_buf.c', 'src/video/ntsc_composite.c', 'src/video/video_trace.c', 'src/ui/palette_tool.c',
                  'src/ui/nsf_frontend.c', 'src/ui/frontend_commands.c', 'src/ui/execution_control.c',
                  'src/ui/machine_actions.c', 'src/ui/app_paths.c', 'src/ui/frontend_execution.c', 'src/ui/replay_frontend.c', 'src/ui/netplay_frontend.c',
-                 'src/ui/frontend_panels.c', 'src/ui/frontend_session.c', 'src/ui/platform_frontend.c', 'src/ui/platform_paths.c', 'src/ui/device_frontend.c', 'src/ui/device_panels.c',
+                 'src/ui/frontend_panels.c', 'src/ui/frontend_session.c', 'src/ui/platform_frontend.c', 'src/ui/platform_paths.c', 'src/ui/device_frontend.c', 'src/ui/storage_frontend.c', 'src/ui/device_panels.c',
                  'src/ui/settings.c', 'src/ui/settings_runtime.c', 'src/ui/game_database.c', 'src/ui/hd_pack_frontend.c', 'src/ui/idle_frontend.c',
                  'src/ui/image_open.c', 'src/ui/session_actions.c', 'src/ui/ui_font.c',
-                 'src/ui/desktop_ui.c', 'src/ui/desktop_idle.c', 'src/ui/state_frontend.c', 'src/ui/state_runtime.c',
+                 'src/ui/desktop_ui.c', 'src/ui/desktop_idle.c', 'src/ui/desktop_features.c', 'src/ui/state_frontend.c', 'src/ui/state_runtime.c',
                  'src/ui/debug_frontend.c', 'src/ui/output_guard.c', 'src/ui/host_input.c', 'src/ui/peripheral_input.c', 'src/ui/cheat_frontend.c',
                  'src/ui/video_runtime.c', 'src/ui/audio_runtime.c')
 $coreSources += @('src/system/execution_policy.c', 'src/replay/rewind.c', 'src/video/frame_snapshot.c',

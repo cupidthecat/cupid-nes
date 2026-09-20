@@ -1,6 +1,9 @@
 /* Desktop event, layout and device regression checks. SPDX-License-Identifier: GPL-3.0-or-later */
 #include "../ui/desktop_ui.h"
 #include "../ui/device_frontend.h"
+#include "../ui/storage_frontend.h"
+#include "../ui/app_paths.h"
+#include "../apu/apu.h"
 #include "../ui/frontend_commands.h"
 #include "../ui/frontend_panels.h"
 #include "../capture/capture_writer.h"
@@ -36,8 +39,55 @@ static void screenshot(FrontendDesktopUi *ui,const char *path) {
     NesCaptureFrame frame={pixels,(unsigned)width,(unsigned)height,(size_t)width};
     CHECK(nes_capture_png(path,&frame)==NES_FILE_OK);free(pixels);
 }
+static void silence(void *context,Uint8 *stream,int length){(void)context;memset(stream,0,(size_t)length);}
+static void audio_settings(void){
+    SDL_setenv("SDL_AUDIODRIVER","dummy",1);CHECK(SDL_InitSubSystem(SDL_INIT_AUDIO)==0);
+    SDL_AudioSpec want={0},have;want.freq=44100;want.format=AUDIO_F32SYS;want.channels=2;want.samples=512;want.callback=silence;
+    SDL_AudioDeviceID device=SDL_OpenAudioDevice(NULL,0,&want,&have,0);CHECK(device);if(!device)return;
+    FrontendExecutionRuntime execution;frontend_execution_init(&execution,&device,have.freq,NULL,NULL,NULL,NULL);
+    frontend_execution_begin_machine_change(&execution);frontend_execution_begin_machine_change(&execution);
+    CHECK(execution.machine_change_depth==2);
+    CHECK(frontend_execution_set_speeds(&execution,2,4));frontend_execution_set_muted(&execution,true);
+    frontend_execution_end_machine_change_preserving_audio(&execution);CHECK(execution.machine_change_depth==1);
+    frontend_execution_end_machine_change_preserving_audio(&execution);CHECK(execution.machine_change_depth==0);
+    FrontendSettings settings;frontend_settings_defaults(&settings);settings.speed=2;settings.muted=true;
+    FrontendDesktopUi ui;frontend_desktop_init(&ui,NULL,NULL,&settings,&execution,NULL,NULL);
+    frontend_commands_reset();frontend_panels_reset();CHECK(frontend_execution_register_commands(&execution));
+    CHECK(frontend_desktop_register_commands(&ui));CHECK(frontend_command_invoke(FRONTEND_COMMAND_SETTINGS,NULL,0));
+    ui.staged.speed=1;key(&ui,SDL_SCANCODE_TAB,KMOD_NONE);key(&ui,SDL_SCANCODE_RETURN,KMOD_NONE);
+    CHECK(settings.speed==1 && execution.machine_change_depth==0 && execution.execution.speed==1);
+    ui.settings_path="build/missing-settings-directory/settings.ini";ui.staged.speed=3;
+    key(&ui,SDL_SCANCODE_RETURN,KMOD_NONE);
+    CHECK(settings.speed==1 && execution.machine_change_depth==0 && execution.execution.speed==1);
+    frontend_desktop_shutdown(&ui);frontend_execution_shutdown(&execution);
+    SDL_CloseAudioDevice(device);apu_audio_shutdown_state(&apu);SDL_QuitSubSystem(SDL_INIT_AUDIO);
+    frontend_commands_reset();frontend_panels_reset();
+}
+static void storage_settings(void){
+    FrontendSettings settings;frontend_settings_defaults(&settings);
+    strcpy(settings.game_database_path,"build/custom-database.txt");strcpy(settings.movie_file_path,"build/movie.cpm");
+    settings.disable_database_corrections=true;
+    FrontendSettingsReport report;CHECK(frontend_settings_save("build/storage-settings.ini",&settings,&report));
+    FrontendSettings restored;CHECK(frontend_settings_load("build/storage-settings.ini",&restored,&report));
+    CHECK(!strcmp(restored.game_database_path,settings.game_database_path));
+    CHECK(!strcmp(restored.movie_file_path,settings.movie_file_path)&&restored.disable_database_corrections);
+    (void)nes_file_remove("build/storage-settings.ini");
+    FrontendExecutionRuntime execution;frontend_execution_init(&execution,NULL,44100,NULL,NULL,NULL,NULL);
+    FrontendSession session;frontend_session_init(&session,NULL,NULL);
+    FrontendSessionActions actions;frontend_session_actions_init(&actions,&session,&settings,NULL);
+    FrontendStorage storage;frontend_panels_reset();frontend_panel_set_session_active(true);
+    CHECK(frontend_storage_register(&storage,&actions,&execution,NULL));
+    char error[256];CHECK(frontend_panel_action(0x1C00,0x1C01,NULL,4,error,sizeof(error)));
+    CHECK(frontend_panel_action(0x1C00,0x1C02,"build/selected.cst",0,error,sizeof(error)));
+    CHECK(!strcmp(settings.state_file_path,"build/selected.cst"));
+    CHECK(frontend_panel_action(0x1C00,0x1C01,NULL,11,error,sizeof(error)));
+    CHECK(!frontend_panel_action(0x1C00,0x1C02,"build/no-such-database.txt",0,error,sizeof(error)));
+    CHECK(!strcmp(settings.game_database_path,"build/custom-database.txt"));
+    frontend_storage_unregister();frontend_execution_shutdown(&execution);frontend_panels_reset();
+}
 int test_desktop_accuracy(void) {
     failures=0;
+    audio_settings();storage_settings();
     SDL_setenv("SDL_VIDEODRIVER","dummy",1);
     CHECK(SDL_InitSubSystem(SDL_INIT_VIDEO)==0);
     SDL_Window *window=SDL_CreateWindow("Desktop checks",0,0,768,720,SDL_WINDOW_HIDDEN|SDL_WINDOW_RESIZABLE);
@@ -78,6 +128,21 @@ int test_desktop_accuracy(void) {
     CHECK(frontend_command_invoke(FRONTEND_COMMAND_SETTINGS,NULL,0));
     SDL_RenderClear(renderer);frontend_desktop_render(&ui,256,240,"Synthetic cartridge","NTSC","Paused");
     screenshot(&ui,"build/desktop-settings-2x.png");
+    for(int category=0;category<8;++category){
+        ui.settings_category=category;ui.settings_row=ui.settings_scroll=0;
+        SDL_RenderClear(renderer);frontend_desktop_render(&ui,256,240,"Synthetic cartridge","NTSC","Paused");
+        char path[80];snprintf(path,sizeof(path),"build/desktop-category-%d.png",category);screenshot(&ui,path);
+    }
+    ui.ui_scale=1.5f;SDL_SetWindowSize(window,960,720);SDL_RenderSetLogicalSize(renderer,960,720);
+    SDL_RenderClear(renderer);frontend_desktop_render(&ui,256,240,"Synthetic cartridge","PAL","Paused");
+    screenshot(&ui,"build/desktop-settings-150.png");
+    key(&ui,SDL_SCANCODE_ESCAPE,KMOD_NONE);
+    SDL_RenderClear(renderer);frontend_desktop_render(&ui,512,240,"Synthetic dual display","NTSC","Running");
+    screenshot(&ui,"build/desktop-main.png");
+    SDL_Rect scaled_game;frontend_desktop_game_rect(&ui,960,720,512,240,false,&scaled_game);
+    CHECK(scaled_game.y>=96&&scaled_game.y+scaled_game.h<=684);
+    ui.ui_scale=2;
+
     SDL_Rect game;frontend_desktop_game_rect(&ui,1280,960,256,240,true,&game);
     CHECK(game.y>=128 && game.y+game.h<=912);
     settings.remember_window_size=false;unsigned width=settings.window_width;

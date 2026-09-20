@@ -18,6 +18,8 @@
 #include "session_actions.h"
 #include "settings.h"
 #include "video_runtime.h"
+#include "capture_frontend.h"
+#include "device_frontend.h"
 
 typedef enum {
     FRONTEND_IDLE_ERROR = -1,
@@ -33,6 +35,9 @@ typedef struct {
     FrontendSessionActions *sessions;
     FrontendAudioRuntime *audio;
     FrontendVideoRuntime *video;
+    NesCaptureFrontend *capture;
+    FrontendDeviceRuntime *devices;
+    NsfPlayer *music;
     const char *settings_path;
     FrontendSettings staged;
     bool settings_open;
@@ -62,7 +67,7 @@ typedef struct {
     unsigned capture_index;
     unsigned panel_id;
     unsigned edit_control;
-    int ui_scale;
+    float ui_scale;
     bool edit_text_active;
     char edit_text[FRONTEND_SETTINGS_PATH_TEXT];
     char status[256];
@@ -94,6 +99,7 @@ void frontend_desktop_compute_game_rect(int window_width, int window_height,
                                         bool integer_scaling, SDL_Rect *rect);
 void frontend_desktop_game_rect(const FrontendDesktopUi *ui, int ww, int wh,
                                  int vw, int vh, bool integer_scaling, SDL_Rect *rect);
+bool frontend_desktop_apply_features(FrontendDesktopUi *ui, const FrontendSettings *settings, char *error, size_t size);
 bool frontend_desktop_input_captured(const FrontendDesktopUi *ui);
 bool frontend_desktop_quit_requested(const FrontendDesktopUi *ui);
 void frontend_desktop_set_status(FrontendDesktopUi *ui, const char *message);

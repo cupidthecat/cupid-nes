@@ -6,6 +6,7 @@
  * This file is part of Cupid NES Emulator and is distributed under the
  * GNU General Public License, version 3 or any later version.
  */
+#include "../system/execution_policy.h"
 #include "debugger.h"
 #include "lua_runtime.h"
 
@@ -101,6 +102,7 @@ void debugger_set_pause_callback(DebugPauseCallback callback, void *userdata) {
 }
 
 void debugger_pause(void) {
+    if (nes_execution_policy() != NES_EXECUTION_LIVE) return;
     debug_state.step = STEP_NONE;
     stop_at(DEBUG_STOP_PAUSE, cpu.pc, debugger_peek_cpu(cpu.pc), 0);
 }
@@ -122,7 +124,7 @@ uint64_t debugger_pause_revision(void) { return pause_revision; }
 DebugStopInfo debugger_last_stop(void) { return debug_state.stop; }
 
 static bool begin_step(StepMode mode) {
-    if (!debug_state.paused) return false;
+    if (!debug_state.paused || nes_execution_policy() != NES_EXECUTION_LIVE) return false;
     debug_state.stop = (DebugStopInfo){0};
     debug_state.step = mode;
     debug_state.step_started = false;
@@ -135,7 +137,7 @@ static bool begin_step(StepMode mode) {
 bool debugger_step_into(void) { return begin_step(STEP_INTO); }
 
 bool debugger_step_over(void) {
-    if (!debug_state.paused) return false;
+    if (!debug_state.paused || nes_execution_policy() != NES_EXECUTION_LIVE) return false;
     if (debugger_peek_cpu(cpu.pc) != JSR_OPCODE) return begin_step(STEP_INTO);
     debug_state.step_target_pc = (uint16_t)(cpu.pc + 3u);
     debug_state.step_target_sp = cpu.sp;
@@ -143,13 +145,13 @@ bool debugger_step_over(void) {
 }
 
 bool debugger_step_out(void) {
-    if (!debug_state.paused) return false;
+    if (!debug_state.paused || nes_execution_policy() != NES_EXECUTION_LIVE) return false;
     debug_state.step_target_sp = (uint8_t)(cpu.sp + 2u);
     return begin_step(STEP_OUT);
 }
 
 bool debugger_run_until_break(CPU *target, uint64_t instruction_limit) {
-    if (!target || !instruction_limit) return false;
+    if (!target || !instruction_limit || nes_execution_policy() != NES_EXECUTION_LIVE) return false;
     if (debug_state.paused) debugger_resume();
     for (uint64_t i = 0; i < instruction_limit; ++i) {
         (void)cpu_step(target);
@@ -202,7 +204,7 @@ void debugger_get_cpu(DebugCpuSnapshot *out) {
 }
 
 bool debugger_set_cpu_register(const char *name, uint32_t value) {
-    if (!name) return false;
+    if (!name || !nes_execution_allows_host_configuration()) return false;
     if (!strcmp(name, "A") || !strcmp(name, "a")) cpu.a = (uint8_t)value;
     else if (!strcmp(name, "X") || !strcmp(name, "x")) cpu.x = (uint8_t)value;
     else if (!strcmp(name, "Y") || !strcmp(name, "y")) cpu.y = (uint8_t)value;
@@ -311,6 +313,7 @@ static void trace_instruction(const CPU *state) {
 
 bool debugger_before_instruction(CPU *state) {
     if (!state) return false;
+    if (nes_execution_policy() != NES_EXECUTION_LIVE) { trace_instruction(state); return true; }
     if (debug_state.paused) return false;
 
     if (debug_state.step != STEP_NONE) {
@@ -336,13 +339,14 @@ bool debugger_before_instruction(CPU *state) {
 }
 
 void debugger_on_cpu_read(uint16_t address, uint8_t *value) {
-    if (!value) return;
+    if (!value || nes_execution_policy() != NES_EXECUTION_LIVE) return;
     debugger_lua_on_read(address, value);
     if (breakpoint_match(DEBUG_BREAK_READ, address))
         stop_at(DEBUG_STOP_BREAKPOINT, address, *value, DEBUG_BREAK_READ);
 }
 
 void debugger_on_cpu_write(uint16_t address, uint8_t value) {
+    if (nes_execution_policy() != NES_EXECUTION_LIVE) return;
     debugger_lua_on_write(address, value);
     if (breakpoint_match(DEBUG_BREAK_WRITE, address))
         stop_at(DEBUG_STOP_BREAKPOINT, address, value, DEBUG_BREAK_WRITE);

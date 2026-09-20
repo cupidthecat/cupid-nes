@@ -61,6 +61,7 @@
 #include "ui/peripheral_input.h"
 #include "ui/desktop_ui.h"
 #include "ui/device_frontend.h"
+#include "ui/storage_frontend.h"
 #include "ui/state_runtime.h"
 #include "ui/debug_frontend.h"
 #include "ui/cheat_frontend.h"
@@ -86,6 +87,7 @@ typedef struct {
     CheatFrontend *cheats;
     NesCaptureRuntime *capture;
     FrontendDeviceRuntime *devices;
+    FrontendVideoRuntime *video;
     bool image_changed;
 } LiveFrontend;
 
@@ -103,6 +105,7 @@ static void live_image_changed(void *context) {
 static void live_state_restored(void *context) {
     LiveFrontend *live = context;
     if (!live) return;
+    if (live->video) nes_hd_runtime_reset_audio(live->video->hd);
     if (live->devices) frontend_devices_session_changed(live->devices);
     if (live->music) nsf_player_image_changed(live->music);
     if (live->capture) nes_capture_frontend_refresh(&live->capture->frontend);
@@ -193,6 +196,7 @@ static int application_main(int argc, char *argv[]) {
                 return 1;
             }
             game_db_path = argv[i];
+            frontend_cli_overrides |= FRONTEND_OVERRIDE_DATABASE;
         } else if (strcmp(argv[i], "--data-dir") == 0) {
             if (++i == argc || !argv[i][0]) {
                 fprintf(stderr, "--data-dir requires a directory\n");
@@ -201,6 +205,7 @@ static int application_main(int argc, char *argv[]) {
             data_dir_override = argv[i];
         } else if (strcmp(argv[i], "--no-game-db-overrides") == 0) {
             disable_game_db_overrides = true;
+            frontend_cli_overrides |= FRONTEND_OVERRIDE_DATABASE_CORRECTIONS;
         } else if (strcmp(argv[i], "--startup-phase") == 0) {
             if (++i == argc || startup_phase_set || startup_seed_set) {
                 fprintf(stderr, "Choose one startup phase CPU:PPU or startup seed\n");
@@ -594,6 +599,8 @@ static int application_main(int argc, char *argv[]) {
         fprintf(stderr, "Could not load the 256 KiB FCNS Kanji ROM: %s\n", fcns_kanji_path);
         return 1;
     }
+    if (!game_db_path && frontend_settings.game_database_path[0])game_db_path=frontend_settings.game_database_path;
+    if (!(frontend_cli_overrides&FRONTEND_OVERRIDE_DATABASE_CORRECTIONS))disable_game_db_overrides=frontend_settings.disable_database_corrections;
     rom_database_set_overrides(!disable_game_db_overrides);
     FrontendDatabaseStatus database_status;
     if (!frontend_database_load(game_db_path, frontend_paths_data_dir(), &database_status)) {
@@ -807,6 +814,8 @@ static int application_main(int argc, char *argv[]) {
                             rom_path, fds_bios_path, studybox_bios_path,
                             &fds_frontend_side);
     execution_runtime.settings = &frontend_settings;
+    if(frontend_settings.movie_file_path[0])
+        (void)frontend_execution_movie_set_path(&execution_runtime,frontend_settings.movie_file_path,path_error,sizeof(path_error));
     frontend_audio_runtime_set_execution(&audio_runtime, &execution_runtime);
     if (!frontend_execution_set_speeds(&execution_runtime, frontend_settings.speed,
                                        frontend_settings.fast_forward_speed)) {
@@ -837,12 +846,16 @@ static int application_main(int argc, char *argv[]) {
     }
     FrontendDeviceRuntime device_runtime;
     frontend_devices_init(&device_runtime, &execution_runtime, &frontend_settings, &fds_frontend_side);
-    if (!frontend_devices_set_tape_paths(&device_runtime, tape_play_path, tape_record_path,
+    if (!frontend_devices_set_tape_paths(&device_runtime,
+        tape_play_path ? tape_play_path : frontend_settings.tape_play_path,
+        tape_record_path ? tape_record_path : frontend_settings.tape_record_path,
                                           path_error, sizeof(path_error))
         || !frontend_devices_register(&device_runtime)) {
         frontend_desktop_set_status(&desktop_ui, path_error);
         running = false;
     }
+    FrontendStorage storage_runtime;
+    if(!frontend_storage_register(&storage_runtime,&session_actions,&execution_runtime,game_db_path))running=false;
     StateRuntime state_runtime;
     state_runtime_init(&state_runtime, &frontend_settings, frontend_paths_data_dir(),
                        &execution_runtime);
@@ -884,6 +897,10 @@ static int application_main(int argc, char *argv[]) {
         running = false;
     }
     capture_runtime.devices = &device_runtime;
+    storage_runtime.capture = &capture_runtime.frontend;
+    desktop_ui.capture = &capture_runtime.frontend;
+    desktop_ui.devices = &device_runtime;
+    desktop_ui.music = &music_player;
     const char *device_protected_paths[] = {epsm_adpcm_path, fcns_kanji_path, game_db_path,
         frontend_settings.state_file_path, frontend_settings.capture_paths[0],
         frontend_settings.capture_paths[1], frontend_settings.capture_paths[2]};
@@ -909,10 +926,11 @@ static int application_main(int argc, char *argv[]) {
     nes_hd_frontend_bind_execution(video_runtime.hd_frontend, &execution_runtime);
     LiveFrontend live = {
         .music = &music_player, .debug = debug_frontend, .cheats = cheat_frontend,
-        .capture = &capture_runtime, .devices = &device_runtime
+        .capture = &capture_runtime, .devices = &device_runtime, .video = &video_runtime
     };
     frontend_session_actions_set_image_changed(&session_actions, live_image_changed, &live);
     state_runtime_set_restored(&state_runtime, live_state_restored, &live);
+    frontend_execution_set_restore_handler(&execution_runtime, live_state_restored, &live);
     frontend_command_set_session_active(frontend_session.active);
     frontend_panel_set_session_active(frontend_session.active);
     char last_capture_error[256] = {0};
@@ -1275,8 +1293,15 @@ static int application_main(int argc, char *argv[]) {
     frontend_desktop_update_window_settings(&desktop_ui);
     bool capture_saved = nes_capture_runtime_shutdown(&capture_runtime) == NES_FILE_OK;
     if (!capture_saved) fprintf(stderr, "%s\n", capture_runtime.frontend.session.error);
+    frontend_settings.nsf_player = music_player.options;
+    frontend_settings.capture = capture_runtime.frontend.options;
+    memcpy(frontend_settings.capture_paths,capture_runtime.frontend.paths,sizeof(frontend_settings.capture_paths));
+    snprintf(frontend_settings.tape_play_path,sizeof(frontend_settings.tape_play_path),"%s",device_runtime.tape_input);
+    snprintf(frontend_settings.tape_record_path,sizeof(frontend_settings.tape_record_path),"%s",device_runtime.tape_output);
+    snprintf(frontend_settings.movie_file_path,sizeof(frontend_settings.movie_file_path),"%s",execution_runtime.movie_path);
     bool tape_saved = frontend_devices_finish(&device_runtime, path_error, sizeof(path_error));
     frontend_devices_unregister();
+    frontend_storage_unregister();
     state_runtime_shutdown(&state_runtime);
     frontend_execution_shutdown(&execution_runtime);
     cheat_frontend_destroy(cheat_frontend);

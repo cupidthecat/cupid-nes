@@ -368,6 +368,8 @@ int lifecycle_render_audio_and_transaction() {
     CHECK(nes_hd_runtime_export(runtime, exported_text.c_str(), error, sizeof(error)));
     auto exported_pack = cupid::hd::load_pack_zip(exported_text);
     CHECK(exported_pack && exported_pack.candidate->audio_tracks.size() == 2);
+    nes_hd_runtime_reset_audio(runtime);
+    CHECK(nes_hd_runtime_info(runtime, &audio_info) && !audio_info.audio_active && audio_info.enabled);
 
     CHECK(nes_hd_runtime_enable(runtime, false, error, sizeof(error)));
     CHECK(nes_hd_runtime_info(runtime, &enabled) && !enabled.enabled && !enabled.audio_active);

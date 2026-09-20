@@ -97,7 +97,9 @@ typedef enum {
     FRONTEND_OVERRIDE_CART_DIPS = 1u << 24,
     FRONTEND_OVERRIDE_STARTUP = 1u << 25,
     FRONTEND_OVERRIDE_POWER_SEED = 1u << 26,
-    FRONTEND_OVERRIDE_VS_DIPS = 1u << 27
+    FRONTEND_OVERRIDE_VS_DIPS = 1u << 27,
+    FRONTEND_OVERRIDE_DATABASE = 1u << 28,
+    FRONTEND_OVERRIDE_DATABASE_CORRECTIONS = 1u << 29
 } FrontendSettingOverride;
 
 typedef enum {
@@ -148,6 +150,9 @@ typedef struct {
     char capture_paths[3][FRONTEND_SETTINGS_PATH_TEXT];
     unsigned state_slot;
     char state_file_path[FRONTEND_SETTINGS_PATH_TEXT];
+    char game_database_path[FRONTEND_SETTINGS_PATH_TEXT];
+    bool disable_database_corrections;
+    char movie_file_path[FRONTEND_SETTINGS_PATH_TEXT];
     NesInputConfiguration input;
     unsigned zapper_radius;
     uint8_t saved_input_overrides;

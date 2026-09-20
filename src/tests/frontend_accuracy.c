@@ -640,7 +640,7 @@ static bool transactional_open_probe(void *userdata, const FrontendImageRequest 
         return false;
     }
     memset(result, 0, sizeof(*result));
-    snprintf(result->title, sizeof(result->title), "%s", request->path);
+    snprintf(result->title, sizeof(result->title), "%.159s", request->path);
     snprintf(result->save_identity, sizeof(result->save_identity), "%s", request->path);
     return true;
 }

@@ -690,6 +690,14 @@ static bool set_known_setting(FrontendSettings *settings, const char *key,
     } else if (strcmp(key, "tape_record_path") == 0) {
         if (strlen(value) >= sizeof(settings->tape_record_path)) return false;
         strcpy(settings->tape_record_path, value);
+    } else if (strcmp(key, "game_database_path") == 0) {
+        if (strlen(value) >= sizeof(settings->game_database_path)) return false;
+        strcpy(settings->game_database_path,value);
+    } else if (strcmp(key, "movie_file_path") == 0) {
+        if (strlen(value) >= sizeof(settings->movie_file_path)) return false;
+        strcpy(settings->movie_file_path,value);
+    } else if (strcmp(key, "disable_database_corrections") == 0) {
+        if (!parse_boolean(value,&settings->disable_database_corrections))return false;
     } else if (strcmp(key, "fds_write_protected") == 0) {
         if (!parse_boolean(value, &settings->fds_write_protected)) return false;
     } else if (strcmp(key, "fds_auto_insert") == 0) {
@@ -974,10 +982,9 @@ bool frontend_settings_load(const char *path, FrontendSettings *settings,
         report_error(report, line_number, NES_FILE_OK, "Active input profile does not exist", NULL);
         return false;
     }
-    if ((loaded.startup_phase_set && loaded.startup_seed_set)
-        || (loaded.tape_play_path[0] && loaded.tape_record_path[0])) {
+    if (loaded.startup_phase_set && loaded.startup_seed_set) {
         report_error(report, line_number, NES_FILE_OK,
-                     "Settings select mutually exclusive startup or tape modes", NULL);
+                     "Settings select mutually exclusive startup modes", NULL);
         return false;
     }
     for (unsigned i = 0; i < 3; ++i) {
@@ -1189,6 +1196,9 @@ bool frontend_settings_save(const char *path, const FrontendSettings *settings,
                                frontend_gamepad_button_name(binding->gamepad_button));
         }
     }
+    ok = ok && append_text(buffer,SETTINGS_SAVE_CAPACITY,&used,
+        "game_database_path=%s\ndisable_database_corrections=%s\nmovie_file_path=%s\n",
+        settings->game_database_path,settings->disable_database_corrections?"true":"false",settings->movie_file_path);
     if (!ok) {
         free(buffer);
         report_error(report, 0, NES_FILE_TOO_LARGE, "Settings serialization is too large", NULL);
@@ -1254,9 +1264,8 @@ bool frontend_settings_validate(const FrontendSettings *settings,
     if (!settings->profile_count || settings->profile_count > FRONTEND_SETTINGS_MAX_PROFILES
         || !find_profile_const(settings, settings->active_profile))
         SETTINGS_FAIL("The active controller binding profile does not exist");
-    if ((settings->startup_phase_set && settings->startup_seed_set)
-        || (settings->tape_play_path[0] && settings->tape_record_path[0]))
-        SETTINGS_FAIL("Startup phase/seed and tape play/record modes are mutually exclusive");
+    if (settings->startup_phase_set && settings->startup_seed_set)
+        SETTINGS_FAIL("Startup phase and seed are mutually exclusive");
     if (settings->startup_cpu_offset > 15 || settings->startup_ppu_phase > 4
         || settings->cart_dips > 255)
         SETTINGS_FAIL("Advanced hardware value is outside the supported range");
@@ -1267,7 +1276,7 @@ bool frontend_settings_validate(const FrontendSettings *settings,
     if (settings->nsf_player.silence_ms < 10 || settings->nsf_player.silence_ms > 600000
         || !isfinite(settings->nsf_player.silence_threshold)
         || settings->nsf_player.silence_threshold < 0.0f
-        || settings->nsf_player.silence_threshold > 1.0f)
+        || settings->nsf_player.silence_threshold > 0.1f)
         SETTINGS_FAIL("Music silence detection settings are invalid");
     if (settings->capture.sample_rate < 8000 || settings->capture.sample_rate > 192000
         || settings->capture.byte_limit < 1024 || settings->capture.byte_limit > UINT32_MAX)

@@ -76,7 +76,8 @@ FrontendIdleResult frontend_desktop_idle_open(FrontendSettings *settings,const F
     frontend_commands_reset();frontend_panels_reset();
     if(selection.selected){if(error&&error_size)error[0]='\0';return FRONTEND_IDLE_OPEN;}
     SDL_DestroyRenderer(*renderer);SDL_DestroyWindow(*window);*renderer=NULL;*window=NULL;
-    if(error&&error_size)error[0]='\0';return FRONTEND_IDLE_QUIT;
+    if(error&&error_size)error[0]='\0';
+    return FRONTEND_IDLE_QUIT;
 failure:
     if(error&&error_size)snprintf(error,error_size,"Could not open desktop: %s",SDL_GetError());
     return FRONTEND_IDLE_ERROR;
