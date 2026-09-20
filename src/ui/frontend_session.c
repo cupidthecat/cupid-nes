@@ -27,6 +27,7 @@ static bool copy_text(char *dst, size_t capacity, const char *src) {
 bool frontend_image_request_init(FrontendImageRequest *request, const char *path) {
     if (!request || !path || !*path) return false;
     memset(request, 0, sizeof(*request));
+    request->fds_save_mode = FDS_SAVE_OVERLAY;
     return copy_text(request->path, sizeof(request->path), path);
 }
 
@@ -76,6 +77,15 @@ bool frontend_image_request_set_studybox_bios(FrontendImageRequest *request, con
     return copy_text(request->studybox_bios_path, sizeof(request->studybox_bios_path), path);
 }
 
+bool frontend_image_request_set_fds_overlay(FrontendImageRequest *request, const char *path) {
+    if (!request) return false;
+    if (!path || !*path) {
+        request->fds_overlay_path[0] = '\0';
+        return true;
+    }
+    return copy_text(request->fds_overlay_path, sizeof(request->fds_overlay_path), path);
+}
+
 void frontend_session_init(FrontendSession *session,
                            FrontendImageOpenHandler open, void *userdata) {
     if (!session) return;
@@ -90,7 +100,9 @@ static bool same_request(const FrontendImageRequest *a, const FrontendImageReque
         && strcmp(a->patch_path, b->patch_path) == 0
         && strcmp(a->fds_bios_path, b->fds_bios_path) == 0
         && strcmp(a->studybox_bios_path, b->studybox_bios_path) == 0
-        && a->fds_write_protected == b->fds_write_protected;
+        && a->fds_write_protected == b->fds_write_protected
+        && a->fds_save_mode == b->fds_save_mode
+        && strcmp(a->fds_overlay_path, b->fds_overlay_path) == 0;
 }
 
 static void remember_request(FrontendSession *session, const FrontendImageRequest *request) {
@@ -125,14 +137,31 @@ bool frontend_session_open(FrontendSession *session,
     memset(&result, 0, sizeof(result));
     if (!session->open(session->userdata, request, &result, error, error_size)) return false;
 
-    session->current = *request;
-    if (result.save_identity[0])
-        (void)copy_text(session->current.save_identity,
-                        sizeof(session->current.save_identity), result.save_identity);
-    session->current_result = result;
+    if (!frontend_session_record_success(session, request, &result)) {
+        set_error(error, error_size, "Loaded image metadata is too long");
+        return false;
+    }
+    if (error && error_size) error[0] = '\0';
+    return true;
+}
+
+bool frontend_session_record_success(FrontendSession *session,
+                                     const FrontendImageRequest *request,
+                                     const FrontendImageResult *result) {
+    if (!session || !request || !request->path[0]) return false;
+    FrontendImageRequest current = *request;
+    FrontendImageResult loaded = {0};
+    if (result) loaded = *result;
+    if (loaded.save_identity[0]
+        && !copy_text(current.save_identity, sizeof(current.save_identity),
+                      loaded.save_identity)) return false;
+    if (loaded.archive_member[0]
+        && !copy_text(current.archive_member, sizeof(current.archive_member),
+                      loaded.archive_member)) return false;
+    session->current = current;
+    session->current_result = loaded;
     session->active = true;
     remember_request(session, &session->current);
-    if (error && error_size) error[0] = '\0';
     return true;
 }
 
@@ -220,6 +249,12 @@ static bool append_recent(char *buffer, size_t capacity, size_t *used,
         if (*used + 1 >= capacity) return false;
         buffer[(*used)++] = '|';
     }
+    const char *mode = request->fds_save_mode == FDS_SAVE_IN_PLACE ? "in-place" : "overlay";
+    if (!encode_field(mode, buffer, capacity, used) || *used + 1 >= capacity) return false;
+    buffer[(*used)++] = '|';
+    if (!encode_field(request->fds_overlay_path, buffer, capacity, used)
+        || *used + 1 >= capacity) return false;
+    buffer[(*used)++] = '|';
     if (*used + 2 >= capacity) return false;
     buffer[(*used)++] = request->fds_write_protected ? '1' : '0';
     buffer[(*used)++] = '\n';
@@ -235,7 +270,7 @@ bool frontend_session_save_recent(const FrontendSession *session, const char *pa
         return false;
     }
     size_t used = 0;
-    const char header[] = "version=1\n";
+    const char header[] = "version=2\n";
     memcpy(buffer, header, sizeof(header) - 1);
     used = sizeof(header) - 1;
     bool ok = true;
@@ -254,7 +289,7 @@ bool frontend_session_save_recent(const FrontendSession *session, const char *pa
     return true;
 }
 
-static bool parse_recent_line(const char *line, FrontendImageRequest *request) {
+static bool parse_recent_line(const char *line, unsigned version, FrontendImageRequest *request) {
     static const size_t capacities[] = {
         FRONTEND_IMAGE_PATH_MAX, FRONTEND_IMAGE_MEMBER_MAX, FRONTEND_IMAGE_PATH_MAX,
         FRONTEND_IMAGE_PATH_MAX, FRONTEND_IMAGE_PATH_MAX, FRONTEND_IMAGE_PATH_MAX
@@ -267,6 +302,23 @@ static bool parse_recent_line(const char *line, FrontendImageRequest *request) {
         const char *separator = strchr(cursor, '|');
         if (!separator || !decode_field(cursor, (size_t)(separator - cursor),
                                         destinations[i], capacities[i])) return false;
+        cursor = separator + 1;
+    }
+    request->fds_save_mode = FDS_SAVE_OVERLAY;
+    if (version >= 2) {
+        const char *separator = strchr(cursor, '|');
+        if (!separator) return false;
+        size_t mode_length = (size_t)(separator - cursor);
+        if (mode_length == strlen("overlay") && !memcmp(cursor, "overlay", mode_length))
+            request->fds_save_mode = FDS_SAVE_OVERLAY;
+        else if (mode_length == strlen("in-place") && !memcmp(cursor, "in-place", mode_length))
+            request->fds_save_mode = FDS_SAVE_IN_PLACE;
+        else return false;
+        cursor = separator + 1;
+        separator = strchr(cursor, '|');
+        if (!separator || !decode_field(cursor, (size_t)(separator - cursor),
+                                        request->fds_overlay_path,
+                                        sizeof(request->fds_overlay_path))) return false;
         cursor = separator + 1;
     }
     if ((cursor[0] != '0' && cursor[0] != '1') || cursor[1] != '\0') return false;
@@ -309,7 +361,7 @@ bool frontend_session_load_recent(FrontendSession *session, const char *path,
     FrontendImageRequest parsed[FRONTEND_RECENT_MAX];
     size_t parsed_count = 0;
     char *cursor = text;
-    bool version = false;
+    unsigned version = 0;
     unsigned line_number = 0;
     while (cursor && *cursor) {
         char *next = strchr(cursor, '\n');
@@ -318,19 +370,20 @@ bool frontend_session_load_recent(FrontendSession *session, const char *path,
         if (length && cursor[length - 1] == '\r') cursor[length - 1] = '\0';
         ++line_number;
         if (!version) {
-            if (strcmp(cursor, "version=1") != 0) break;
-            version = true;
+            if (strcmp(cursor, "version=1") == 0) version = 1;
+            else if (strcmp(cursor, "version=2") == 0) version = 2;
+            else break;
         } else if (strncmp(cursor, "recent=", 7) == 0 && parsed_count < FRONTEND_RECENT_MAX) {
             FrontendImageRequest request;
             memset(&request, 0, sizeof(request));
-            if (!parse_recent_line(cursor + 7, &request)) break;
+            if (!parse_recent_line(cursor + 7, version, &request)) break;
             parsed[parsed_count++] = request;
         } else if (*cursor) {
             break;
         }
         cursor = next;
     }
-    bool valid = version && (!cursor || !*cursor);
+    bool valid = version != 0 && (!cursor || !*cursor);
     free(text);
     if (!valid) {
         char message[160];

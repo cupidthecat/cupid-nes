@@ -74,6 +74,8 @@ void frontend_panels_reset(void);
 bool frontend_panel_register(const FrontendPanelSpec *spec);
 bool frontend_panel_unregister(unsigned id);
 bool frontend_panel_set_enabled(unsigned id, bool enabled);
+void frontend_panel_set_session_active(bool active);
+bool frontend_panel_session_active(void);
 bool frontend_panel_get(unsigned id, FrontendPanelInfo *info);
 size_t frontend_panel_count(void);
 bool frontend_panel_at(size_t index, FrontendPanelInfo *info);

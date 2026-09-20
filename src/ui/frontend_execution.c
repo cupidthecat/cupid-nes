@@ -8,6 +8,7 @@
  */
 #include "frontend_execution.h"
 #include "frontend_commands.h"
+#include "frontend_panels.h"
 #include "machine_actions.h"
 #include "../debugger/debugger.h"
 #include "replay_frontend.h"
@@ -37,12 +38,13 @@ static void refresh_audio(FrontendExecutionRuntime *runtime) {
     if (emulated_sample_rate < 1000) emulated_sample_rate = 1000;
     vs_audio_init(emulated_sample_rate);
     SDL_UnlockAudioDevice(device);
-    if (!runtime->execution.paused) SDL_PauseAudioDevice(device, 0);
+    if (!runtime->execution.paused && !runtime->muted) SDL_PauseAudioDevice(device, 0);
 }
 
 static void update_audio_pause(FrontendExecutionRuntime *runtime) {
     if (runtime && runtime->audio_device && *runtime->audio_device)
-        SDL_PauseAudioDevice(*runtime->audio_device, runtime->execution.paused ? 1 : 0);
+        SDL_PauseAudioDevice(*runtime->audio_device,
+                             runtime->execution.paused || runtime->muted ? 1 : 0);
 }
 
 void frontend_execution_sync_debugger(FrontendExecutionRuntime *runtime) {
@@ -69,7 +71,8 @@ static void unlock_audio_after_machine_change(FrontendExecutionRuntime *runtime)
 static void unlock_audio_without_refresh(FrontendExecutionRuntime *runtime) {
     if (!runtime || !runtime->audio_device || !*runtime->audio_device) return;
     SDL_UnlockAudioDevice(*runtime->audio_device);
-    if (!runtime->execution.paused) SDL_PauseAudioDevice(*runtime->audio_device, 0);
+    if (!runtime->execution.paused && !runtime->muted)
+        SDL_PauseAudioDevice(*runtime->audio_device, 0);
 }
 
 static bool command_pause(void *userdata, char *error, size_t error_size) {
@@ -85,6 +88,15 @@ static bool command_pause(void *userdata, char *error, size_t error_size) {
     frontend_command_set_checked(FRONTEND_COMMAND_PAUSE, runtime->execution.paused);
     update_audio_pause(runtime);
     return true;
+}
+
+static bool command_open(void *userdata, char *error, size_t error_size) {
+    FrontendExecutionRuntime *runtime = (FrontendExecutionRuntime *)userdata;
+    if (!runtime || !runtime->open_handler) {
+        set_error(error, error_size, "Open is unavailable");
+        return false;
+    }
+    return runtime->open_handler(runtime->open_userdata, error, error_size);
 }
 
 static bool command_frame_advance(void *userdata, char *error, size_t error_size) {
@@ -129,6 +141,9 @@ static bool command_power_cycle(void *userdata, char *error, size_t error_size) 
 
 static bool command_reload(void *userdata, char *error, size_t error_size) {
     FrontendExecutionRuntime *runtime = (FrontendExecutionRuntime *)userdata;
+    if (runtime && runtime->reload_handler) {
+        return runtime->reload_handler(runtime->reload_userdata, error, error_size);
+    }
     if (!runtime->rom_path) {
         set_error(error, error_size, "No image is loaded");
         return false;
@@ -240,6 +255,28 @@ void frontend_execution_init(FrontendExecutionRuntime *runtime,
     (void)frontend_execution_set_rewind_seconds(runtime, 10);
 }
 
+void frontend_execution_set_open_handler(FrontendExecutionRuntime *runtime,
+                                         FrontendOpenHandler handler, void *userdata) {
+    if (!runtime) return;
+    runtime->open_handler = handler;
+    runtime->open_userdata = userdata;
+}
+
+void frontend_execution_set_reload_handler(FrontendExecutionRuntime *runtime,
+                                           FrontendReloadHandler handler, void *userdata) {
+    if (!runtime) return;
+    runtime->reload_handler = handler;
+    runtime->reload_userdata = userdata;
+}
+
+void frontend_execution_begin_machine_change(FrontendExecutionRuntime *runtime) {
+    lock_audio_for_machine_change(runtime);
+}
+
+void frontend_execution_end_machine_change(FrontendExecutionRuntime *runtime) {
+    unlock_audio_after_machine_change(runtime);
+}
+
 bool frontend_execution_register_commands(FrontendExecutionRuntime *runtime) {
     static const struct {
         unsigned id;
@@ -248,6 +285,7 @@ bool frontend_execution_register_commands(FrontendExecutionRuntime *runtime) {
         unsigned flags;
         FrontendCommandHandler handler;
     } specs[] = {
+        {FRONTEND_COMMAND_OPEN, "Open Game...", "Ctrl+O", 0, command_open},
         {FRONTEND_COMMAND_PAUSE, "Pause", "Ctrl+P",
          FRONTEND_COMMAND_NEEDS_SESSION | FRONTEND_COMMAND_CHECKABLE, command_pause},
         {FRONTEND_COMMAND_FRAME_ADVANCE, "Frame Advance", "Ctrl+.",
@@ -273,11 +311,14 @@ bool frontend_execution_register_commands(FrontendExecutionRuntime *runtime) {
     };
     if (!runtime) return false;
     frontend_commands_reset();
+    bool session_active = rom_metadata_source() != ROM_METADATA_NONE;
+    frontend_command_set_session_active(session_active);
+    frontend_panel_set_session_active(session_active);
     for (size_t i = 0; i < sizeof(specs) / sizeof(specs[0]); ++i) {
         FrontendCommandSpec spec = {
             .id = specs[i].id,
             .label = specs[i].label,
-            .menu = "Emulation",
+            .menu = specs[i].id == FRONTEND_COMMAND_OPEN ? "File" : "Emulation",
             .shortcut = specs[i].shortcut,
             .flags = specs[i].flags,
             .handler = specs[i].handler,
@@ -285,57 +326,102 @@ bool frontend_execution_register_commands(FrontendExecutionRuntime *runtime) {
         };
         if (!frontend_command_register(&spec)) return false;
     }
+    replay_frontend_unregister();
     return replay_frontend_register(runtime);
 }
 
 bool frontend_execution_handle_shortcut(FrontendExecutionRuntime *runtime,
                                         const SDL_KeyboardEvent *event) {
-    static bool held_fast_forward_shortcut;
     if (!event || !runtime) return false;
     bool down = event->type == SDL_KEYDOWN;
     SDL_Keymod mods = (SDL_Keymod)event->keysym.mod;
     bool control = (mods & KMOD_CTRL) != 0;
     bool shift = (mods & KMOD_SHIFT) != 0;
     bool alt = (mods & KMOD_ALT) != 0;
-    char error[160] = {0};
-    unsigned command = 0;
-
-    if (event->keysym.scancode == SDL_SCANCODE_F && held_fast_forward_shortcut && !down) {
-        held_fast_forward_shortcut = false;
-        execution_control_set_fast_forward_held(&runtime->execution, false);
-        refresh_audio(runtime);
-        return true;
-    }
     if (!control) return false;
     if (event->keysym.scancode == SDL_SCANCODE_F && !shift) {
-        if (down && !event->repeat) {
-            held_fast_forward_shortcut = true;
-            (void)frontend_command_invoke(FRONTEND_COMMAND_FAST_FORWARD_HOLD,
-                                          error, sizeof(error));
+        return frontend_execution_handle_shortcut_action(
+            runtime, FRONTEND_SHORTCUT_FAST_FORWARD_HOLD, down, event->repeat != 0);
+    }
+    if (!down || event->repeat) return false;
+    FrontendShortcut shortcut;
+    switch (event->keysym.scancode) {
+        case SDL_SCANCODE_P: shortcut = FRONTEND_SHORTCUT_PAUSE; break;
+        case SDL_SCANCODE_PERIOD: shortcut = FRONTEND_SHORTCUT_FRAME_ADVANCE; break;
+        case SDL_SCANCODE_R:
+            shortcut = alt ? FRONTEND_SHORTCUT_RELOAD
+                           : shift ? FRONTEND_SHORTCUT_POWER_CYCLE
+                                   : FRONTEND_SHORTCUT_SOFT_RESET;
+            break;
+        case SDL_SCANCODE_F:
+            if (!shift) return false;
+            shortcut = FRONTEND_SHORTCUT_FAST_FORWARD_TOGGLE;
+            break;
+        case SDL_SCANCODE_1: shortcut = FRONTEND_SHORTCUT_SPEED_HALF; break;
+        case SDL_SCANCODE_2: shortcut = FRONTEND_SHORTCUT_SPEED_NORMAL; break;
+        case SDL_SCANCODE_3: shortcut = FRONTEND_SHORTCUT_SPEED_DOUBLE; break;
+        default: return false;
+    }
+    return frontend_execution_handle_shortcut_action(runtime, shortcut, down,
+                                                     event->repeat != 0);
+}
+
+bool frontend_execution_handle_shortcut_action(FrontendExecutionRuntime *runtime,
+                                               FrontendShortcut shortcut,
+                                               bool down, bool repeat) {
+    if (!runtime || shortcut >= FRONTEND_SHORTCUT_COUNT) return false;
+    if (shortcut == FRONTEND_SHORTCUT_FAST_FORWARD_HOLD) {
+        if (!repeat) {
+            execution_control_set_fast_forward_held(&runtime->execution, down);
+            refresh_audio(runtime);
         }
         return true;
     }
-    if (!down || event->repeat) return false;
-    switch (event->keysym.scancode) {
-        case SDL_SCANCODE_P: command = FRONTEND_COMMAND_PAUSE; break;
-        case SDL_SCANCODE_PERIOD: command = FRONTEND_COMMAND_FRAME_ADVANCE; break;
-        case SDL_SCANCODE_R:
-            command = alt ? FRONTEND_COMMAND_RELOAD
-                          : shift ? FRONTEND_COMMAND_POWER_CYCLE
-                                  : FRONTEND_COMMAND_SOFT_RESET;
-            break;
-        case SDL_SCANCODE_F:
-            if (shift) command = FRONTEND_COMMAND_FAST_FORWARD_TOGGLE;
-            break;
-        case SDL_SCANCODE_1: command = FRONTEND_COMMAND_SPEED_HALF; break;
-        case SDL_SCANCODE_2: command = FRONTEND_COMMAND_SPEED_NORMAL; break;
-        case SDL_SCANCODE_3: command = FRONTEND_COMMAND_SPEED_DOUBLE; break;
-        default: break;
-    }
-    if (!command) return false;
-    if (!frontend_command_invoke(command, error, sizeof(error)) && error[0])
+    if (!down || repeat) return true;
+    static const unsigned commands[FRONTEND_SHORTCUT_COUNT] = {
+        FRONTEND_COMMAND_PAUSE,
+        FRONTEND_COMMAND_FRAME_ADVANCE,
+        FRONTEND_COMMAND_SOFT_RESET,
+        FRONTEND_COMMAND_POWER_CYCLE,
+        FRONTEND_COMMAND_RELOAD,
+        FRONTEND_COMMAND_FAST_FORWARD_HOLD,
+        FRONTEND_COMMAND_FAST_FORWARD_TOGGLE,
+        FRONTEND_COMMAND_SPEED_HALF,
+        FRONTEND_COMMAND_SPEED_NORMAL,
+        FRONTEND_COMMAND_SPEED_DOUBLE,
+        FRONTEND_COMMAND_OPEN
+    };
+    char error[160] = {0};
+    if (!frontend_command_invoke(commands[shortcut], error, sizeof(error)) && error[0])
         fprintf(stderr, "%s\n", error);
     return true;
+}
+
+void frontend_execution_release_host_input(FrontendExecutionRuntime *runtime) {
+    if (!runtime) return;
+    if (runtime->execution.fast_forward_held) {
+        execution_control_set_fast_forward_held(&runtime->execution, false);
+        refresh_audio(runtime);
+    }
+}
+
+bool frontend_execution_set_speeds(FrontendExecutionRuntime *runtime,
+                                   double speed, double fast_forward_speed) {
+    if (!runtime || !execution_control_set_speed(&runtime->execution, speed)
+        || !execution_control_set_fast_forward_speed(&runtime->execution,
+                                                    fast_forward_speed)) return false;
+    refresh_audio(runtime);
+    return true;
+}
+
+void frontend_execution_set_muted(FrontendExecutionRuntime *runtime, bool muted) {
+    if (!runtime) return;
+    runtime->muted = muted;
+    refresh_audio(runtime);
+}
+
+bool frontend_execution_muted(const FrontendExecutionRuntime *runtime) {
+    return runtime && runtime->muted;
 }
 
 static bool run_emulation_frame(void *userdata) {
@@ -348,6 +434,11 @@ static bool run_emulation_frame(void *userdata) {
 bool frontend_execution_run_frame(FrontendExecutionRuntime *runtime) {
     if (!runtime) return false;
     frontend_execution_sync_debugger(runtime);
+    bool loading_fast_forward = fds_loading_fast_forward();
+    if (runtime->execution.loading_fast_forward != loading_fast_forward) {
+        execution_control_set_loading_fast_forward(&runtime->execution, loading_fast_forward);
+        refresh_audio(runtime);
+    }
     if (!execution_control_should_run_frame(&runtime->execution)) return false;
 
     if (nes_execution_policy() == NES_EXECUTION_LIVE && runtime->rewind.capacity) {
@@ -438,6 +529,7 @@ void frontend_execution_clear_timeline(FrontendExecutionRuntime *runtime) {
 
 void frontend_execution_shutdown(FrontendExecutionRuntime *runtime) {
     if (!runtime) return;
+    replay_frontend_unregister();
     nes_rewind_destroy(&runtime->rewind);
     nes_runahead_clear_presented_frame();
     runtime->rewind_seconds = 0;

@@ -26,6 +26,12 @@ typedef struct {
 
 static PanelEntry panels[PANEL_CAPACITY];
 static size_t panel_count;
+static bool panel_session_active;
+
+static bool panel_enabled(const PanelEntry *entry) {
+    return entry && entry->enabled
+        && (!(entry->flags & FRONTEND_PANEL_NEEDS_SESSION) || panel_session_active);
+}
 
 static PanelEntry *find_panel(unsigned id) {
     for (size_t i = 0; i < PANEL_CAPACITY; ++i)
@@ -44,12 +50,13 @@ static void export_info(const PanelEntry *entry, FrontendPanelInfo *info) {
     info->title = entry->title;
     info->category = entry->category;
     info->flags = entry->flags;
-    info->enabled = entry->enabled;
+    info->enabled = panel_enabled(entry);
 }
 
 void frontend_panels_reset(void) {
     memset(panels, 0, sizeof(panels));
     panel_count = 0;
+    panel_session_active = false;
 }
 
 bool frontend_panel_register(const FrontendPanelSpec *spec) {
@@ -94,6 +101,14 @@ bool frontend_panel_set_enabled(unsigned id, bool enabled) {
     return true;
 }
 
+void frontend_panel_set_session_active(bool active) {
+    panel_session_active = active;
+}
+
+bool frontend_panel_session_active(void) {
+    return panel_session_active;
+}
+
 bool frontend_panel_get(unsigned id, FrontendPanelInfo *info) {
     PanelEntry *entry = find_panel(id);
     if (!entry || !info) return false;
@@ -121,7 +136,7 @@ bool frontend_panel_at(size_t index, FrontendPanelInfo *info) {
 bool frontend_panel_snapshot(unsigned id, FrontendPanelModel *model,
                              char *error, size_t error_size) {
     PanelEntry *entry = find_panel(id);
-    if (!entry || !entry->enabled || !model || !model->controls) {
+    if (!entry || !panel_enabled(entry) || !model || !model->controls) {
         if (error && error_size) snprintf(error, error_size, "Panel is unavailable");
         return false;
     }
@@ -135,7 +150,7 @@ bool frontend_panel_action(unsigned id, unsigned control_id,
                            const char *value, int selected,
                            char *error, size_t error_size) {
     PanelEntry *entry = find_panel(id);
-    if (!entry || !entry->enabled || !entry->action) {
+    if (!entry || !panel_enabled(entry) || !entry->action) {
         if (error && error_size) snprintf(error, error_size, "Panel action is unavailable");
         return false;
     }

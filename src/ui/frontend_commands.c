@@ -31,6 +31,12 @@ typedef struct {
 
 static CommandEntry commands[FRONTEND_COMMAND_CAPACITY];
 static size_t command_count;
+static bool session_active;
+
+static bool command_enabled(const CommandEntry *entry) {
+    return entry && entry->enabled
+        && (!(entry->flags & FRONTEND_COMMAND_NEEDS_SESSION) || session_active);
+}
 
 static CommandEntry *find_command(unsigned id) {
     for (size_t i = 0; i < FRONTEND_COMMAND_CAPACITY; ++i)
@@ -61,13 +67,14 @@ static void export_info(const CommandEntry *entry, FrontendCommandInfo *info) {
     info->menu = entry->menu;
     info->shortcut = entry->shortcut;
     info->flags = entry->flags;
-    info->enabled = entry->enabled;
+    info->enabled = command_enabled(entry);
     info->checked = entry->checked;
 }
 
 void frontend_commands_reset(void) {
     memset(commands, 0, sizeof(commands));
     command_count = 0;
+    session_active = false;
 }
 
 bool frontend_command_register(const FrontendCommandSpec *spec) {
@@ -111,7 +118,7 @@ bool frontend_command_invoke(unsigned id, char *error, size_t error_size) {
         if (error && error_size) snprintf(error, error_size, "Unknown frontend command %u", id);
         return false;
     }
-    if (!entry->enabled) {
+    if (!command_enabled(entry)) {
         if (error && error_size) snprintf(error, error_size, "%s is unavailable", entry->label);
         return false;
     }
@@ -131,6 +138,14 @@ bool frontend_command_set_checked(unsigned id, bool checked) {
     if (!entry || !(entry->flags & FRONTEND_COMMAND_CHECKABLE)) return false;
     entry->checked = checked;
     return true;
+}
+
+void frontend_command_set_session_active(bool active) {
+    session_active = active;
+}
+
+bool frontend_command_session_active(void) {
+    return session_active;
 }
 
 bool frontend_command_get(unsigned id, FrontendCommandInfo *info) {

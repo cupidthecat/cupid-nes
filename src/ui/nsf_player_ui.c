@@ -213,6 +213,10 @@ static bool music_action(void *context, unsigned id, const char *value, int sele
 
 bool nsf_player_register_ui(NsfPlayer *player) {
     if (!player || !player->observer_token || player->ui) return false;
+    if (rom_is_nsf()) {
+        frontend_command_set_session_active(true);
+        frontend_panel_set_session_active(true);
+    }
     MusicUi *ui = calloc(1, sizeof(*ui));
     if (!ui) return false;
     player->ui = ui;

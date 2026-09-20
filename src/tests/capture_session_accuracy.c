@@ -147,7 +147,7 @@ static int test_clocks_and_fidelity(const char *directory) {
     NesCaptureSession session = {0};
     uint8_t *data = NULL;
     size_t size = 0;
-    FrontendExecutionRuntime execution;
+    FrontendExecutionRuntime execution = {0};
     for (unsigned region = NES_REGION_NTSC; region <= NES_REGION_DENDY; ++region) {
         CHECK(fixture((NesRegion)region, false, false));
         frontend_execution_init(&execution, NULL, 44100, "fixture.nes", NULL, NULL, NULL);
@@ -181,14 +181,17 @@ static int test_clocks_and_fidelity(const char *directory) {
         for (size_t i = 44; i < size; ++i) audible |= data[i] != 0;
         CHECK(audible);
         free(data); data = NULL;
+        frontend_execution_shutdown(&execution);
         CHECK(fixture((NesRegion)region, false, false));
         frontend_execution_init(&execution, NULL, 44100, "fixture.nes", NULL, NULL, NULL);
         for (unsigned frame = 0; frame < 6; ++frame) CHECK(run_frame(&execution, NULL));
         MachineDigest ordinary = digest();
         CHECK(digest_equal(&captured, &ordinary));
+        frontend_execution_shutdown(&execution);
     }
 cleanup:
     nes_capture_session_discard(&session);
+    frontend_execution_shutdown(&execution);
     free(data);
     (void)nes_file_remove(path);
     (void)unload_rom();
@@ -228,7 +231,7 @@ static int test_stereo_and_dual(const char *directory) {
     size_t size = 0;
     NesCaptureOptions options;
     nes_capture_options_defaults(&options);
-    FrontendExecutionRuntime execution;
+    FrontendExecutionRuntime execution = {0};
     CHECK(fixture(NES_REGION_NTSC, false, true));
     fm_left_tone();
     frontend_execution_init(&execution, NULL, 44100, "fixture.nes", NULL, NULL, NULL);
@@ -243,6 +246,7 @@ static int test_stereo_and_dual(const char *directory) {
     }
     CHECK(left);
     free(data); data = NULL;
+    frontend_execution_shutdown(&execution);
     CHECK(fixture(NES_REGION_NTSC, true, false));
     frontend_execution_init(&execution, NULL, 44100, "dual.nes", NULL, NULL, NULL);
     CHECK(nes_capture_session_start(&session, path, false, NULL, &options) == NES_FILE_OK);
@@ -262,6 +266,7 @@ static int test_stereo_and_dual(const char *directory) {
     CHECK(capture_test_png_matches(screenshot, &frame) == 0);
 cleanup:
     nes_capture_session_discard(&session);
+    frontend_execution_shutdown(&execution);
     free(data);
     (void)nes_file_remove(path);
     (void)nes_file_remove(screenshot);
@@ -278,7 +283,7 @@ static int test_frontend_and_interruptions(const char *directory) {
     snprintf(protected_path, sizeof(protected_path), "%s/game.nes", directory);
     snprintf(alias, sizeof(alias), "./%s", protected_path);
     NesCaptureRuntime capture = {0};
-    FrontendExecutionRuntime execution;
+    FrontendExecutionRuntime execution = {0};
     bool composite = false;
     uint32_t *filtered = calloc(NTSC_COMPOSITE_WIDTH * NTSC_COMPOSITE_HEIGHT, sizeof(uint32_t));
     uint8_t *data = NULL;
@@ -329,6 +334,7 @@ static int test_frontend_and_interruptions(const char *directory) {
     CHECK(nes_file_read_all(protected_path, 4, &data, &size) == NES_FILE_OK && size == 4 && !memcmp(data, "keep", 4));
 cleanup:
     (void)nes_capture_runtime_shutdown(&capture);
+    frontend_execution_shutdown(&execution);
     frontend_commands_reset();
     free(filtered);
     free(data);
@@ -366,7 +372,7 @@ static int test_track_resets_and_policy(const char *directory) {
     NesCaptureSession session = {0};
     NesCaptureOptions options;
     nes_capture_options_defaults(&options);
-    FrontendExecutionRuntime execution;
+    FrontendExecutionRuntime execution = {0};
     uint8_t *data = NULL;
     size_t size = 0;
     CHECK(nes_set_region_mode(NES_REGION_MODE_AUTO) && music_fixture());
@@ -401,6 +407,7 @@ static int test_track_resets_and_policy(const char *directory) {
 cleanup:
     (void)nes_execution_set_policy(NES_EXECUTION_LIVE);
     nes_capture_session_discard(&session);
+    frontend_execution_shutdown(&execution);
     free(data);
     (void)nes_file_remove(path);
     (void)unload_rom();

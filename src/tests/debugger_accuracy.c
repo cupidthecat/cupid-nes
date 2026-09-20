@@ -295,6 +295,7 @@ static int disassembly_formats_and_lengths(void) {
 static void temporary_frontend_runtime(void) {
     FrontendExecutionRuntime temporary;
     frontend_execution_init(&temporary, NULL, 44100, "fixture.nes", NULL, NULL, NULL);
+    frontend_execution_shutdown(&temporary);
 }
 
 static void count_pause(bool paused, void *userdata) {
@@ -327,6 +328,7 @@ static int frontend_debugger_lifetime(void) {
     CHECK(!frontend_execution_run_frame(&runtime));
     CHECK(frontend_command_invoke(FRONTEND_COMMAND_PAUSE, error, sizeof(error)));
     CHECK(!frontend_execution_paused(&runtime) && frontend_execution_run_frame(&runtime));
+    frontend_execution_shutdown(&runtime);
     frontend_commands_reset();
 
     unsigned calls = 0;

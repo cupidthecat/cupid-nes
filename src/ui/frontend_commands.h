@@ -64,6 +64,8 @@ bool frontend_command_unregister(unsigned id);
 bool frontend_command_invoke(unsigned id, char *error, size_t error_size);
 bool frontend_command_set_enabled(unsigned id, bool enabled);
 bool frontend_command_set_checked(unsigned id, bool checked);
+void frontend_command_set_session_active(bool active);
+bool frontend_command_session_active(void);
 bool frontend_command_get(unsigned id, FrontendCommandInfo *info);
 size_t frontend_command_count(void);
 bool frontend_command_at(size_t index, FrontendCommandInfo *info);

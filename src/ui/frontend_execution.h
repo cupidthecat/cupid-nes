@@ -14,11 +14,16 @@
 #include <stddef.h>
 #include "execution_control.h"
 #include "../replay/rewind.h"
+#include "settings.h"
+
+typedef bool (*FrontendOpenHandler)(void *userdata, char *error, size_t error_size);
+typedef bool (*FrontendReloadHandler)(void *userdata, char *error, size_t error_size);
 
 typedef struct FrontendExecutionRuntime {
     ExecutionControl execution;
     SDL_AudioDeviceID *audio_device;
     int audio_output_rate;
+    bool muted;
     const char *rom_path;
     const char *fds_bios_path;
     const char *studybox_bios_path;
@@ -31,6 +36,10 @@ typedef struct FrontendExecutionRuntime {
     NesStateResult replay_state_status;
     bool (*before_machine_change)(void *context, char *error, size_t error_size);
     void *machine_change_context;
+    FrontendOpenHandler open_handler;
+    void *open_userdata;
+    FrontendReloadHandler reload_handler;
+    void *reload_userdata;
 } FrontendExecutionRuntime;
 
 void frontend_execution_init(FrontendExecutionRuntime *runtime,
@@ -38,8 +47,22 @@ void frontend_execution_init(FrontendExecutionRuntime *runtime,
                              const char *rom_path, const char *fds_bios_path,
                              const char *studybox_bios_path, size_t *fds_side);
 bool frontend_execution_register_commands(FrontendExecutionRuntime *runtime);
+void frontend_execution_set_open_handler(FrontendExecutionRuntime *runtime,
+                                         FrontendOpenHandler handler, void *userdata);
+void frontend_execution_set_reload_handler(FrontendExecutionRuntime *runtime,
+                                           FrontendReloadHandler handler, void *userdata);
+void frontend_execution_begin_machine_change(FrontendExecutionRuntime *runtime);
+void frontend_execution_end_machine_change(FrontendExecutionRuntime *runtime);
 bool frontend_execution_handle_shortcut(FrontendExecutionRuntime *runtime,
                                         const SDL_KeyboardEvent *event);
+bool frontend_execution_handle_shortcut_action(FrontendExecutionRuntime *runtime,
+                                               FrontendShortcut shortcut,
+                                               bool down, bool repeat);
+void frontend_execution_release_host_input(FrontendExecutionRuntime *runtime);
+bool frontend_execution_set_speeds(FrontendExecutionRuntime *runtime,
+                                   double speed, double fast_forward_speed);
+void frontend_execution_set_muted(FrontendExecutionRuntime *runtime, bool muted);
+bool frontend_execution_muted(const FrontendExecutionRuntime *runtime);
 bool frontend_execution_run_frame(FrontendExecutionRuntime *runtime);
 void frontend_execution_sync_debugger(FrontendExecutionRuntime *runtime);
 bool frontend_execution_paused(const FrontendExecutionRuntime *runtime);

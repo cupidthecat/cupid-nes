@@ -92,7 +92,7 @@ static unsigned tile_pixel(const NesVideoTile *tile, bool sprite) {
 static int test_hardware_invariance(void) {
     int failed = 0;
     NesStateBlob initial = {0}, ordinary = {0}, traced = {0};
-    FrontendExecutionRuntime execution;
+    FrontendExecutionRuntime execution = {0};
     for (unsigned configuration = 0; configuration < 4; ++configuration) {
         bool dual = configuration == 3;
         NesRegion region = dual ? NES_REGION_NTSC : (NesRegion)configuration;
@@ -152,9 +152,11 @@ static int test_hardware_invariance(void) {
         CHECK(nes_video_trace_use(NES_VIDEO_TRACE_LAYERS, false) && !nes_video_trace_active);
         CHECK(!nes_video_trace_frame(0));
         nes_state_blob_free(&initial); nes_state_blob_free(&ordinary); nes_state_blob_free(&traced);
+        frontend_execution_shutdown(&execution);
     }
 cleanup:
     nes_state_blob_free(&initial); nes_state_blob_free(&ordinary); nes_state_blob_free(&traced);
+    frontend_execution_shutdown(&execution);
     nes_video_trace_shutdown();
     (void)unload_rom();
     return failed;

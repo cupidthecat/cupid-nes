@@ -74,7 +74,7 @@ static const char *const player_button_names[8] = {
 static const char *const shortcut_names[FRONTEND_SHORTCUT_COUNT] = {
     "pause", "frame-advance", "soft-reset", "power-cycle", "reload",
     "fast-forward-hold", "fast-forward-toggle", "speed-half",
-    "speed-normal", "speed-double"
+    "speed-normal", "speed-double", "open"
 };
 
 static const NameValue gamepad_names[] = {
@@ -256,6 +256,7 @@ bool frontend_binding_profile_preset(FrontendBindingProfile *profile,
     set_shortcut_default(profile, FRONTEND_SHORTCUT_SPEED_HALF, SDL_SCANCODE_1, KMOD_CTRL);
     set_shortcut_default(profile, FRONTEND_SHORTCUT_SPEED_NORMAL, SDL_SCANCODE_2, KMOD_CTRL);
     set_shortcut_default(profile, FRONTEND_SHORTCUT_SPEED_DOUBLE, SDL_SCANCODE_3, KMOD_CTRL);
+    set_shortcut_default(profile, FRONTEND_SHORTCUT_OPEN, SDL_SCANCODE_O, KMOD_CTRL);
     return true;
 }
 
@@ -267,6 +268,13 @@ void frontend_settings_defaults(FrontendSettings *settings) {
     settings->console_model = NES_CONSOLE_NES001;
     settings->speed = 1.0;
     settings->fast_forward_speed = 4.0;
+    settings->pause_on_focus_loss = true;
+    settings->pause_on_ui = true;
+    settings->window_width = 768;
+    settings->window_height = 640;
+    settings->disk_save_mode = FDS_SAVE_OVERLAY;
+    nsf_player_options_defaults(&settings->nsf_player);
+    nes_capture_options_defaults(&settings->capture);
     settings->input.adapter = NES_ADAPTER_NONE;
     settings->input.ports[0] = NES_PORT_GAMEPAD;
     settings->input.ports[1] = NES_PORT_GAMEPAD;
@@ -349,6 +357,29 @@ static bool parse_unsigned_range(const char *text, unsigned max, unsigned *value
     if (errno || end == text || *end || parsed > max) return false;
     *value = (unsigned)parsed;
     return true;
+}
+
+static bool parse_u64_range(const char *text, uint64_t max, uint64_t *value) {
+    if (!text || !*text || !value || text[0] == '-') return false;
+    char *end = NULL;
+    errno = 0;
+    unsigned long long parsed = strtoull(text, &end, 10);
+    if (errno || end == text || *end || parsed > max) return false;
+    *value = (uint64_t)parsed;
+    return true;
+}
+
+static bool parse_boolean(const char *text, bool *value) {
+    if (!text || !value) return false;
+    if (text_equal_ci(text, "true") || strcmp(text, "1") == 0) {
+        *value = true;
+        return true;
+    }
+    if (text_equal_ci(text, "false") || strcmp(text, "0") == 0) {
+        *value = false;
+        return true;
+    }
+    return false;
 }
 
 static SDL_Keymod normalized_modifiers(SDL_Keymod mods) {
@@ -553,6 +584,83 @@ static bool set_known_setting(FrontendSettings *settings, const char *key,
         if (!parse_double_range(value, 0.1, 16.0, &settings->speed)) return false;
     } else if (strcmp(key, "fast_forward_speed") == 0) {
         if (!parse_double_range(value, 0.1, 16.0, &settings->fast_forward_speed)) return false;
+    } else if (strcmp(key, "reopen_last_image") == 0) {
+        if (!parse_boolean(value, &settings->reopen_last_image)) return false;
+    } else if (strcmp(key, "pause_on_focus_loss") == 0) {
+        if (!parse_boolean(value, &settings->pause_on_focus_loss)) return false;
+    } else if (strcmp(key, "pause_on_ui") == 0) {
+        if (!parse_boolean(value, &settings->pause_on_ui)) return false;
+    } else if (strcmp(key, "show_fps") == 0) {
+        if (!parse_boolean(value, &settings->show_fps)) return false;
+    } else if (strcmp(key, "fullscreen") == 0) {
+        if (!parse_boolean(value, &settings->fullscreen)) return false;
+    } else if (strcmp(key, "integer_scaling") == 0) {
+        if (!parse_boolean(value, &settings->integer_scaling)) return false;
+    } else if (strcmp(key, "muted") == 0) {
+        if (!parse_boolean(value, &settings->muted)) return false;
+    } else if (strcmp(key, "window_width") == 0) {
+        if (!parse_unsigned_range(value, 16384, &settings->window_width)
+            || settings->window_width < 320) return false;
+    } else if (strcmp(key, "window_height") == 0) {
+        if (!parse_unsigned_range(value, 16384, &settings->window_height)
+            || settings->window_height < 240) return false;
+    } else if (strcmp(key, "disk_save_mode") == 0) {
+        if (text_equal_ci(value, "overlay")) settings->disk_save_mode = FDS_SAVE_OVERLAY;
+        else if (text_equal_ci(value, "in-place")) settings->disk_save_mode = FDS_SAVE_IN_PLACE;
+        else return false;
+    } else if (strcmp(key, "disk_overlay_path") == 0) {
+        if (strlen(value) >= sizeof(settings->disk_overlay_path)) return false;
+        strcpy(settings->disk_overlay_path, value);
+    } else if (strcmp(key, "fds_bios_path") == 0) {
+        if (strlen(value) >= sizeof(settings->fds_bios_path)) return false;
+        strcpy(settings->fds_bios_path, value);
+    } else if (strcmp(key, "studybox_bios_path") == 0) {
+        if (strlen(value) >= sizeof(settings->studybox_bios_path)) return false;
+        strcpy(settings->studybox_bios_path, value);
+    } else if (strcmp(key, "fds_write_protected") == 0) {
+        if (!parse_boolean(value, &settings->fds_write_protected)) return false;
+    } else if (strcmp(key, "fds_auto_insert") == 0) {
+        if (!parse_boolean(value, &settings->fds_auto_insert)) return false;
+    } else if (strcmp(key, "fds_loading_fast_forward") == 0) {
+        if (!parse_boolean(value, &settings->fds_loading_fast_forward)) return false;
+    } else if (strcmp(key, "music_automatic") == 0) {
+        if (!parse_boolean(value, &settings->nsf_player.automatic)) return false;
+    } else if (strcmp(key, "music_repeat") == 0) {
+        if (!parse_boolean(value, &settings->nsf_player.repeat)) return false;
+    } else if (strcmp(key, "music_shuffle") == 0) {
+        if (!parse_boolean(value, &settings->nsf_player.shuffle)) return false;
+    } else if (strcmp(key, "music_detect_silence") == 0) {
+        if (!parse_boolean(value, &settings->nsf_player.detect_silence)) return false;
+    } else if (strcmp(key, "music_silence_ms") == 0) {
+        unsigned silence_ms;
+        if (!parse_unsigned_range(value, 600000, &silence_ms) || silence_ms < 10) return false;
+        settings->nsf_player.silence_ms = silence_ms;
+    } else if (strcmp(key, "music_silence_threshold") == 0) {
+        double threshold;
+        if (!parse_double_range(value, 0.0, 0.1, &threshold)) return false;
+        settings->nsf_player.silence_threshold = (float)threshold;
+    } else if (strcmp(key, "capture_sample_rate") == 0) {
+        unsigned rate;
+        if (!parse_unsigned_range(value, 192000, &rate) || rate < 8000) return false;
+        settings->capture.sample_rate = rate;
+    } else if (strcmp(key, "capture_byte_limit") == 0) {
+        if (!parse_u64_range(value, UINT32_MAX, &settings->capture.byte_limit)) return false;
+    } else if (strcmp(key, "capture_displayed_output") == 0) {
+        if (!parse_boolean(value, &settings->capture.displayed_output)) return false;
+    } else if (strcmp(key, "capture_screenshot_path") == 0) {
+        if (strlen(value) >= sizeof(settings->capture_paths[0])) return false;
+        strcpy(settings->capture_paths[0], value);
+    } else if (strcmp(key, "capture_audio_path") == 0) {
+        if (strlen(value) >= sizeof(settings->capture_paths[1])) return false;
+        strcpy(settings->capture_paths[1], value);
+    } else if (strcmp(key, "capture_video_path") == 0) {
+        if (strlen(value) >= sizeof(settings->capture_paths[2])) return false;
+        strcpy(settings->capture_paths[2], value);
+    } else if (strcmp(key, "state_slot") == 0) {
+        if (!parse_unsigned_range(value, NES_STATE_SLOT_COUNT - 1, &settings->state_slot)) return false;
+    } else if (strcmp(key, "state_file_path") == 0) {
+        if (strlen(value) >= sizeof(settings->state_file_path)) return false;
+        strcpy(settings->state_file_path, value);
     } else if (file_version == 1 && strcmp(key, "speed_percent") == 0) {
         double percent;
         if (!parse_double_range(value, 10.0, 1600.0, &percent)) return false;
@@ -749,6 +857,20 @@ bool frontend_settings_save(const char *path, const FrontendSettings *settings,
     bool ok = append_text(buffer, SETTINGS_SAVE_CAPACITY, &used,
                           "version=%u\nregion=%s\nconsole=%s\nvideo_filter=%s\n"
                           "speed=%.6g\nfast_forward_speed=%.6g\n"
+                          "reopen_last_image=%s\npause_on_focus_loss=%s\npause_on_ui=%s\n"
+                          "show_fps=%s\nfullscreen=%s\ninteger_scaling=%s\nmuted=%s\n"
+                          "window_width=%u\nwindow_height=%u\n"
+                          "disk_save_mode=%s\ndisk_overlay_path=%s\n"
+                          "fds_bios_path=%s\nstudybox_bios_path=%s\n"
+                          "fds_write_protected=%s\n"
+                          "fds_auto_insert=%s\nfds_loading_fast_forward=%s\n"
+                          "music_automatic=%s\nmusic_repeat=%s\nmusic_shuffle=%s\n"
+                          "music_detect_silence=%s\nmusic_silence_ms=%u\n"
+                          "music_silence_threshold=%.6g\n"
+                          "capture_sample_rate=%u\ncapture_byte_limit=%llu\n"
+                          "capture_displayed_output=%s\n"
+                          "capture_screenshot_path=%s\ncapture_audio_path=%s\ncapture_video_path=%s\n"
+                          "state_slot=%u\nstate_file_path=%s\n"
                           "adapter=%s\nport1=%s\nport2=%s\nexpansion=%s\n"
                           "zapper_radius=%u\nactive_profile=%s\n",
                           FRONTEND_SETTINGS_VERSION,
@@ -756,6 +878,32 @@ bool frontend_settings_save(const char *path, const FrontendSettings *settings,
                           name_for_value(console_names, 4, settings->console_model),
                           settings->ntsc_composite ? "ntsc-composite" : "direct",
                           settings->speed, settings->fast_forward_speed,
+                          settings->reopen_last_image ? "true" : "false",
+                          settings->pause_on_focus_loss ? "true" : "false",
+                          settings->pause_on_ui ? "true" : "false",
+                          settings->show_fps ? "true" : "false",
+                          settings->fullscreen ? "true" : "false",
+                          settings->integer_scaling ? "true" : "false",
+                          settings->muted ? "true" : "false",
+                          settings->window_width, settings->window_height,
+                          settings->disk_save_mode == FDS_SAVE_IN_PLACE ? "in-place" : "overlay",
+                          settings->disk_overlay_path,
+                          settings->fds_bios_path, settings->studybox_bios_path,
+                          settings->fds_write_protected ? "true" : "false",
+                          settings->fds_auto_insert ? "true" : "false",
+                          settings->fds_loading_fast_forward ? "true" : "false",
+                          settings->nsf_player.automatic ? "true" : "false",
+                          settings->nsf_player.repeat ? "true" : "false",
+                          settings->nsf_player.shuffle ? "true" : "false",
+                          settings->nsf_player.detect_silence ? "true" : "false",
+                          settings->nsf_player.silence_ms,
+                          (double)settings->nsf_player.silence_threshold,
+                          settings->capture.sample_rate,
+                          (unsigned long long)settings->capture.byte_limit,
+                          settings->capture.displayed_output ? "true" : "false",
+                          settings->capture_paths[0], settings->capture_paths[1],
+                          settings->capture_paths[2],
+                          settings->state_slot, settings->state_file_path,
                           name_for_value(adapter_names, 4, settings->input.adapter),
                           name_for_value(port_names, sizeof(port_names) / sizeof(port_names[0]),
                                          settings->input.ports[0]),

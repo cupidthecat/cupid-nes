@@ -14,15 +14,20 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "../joypad/joypad.h"
+#include "../capture/capture_session.h"
+#include "../rom/rom.h"
+#include "../state/state.h"
 #include "../system/hardware.h"
 #include "../system/timing.h"
 #include "../util/file_io.h"
+#include "nsf_player.h"
 
 enum {
-    FRONTEND_SETTINGS_VERSION = 2,
+    FRONTEND_SETTINGS_VERSION = 3,
     FRONTEND_SETTINGS_MAX_PROFILES = 8,
     FRONTEND_SETTINGS_PROFILE_NAME = 32,
     FRONTEND_SETTINGS_GUID_TEXT = 64,
+    FRONTEND_SETTINGS_PATH_TEXT = 1024,
     FRONTEND_SETTINGS_MESSAGE = 256
 };
 
@@ -37,6 +42,7 @@ typedef enum {
     FRONTEND_SHORTCUT_SPEED_HALF,
     FRONTEND_SHORTCUT_SPEED_NORMAL,
     FRONTEND_SHORTCUT_SPEED_DOUBLE,
+    FRONTEND_SHORTCUT_OPEN,
     FRONTEND_SHORTCUT_COUNT
 } FrontendShortcut;
 
@@ -72,6 +78,27 @@ typedef struct {
     bool ntsc_composite;
     double speed;
     double fast_forward_speed;
+    bool reopen_last_image;
+    bool pause_on_focus_loss;
+    bool pause_on_ui;
+    bool show_fps;
+    bool fullscreen;
+    bool integer_scaling;
+    bool muted;
+    unsigned window_width;
+    unsigned window_height;
+    FdsSaveMode disk_save_mode;
+    char disk_overlay_path[FRONTEND_SETTINGS_PATH_TEXT];
+    char fds_bios_path[FRONTEND_SETTINGS_PATH_TEXT];
+    char studybox_bios_path[FRONTEND_SETTINGS_PATH_TEXT];
+    bool fds_write_protected;
+    bool fds_auto_insert;
+    bool fds_loading_fast_forward;
+    NsfPlayerOptions nsf_player;
+    NesCaptureOptions capture;
+    char capture_paths[3][FRONTEND_SETTINGS_PATH_TEXT];
+    unsigned state_slot;
+    char state_file_path[FRONTEND_SETTINGS_PATH_TEXT];
     NesInputConfiguration input;
     unsigned zapper_radius;
     uint8_t saved_input_overrides;

@@ -11,6 +11,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include "../rom/rom.h"
 
 enum {
     FRONTEND_IMAGE_PATH_MAX = 1024,
@@ -27,11 +28,14 @@ typedef struct {
     char fds_bios_path[FRONTEND_IMAGE_PATH_MAX];
     char studybox_bios_path[FRONTEND_IMAGE_PATH_MAX];
     bool fds_write_protected;
+    FdsSaveMode fds_save_mode;
+    char fds_overlay_path[FRONTEND_IMAGE_PATH_MAX];
 } FrontendImageRequest;
 
 typedef struct {
     char title[FRONTEND_IMAGE_TITLE_MAX];
     char save_identity[FRONTEND_IMAGE_PATH_MAX];
+    char archive_member[FRONTEND_IMAGE_MEMBER_MAX];
 } FrontendImageResult;
 
 typedef bool (*FrontendImageOpenHandler)(void *userdata,
@@ -56,11 +60,15 @@ bool frontend_image_request_set_save_identity(FrontendImageRequest *request,
                                               const char *save_identity);
 bool frontend_image_request_set_fds_bios(FrontendImageRequest *request, const char *path);
 bool frontend_image_request_set_studybox_bios(FrontendImageRequest *request, const char *path);
+bool frontend_image_request_set_fds_overlay(FrontendImageRequest *request, const char *path);
 void frontend_session_init(FrontendSession *session,
                            FrontendImageOpenHandler open, void *userdata);
 bool frontend_session_open(FrontendSession *session,
                            const FrontendImageRequest *request,
                            char *error, size_t error_size);
+bool frontend_session_record_success(FrontendSession *session,
+                                     const FrontendImageRequest *request,
+                                     const FrontendImageResult *result);
 bool frontend_session_reload(FrontendSession *session, char *error, size_t error_size);
 bool frontend_session_open_recent(FrontendSession *session, size_t index,
                                   char *error, size_t error_size);

@@ -15,6 +15,7 @@
 #include "../system/vs_system.h"
 #include "../ui/execution_control.h"
 #include "../ui/frontend_commands.h"
+#include "../ui/frontend_execution.h"
 #include "../ui/machine_actions.h"
 #include "../ui/frontend_panels.h"
 #include "../ui/frontend_session.h"
@@ -167,6 +168,18 @@ static int command_registry(void) {
     CHECK(probe.calls == 1);
     CHECK(frontend_command_unregister(spec.id));
     CHECK(frontend_command_count() == 0);
+
+    spec.id = FRONTEND_COMMAND_EXTENSION_BASE + 8;
+    spec.flags = FRONTEND_COMMAND_NEEDS_SESSION;
+    CHECK(frontend_command_register(&spec));
+    FrontendCommandInfo gated;
+    CHECK(frontend_command_get(spec.id, &gated) && !gated.enabled);
+    CHECK(!frontend_command_invoke(spec.id, error, sizeof(error)));
+    frontend_command_set_session_active(true);
+    CHECK(frontend_command_get(spec.id, &gated) && gated.enabled);
+    CHECK(frontend_command_invoke(spec.id, error, sizeof(error)));
+    frontend_command_set_session_active(false);
+    CHECK(frontend_command_unregister(spec.id));
     return 0;
 }
 
@@ -222,6 +235,15 @@ static int panel_registry(void) {
     CHECK(frontend_panel_action(spec.id, 2, NULL, 0, error, sizeof(error)));
     CHECK(calls == 2);
     CHECK(frontend_panel_unregister(spec.id));
+    spec.id = FRONTEND_PANEL_EXTENSION_BASE + 2;
+    spec.flags = FRONTEND_PANEL_NEEDS_SESSION;
+    CHECK(frontend_panel_register(&spec));
+    FrontendPanelInfo gated;
+    CHECK(frontend_panel_get(spec.id, &gated) && !gated.enabled);
+    frontend_panel_set_session_active(true);
+    CHECK(frontend_panel_get(spec.id, &gated) && gated.enabled);
+    frontend_panel_set_session_active(false);
+    CHECK(frontend_panel_unregister(spec.id));
     return 0;
 }
 
@@ -238,6 +260,34 @@ static int settings_round_trip(void) {
     saved.ntsc_composite = true;
     saved.speed = 1.25;
     saved.fast_forward_speed = 5.0;
+    saved.reopen_last_image = true;
+    saved.pause_on_focus_loss = false;
+    saved.pause_on_ui = false;
+    saved.show_fps = true;
+    saved.fullscreen = true;
+    saved.integer_scaling = true;
+    saved.muted = true;
+    saved.window_width = 1234;
+    saved.window_height = 777;
+    saved.disk_save_mode = FDS_SAVE_IN_PLACE;
+    strcpy(saved.disk_overlay_path, "C:/saves/custom disk.ips");
+    saved.fds_write_protected = true;
+    saved.fds_auto_insert = true;
+    saved.fds_loading_fast_forward = true;
+    saved.nsf_player.automatic = false;
+    saved.nsf_player.repeat = true;
+    saved.nsf_player.shuffle = true;
+    saved.nsf_player.detect_silence = false;
+    saved.nsf_player.silence_ms = 4321;
+    saved.nsf_player.silence_threshold = 0.0025f;
+    saved.capture.sample_rate = 96000;
+    saved.capture.byte_limit = 123456789u;
+    saved.capture.displayed_output = true;
+    strcpy(saved.capture_paths[0], "C:/capture/shot.png");
+    strcpy(saved.capture_paths[1], "C:/capture/audio.wav");
+    strcpy(saved.capture_paths[2], "C:/capture/video.avi");
+    saved.state_slot = 7;
+    strcpy(saved.state_file_path, "C:/states/game state.cstate");
     saved.input.adapter = NES_ADAPTER_FOUR_SCORE;
     saved.input.ports[0] = NES_PORT_GAMEPAD;
     saved.input.ports[1] = NES_PORT_GAMEPAD;
@@ -257,6 +307,23 @@ static int settings_round_trip(void) {
     CHECK(loaded.region_mode == saved.region_mode);
     CHECK(loaded.console_model == saved.console_model);
     CHECK(loaded.ntsc_composite && loaded.speed == 1.25 && loaded.fast_forward_speed == 5.0);
+    CHECK(loaded.reopen_last_image && !loaded.pause_on_focus_loss && !loaded.pause_on_ui
+          && loaded.show_fps);
+    CHECK(loaded.fullscreen && loaded.integer_scaling && loaded.muted);
+    CHECK(loaded.window_width == 1234 && loaded.window_height == 777);
+    CHECK(loaded.disk_save_mode == FDS_SAVE_IN_PLACE);
+    CHECK(strcmp(loaded.disk_overlay_path, "C:/saves/custom disk.ips") == 0);
+    CHECK(loaded.fds_write_protected && loaded.fds_auto_insert && loaded.fds_loading_fast_forward);
+    CHECK(!loaded.nsf_player.automatic && loaded.nsf_player.repeat && loaded.nsf_player.shuffle);
+    CHECK(!loaded.nsf_player.detect_silence && loaded.nsf_player.silence_ms == 4321);
+    CHECK(fabs((double)loaded.nsf_player.silence_threshold - 0.0025) < 0.000001);
+    CHECK(loaded.capture.sample_rate == 96000 && loaded.capture.byte_limit == 123456789u);
+    CHECK(loaded.capture.displayed_output);
+    CHECK(strcmp(loaded.capture_paths[0], "C:/capture/shot.png") == 0);
+    CHECK(strcmp(loaded.capture_paths[1], "C:/capture/audio.wav") == 0);
+    CHECK(strcmp(loaded.capture_paths[2], "C:/capture/video.avi") == 0);
+    CHECK(loaded.state_slot == 7);
+    CHECK(strcmp(loaded.state_file_path, "C:/states/game state.cstate") == 0);
     CHECK(loaded.input.adapter == NES_ADAPTER_FOUR_SCORE && loaded.zapper_radius == 7);
     CHECK(strcmp(loaded.active_profile, "wasd") == 0);
     CHECK(strcmp(loaded.device_guid[1], "03000000cafef00d") == 0);
@@ -358,6 +425,45 @@ static int settings_cli_precedence(void) {
     return 0;
 }
 
+static int remapped_execution_shortcuts(void) {
+    unload_rom();
+    CHECK(nes_set_region_mode(NES_REGION_MODE_NTSC));
+    build_nrom(0);
+    CHECK(load_rom_memory(image, sizeof(image)) == 0);
+    CHECK(frontend_machine_power_cycle());
+
+    SDL_AudioDeviceID device = 0;
+    FrontendExecutionRuntime runtime;
+    size_t side = 0;
+    frontend_execution_init(&runtime, &device, 44100, "binding.nes", NULL, NULL, &side);
+    CHECK(frontend_execution_register_commands(&runtime));
+    CHECK(frontend_execution_set_speeds(&runtime, 1.25, 5.0));
+    CHECK(frontend_execution_speed(&runtime) == 1.25);
+
+    CHECK(frontend_execution_handle_shortcut_action(
+        &runtime, FRONTEND_SHORTCUT_PAUSE, true, false));
+    CHECK(frontend_execution_paused(&runtime));
+    CHECK(frontend_execution_handle_shortcut_action(
+        &runtime, FRONTEND_SHORTCUT_FRAME_ADVANCE, true, false));
+    uint64_t frame = ppu.frame_count;
+    CHECK(frontend_execution_run_frame(&runtime));
+    CHECK(ppu.frame_count == frame + 1);
+    CHECK(frontend_execution_paused(&runtime));
+
+    CHECK(frontend_execution_handle_shortcut_action(
+        &runtime, FRONTEND_SHORTCUT_FAST_FORWARD_HOLD, true, false));
+    CHECK(runtime.execution.fast_forward_held);
+    CHECK(frontend_execution_speed(&runtime) == 5.0);
+    frontend_execution_release_host_input(&runtime);
+    CHECK(!runtime.execution.fast_forward_held);
+    CHECK(frontend_execution_speed(&runtime) == 1.25);
+    CHECK(frontend_execution_handle_shortcut_action(
+        &runtime, FRONTEND_SHORTCUT_PAUSE, true, false));
+    CHECK(!frontend_execution_paused(&runtime));
+    frontend_execution_shutdown(&runtime);
+    return 0;
+}
+
 typedef struct {
     unsigned calls;
     bool fail;
@@ -376,6 +482,8 @@ static bool open_session_probe(void *userdata, const FrontendImageRequest *reque
              ? request->archive_member : request->path);
     snprintf(result->save_identity, sizeof(result->save_identity), "%s%s",
              request->path, request->patch_path[0] ? ".patched" : ".save");
+    if (!request->archive_member[0])
+        snprintf(result->archive_member, sizeof(result->archive_member), "resolved/game.nes");
     return true;
 }
 
@@ -389,6 +497,8 @@ static int session_transitions_and_recents(void) {
     CHECK(frontend_image_request_set_member(&request, "collection/ゲーム.nes"));
     CHECK(frontend_image_request_set_patch(&request, "C:/patches/fix 🎯.bps"));
     CHECK(frontend_image_request_set_fds_bios(&request, "C:/firmware/disk.bin"));
+    CHECK(frontend_image_request_set_fds_overlay(&request, "C:/saves/overlay 🎮.ips"));
+    request.fds_save_mode = FDS_SAVE_IN_PLACE;
     request.fds_write_protected = true;
 
     SessionProbe probe = {0};
@@ -423,6 +533,8 @@ static int session_transitions_and_recents(void) {
     CHECK(strcmp(recent->path, "C:/games/Crème 日本 🎮.zip") == 0);
     CHECK(strcmp(recent->archive_member, "collection/ゲーム.nes") == 0);
     CHECK(strcmp(recent->patch_path, "C:/patches/fix 🎯.bps") == 0);
+    CHECK(recent->fds_save_mode == FDS_SAVE_IN_PLACE);
+    CHECK(strcmp(recent->fds_overlay_path, "C:/saves/overlay 🎮.ips") == 0);
     CHECK(recent->fds_write_protected);
     CHECK(frontend_session_open_recent(&restored, 0, error, sizeof(error)));
     CHECK(restored.active && probe.calls == 3);
@@ -439,6 +551,13 @@ static int session_transitions_and_recents(void) {
         CHECK(error[0] && frontend_session_recent_count(&restored) == 1);
         CHECK(memcmp(frontend_session_recent(&restored, 0), &retained, sizeof(retained)) == 0);
     }
+    const char legacy_list[] =
+        "version=1\nrecent=C:/legacy.fds||||C:/firmware/disk.bin||1\n";
+    CHECK(nes_file_write_atomic(recent_path, legacy_list, sizeof(legacy_list) - 1) == NES_FILE_OK);
+    CHECK(frontend_session_load_recent(&restored, recent_path, error, sizeof(error)));
+    recent = frontend_session_recent(&restored, 0);
+    CHECK(recent && recent->fds_save_mode == FDS_SAVE_OVERLAY);
+    CHECK(recent->fds_overlay_path[0] == '\0' && recent->fds_write_protected);
     CHECK(nes_file_remove(recent_path) == NES_FILE_OK);
     return 0;
 }
@@ -456,6 +575,7 @@ int test_frontend_accuracy(void) {
     failures += settings_round_trip();
     failures += settings_migration_and_errors();
     failures += settings_cli_precedence();
+    failures += remapped_execution_shortcuts();
     failures += session_transitions_and_recents();
     unload_rom();
     frontend_commands_reset();
