@@ -46,6 +46,16 @@ NesStateResult nes_state_capture(NesStateBlob *out);
 /* Restore validates the complete image before changing the active machine. */
 NesStateResult nes_state_restore(const void *data, size_t size);
 
+typedef struct NesStateRestore NesStateRestore;
+
+/* Prepare validates and owns a copy of all state data and allocates every
+ * restore resource. Apply performs no allocation. Keep the same loaded image
+ * and device configuration until the token is applied and released. These
+ * operations belong to the emulation thread with host audio coordinated. */
+NesStateResult nes_state_prepare_restore(const void *data, size_t size, NesStateRestore **out);
+NesStateResult nes_state_apply_prepared(NesStateRestore *restore);
+void nes_state_restore_free(NesStateRestore *restore);
+
 void nes_state_blob_free(NesStateBlob *blob);
 
 /* File saves replace an existing destination only after the complete write succeeds. */

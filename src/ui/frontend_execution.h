@@ -13,8 +13,9 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include "execution_control.h"
+#include "../replay/rewind.h"
 
-typedef struct {
+typedef struct FrontendExecutionRuntime {
     ExecutionControl execution;
     SDL_AudioDeviceID *audio_device;
     int audio_output_rate;
@@ -23,6 +24,11 @@ typedef struct {
     const char *studybox_bios_path;
     size_t *fds_side;
     uint64_t debugger_pause_revision;
+    NesRewindHistory rewind;
+    unsigned rewind_seconds;
+    unsigned run_ahead_frames;
+    NesReplayResult replay_status;
+    NesStateResult replay_state_status;
     bool (*before_machine_change)(void *context, char *error, size_t error_size);
     void *machine_change_context;
 } FrontendExecutionRuntime;
@@ -38,5 +44,19 @@ bool frontend_execution_run_frame(FrontendExecutionRuntime *runtime);
 void frontend_execution_sync_debugger(FrontendExecutionRuntime *runtime);
 bool frontend_execution_paused(const FrontendExecutionRuntime *runtime);
 double frontend_execution_speed(const FrontendExecutionRuntime *runtime);
+
+bool frontend_execution_set_rewind_seconds(FrontendExecutionRuntime *runtime,
+                                           unsigned seconds);
+unsigned frontend_execution_rewind_seconds(const FrontendExecutionRuntime *runtime);
+size_t frontend_execution_rewind_available(const FrontendExecutionRuntime *runtime);
+bool frontend_execution_rewind_step(FrontendExecutionRuntime *runtime,
+                                    char *error, size_t error_size);
+void frontend_execution_clear_timeline(FrontendExecutionRuntime *runtime);
+void frontend_execution_shutdown(FrontendExecutionRuntime *runtime);
+
+bool frontend_execution_set_run_ahead(FrontendExecutionRuntime *runtime, unsigned frames);
+unsigned frontend_execution_run_ahead(const FrontendExecutionRuntime *runtime);
+NesReplayResult frontend_execution_replay_status(const FrontendExecutionRuntime *runtime,
+                                                 NesStateResult *state_result);
 
 #endif

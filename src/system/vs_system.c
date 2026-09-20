@@ -288,6 +288,13 @@ const uint32_t *vs_video_framebuffer(void) {
     return vs.dual_framebuffer;
 }
 
+bool vs_video_copy_frame(uint32_t *out, size_t pixels) {
+    size_t required = (size_t)vs_video_width() * SCREEN_HEIGHT;
+    if (!out || pixels < required) return false;
+    memcpy(out, vs_video_framebuffer(), required * sizeof(*out));
+    return true;
+}
+
 APU *vs_side_apu(unsigned side) {
     if (side == 0) return &apu;
     return side == 1 && vs_dual_system() ? &vs.sub_apu : NULL;
@@ -598,6 +605,13 @@ typedef struct {
     size_t sub_apu_size;
 } VsSavedState;
 
+/* Save-state validation can run on sanitizer builds with a small Windows
+ * thread stack. The dual-VS framebuffer makes this restore image too large for
+ * an automatic local. State restore is application-thread owned, like the VS
+ * hardware itself, so a reusable decode scratch keeps validation allocation
+ * free and preserves transactional apply behavior. */
+static VsSavedState vs_saved_scratch;
+
 static bool vs_state_write_config(NesStateWriter *writer, const VsRomConfig *config) {
     return nes_state_write_bool(writer, config->enabled)
         && nes_state_write_bool(writer, config->dual)
@@ -724,37 +738,36 @@ bool vs_state_capture(NesStateWriter *writer) {
 }
 
 bool vs_state_validate(NesStateReader *reader) {
-    VsSavedState saved;
-    return reader && vs_state_decode(reader, &saved);
+    return reader && vs_state_decode(reader, &vs_saved_scratch);
 }
 
 bool vs_state_apply(NesStateReader *reader) {
-    VsSavedState saved;
-    if (!reader || !vs_state_decode(reader, &saved)) return false;
-    vs.dips = saved.dips;
-    memcpy(vs.coin_frames, saved.coin_frames, sizeof(vs.coin_frames));
-    memcpy(vs.coin_pressed, saved.coin_pressed, sizeof(vs.coin_pressed));
-    memcpy(vs.coin_frame_mark, saved.coin_frame_mark, sizeof(vs.coin_frame_mark));
-    memcpy(vs.service, saved.service, sizeof(vs.service));
-    memcpy(vs.shift, saved.shift, sizeof(vs.shift));
-    memcpy(vs.strobe, saved.strobe, sizeof(vs.strobe));
-    memcpy(vs.select_bit, saved.select_bit, sizeof(vs.select_bit));
-    vs.ram_owner = saved.ram_owner;
-    memcpy(vs.main_sub_bit, saved.main_sub_bit, sizeof(vs.main_sub_bit));
-    memcpy(vs.external_irq, saved.external_irq, sizeof(vs.external_irq));
-    memcpy(vs.protection_counter, saved.protection_counter, sizeof(vs.protection_counter));
-    if (saved.has_subconsole) {
-        vs.sub_cpu = saved.sub_cpu;
-        vs.sub_ppu = saved.sub_ppu;
-        memcpy(vs.sub_framebuffer, saved.sub_framebuffer, sizeof(vs.sub_framebuffer));
+    VsSavedState *saved = &vs_saved_scratch;
+    if (!reader || !vs_state_decode(reader, saved)) return false;
+    vs.dips = saved->dips;
+    memcpy(vs.coin_frames, saved->coin_frames, sizeof(vs.coin_frames));
+    memcpy(vs.coin_pressed, saved->coin_pressed, sizeof(vs.coin_pressed));
+    memcpy(vs.coin_frame_mark, saved->coin_frame_mark, sizeof(vs.coin_frame_mark));
+    memcpy(vs.service, saved->service, sizeof(vs.service));
+    memcpy(vs.shift, saved->shift, sizeof(vs.shift));
+    memcpy(vs.strobe, saved->strobe, sizeof(vs.strobe));
+    memcpy(vs.select_bit, saved->select_bit, sizeof(vs.select_bit));
+    vs.ram_owner = saved->ram_owner;
+    memcpy(vs.main_sub_bit, saved->main_sub_bit, sizeof(vs.main_sub_bit));
+    memcpy(vs.external_irq, saved->external_irq, sizeof(vs.external_irq));
+    memcpy(vs.protection_counter, saved->protection_counter, sizeof(vs.protection_counter));
+    if (saved->has_subconsole) {
+        vs.sub_cpu = saved->sub_cpu;
+        vs.sub_ppu = saved->sub_ppu;
+        memcpy(vs.sub_framebuffer, saved->sub_framebuffer, sizeof(vs.sub_framebuffer));
         NesStateReader apu_reader;
-        nes_state_reader_init(&apu_reader, saved.sub_apu_data, saved.sub_apu_size);
+        nes_state_reader_init(&apu_reader, saved->sub_apu_data, saved->sub_apu_size);
         if (!apu_machine_state_apply(&vs.sub_apu, &apu_reader)) {
             select_side(0);
             return false;
         }
     }
-    select_side(saved.active_side);
-    if (saved.active_side != 0) select_side(0);
+    select_side(saved->active_side);
+    if (saved->active_side != 0) select_side(0);
     return true;
 }

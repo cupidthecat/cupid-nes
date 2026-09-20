@@ -12,6 +12,7 @@
  */
 #include "state.h"
 #include "state_io.h"
+#include "state_alloc.h"
 
 #include "../apu/apu.h"
 #include "../apu/epsm.h"
@@ -106,6 +107,16 @@ typedef struct {
     EpsmStateRestore *epsm;
     FamilyBasicStateRestore *family_basic;
 } StatePreparedRestore;
+
+struct NesStateRestore {
+    uint8_t *data;
+    StateChunk chunks[NES_STATE_COMPONENT_COUNT];
+    StatePreparedRestore prepared;
+    StateIdentity identity;
+    const uint8_t *prg;
+    const uint8_t *chr;
+    bool applied;
+};
 
 static uint32_t state_crc32(const uint8_t *data, size_t size) {
     uint32_t crc = 0xFFFFFFFFu;
@@ -326,7 +337,8 @@ NesStateResult nes_state_capture(NesStateBlob *out) {
     return out->data ? NES_STATE_OK : NES_STATE_ERROR_OUT_OF_MEMORY;
 }
 
-NesStateResult nes_state_restore(const void *data, size_t size) {
+static NesStateResult state_read_chunks(const void *data, size_t size,
+                                        StateChunk chunks[NES_STATE_COMPONENT_COUNT]) {
     if ((!data && size) || !data) return NES_STATE_ERROR_ARGUMENT;
     if (rom_metadata_source() == ROM_METADATA_NONE || !cart) return NES_STATE_ERROR_NO_IMAGE;
     if (size < NES_STATE_FIXED_HEADER_SIZE || size > NES_STATE_MAX_SIZE)
@@ -346,8 +358,12 @@ NesStateResult nes_state_restore(const void *data, size_t size) {
     const uint8_t *payload = reader.data + reader.offset;
     if (state_crc32(payload, payload_size) != expected_crc) return NES_STATE_ERROR_CORRUPT;
 
+    return state_parse_payload(payload, payload_size, chunks);
+}
+
+NesStateResult nes_state_restore(const void *data, size_t size) {
     StateChunk chunks[NES_STATE_COMPONENT_COUNT];
-    NesStateResult result = state_parse_payload(payload, payload_size, chunks);
+    NesStateResult result = state_read_chunks(data, size, chunks);
     if (result != NES_STATE_OK) return result;
     StatePreparedRestore prepared;
     result = state_prepare_chunks(chunks, &prepared);
@@ -355,6 +371,53 @@ NesStateResult nes_state_restore(const void *data, size_t size) {
     bool applied = state_apply_chunks(chunks, &prepared);
     state_prepared_restore_free(&prepared);
     return applied ? NES_STATE_OK : NES_STATE_ERROR_CORRUPT;
+}
+
+void nes_state_restore_free(NesStateRestore *restore) {
+    if (!restore) return;
+    state_prepared_restore_free(&restore->prepared);
+    nes_state_dealloc(restore->data);
+    nes_state_dealloc(restore);
+}
+
+NesStateResult nes_state_prepare_restore(const void *data, size_t size, NesStateRestore **out) {
+    if (!out) return NES_STATE_ERROR_ARGUMENT;
+    *out = NULL;
+    StateChunk checked[NES_STATE_COMPONENT_COUNT];
+    NesStateResult result = state_read_chunks(data, size, checked);
+    if (result != NES_STATE_OK) return result;
+    NesStateRestore *restore = nes_state_alloc(sizeof(*restore));
+    if (!restore) return NES_STATE_ERROR_OUT_OF_MEMORY;
+    memset(restore, 0, sizeof(*restore));
+    restore->data = nes_state_alloc(size);
+    if (!restore->data) {
+        nes_state_restore_free(restore);
+        return NES_STATE_ERROR_OUT_OF_MEMORY;
+    }
+    memcpy(restore->data, data, size);
+    for (unsigned i = 0; i < NES_STATE_COMPONENT_COUNT; ++i) {
+        restore->chunks[i] = checked[i];
+        restore->chunks[i].data = restore->data + (checked[i].data - (const uint8_t *)data);
+    }
+    result = state_prepare_chunks(restore->chunks, &restore->prepared);
+    if (result != NES_STATE_OK) {
+        nes_state_restore_free(restore);
+        return result;
+    }
+    restore->identity = current_identity();
+    restore->prg = prg_rom;
+    restore->chr = chr_rom;
+    *out = restore;
+    return NES_STATE_OK;
+}
+
+NesStateResult nes_state_apply_prepared(NesStateRestore *restore) {
+    if (!restore || restore->applied) return NES_STATE_ERROR_ARGUMENT;
+    if (restore->prg != prg_rom || restore->chr != chr_rom
+        || !state_identity_matches(&restore->identity)) return NES_STATE_ERROR_INCOMPATIBLE;
+    restore->applied = true;
+    return state_apply_chunks(restore->chunks, &restore->prepared)
+        ? NES_STATE_OK : NES_STATE_ERROR_CORRUPT;
 }
 
 void nes_state_blob_free(NesStateBlob *blob) {

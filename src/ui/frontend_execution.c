@@ -10,11 +10,14 @@
 #include "frontend_commands.h"
 #include "machine_actions.h"
 #include "../debugger/debugger.h"
+#include "replay_frontend.h"
 #include "../joypad/joypad.h"
 #include "../ppu/ppu.h"
 #include "../rom/fds.h"
 #include "../rom/rom.h"
 #include "../system/vs_system.h"
+#include "../system/execution_policy.h"
+#include "../system/timing.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -63,6 +66,12 @@ static void unlock_audio_after_machine_change(FrontendExecutionRuntime *runtime)
     refresh_audio(runtime);
 }
 
+static void unlock_audio_without_refresh(FrontendExecutionRuntime *runtime) {
+    if (!runtime || !runtime->audio_device || !*runtime->audio_device) return;
+    SDL_UnlockAudioDevice(*runtime->audio_device);
+    if (!runtime->execution.paused) SDL_PauseAudioDevice(*runtime->audio_device, 0);
+}
+
 static bool command_pause(void *userdata, char *error, size_t error_size) {
     (void)error;
     (void)error_size;
@@ -95,7 +104,9 @@ static bool command_frame_advance(void *userdata, char *error, size_t error_size
 static bool command_soft_reset(void *userdata, char *error, size_t error_size) {
     FrontendExecutionRuntime *runtime = (FrontendExecutionRuntime *)userdata;
     if (runtime->before_machine_change
-        && !runtime->before_machine_change(runtime->machine_change_context, error, error_size)) return false;
+        && !runtime->before_machine_change(runtime->machine_change_context,
+                                           error, error_size)) return false;
+    frontend_execution_clear_timeline(runtime);
     lock_audio_for_machine_change(runtime);
     bool result = frontend_machine_soft_reset();
     unlock_audio_after_machine_change(runtime);
@@ -105,7 +116,9 @@ static bool command_soft_reset(void *userdata, char *error, size_t error_size) {
 static bool command_power_cycle(void *userdata, char *error, size_t error_size) {
     FrontendExecutionRuntime *runtime = (FrontendExecutionRuntime *)userdata;
     if (runtime->before_machine_change
-        && !runtime->before_machine_change(runtime->machine_change_context, error, error_size)) return false;
+        && !runtime->before_machine_change(runtime->machine_change_context,
+                                           error, error_size)) return false;
+    frontend_execution_clear_timeline(runtime);
     lock_audio_for_machine_change(runtime);
     bool result = frontend_machine_power_cycle();
     unlock_audio_after_machine_change(runtime);
@@ -142,6 +155,7 @@ static bool command_reload(void *userdata, char *error, size_t error_size) {
                   "The image could not be reloaded; the current session was kept");
         return false;
     }
+    frontend_execution_clear_timeline(runtime);
     if (rom_is_fds() && runtime->fds_side) {
         if (disk_inserted) {
             if (!fds_insert_disk(*runtime->fds_side)) {
@@ -220,6 +234,10 @@ void frontend_execution_init(FrontendExecutionRuntime *runtime,
     runtime->fds_side = fds_side;
     debugger_init();
     runtime->debugger_pause_revision = debugger_pause_revision();
+    runtime->replay_status = NES_REPLAY_OK;
+    runtime->replay_state_status = NES_STATE_OK;
+    nes_rewind_init(&runtime->rewind);
+    (void)frontend_execution_set_rewind_seconds(runtime, 10);
 }
 
 bool frontend_execution_register_commands(FrontendExecutionRuntime *runtime) {
@@ -267,7 +285,7 @@ bool frontend_execution_register_commands(FrontendExecutionRuntime *runtime) {
         };
         if (!frontend_command_register(&spec)) return false;
     }
-    return true;
+    return replay_frontend_register(runtime);
 }
 
 bool frontend_execution_handle_shortcut(FrontendExecutionRuntime *runtime,
@@ -330,7 +348,29 @@ static bool run_emulation_frame(void *userdata) {
 bool frontend_execution_run_frame(FrontendExecutionRuntime *runtime) {
     if (!runtime) return false;
     frontend_execution_sync_debugger(runtime);
-    bool ran = execution_control_run_frame(&runtime->execution, run_emulation_frame, NULL);
+    if (!execution_control_should_run_frame(&runtime->execution)) return false;
+
+    if (nes_execution_policy() == NES_EXECUTION_LIVE && runtime->rewind.capacity) {
+        lock_audio_for_machine_change(runtime);
+        runtime->replay_status = nes_rewind_capture(&runtime->rewind,
+                                                    &runtime->replay_state_status);
+        unlock_audio_without_refresh(runtime);
+        if (runtime->replay_status == NES_REPLAY_DISABLED)
+            runtime->replay_status = NES_REPLAY_OK;
+    }
+
+    bool ran = false;
+    if (runtime->run_ahead_frames && nes_execution_policy() == NES_EXECUTION_LIVE) {
+        lock_audio_for_machine_change(runtime);
+        runtime->replay_status = nes_runahead_execute(runtime->run_ahead_frames,
+                                                      run_emulation_frame, NULL,
+                                                      &runtime->replay_state_status);
+        unlock_audio_without_refresh(runtime);
+        ran = runtime->replay_status == NES_REPLAY_OK;
+    } else {
+        ran = run_emulation_frame(NULL);
+    }
+    if (ran) execution_control_frame_complete(&runtime->execution);
     frontend_execution_sync_debugger(runtime);
     if (runtime->execution.paused) update_audio_pause(runtime);
     return ran;
@@ -342,4 +382,87 @@ bool frontend_execution_paused(const FrontendExecutionRuntime *runtime) {
 
 double frontend_execution_speed(const FrontendExecutionRuntime *runtime) {
     return runtime ? execution_control_effective_speed(&runtime->execution) : 1.0;
+}
+
+bool frontend_execution_set_rewind_seconds(FrontendExecutionRuntime *runtime,
+                                           unsigned seconds) {
+    if (!runtime || seconds > 60) return false;
+    const NesTiming *timing = nes_timing();
+    double fps = timing && timing->fps > 0.0 ? timing->fps : 60.0;
+    size_t frames = seconds ? (size_t)ceil((double)seconds * fps) : 0;
+    if (frames > NES_REWIND_MAX_FRAMES) return false;
+    if (!nes_rewind_configure(&runtime->rewind, frames,
+                              NES_REWIND_DEFAULT_MEMORY_LIMIT)) return false;
+    runtime->rewind_seconds = seconds;
+    runtime->replay_status = NES_REPLAY_OK;
+    runtime->replay_state_status = NES_STATE_OK;
+    return true;
+}
+
+unsigned frontend_execution_rewind_seconds(const FrontendExecutionRuntime *runtime) {
+    return runtime ? runtime->rewind_seconds : 0;
+}
+
+size_t frontend_execution_rewind_available(const FrontendExecutionRuntime *runtime) {
+    return runtime ? nes_rewind_count(&runtime->rewind) : 0;
+}
+
+bool frontend_execution_rewind_step(FrontendExecutionRuntime *runtime,
+                                    char *error, size_t error_size) {
+    if (!runtime) return false;
+    if (runtime->before_machine_change
+        && !runtime->before_machine_change(runtime->machine_change_context, error, error_size)) return false;
+    lock_audio_for_machine_change(runtime);
+    runtime->replay_status = nes_rewind_step(&runtime->rewind,
+                                             &runtime->replay_state_status);
+    unlock_audio_after_machine_change(runtime);
+    if (runtime->replay_status == NES_REPLAY_OK) return true;
+    if (runtime->replay_status == NES_REPLAY_STATE_ERROR) {
+        char message[160];
+        snprintf(message, sizeof(message), "Rewind failed: %s",
+                 nes_state_result_string(runtime->replay_state_status));
+        set_error(error, error_size, message);
+    } else {
+        set_error(error, error_size, nes_replay_result_string(runtime->replay_status));
+    }
+    return false;
+}
+
+void frontend_execution_clear_timeline(FrontendExecutionRuntime *runtime) {
+    if (!runtime) return;
+    nes_rewind_clear(&runtime->rewind);
+    nes_runahead_clear_presented_frame();
+    runtime->replay_status = NES_REPLAY_OK;
+    runtime->replay_state_status = NES_STATE_OK;
+}
+
+void frontend_execution_shutdown(FrontendExecutionRuntime *runtime) {
+    if (!runtime) return;
+    nes_rewind_destroy(&runtime->rewind);
+    nes_runahead_clear_presented_frame();
+    runtime->rewind_seconds = 0;
+    runtime->run_ahead_frames = 0;
+}
+
+bool frontend_execution_set_run_ahead(FrontendExecutionRuntime *runtime, unsigned frames) {
+    if (!runtime || frames > 4) return false;
+    runtime->run_ahead_frames = frames;
+    if (!frames) nes_runahead_clear_presented_frame();
+    runtime->replay_status = NES_REPLAY_OK;
+    runtime->replay_state_status = NES_STATE_OK;
+    return true;
+}
+
+unsigned frontend_execution_run_ahead(const FrontendExecutionRuntime *runtime) {
+    return runtime ? runtime->run_ahead_frames : 0;
+}
+
+NesReplayResult frontend_execution_replay_status(const FrontendExecutionRuntime *runtime,
+                                                 NesStateResult *state_result) {
+    if (!runtime) {
+        if (state_result) *state_result = NES_STATE_ERROR_ARGUMENT;
+        return NES_REPLAY_STATE_ERROR;
+    }
+    if (state_result) *state_result = runtime->replay_state_status;
+    return runtime->replay_status;
 }

@@ -104,6 +104,7 @@ int test_board_state_accuracy(void);
 int test_state_accuracy(void);
 int test_debugger_accuracy(void);
 int test_cheat_accuracy(void);
+int test_rewind_accuracy(void);
 int test_cpu_trace(const char *rom_path, const char *trace_path);
 int run_diagnostic_rom(const char *path, unsigned frame_limit);
 int run_mmc3_diagnostic_rom(const char *path, unsigned frame_limit);
@@ -216,6 +217,7 @@ int main(int argc, char **argv) {
     failures += test_epsm_accuracy();
     failures += test_board_state_accuracy();
     failures += test_state_accuracy();
+    failures += test_rewind_accuracy();
     failures += test_region_accuracy();
     failures += test_file_io_accuracy();
     failures += test_persistence_accuracy();

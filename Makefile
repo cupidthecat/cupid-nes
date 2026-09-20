@@ -17,9 +17,9 @@ CORE_SRC = src/system/timing.c src/system/hardware.c src/system/vs_system.c src/
            src/joypad/joypad.c src/joypad/family_basic.c src/joypad/special_peripherals.c \
            src/apu/apu.c src/third_party/blip_buf.c src/video/ntsc_composite.c src/video/video_trace.c src/ui/palette_tool.c src/ui/nsf_frontend.c \
            src/ui/frontend_commands.c src/ui/execution_control.c src/ui/machine_actions.c src/ui/app_paths.c \
-           src/ui/frontend_execution.c src/ui/frontend_panels.c src/ui/frontend_session.c \
+           src/ui/frontend_execution.c src/ui/replay_frontend.c src/ui/frontend_panels.c src/ui/frontend_session.c \
            src/ui/platform_frontend.c src/ui/settings.c src/ui/game_database.c
-CORE_SRC += src/system/execution_policy.c \
+CORE_SRC += src/system/execution_policy.c src/replay/rewind.c \
             src/audio/audio_observer.c src/ui/nsf_player.c src/ui/nsf_player_ui.c \
             src/ui/nsf_player_runtime.c \
             src/capture/capture_writer.c src/capture/capture_png.c src/capture/capture_session.c \
@@ -76,7 +76,7 @@ TEST_SRC = src/tests/accuracy_test.c src/tests/cpu_accuracy.c \
            src/tests/native_chr_capacity_accuracy.c src/tests/native_mixed_chr_accuracy.c \
            src/tests/board_nina_fme7_accuracy.c src/tests/board_state_accuracy.c src/tests/state_accuracy.c \
            src/tests/debugger_accuracy.c src/tests/cheat_accuracy.c \
-           src/tests/frontend_accuracy.c
+           src/tests/rewind_accuracy.c src/tests/frontend_accuracy.c
 TEST_SRC += src/tests/patch_accuracy.c src/tests/media_accuracy.c src/tests/fds_options_accuracy.c \
             src/tests/fds_automation_accuracy.c src/tests/execution_policy_accuracy.c \
             src/tests/nsf_player_accuracy.c src/tests/capture_container_accuracy.c \

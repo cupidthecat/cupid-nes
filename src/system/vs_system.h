@@ -80,6 +80,10 @@ uint64_t vs_side_cpu_cycles(unsigned side);
 uint64_t vs_side_frame_count(unsigned side);
 unsigned vs_video_width(void);
 const uint32_t *vs_video_framebuffer(void);
+/* Host presentation helpers. These buffers are intentionally outside hardware
+ * identity; run-ahead uses them to keep the speculative picture after the
+ * authoritative machine snapshot is restored. */
+bool vs_video_copy_frame(uint32_t *out, size_t pixels);
 APU *vs_side_apu(unsigned side);
 PPU *vs_side_ppu(unsigned side);
 void vs_audio_init(int sample_rate);
