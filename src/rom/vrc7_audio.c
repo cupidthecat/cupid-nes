@@ -24,9 +24,13 @@ void vrc7_fm_destroy(Vrc7Fm *fm) {
     memset(fm, 0, sizeof(*fm));
 }
 
+void vrc7_fm_reset_chip(Vrc7Fm *fm) {
+    if (fm && fm->opll) OPLL_reset(fm->opll);
+}
+
 void vrc7_fm_reset(Vrc7Fm *fm) {
     if (!fm || !fm->opll) return;
-    OPLL_reset(fm->opll);
+    vrc7_fm_reset_chip(fm);
     OPLL_setChipType(fm->opll, OPLL_VRC7_TONE);
     OPLL_resetPatch(fm->opll, OPLL_VRC7_TONE);
     fm->address = 0;

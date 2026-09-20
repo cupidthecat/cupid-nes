@@ -96,6 +96,7 @@ static bool cart_cpu_cycle_is_write = false;
 static void mmc3_irq_clock(void);
 static float vrc7_expansion_output(void);
 static void vrc7_shutdown(void);
+static void vrc7_console_reset(void);
 static void nsf_reset(bool soft_reset);
 static void nsf_after_reset(void);
 static void build_mapper(Mapper *m,
@@ -849,6 +850,7 @@ void cart_irq_ack(void) {
 }
 void cart_console_reset(bool soft_reset) {
     if (cart == &mapper_nsf) nsf_reset(soft_reset);
+    else if (cart == &mapper_vrc7) vrc7_console_reset();
     else board_reset(active_board, soft_reset);
 }
 void cart_after_console_reset(void) {

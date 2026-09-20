@@ -149,6 +149,28 @@ The combined implementation is `a3c8afd8d5cd155d297917079072aad7ee430151`. Its L
 
 Revision `6cbf43b6ddb4ad03c09675f63ae732eff3bbfb88` updates the README and five technical guides while retaining that implementation, build scripts, and test pins. Its [push workflow](https://github.com/cupidthecat/cupid-nes/actions/runs/35484461117) and [pull-request workflow](https://github.com/cupidthecat/cupid-nes/actions/runs/35484472930) both passed the GCC and Clang sanitizer jobs. Each job passed the production hardware suite, 8,991-state CPU trace, all 91 diagnostic ROMs, and AccuracyCoin 144/144 with zero skipped or unfinished tests. These are results for the named revision; later commits require their own CI checks.
 
+## NSF multiplier reset checkpoint
+
+Revision `265f7d2919940db3dac83faf3617cb65dddb11eb` preserves the NSF/NSFe MMC5 multiplier operands across soft reset and track changes. A fresh music-image load initializes both operands to zero. The regression runs a synthetic program through the production loader and CPU: its initialization routine reads `$5205/$5206` and stores both product bytes in RAM. It checks `$FE * $FD` across soft reset, a partial operand write followed by a track change, and separate operand initialization after reload. The expansion-audio combination tests also check retained operands while continuing to require cleared audio output.
+
+Before the implementation change, the new reset regression and corrected audio-combination check both failed because the multiplier returned zero. The committed fix passed the strict Windows build, production hardware suite, and AccuracyCoin in normal and AddressSanitizer/UndefinedBehaviorSanitizer builds. Both AccuracyCoin runs reported 144/144 passed, zero skipped, zero unfinished, and 4,182 frames, matching the cartridge's tally. The ROM revision, SHA-256, and result requirements above were unchanged.
+
+Both Windows builds also passed the canonical CPU trace's 8,991 states and all 91 pinned diagnostic ROMs through `scripts/run-diagnostics.py`.
+
+## VRC7 console reset checkpoint
+
+Revision `1dd63fd97a7228f58f14fc13812bc21ba3a3a055` connects mapper 85 console reset to the FM chip's reset operation. Banking, control, RAM and IRQ state survive, along with the audio address latch, mute state and sample-clock phase. The regression checks all three supported submapper values, an IRQ counter that keeps advancing through the seven CPU reset cycles, the next FM sample boundary, muted writes and a data write through the retained address latch. Before the fix, the sample-boundary assertion failed because the synthesizer kept playing.
+
+The strict Windows build and production hardware suite passed in normal and AddressSanitizer/UndefinedBehaviorSanitizer builds. Each build then passed AccuracyCoin 144/144 with zero skipped and zero unfinished in 4,182 frames, matching the cartridge's tally. The test ROM pin and SHA-256 were unchanged.
+
+## NMI during CPU reset checkpoint
+
+Revision `6177689eed717b5c7ed32842226b866c54d92111` clears earlier NMI requests before the CPU reset bus cycles, preserving new edges detected during those cycles. With PPU reset suppression enabled, the running PPU can raise its vblank NMI inside that window. The regression advances the real PPU to five offsets in each of NTSC, PAL and Dendy, then verifies the first instruction, NMI handler and return. Paired cases use ordinary PPU reset, and the handler count checks that a held NMI line does not cause repeated delivery. Before the fix, all 15 cases with PPU reset suppression enabled missed the interrupt; the paired controls passed.
+
+This revision includes the NSF multiplier and VRC7 reset fixes above. Its strict Windows build and production hardware suite passed in normal and AddressSanitizer/UndefinedBehaviorSanitizer builds. Both builds passed the canonical CPU trace's 8,991 states, all 91 pinned diagnostic ROMs, and AccuracyCoin 144/144 with zero skipped or unfinished tests. Each AccuracyCoin run completed in 4,182 frames and matched the cartridge's tally. The ROM revisions, SHA-256 and result requirements were unchanged.
+
+These local results belong to the named implementation revision. Later documentation commits retain that source, and the final pull-request revision must pass its own GCC and Clang sanitizer CI jobs.
+
 ## Reproducing a checkpoint
 
 Check out the listed commit in a separate worktree, prepare SDL2 and the pinned ROM as described in [development and testing](development.md), then run:
