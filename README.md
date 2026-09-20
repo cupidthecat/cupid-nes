@@ -24,7 +24,7 @@ input, storage, and expansion-audio regressions cover hardware that AccuracyCoin
 does not exercise.
 
 <p align="center">
-  <img src="img/smb33.png" alt="Super Mario Bros. 3 running in Cupid">
+  <img src="img/new.png" alt="Super Mario Bros. 3 running in Cupid">
 </p>
 <p align="center">
   <img src="img/coin.png" alt="AccuracyCoin results from the production core">
