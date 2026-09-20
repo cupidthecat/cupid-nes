@@ -38,7 +38,7 @@ Get-ChildItem -LiteralPath $sdkInclude -Filter '*.h' | Copy-Item -Destination $s
 Copy-Item -LiteralPath $sdkRuntime -Destination (Join-Path $outputDirectory 'SDL2.dll') -Force
 
 $flags = @('-std=c11', '-Wall', '-Wextra', '-Werror', '-D_CRT_SECURE_NO_WARNINGS', '-DSDL_MAIN_HANDLED',
-           '-DZ7_PPMD_SUPPORT', '-DZ7_EXTRACT_ONLY', "-I$includeDirectory")
+           '-DZ7_PPMD_SUPPORT', '-DZ7_EXTRACT_ONLY', '-DMINIZ_NO_ZLIB_COMPATIBLE_NAMES', "-I$includeDirectory")
 if ($Sanitize) {
     $flags += @('-O1', '-g', '-fsanitize=address,undefined', '-fno-omit-frame-pointer')
     $resourceDirectory = & $Compiler '-print-resource-dir'

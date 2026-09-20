@@ -51,7 +51,7 @@ typedef struct {
     unsigned edit_control;
     int ui_scale;
     bool edit_text_active;
-    char edit_text[128];
+    char edit_text[FRONTEND_SETTINGS_PATH_TEXT];
     char status[256];
     uint32_t status_until;
     double fps;

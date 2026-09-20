@@ -91,7 +91,7 @@ static bool move_relative(size_t *position, size_t encoded, size_t limit) {
 
 static NesPatchResult ips_pass(const uint8_t *patch, size_t patch_size,
                                 uint8_t *output, size_t source_size,
-                                size_t limit, size_t *output_size) {
+                                size_t limit, size_t *output_size, size_t *allocation_size) {
     PatchReader reader = {patch, patch_size, 5};
     size_t size = source_size;
     for (;;) {
@@ -101,13 +101,14 @@ static NesPatchResult ips_pass(const uint8_t *patch, size_t patch_size,
         }
 
         if (!memcmp(record, "EOF", 3)) {
+            if (allocation_size) *allocation_size = size;
             size_t remainder = reader.size - reader.position;
             if (remainder != 0 && remainder != 3) {
                 return NES_PATCH_INVALID;
             }
 
             if (remainder) {
-                (void)take(&reader, 3, &record);
+                if (!take(&reader, 3, &record)) return NES_PATCH_INVALID;
                 size_t truncate = big24(record);
                 if (size > truncate) {
                     size = truncate;
@@ -161,34 +162,11 @@ static NesPatchResult apply_ips(const uint8_t *source, size_t source_size,
                                  size_t limit, uint8_t **output, size_t *output_size) {
     /* The first pass also determines the pre-truncation allocation. A record
      * may write past the final size before the optional truncation is applied. */
-    size_t final_size = 0;
-    NesPatchResult result = ips_pass(patch, patch_size, NULL, source_size, limit, &final_size);
+    size_t final_size = 0, allocation = 0;
+    NesPatchResult result = ips_pass(patch, patch_size, NULL, source_size, limit,
+                                     &final_size, &allocation);
     if (result != NES_PATCH_OK) {
         return result;
-    }
-
-    size_t allocation = source_size;
-    PatchReader reader = {patch, patch_size, 5};
-    for (;;) {
-        const uint8_t *bytes;
-        (void)take(&reader, 3, &bytes);
-        if (!memcmp(bytes, "EOF", 3)) {
-            break;
-        }
-
-        size_t offset = big24(bytes);
-        (void)take(&reader, 2, &bytes);
-        size_t count = ((size_t)bytes[0] << 8) | bytes[1];
-        if (count) {
-            (void)take(&reader, count, &bytes);
-        } else {
-            (void)take(&reader, 3, &bytes);
-            count = ((size_t)bytes[0] << 8) | bytes[1];
-        }
-
-        if (allocation < offset + count) {
-            allocation = offset + count;
-        }
     }
 
     uint8_t *data = (uint8_t *)calloc(allocation ? allocation : 1, 1);
@@ -200,7 +178,7 @@ static NesPatchResult apply_ips(const uint8_t *source, size_t source_size,
         memcpy(data, source, source_size);
     }
 
-    result = ips_pass(patch, patch_size, data, source_size, limit, &final_size);
+    result = ips_pass(patch, patch_size, data, source_size, limit, &final_size, NULL);
     if (result != NES_PATCH_OK) {
         free(data);
         return result;

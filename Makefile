@@ -4,7 +4,10 @@ ifeq ($(origin CXX),default)
 CXX = $(if $(findstring clang,$(CC)),clang++,g++)
 endif
 CXXFLAGS ?= $(filter-out -std=c%,$(CFLAGS)) -std=c++17
-CPPFLAGS += -DSDL_MAIN_HANDLED -DZ7_PPMD_SUPPORT -DZ7_EXTRACT_ONLY
+CPPFLAGS += -DSDL_MAIN_HANDLED -DZ7_PPMD_SUPPORT -DZ7_EXTRACT_ONLY -DMINIZ_NO_ZLIB_COMPATIBLE_NAMES
+ifneq ($(OS),Windows_NT)
+CPPFLAGS += -D_POSIX_C_SOURCE=200809L
+endif
 LDLIBS ?= -lSDL2 -lm
 
 TARGET = cupid-nes

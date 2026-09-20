@@ -41,6 +41,24 @@ static void copy_status(FrontendDesktopUi *ui, const char *text) {
     ui->status_until = SDL_GetTicks() + 6000;
 }
 
+static void visible_text(char *target, size_t capacity, const char *text) {
+    if (!target || !capacity) return;
+    if (!text) text = "";
+    size_t size = strlen(text);
+    if (size < capacity) {
+        memcpy(target, text, size + 1);
+        return;
+    }
+    if (capacity < 4) {
+        target[0] = '\0';
+        return;
+    }
+    size_t prefix = capacity - 4;
+    while (prefix && ((unsigned char)text[prefix] & 0xC0u) == 0x80u) --prefix;
+    memcpy(target, text, prefix);
+    memcpy(target + prefix, "...", 4);
+}
+
 void frontend_desktop_set_status(FrontendDesktopUi *ui, const char *message) {
     copy_status(ui, message);
 }
@@ -275,9 +293,9 @@ static void setting_text(FrontendDesktopUi *ui, int row, char *label, size_t lc,
             "Disk write protection", "Automatic disk insertion", "Fast-forward disk loading",
             "Music auto advance", "Music repeat", "Music shuffle", "Music silence detection"};
         snprintf(label, lc, "%s", labels[row]);
-        if (row == 0) snprintf(value, vc, "%s", s->fds_bios_path);
-        else if (row == 1) snprintf(value, vc, "%s", s->studybox_bios_path);
-        else if (row == 2) snprintf(value, vc, "%s", s->disk_overlay_path);
+        if (row == 0) visible_text(value, vc, s->fds_bios_path);
+        else if (row == 1) visible_text(value, vc, s->studybox_bios_path);
+        else if (row == 2) visible_text(value, vc, s->disk_overlay_path);
         else if (row == 3) snprintf(value, vc, "%s", s->disk_save_mode == FDS_SAVE_OVERLAY ? "Overlay" : "In place");
         else { bool flags[] = {s->fds_write_protected, s->fds_auto_insert, s->fds_loading_fast_forward,
                     s->nsf_player.automatic, s->nsf_player.repeat, s->nsf_player.shuffle, s->nsf_player.detect_silence};
@@ -286,19 +304,29 @@ static void setting_text(FrontendDesktopUi *ui, int row, char *label, size_t lc,
         const char *labels[] = {"State slot", "State file path", "Screenshot path", "Audio capture path", "Video capture path"};
         snprintf(label, lc, "%s", labels[row]);
         if (row == 0) snprintf(value, vc, "Slot %u", s->state_slot + 1u);
-        else if (row == 1) snprintf(value, vc, "%s", s->state_file_path);
-        else snprintf(value, vc, "%s", s->capture_paths[row - 2]);
+        else if (row == 1) visible_text(value, vc, s->state_file_path);
+        else visible_text(value, vc, s->capture_paths[row - 2]);
     } else if (ui->settings_category == 7) {
         snprintf(label, lc, "%s", row == 0 ? "Console wiring" : "Effective timing");
         snprintf(value, vc, "%s", row == 0 ? console_value(s->console_model) : nes_region_name(nes_timing()->region));
     }
 }
 
-static void begin_edit(FrontendDesktopUi *ui, unsigned row, const char *text) {
-    ui->edit_control = 0x80000000u | row;
-    snprintf(ui->edit_text, sizeof(ui->edit_text), "%s", text ? text : "");
+static void start_text_edit(FrontendDesktopUi *ui, unsigned control, const char *text) {
+    if (!text) text = "";
+    size_t size = strlen(text);
+    if (size >= sizeof(ui->edit_text)) {
+        copy_status(ui, "This value is too long to edit here");
+        return;
+    }
+    ui->edit_control = control;
+    memcpy(ui->edit_text, text, size + 1);
     ui->edit_text_active = true;
     SDL_StartTextInput();
+}
+
+static void begin_edit(FrontendDesktopUi *ui, unsigned row, const char *text) {
+    start_text_edit(ui, 0x80000000u | row, text);
 }
 
 static void adjust_setting(FrontendDesktopUi *ui, int row, int direction) {
@@ -346,7 +374,14 @@ static void commit_edit(FrontendDesktopUi *ui) {
     unsigned row = ui->edit_control & 0x7fffffffu;
     FrontendSettings *s = &ui->staged;
     if (ui->settings_open) {
-        if (ui->settings_category == 4 && row == 7) snprintf(s->device_guid[ui->settings_player], FRONTEND_SETTINGS_GUID_TEXT, "%s", ui->edit_text);
+        if (ui->settings_category == 4 && row == 7) {
+            size_t size = strlen(ui->edit_text);
+            if (size >= FRONTEND_SETTINGS_GUID_TEXT) {
+                copy_status(ui, "Controller identifier is too long");
+                return;
+            }
+            memcpy(s->device_guid[ui->settings_player], ui->edit_text, size + 1);
+        }
         else if (ui->settings_category == 5 && row <= 2) {
             char *targets[] = {s->fds_bios_path, s->studybox_bios_path, s->disk_overlay_path}; snprintf(targets[row], FRONTEND_SETTINGS_PATH_TEXT, "%s", ui->edit_text);
         } else if (ui->settings_category == 6) {
@@ -414,7 +449,8 @@ static void render_menu(FrontendDesktopUi *ui) {
     const char *menu=menu_names[ui->open_menu]; int count=0; FrontendCommandInfo ci;
     for(size_t i=0;i<frontend_command_count();i++) if(frontend_command_at(i,&ci) && !strcmp(ci.menu,menu)) count++;
     int panel_start=count; if(ui->open_menu==3){ FrontendPanelInfo pi; for(size_t i=0;i<frontend_panel_count();i++) if(frontend_panel_at(i,&pi)&&pi.enabled) count++; }
-    if(ui->open_menu==4) count+=2; if(!count)return;
+    if (ui->open_menu == 4) count += 2;
+    if (!count) return;
     SDL_Rect box={x,MENU_H,260,count*24+8}; fill(ui->renderer,box,36,38,44,250);
     int row=0; for(size_t i=0;i<frontend_command_count();i++){ if(!frontend_command_at(i,&ci)||strcmp(ci.menu,menu))continue; char line[128]; snprintf(line,sizeof(line),"%s%s%s",ci.checked?"[x] ":"",ci.label,ci.enabled?"":" (disabled)"); frontend_draw_text(ui->renderer,x+8,MENU_H+8+row*24,1,line,ci.enabled?230:120,ci.enabled?230:120,ci.enabled?235:120,255); row++; }
     if(ui->open_menu==3){ FrontendPanelInfo pi; for(size_t i=0;i<frontend_panel_count();i++){ if(!frontend_panel_at(i,&pi)||!pi.enabled)continue; frontend_draw_text(ui->renderer,x+8,MENU_H+8+row*24,1,pi.title,220,220,225,255); row++; } }
@@ -450,14 +486,37 @@ static void handle_settings_mouse(FrontendDesktopUi *ui, int x, int y) {
     if(y>=box.y+390&&y<box.y+416){int b=(x-(box.x+175))/84;if(b==0)(void)save_settings(ui);else if(b==1){if(save_settings(ui))set_settings_open(ui,false);}else if(b==2)set_settings_open(ui,false);else if(b==3){FrontendSettings d;frontend_settings_defaults(&d);d.cli_overrides=ui->staged.cli_overrides;ui->staged=d;}else if(b==4){if(ui->confirm_restore_all){FrontendSettings d;frontend_settings_defaults(&d);d.cli_overrides=ui->staged.cli_overrides;ui->staged=d;ui->confirm_restore_all=false;}else{ui->confirm_restore_all=true;copy_status(ui,"Click Reset all again to confirm");}}}
 }
 
-static void handle_panel_mouse(FrontendDesktopUi *ui,int x,int y){int ww=0,wh=0;SDL_GetWindowSize(ui->window,&ww,&wh);SDL_Rect box={(ww-600)/2,(wh-430)/2,600,430};if(!inside(x,y,box))return;int row=(y-(box.y+52))/23;if(row<0)return;FrontendPanelControl cs[64];FrontendPanelModel m={.controls=cs,.capacity=64};char e[256]={0};if(!frontend_panel_snapshot(ui->panel_id,&m,e,sizeof(e))||(size_t)row>=m.count)return;FrontendPanelControl*c=&cs[row];if(!c->enabled)return;if(c->type==FRONTEND_PANEL_TEXT&&!c->read_only){ui->edit_control=c->id;snprintf(ui->edit_text,sizeof(ui->edit_text),"%s",c->value?c->value:"");ui->edit_text_active=true;SDL_StartTextInput();return;}int selected=c->selected;if(c->type==FRONTEND_PANEL_CHOICE&&c->item_count)selected=(selected+1)%(int)c->item_count;if(!frontend_panel_action(ui->panel_id,c->id,NULL,selected,e,sizeof(e))&&e[0])copy_status(ui,e);}
+static void handle_panel_mouse(FrontendDesktopUi *ui, int x, int y) {
+    int ww = 0, wh = 0;
+    SDL_GetWindowSize(ui->window, &ww, &wh);
+    SDL_Rect box = {(ww - 600) / 2, (wh - 430) / 2, 600, 430};
+    if (!inside(x, y, box)) return;
+    int row = (y - (box.y + 52)) / 23;
+    if (row < 0) return;
+    FrontendPanelControl controls[64];
+    FrontendPanelModel model = {.controls = controls, .capacity = 64};
+    char error[256] = {0};
+    if (!frontend_panel_snapshot(ui->panel_id, &model, error, sizeof(error))
+        || (size_t)row >= model.count) return;
+    FrontendPanelControl *control = &controls[row];
+    if (!control->enabled) return;
+    if (control->type == FRONTEND_PANEL_TEXT && !control->read_only) {
+        start_text_edit(ui, control->id, control->value);
+        return;
+    }
+    int selected = control->selected;
+    if (control->type == FRONTEND_PANEL_CHOICE && control->item_count)
+        selected = (selected + 1) % (int)control->item_count;
+    if (!frontend_panel_action(ui->panel_id, control->id, NULL, selected, error, sizeof(error))
+        && error[0]) copy_status(ui, error);
+}
 
 bool frontend_desktop_handle_event(FrontendDesktopUi *ui, const SDL_Event *event) {
     if (!ui || !event) return false;
     if(event->type==SDL_WINDOWEVENT&&ui->window&&event->window.windowID==SDL_GetWindowID(ui->window)){if(event->window.event==SDL_WINDOWEVENT_SIZE_CHANGED){ui->settings->window_width=(unsigned)event->window.data1;ui->settings->window_height=(unsigned)event->window.data2;sync_scale(ui);}if(event->window.event==SDL_WINDOWEVENT_FOCUS_LOST&&ui->settings->pause_on_focus_loss&&ui->execution&&!frontend_execution_paused(ui->execution)){ui->paused_for_focus=invoke_command(ui,FRONTEND_COMMAND_PAUSE);}if(event->window.event==SDL_WINDOWEVENT_FOCUS_GAINED&&ui->paused_for_focus&&ui->execution&&frontend_execution_paused(ui->execution)){(void)invoke_command(ui,FRONTEND_COMMAND_PAUSE);ui->paused_for_focus=false;}}
     if(event->type==SDL_TEXTINPUT&&ui->edit_text_active){size_t n=strlen(ui->edit_text),a=strlen(event->text.text);if(n+a<sizeof(ui->edit_text)){memcpy(ui->edit_text+n,event->text.text,a+1);}return true;}
     if((event->type==SDL_KEYDOWN||event->type==SDL_KEYUP)&&ui->capture_binding){if(event->type==SDL_KEYDOWN&&!event->key.repeat)handle_binding_key(ui,&event->key);return true;}
-    if(event->type==SDL_KEYDOWN&&!event->key.repeat){SDL_Scancode sc=event->key.keysym.scancode;if(ui->edit_text_active){if(sc==SDL_SCANCODE_RETURN)commit_edit(ui);else if(sc==SDL_SCANCODE_ESCAPE){ui->edit_text_active=false;SDL_StopTextInput();}else if(sc==SDL_SCANCODE_BACKSPACE){size_t n=strlen(ui->edit_text);if(n)ui->edit_text[n-1]='\0';}return true;}if(sc==SDL_SCANCODE_ESCAPE){if(ui->settings_open)set_settings_open(ui,false);else if(ui->panel_open)ui->panel_open=false;else if(ui->info_open)ui->info_open=false;else ui->open_menu=-1;return true;}if(ui->settings_open){int rows=setting_rows(ui);if(sc==SDL_SCANCODE_TAB||sc==SDL_SCANCODE_DOWN)ui->settings_row=(ui->settings_row+1)%rows;else if(sc==SDL_SCANCODE_UP)ui->settings_row=(ui->settings_row+rows-1)%rows;else if(sc==SDL_SCANCODE_LEFT)adjust_setting(ui,ui->settings_row,-1);else if(sc==SDL_SCANCODE_RIGHT||sc==SDL_SCANCODE_RETURN)adjust_setting(ui,ui->settings_row,1);return true;}if((event->key.keysym.mod&KMOD_ALT)&&sc==SDL_SCANCODE_RETURN){(void)invoke_command(ui,FRONTEND_COMMAND_FULLSCREEN);return true;}if((event->key.keysym.mod&KMOD_CTRL)&&sc==SDL_SCANCODE_COMMA){set_settings_open(ui,true);return true;}}
+    if(event->type==SDL_KEYDOWN&&!event->key.repeat){SDL_Scancode sc=event->key.keysym.scancode;if(ui->edit_text_active){if(sc==SDL_SCANCODE_RETURN)commit_edit(ui);else if(sc==SDL_SCANCODE_ESCAPE){ui->edit_text_active=false;SDL_StopTextInput();}else if(sc==SDL_SCANCODE_BACKSPACE){size_t n=strlen(ui->edit_text);if(n){--n;while(n&&((unsigned char)ui->edit_text[n]&0xC0u)==0x80u)--n;ui->edit_text[n]='\0';}}return true;}if(sc==SDL_SCANCODE_ESCAPE){if(ui->settings_open)set_settings_open(ui,false);else if(ui->panel_open)ui->panel_open=false;else if(ui->info_open)ui->info_open=false;else ui->open_menu=-1;return true;}if(ui->settings_open){int rows=setting_rows(ui);if(sc==SDL_SCANCODE_TAB||sc==SDL_SCANCODE_DOWN)ui->settings_row=(ui->settings_row+1)%rows;else if(sc==SDL_SCANCODE_UP)ui->settings_row=(ui->settings_row+rows-1)%rows;else if(sc==SDL_SCANCODE_LEFT)adjust_setting(ui,ui->settings_row,-1);else if(sc==SDL_SCANCODE_RIGHT||sc==SDL_SCANCODE_RETURN)adjust_setting(ui,ui->settings_row,1);return true;}if((event->key.keysym.mod&KMOD_ALT)&&sc==SDL_SCANCODE_RETURN){(void)invoke_command(ui,FRONTEND_COMMAND_FULLSCREEN);return true;}if((event->key.keysym.mod&KMOD_CTRL)&&sc==SDL_SCANCODE_COMMA){set_settings_open(ui,true);return true;}}
     if(event->type==SDL_MOUSEBUTTONDOWN&&event->button.button==SDL_BUTTON_LEFT){int x=event->button.x,y=event->button.y;if(ui->settings_open){handle_settings_mouse(ui,x,y);return true;}if(ui->panel_open){handle_panel_mouse(ui,x,y);return true;}if(ui->info_open){ui->info_open=false;return true;}if(y<MENU_H){ui->open_menu=menu_index_at(x);return true;}if(ui->open_menu>=0){if(y>=MENU_H){activate_menu_row(ui,(y-MENU_H-8)/24);return true;}}if(y>=MENU_H&&y<MENU_H+TOOLBAR_H){int index=(x-10)/88;if(index>=0&&index<4){unsigned ids[]={FRONTEND_COMMAND_OPEN,FRONTEND_COMMAND_PAUSE,FRONTEND_COMMAND_SOFT_RESET,FRONTEND_COMMAND_SETTINGS};(void)invoke_command(ui,ids[index]);return true;}}}
     return ui->settings_open||ui->panel_open||ui->info_open||ui->edit_text_active;
 }

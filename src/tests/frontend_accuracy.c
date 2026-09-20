@@ -14,6 +14,7 @@
 #include "../system/timing.h"
 #include "../system/vs_system.h"
 #include "../ui/execution_control.h"
+#include "../ui/desktop_ui.h"
 #include "../ui/frontend_commands.h"
 #include "../ui/frontend_execution.h"
 #include "../ui/machine_actions.h"
@@ -478,10 +479,17 @@ static bool open_session_probe(void *userdata, const FrontendImageRequest *reque
         snprintf(error, error_size, "image validation failed");
         return false;
     }
-    snprintf(result->title, sizeof(result->title), "Loaded %s", request->archive_member[0]
-             ? request->archive_member : request->path);
-    snprintf(result->save_identity, sizeof(result->save_identity), "%s%s",
-             request->path, request->patch_path[0] ? ".patched" : ".save");
+    const char *name = request->archive_member[0] ? request->archive_member : request->path;
+    const char *suffix = request->patch_path[0] ? ".patched" : ".save";
+    if (strlen(name) + 7 >= sizeof(result->title)
+        || strlen(request->path) + strlen(suffix) >= sizeof(result->save_identity)) {
+        snprintf(error, error_size, "probe image name is too long");
+        return false;
+    }
+    memcpy(result->title, "Loaded ", 7);
+    memcpy(result->title + 7, name, strlen(name) + 1);
+    memcpy(result->save_identity, request->path, strlen(request->path));
+    memcpy(result->save_identity + strlen(request->path), suffix, strlen(suffix) + 1);
     if (!request->archive_member[0])
         snprintf(result->archive_member, sizeof(result->archive_member), "resolved/game.nes");
     return true;
@@ -562,6 +570,63 @@ static int session_transitions_and_recents(void) {
     return 0;
 }
 
+static int settings_text_editing(void) {
+    FrontendSettings settings;
+    frontend_settings_defaults(&settings);
+    memset(settings.fds_bios_path, 'a', 400);
+    strcpy(settings.fds_bios_path + 400, "/café-猫-🎮.bin");
+    FrontendDesktopUi ui = {0};
+    ui.settings = &settings;
+    ui.staged = settings;
+    ui.settings_open = true;
+    ui.settings_category = 5;
+    SDL_Event event = {0};
+    event.type = SDL_KEYDOWN;
+    event.key.keysym.scancode = SDL_SCANCODE_RIGHT;
+    CHECK(frontend_desktop_handle_event(&ui, &event));
+    CHECK(ui.edit_text_active && !strcmp(ui.edit_text, settings.fds_bios_path));
+    event.key.keysym.scancode = SDL_SCANCODE_RETURN;
+    CHECK(frontend_desktop_handle_event(&ui, &event));
+    CHECK(!ui.edit_text_active && !strcmp(ui.staged.fds_bios_path, settings.fds_bios_path));
+
+    event.key.keysym.scancode = SDL_SCANCODE_RIGHT;
+    CHECK(frontend_desktop_handle_event(&ui, &event));
+    strcpy(ui.edit_text, "aé猫🎮");
+    event.key.keysym.scancode = SDL_SCANCODE_BACKSPACE;
+    const char *expected[] = {"aé猫", "aé", "a", "", ""};
+    for (size_t i = 0; i < sizeof(expected) / sizeof(expected[0]); ++i) {
+        CHECK(frontend_desktop_handle_event(&ui, &event));
+        CHECK(!strcmp(ui.edit_text, expected[i]));
+    }
+
+    memset(ui.edit_text, 'x', sizeof(ui.edit_text) - 3);
+    ui.edit_text[sizeof(ui.edit_text) - 3] = '\0';
+    event.type = SDL_TEXTINPUT;
+    strcpy(event.text.text, "é");
+    CHECK(frontend_desktop_handle_event(&ui, &event));
+    CHECK(strlen(ui.edit_text) == sizeof(ui.edit_text) - 1);
+    strcpy(event.text.text, "🎮");
+    CHECK(frontend_desktop_handle_event(&ui, &event));
+    CHECK(strlen(ui.edit_text) == sizeof(ui.edit_text) - 1);
+    CHECK(!strcmp(ui.edit_text + sizeof(ui.edit_text) - 3, "é"));
+
+    ui.settings_category = 4;
+    ui.edit_control = 0x80000000u | 7u;
+    strcpy(ui.staged.device_guid[0], "retained");
+    memset(ui.edit_text, 'x', 80);
+    ui.edit_text[80] = '\0';
+    memset(&event, 0, sizeof(event));
+    event.type = SDL_KEYDOWN;
+    event.key.keysym.scancode = SDL_SCANCODE_RETURN;
+    CHECK(frontend_desktop_handle_event(&ui, &event));
+    CHECK(ui.edit_text_active && !strcmp(ui.staged.device_guid[0], "retained"));
+    CHECK(ui.status[0]);
+    event.key.keysym.scancode = SDL_SCANCODE_ESCAPE;
+    CHECK(frontend_desktop_handle_event(&ui, &event));
+    CHECK(!ui.edit_text_active && !strcmp(ui.staged.device_guid[0], "retained"));
+    return 0;
+}
+
 int test_frontend_accuracy(void) {
     const NesRegionMode saved_mode = nes_region_mode();
     const NesRegion saved_region = nes_timing()->region;
@@ -577,6 +642,7 @@ int test_frontend_accuracy(void) {
     failures += settings_cli_precedence();
     failures += remapped_execution_shortcuts();
     failures += session_transitions_and_recents();
+    failures += settings_text_editing();
     unload_rom();
     frontend_commands_reset();
     nes_set_region_mode(saved_mode);
