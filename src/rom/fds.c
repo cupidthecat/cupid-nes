@@ -24,6 +24,7 @@
  */
 
 #include "fds.h"
+#include "../system/hardware.h"
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -478,6 +479,11 @@ void fds_activate(FdsImage *image) {
     fds_shutdown();
     memset(&fds, 0, sizeof(fds));
     fds.image = image;
+    if (image) {
+        nes_initialize_power_on_ram(fds.work_ram, sizeof(fds.work_ram), 0);
+        nes_initialize_power_on_ram(fds.chr_ram, sizeof(fds.chr_ram), 0);
+    }
+
     fds.current_side = image && image->side_count ? 0 : FDS_NO_SIDE;
     fds.mirroring = MIRROR_VERTICAL;
     fds.disk_regs_enabled = true;
