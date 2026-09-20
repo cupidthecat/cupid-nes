@@ -9,6 +9,7 @@
 #include "family_basic.h"
 #include "../system/execution_policy.h"
 #include "../util/file_io.h"
+#include "../state/state_alloc.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -178,3 +179,130 @@ void family_basic_tape_record(uint64_t cpu_cycles) {
 void family_basic_tape_stop(void) { tape.mode = FB_TAPE_STOPPED; }
 FamilyBasicTapeMode family_basic_tape_mode(void) { return tape.mode; }
 bool family_basic_tape_failed(void) { return tape.failed; }
+
+static bool family_basic_state_decode(NesStateReader *reader, uint8_t saved_matrix[9],
+                                      unsigned *saved_row, bool *saved_half,
+                                      bool *saved_enabled, size_t *saved_samples,
+                                      uint64_t *saved_cycle, FamilyBasicTapeMode *saved_mode,
+                                      bool *saved_failed, const uint8_t **saved_data,
+                                      size_t *saved_bytes) {
+    uint32_t row, mode;
+    uint64_t samples;
+    if (!reader || !saved_matrix || !saved_row || !saved_half || !saved_enabled
+        || !saved_samples || !saved_cycle || !saved_mode || !saved_failed
+        || !saved_data || !saved_bytes
+        || !nes_state_read_bytes(reader, saved_matrix, 9)
+        || !nes_state_read_u32(reader, &row)
+        || !nes_state_read_bool(reader, saved_half)
+        || !nes_state_read_bool(reader, saved_enabled)
+        || !nes_state_read_u64(reader, &samples)
+        || !nes_state_read_u64(reader, saved_cycle)
+        || !nes_state_read_u32(reader, &mode)
+        || !nes_state_read_bool(reader, saved_failed)
+        || row >= 9 || mode > FB_TAPE_RECORDING || samples > SIZE_MAX) return false;
+    size_t count = (size_t)samples;
+    if (count > SIZE_MAX - 7) return false;
+    size_t bytes = (count + 7) / 8;
+    if (nes_state_reader_remaining(reader) != bytes) return false;
+    *saved_row = row;
+    *saved_samples = count;
+    *saved_mode = (FamilyBasicTapeMode)mode;
+    *saved_data = reader->data + reader->offset;
+    *saved_bytes = bytes;
+    reader->offset += bytes;
+    return true;
+}
+
+bool family_basic_state_capture(NesStateWriter *writer) {
+    if (!writer || tape.samples > SIZE_MAX - 7) return false;
+    size_t bytes = (tape.samples + 7) / 8;
+    return nes_state_write_bytes(writer, matrix, sizeof(matrix))
+        && nes_state_write_u32(writer, scan_row)
+        && nes_state_write_bool(writer, scan_half)
+        && nes_state_write_bool(writer, enabled)
+        && nes_state_write_u64(writer, tape.samples)
+        && nes_state_write_u64(writer, tape.cycle)
+        && nes_state_write_u32(writer, (uint32_t)tape.mode)
+        && nes_state_write_bool(writer, tape.failed)
+        && nes_state_write_bytes(writer, tape.data, bytes);
+}
+
+bool family_basic_state_validate(NesStateReader *reader) {
+    uint8_t saved_matrix[9];
+    unsigned row;
+    bool half, active, failed;
+    size_t samples, bytes;
+    uint64_t cycle;
+    FamilyBasicTapeMode mode;
+    const uint8_t *data;
+    return family_basic_state_decode(reader, saved_matrix, &row, &half, &active,
+                                     &samples, &cycle, &mode, &failed, &data, &bytes);
+}
+
+struct FamilyBasicStateRestore {
+    uint8_t matrix[9];
+    unsigned row;
+    bool half;
+    bool active;
+    size_t samples;
+    uint64_t cycle;
+    FamilyBasicTapeMode mode;
+    bool failed;
+    uint8_t *data;
+    size_t bytes;
+};
+
+NesStateResult family_basic_state_prepare(NesStateReader *reader, FamilyBasicStateRestore **out_restore) {
+    if (!reader || !out_restore) return NES_STATE_ERROR_ARGUMENT;
+    *out_restore = NULL;
+    FamilyBasicStateRestore decoded = {0};
+    const uint8_t *data = NULL;
+    if (!family_basic_state_decode(reader, decoded.matrix, &decoded.row, &decoded.half,
+                                   &decoded.active, &decoded.samples, &decoded.cycle,
+                                   &decoded.mode, &decoded.failed, &data, &decoded.bytes))
+        return NES_STATE_ERROR_CORRUPT;
+    FamilyBasicStateRestore *restore = nes_state_alloc(sizeof(*restore));
+    if (!restore) return NES_STATE_ERROR_OUT_OF_MEMORY;
+    *restore = decoded;
+    if (decoded.bytes) {
+        restore->data = nes_state_alloc(decoded.bytes);
+        if (!restore->data) {
+            nes_state_dealloc(restore);
+            return NES_STATE_ERROR_OUT_OF_MEMORY;
+        }
+        memcpy(restore->data, data, decoded.bytes);
+    }
+    *out_restore = restore;
+    return NES_STATE_OK;
+}
+
+void family_basic_state_apply_prepared(FamilyBasicStateRestore *restore) {
+    if (!restore) return;
+    memcpy(matrix, restore->matrix, sizeof(matrix));
+    scan_row = restore->row;
+    scan_half = restore->half;
+    enabled = restore->active;
+    free(tape.data);
+    tape.data = restore->data;
+    tape.capacity = restore->bytes;
+    tape.samples = restore->samples;
+    tape.cycle = restore->cycle;
+    tape.mode = restore->mode;
+    tape.failed = restore->failed;
+    restore->data = NULL;
+    restore->bytes = 0;
+}
+
+void family_basic_state_restore_free(FamilyBasicStateRestore *restore) {
+    if (!restore) return;
+    nes_state_dealloc(restore->data);
+    nes_state_dealloc(restore);
+}
+
+bool family_basic_state_apply(NesStateReader *reader) {
+    FamilyBasicStateRestore *restore = NULL;
+    if (family_basic_state_prepare(reader, &restore) != NES_STATE_OK) return false;
+    family_basic_state_apply_prepared(restore);
+    family_basic_state_restore_free(restore);
+    return true;
+}

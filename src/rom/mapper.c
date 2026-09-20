@@ -852,3 +852,4 @@ void cart_notify_vblank_start(void) {
 #include "mapper_discrete.h"
 #include "mapper_jaleco_irem.h"
 #include "mapper_factory.h"
+#include "mapper_state_impl.h"

@@ -29,6 +29,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "../joypad/joypad.h"
+#include "../state/state_io.h"
 #include "../system/timing.h"
 
 typedef struct {
@@ -121,5 +122,11 @@ void cpu_set_nmi_line(bool asserted);
 // Inject an already-latched NMI for tests; hardware uses cpu_set_nmi_line.
 void cpu_request_nmi(void);
 void cpu_irq(CPU *cpu);
+
+bool cpu_state_capture(NesStateWriter *writer);
+bool cpu_state_validate(NesStateReader *reader);
+bool cpu_state_apply(NesStateReader *reader);
+bool cpu_machine_state_capture(NesStateWriter *writer, const CpuMachineContext *context);
+bool cpu_machine_state_decode(NesStateReader *reader, CpuMachineContext *context);
 
 #endif // CPU_H

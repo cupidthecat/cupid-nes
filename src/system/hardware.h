@@ -27,6 +27,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include "../state/state_io.h"
 
 typedef enum {
     NES_CONSOLE_NES001,
@@ -56,5 +57,9 @@ void nes_initialize_power_on_ram(void *data, size_t size, uint8_t default_value)
 bool nes_power_on_random_bool(void);
 void nes_set_randomize_vblank(bool enabled);
 bool nes_randomize_vblank_enabled(void);
+
+bool hardware_state_capture(NesStateWriter *writer);
+bool hardware_state_validate(NesStateReader *reader);
+bool hardware_state_apply(NesStateReader *reader);
 
 #endif

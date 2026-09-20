@@ -917,3 +917,5 @@ void fds_cpu_write(uint16_t addr, uint8_t value) {
             break;
     }
 }
+
+#include "fds_state_impl.h"

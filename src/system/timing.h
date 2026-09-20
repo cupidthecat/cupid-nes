@@ -25,6 +25,7 @@
 #define NES_TIMING_H
 
 #include <stdbool.h>
+#include "../state/state_io.h"
 
 typedef enum {
     NES_REGION_NTSC,
@@ -62,5 +63,9 @@ bool nes_set_region_mode_name(const char *name);
 const char *nes_region_mode_name(void);
 const char *nes_region_name(NesRegion region);
 NesRegion nes_resolve_region(NesRegion detected_region);
+
+bool timing_state_capture(NesStateWriter *writer);
+bool timing_state_validate(NesStateReader *reader);
+bool timing_state_apply(NesStateReader *reader);
 
 #endif

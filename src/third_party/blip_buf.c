@@ -144,6 +144,41 @@ int blip_read_samples(blip_t *buffer, short out[], int count, int stereo) {
     return count;
 }
 
+size_t blip_state_sample_count(const blip_t *buffer) {
+    return buffer && buffer->size >= 0 ? (size_t)buffer->size + buf_extra : 0;
+}
+
+bool blip_state_export(const blip_t *buffer, BlipStateHeader *header,
+                       int32_t *samples, size_t sample_count) {
+    if (!buffer || !header || buffer->size < 0 || buffer->avail < 0
+        || buffer->avail > buffer->size) return false;
+    size_t count = blip_state_sample_count(buffer);
+    if (count != sample_count || (count && !samples)) return false;
+    header->factor = (uint64_t)buffer->factor;
+    header->offset = (uint64_t)buffer->offset;
+    header->available = buffer->avail;
+    header->size = buffer->size;
+    header->integrator = buffer->integrator;
+    for (size_t i = 0; i < count; ++i) samples[i] = SAMPLES(buffer)[i];
+    return true;
+}
+
+bool blip_state_import(blip_t *buffer, const BlipStateHeader *header,
+                       const int32_t *samples, size_t sample_count) {
+    if (!buffer || !header || header->size != buffer->size
+        || header->available < 0 || header->available > header->size
+        || (uint64_t)(fixed_t)header->factor != header->factor
+        || (uint64_t)(fixed_t)header->offset != header->offset) return false;
+    size_t count = blip_state_sample_count(buffer);
+    if (count != sample_count || (count && !samples)) return false;
+    buffer->factor = (fixed_t)header->factor;
+    buffer->offset = (fixed_t)header->offset;
+    buffer->avail = header->available;
+    buffer->integrator = header->integrator;
+    for (size_t i = 0; i < count; ++i) SAMPLES(buffer)[i] = samples[i];
+    return true;
+}
+
 static const short bl_step[phase_count + 1][half_width] = {
     {43,-115,350,-488,1136,-914,5861,21022},
     {44,-118,348,-473,1076,-799,5274,21001},

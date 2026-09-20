@@ -1172,6 +1172,8 @@ void ppu_step(int cpu_cycles) {
     }
 }
 
+#include "ppu_state_impl.h"
+
 uint16_t ppu_pixel_brightness(unsigned x, unsigned y) {
     // The sensor uses a fixed RGB-sum approximation after the PPU's palette
     // remap. Display palette edits and emphasis do not change that signal.

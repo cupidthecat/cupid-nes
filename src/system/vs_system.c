@@ -564,3 +564,187 @@ bool vs_ppu_rgb_color(uint8_t color, uint8_t mask, uint32_t *argb) {
     *argb = result;
     return true;
 }
+
+typedef struct {
+    VsRomConfig config;
+    unsigned active_side;
+    uint16_t dips;
+    uint8_t coin_frames[4];
+    bool coin_pressed[4];
+    uint64_t coin_frame_mark[4];
+    bool service[2];
+    uint8_t shift[2][2];
+    bool strobe[2];
+    uint8_t select_bit[2];
+    unsigned ram_owner;
+    bool main_sub_bit[2];
+    bool external_irq[2];
+    uint8_t protection_counter[2];
+    bool has_subconsole;
+    CpuMachineContext sub_cpu;
+    PpuMachineContext sub_ppu;
+    uint32_t sub_framebuffer[SCREEN_WIDTH * SCREEN_HEIGHT];
+    const uint8_t *sub_apu_data;
+    size_t sub_apu_size;
+} VsSavedState;
+
+static bool vs_state_write_config(NesStateWriter *writer, const VsRomConfig *config) {
+    return nes_state_write_bool(writer, config->enabled)
+        && nes_state_write_bool(writer, config->dual)
+        && nes_state_write_u8(writer, (uint8_t)config->type)
+        && nes_state_write_u8(writer, (uint8_t)config->ppu_model)
+        && nes_state_write_u8(writer, (uint8_t)config->input_type);
+}
+
+static bool vs_state_read_config(NesStateReader *reader, VsRomConfig *config) {
+    uint8_t type, ppu_model, input_type;
+    if (!nes_state_read_bool(reader, &config->enabled)
+        || !nes_state_read_bool(reader, &config->dual)
+        || !nes_state_read_u8(reader, &type)
+        || !nes_state_read_u8(reader, &ppu_model)
+        || !nes_state_read_u8(reader, &input_type)
+        || type > VS_TYPE_RAID_ON_BUNGELING_BAY
+        || ppu_model > VS_PPU_2C05_05
+        || (config->enabled && (input_type < VS_INPUT_STANDARD || input_type > VS_INPUT_ZAPPER))
+        || (!config->enabled && (config->dual || input_type > VS_INPUT_ZAPPER))) return false;
+    config->type = (VsSystemType)type;
+    config->ppu_model = (VsPpuModel)ppu_model;
+    config->input_type = (VsInputType)input_type;
+    return true;
+}
+
+static bool vs_state_write_nested(NesStateWriter *writer, const NesStateWriter *nested) {
+    return nested->size <= UINT32_MAX
+        && nes_state_write_u32(writer, (uint32_t)nested->size)
+        && nes_state_write_bytes(writer, nested->data, nested->size);
+}
+
+static bool vs_state_read_nested(NesStateReader *reader, NesStateReader *nested) {
+    uint32_t size;
+    return nes_state_read_u32(reader, &size) && nes_state_reader_slice(reader, size, nested);
+}
+
+static bool vs_state_config_matches(const VsRomConfig *config) {
+    return config->enabled == vs.config.enabled && config->dual == vs.config.dual
+        && config->type == vs.config.type && config->ppu_model == vs.config.ppu_model
+        && config->input_type == vs.config.input_type;
+}
+
+static bool vs_state_decode(NesStateReader *reader, VsSavedState *saved) {
+    uint32_t active_side, ram_owner;
+    memset(saved, 0, sizeof(*saved));
+    if (!reader || !vs_state_read_config(reader, &saved->config)
+        || !vs_state_config_matches(&saved->config)
+        || !nes_state_read_u32(reader, &active_side)
+        || !nes_state_read_u16(reader, &saved->dips)
+        || !nes_state_read_bytes(reader, saved->coin_frames, sizeof(saved->coin_frames))) return false;
+    for (unsigned i = 0; i < 4; ++i)
+        if (!nes_state_read_bool(reader, &saved->coin_pressed[i])
+            || !nes_state_read_u64(reader, &saved->coin_frame_mark[i])) return false;
+    for (unsigned side = 0; side < 2; ++side) {
+        if (!nes_state_read_bool(reader, &saved->service[side])
+            || !nes_state_read_bytes(reader, saved->shift[side], 2)
+            || !nes_state_read_bool(reader, &saved->strobe[side])
+            || !nes_state_read_u8(reader, &saved->select_bit[side])
+            || saved->select_bit[side] > 1) return false;
+    }
+    if (!nes_state_read_u32(reader, &ram_owner)) return false;
+    for (unsigned side = 0; side < 2; ++side) {
+        if (!nes_state_read_bool(reader, &saved->main_sub_bit[side])
+            || !nes_state_read_bool(reader, &saved->external_irq[side])
+            || !nes_state_read_u8(reader, &saved->protection_counter[side])) return false;
+    }
+    if (!nes_state_read_bool(reader, &saved->has_subconsole)
+        || active_side > 1 || ram_owner > 1
+        || saved->has_subconsole != saved->config.dual) return false;
+    saved->active_side = active_side;
+    saved->ram_owner = ram_owner;
+    if (!saved->has_subconsole) return nes_state_reader_remaining(reader) == 0;
+
+    NesStateReader nested;
+    if (!vs_state_read_nested(reader, &nested)
+        || !cpu_machine_state_decode(&nested, &saved->sub_cpu)
+        || !vs_state_read_nested(reader, &nested)
+        || !ppu_machine_state_decode(&nested, &saved->sub_ppu, saved->sub_framebuffer)
+        || nes_state_reader_remaining(&nested) != 0
+        || !vs_state_read_nested(reader, &nested)) return false;
+    saved->sub_apu_data = nested.data;
+    saved->sub_apu_size = nested.size;
+    if (!apu_machine_state_validate(&vs.sub_apu, &nested)
+        || nes_state_reader_remaining(reader) != 0) return false;
+    return true;
+}
+
+bool vs_state_capture(NesStateWriter *writer) {
+    if (!writer || vs.active_side != 0 || !vs_state_write_config(writer, &vs.config)
+        || !nes_state_write_u32(writer, vs.active_side)
+        || !nes_state_write_u16(writer, vs.dips)
+        || !nes_state_write_bytes(writer, vs.coin_frames, sizeof(vs.coin_frames))) return false;
+    for (unsigned i = 0; i < 4; ++i)
+        if (!nes_state_write_bool(writer, vs.coin_pressed[i])
+            || !nes_state_write_u64(writer, vs.coin_frame_mark[i])) return false;
+    for (unsigned side = 0; side < 2; ++side) {
+        if (!nes_state_write_bool(writer, vs.service[side])
+            || !nes_state_write_bytes(writer, vs.shift[side], 2)
+            || !nes_state_write_bool(writer, vs.strobe[side])
+            || !nes_state_write_u8(writer, vs.select_bit[side])) return false;
+    }
+    if (!nes_state_write_u32(writer, vs.ram_owner)) return false;
+    for (unsigned side = 0; side < 2; ++side) {
+        if (!nes_state_write_bool(writer, vs.main_sub_bit[side])
+            || !nes_state_write_bool(writer, vs.external_irq[side])
+            || !nes_state_write_u8(writer, vs.protection_counter[side])) return false;
+    }
+    if (!nes_state_write_bool(writer, vs.config.dual) || !vs.config.dual) return true;
+
+    NesStateWriter nested;
+    nes_state_writer_init(&nested, NES_STATE_MAX_SIZE);
+    bool ok = cpu_machine_state_capture(&nested, &vs.sub_cpu) && vs_state_write_nested(writer, &nested);
+    nes_state_writer_destroy(&nested);
+    if (!ok) return false;
+    nes_state_writer_init(&nested, NES_STATE_MAX_SIZE);
+    ok = ppu_machine_state_capture(&nested, &vs.sub_ppu, vs.sub_framebuffer)
+        && vs_state_write_nested(writer, &nested);
+    nes_state_writer_destroy(&nested);
+    if (!ok) return false;
+    nes_state_writer_init(&nested, NES_STATE_MAX_SIZE);
+    ok = apu_machine_state_capture(&nested, &vs.sub_apu) && vs_state_write_nested(writer, &nested);
+    nes_state_writer_destroy(&nested);
+    return ok;
+}
+
+bool vs_state_validate(NesStateReader *reader) {
+    VsSavedState saved;
+    return reader && vs_state_decode(reader, &saved);
+}
+
+bool vs_state_apply(NesStateReader *reader) {
+    VsSavedState saved;
+    if (!reader || !vs_state_decode(reader, &saved)) return false;
+    vs.dips = saved.dips;
+    memcpy(vs.coin_frames, saved.coin_frames, sizeof(vs.coin_frames));
+    memcpy(vs.coin_pressed, saved.coin_pressed, sizeof(vs.coin_pressed));
+    memcpy(vs.coin_frame_mark, saved.coin_frame_mark, sizeof(vs.coin_frame_mark));
+    memcpy(vs.service, saved.service, sizeof(vs.service));
+    memcpy(vs.shift, saved.shift, sizeof(vs.shift));
+    memcpy(vs.strobe, saved.strobe, sizeof(vs.strobe));
+    memcpy(vs.select_bit, saved.select_bit, sizeof(vs.select_bit));
+    vs.ram_owner = saved.ram_owner;
+    memcpy(vs.main_sub_bit, saved.main_sub_bit, sizeof(vs.main_sub_bit));
+    memcpy(vs.external_irq, saved.external_irq, sizeof(vs.external_irq));
+    memcpy(vs.protection_counter, saved.protection_counter, sizeof(vs.protection_counter));
+    if (saved.has_subconsole) {
+        vs.sub_cpu = saved.sub_cpu;
+        vs.sub_ppu = saved.sub_ppu;
+        memcpy(vs.sub_framebuffer, saved.sub_framebuffer, sizeof(vs.sub_framebuffer));
+        NesStateReader apu_reader;
+        nes_state_reader_init(&apu_reader, saved.sub_apu_data, saved.sub_apu_size);
+        if (!apu_machine_state_apply(&vs.sub_apu, &apu_reader)) {
+            select_side(0);
+            return false;
+        }
+    }
+    select_side(saved.active_side);
+    if (saved.active_side != 0) select_side(0);
+    return true;
+}

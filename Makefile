@@ -9,7 +9,7 @@ LDLIBS ?= -lSDL2 -lm
 
 TARGET = cupid-nes
 TEST_TARGET = build/accuracy-tests
-CORE_SRC = src/system/timing.c src/system/hardware.c src/system/vs_system.c src/state/state_io.c src/cpu/cpu.c src/ppu/ppu.c src/rom/rom.c src/rom/mapper.c \
+CORE_SRC = src/system/timing.c src/system/hardware.c src/system/vs_system.c src/state/state.c src/state/state_io.c src/state/state_alloc.c src/cpu/cpu.c src/ppu/ppu.c src/rom/rom.c src/rom/mapper.c \
            src/rom/fds.c src/rom/nsf.c src/util/file_io.c \
            src/rom/vrc7_audio.c src/rom/emu2413.c \
            src/rom/eeprom.c src/rom/namco163.c src/rom/sunsoft5b.c \
@@ -62,7 +62,7 @@ TEST_SRC = src/tests/accuracy_test.c src/tests/cpu_accuracy.c \
            src/tests/mmc5_extended_geometry_accuracy.c src/tests/native_ram_accuracy.c \
            src/tests/board_irem77_accuracy.c src/tests/default_prg_ram_geometry_accuracy.c \
            src/tests/native_chr_capacity_accuracy.c src/tests/native_mixed_chr_accuracy.c \
-           src/tests/board_nina_fme7_accuracy.c src/tests/board_state_accuracy.c src/tests/frontend_accuracy.c
+           src/tests/board_nina_fme7_accuracy.c src/tests/board_state_accuracy.c src/tests/state_accuracy.c src/tests/frontend_accuracy.c
 TEST_SRC += src/tests/patch_accuracy.c src/tests/media_accuracy.c src/tests/fds_options_accuracy.c \
             src/tests/fds_automation_accuracy.c src/tests/execution_policy_accuracy.c \
             src/tests/nsf_player_accuracy.c

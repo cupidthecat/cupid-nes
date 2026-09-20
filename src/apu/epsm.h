@@ -12,6 +12,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "../state/state.h"
+#include "../state/state_io.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -37,6 +39,14 @@ bool epsm_irq_pending(void);
 void epsm_write_4016(uint8_t data_bus, uint8_t out_pins);
 void epsm_write_port(uint16_t address, uint8_t value);
 void epsm_sample_stereo(float *left, float *right);
+bool epsm_state_capture(NesStateWriter *writer);
+bool epsm_state_validate(NesStateReader *reader);
+bool epsm_state_apply(NesStateReader *reader);
+
+typedef struct EpsmStateRestore EpsmStateRestore;
+NesStateResult epsm_state_prepare(NesStateReader *reader, EpsmStateRestore **out_restore);
+void epsm_state_apply_prepared(EpsmStateRestore *restore);
+void epsm_state_restore_free(EpsmStateRestore *restore);
 
 #ifdef __cplusplus
 }

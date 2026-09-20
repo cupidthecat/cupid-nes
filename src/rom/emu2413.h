@@ -194,6 +194,7 @@ void OPLL_copyPatch(OPLL *, int32_t, OPLL_PATCH *);
  * External program should call this function after updating patch parameters.
  */
 void OPLL_forceRefresh(OPLL *);
+void OPLL_rebindState(OPLL *);
 
 void OPLL_dumpToPatch(const uint8_t *dump, OPLL_PATCH *patch);
 void OPLL_patchToDump(const OPLL_PATCH *patch, uint8_t *dump);

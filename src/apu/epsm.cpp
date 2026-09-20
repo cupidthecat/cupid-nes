@@ -14,6 +14,7 @@
 #include <cstring>
 #include <memory>
 #include <new>
+#include <vector>
 
 static std::array<uint8_t, EPSM_ADPCM_ROM_SIZE> configured_rom{};
 static bool configured_rom_present;
@@ -185,4 +186,172 @@ void epsm_write_port(uint16_t address, uint8_t value) {
 void epsm_sample_stereo(float *left, float *right) {
     if (left) *left = active_epsm ? active_epsm->sample(0) : 0;
     if (right) *right = active_epsm ? active_epsm->sample(1) : 0;
+}
+
+static uint32_t epsm_state_crc32(const uint8_t *data, size_t size) {
+    uint32_t crc = 0xFFFFFFFFu;
+    for (size_t i = 0; i < size; ++i) {
+        crc ^= data[i];
+        for (unsigned bit = 0; bit < 8; ++bit)
+            crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+    }
+    return ~crc;
+}
+
+struct EpsmSavedState {
+    bool enabled = false;
+    bool rom_present = false;
+    uint32_t rom_crc = 0;
+    std::array<uint32_t, 2> timers{};
+    uint32_t busy_clocks = 0;
+    bool irq = false;
+    uint64_t total_clocks = 0;
+    uint64_t master_remainder = 0;
+    uint32_t master_frequency = 0;
+    uint32_t sample_phase = 0;
+    uint8_t previous_out = 0;
+    uint8_t protocol_address = 0;
+    uint8_t protocol_data = 0;
+    std::array<std::array<double, 4>, 2> history{};
+    std::vector<uint8_t> chip;
+};
+
+struct EpsmStateRestore {
+    EpsmSavedState saved;
+};
+
+static bool epsm_state_decode(NesStateReader *reader, EpsmSavedState &saved) {
+    uint32_t chip_size = 0;
+    if (!reader || !nes_state_read_bool(reader, &saved.enabled)) return false;
+    if (!saved.enabled) return nes_state_reader_remaining(reader) == 0;
+    if (!nes_state_read_bool(reader, &saved.rom_present)
+        || !nes_state_read_u32(reader, &saved.rom_crc)
+        || !nes_state_read_u32(reader, &saved.timers[0])
+        || !nes_state_read_u32(reader, &saved.timers[1])
+        || !nes_state_read_u32(reader, &saved.busy_clocks)
+        || !nes_state_read_bool(reader, &saved.irq)
+        || !nes_state_read_u64(reader, &saved.total_clocks)
+        || !nes_state_read_u64(reader, &saved.master_remainder)
+        || !nes_state_read_u32(reader, &saved.master_frequency)
+        || !nes_state_read_u32(reader, &saved.sample_phase)
+        || !nes_state_read_u8(reader, &saved.previous_out)
+        || !nes_state_read_u8(reader, &saved.protocol_address)
+        || !nes_state_read_u8(reader, &saved.protocol_data)) return false;
+    for (auto &side : saved.history)
+        for (double &sample : side)
+            if (!nes_state_read_f64(reader, &sample)) return false;
+    if (!nes_state_read_u32(reader, &chip_size)
+        || chip_size > nes_state_reader_remaining(reader)) return false;
+    try {
+        saved.chip.resize(chip_size);
+    } catch (const std::bad_alloc &) {
+        return false;
+    }
+    if (!nes_state_read_bytes(reader, saved.chip.data(), saved.chip.size())
+        || nes_state_reader_remaining(reader) != 0
+        || saved.sample_phase >= 144) return false;
+    if (saved.master_frequency && saved.master_remainder >= saved.master_frequency) return false;
+    return true;
+}
+
+static bool epsm_state_compatible(const EpsmSavedState &saved) {
+    if (saved.enabled != (active_epsm != nullptr)) return false;
+    if (!saved.enabled) return true;
+    const EpsmDevice &device = *active_epsm;
+    return saved.rom_present == device.rom_present
+        && (!saved.rom_present
+            || saved.rom_crc == epsm_state_crc32(device.adpcm_rom.data(), device.adpcm_rom.size()));
+}
+
+bool epsm_state_capture(NesStateWriter *writer) {
+    if (!writer || !nes_state_write_bool(writer, active_epsm != nullptr)) return false;
+    if (!active_epsm) return true;
+    EpsmDevice &device = *active_epsm;
+    std::vector<uint8_t> chip;
+    try {
+        ymfm::ymfm_saved_state state(chip, true);
+        device.chip.save_restore(state);
+    } catch (const std::bad_alloc &) {
+        return false;
+    }
+    if (chip.size() > UINT32_MAX
+        || !nes_state_write_bool(writer, device.rom_present)
+        || !nes_state_write_u32(writer, epsm_state_crc32(device.adpcm_rom.data(), device.adpcm_rom.size()))
+        || !nes_state_write_u32(writer, device.timers[0])
+        || !nes_state_write_u32(writer, device.timers[1])
+        || !nes_state_write_u32(writer, device.busy_clocks)
+        || !nes_state_write_bool(writer, device.irq)
+        || !nes_state_write_u64(writer, device.total_clocks)
+        || !nes_state_write_u64(writer, device.master_remainder)
+        || !nes_state_write_u32(writer, device.master_frequency)
+        || !nes_state_write_u32(writer, device.sample_phase)
+        || !nes_state_write_u8(writer, device.previous_out)
+        || !nes_state_write_u8(writer, device.protocol_address)
+        || !nes_state_write_u8(writer, device.protocol_data)) return false;
+    for (const auto &side : device.history)
+        for (double sample : side)
+            if (!nes_state_write_f64(writer, sample)) return false;
+    return nes_state_write_u32(writer, static_cast<uint32_t>(chip.size()))
+        && nes_state_write_bytes(writer, chip.data(), chip.size());
+}
+
+bool epsm_state_validate(NesStateReader *reader) {
+    EpsmStateRestore *restore = nullptr;
+    bool ok = epsm_state_prepare(reader, &restore) == NES_STATE_OK;
+    epsm_state_restore_free(restore);
+    return ok;
+}
+
+NesStateResult epsm_state_prepare(NesStateReader *reader, EpsmStateRestore **out_restore) {
+    if (!reader || !out_restore) return NES_STATE_ERROR_ARGUMENT;
+    *out_restore = nullptr;
+    std::unique_ptr<EpsmStateRestore> restore(new (std::nothrow) EpsmStateRestore());
+    if (!restore) return NES_STATE_ERROR_OUT_OF_MEMORY;
+    if (!epsm_state_decode(reader, restore->saved)) return NES_STATE_ERROR_CORRUPT;
+    if (!epsm_state_compatible(restore->saved)) return NES_STATE_ERROR_INCOMPATIBLE;
+    if (!restore->saved.enabled) {
+        *out_restore = restore.release();
+        return NES_STATE_OK;
+    }
+    try {
+        EpsmDevice scratch;
+        if (restore->saved.chip.size() != scratch.power_on_state.size()) return NES_STATE_ERROR_CORRUPT;
+        ymfm::ymfm_saved_state state(restore->saved.chip, false);
+        scratch.chip.save_restore(state);
+    } catch (const std::bad_alloc &) {
+        return NES_STATE_ERROR_OUT_OF_MEMORY;
+    }
+    *out_restore = restore.release();
+    return NES_STATE_OK;
+}
+
+void epsm_state_apply_prepared(EpsmStateRestore *restore) {
+    if (!restore || !restore->saved.enabled || !active_epsm) return;
+    EpsmSavedState &saved = restore->saved;
+    EpsmDevice &device = *active_epsm;
+    ymfm::ymfm_saved_state state(saved.chip, false);
+    device.chip.save_restore(state);
+    device.timers = saved.timers;
+    device.busy_clocks = saved.busy_clocks;
+    device.irq = saved.irq;
+    device.total_clocks = saved.total_clocks;
+    device.master_remainder = saved.master_remainder;
+    device.master_frequency = saved.master_frequency;
+    device.sample_phase = saved.sample_phase;
+    device.previous_out = saved.previous_out;
+    device.protocol_address = saved.protocol_address;
+    device.protocol_data = saved.protocol_data;
+    device.history = saved.history;
+}
+
+void epsm_state_restore_free(EpsmStateRestore *restore) {
+    delete restore;
+}
+
+bool epsm_state_apply(NesStateReader *reader) {
+    EpsmStateRestore *restore = nullptr;
+    if (epsm_state_prepare(reader, &restore) != NES_STATE_OK) return false;
+    epsm_state_apply_prepared(restore);
+    epsm_state_restore_free(restore);
+    return true;
 }

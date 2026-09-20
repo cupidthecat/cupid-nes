@@ -28,6 +28,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdatomic.h>
+#include "../state/state_io.h"
 typedef struct blip_t blip_t;
 // NTSC APU frame-sequencer constants (CPU cycles)
 #define APU_4STEP_PERIOD 29830u
@@ -240,5 +241,12 @@ void apu_dmc_dma_complete(APU *a, uint8_t value);
 // SDL glue
 void apu_sdl_audio_callback(void *userdata, uint8_t *stream, int len);
 void apu_sdl_stereo_callback(void *userdata, uint8_t *stream, int len);
+
+bool apu_state_capture(NesStateWriter *writer);
+bool apu_state_validate(NesStateReader *reader);
+bool apu_state_apply(NesStateReader *reader);
+bool apu_machine_state_capture(NesStateWriter *writer, const APU *state);
+bool apu_machine_state_validate(const APU *target, NesStateReader *reader);
+bool apu_machine_state_apply(APU *target, NesStateReader *reader);
 
 #endif

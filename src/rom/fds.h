@@ -29,6 +29,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "rom.h"
+#include "../state/state_io.h"
 
 typedef struct FdsImage FdsImage;
 
@@ -87,5 +88,9 @@ bool fds_loading_fast_forward(void);
 // Called by the disk clock when the PPU reaches a new frame. Repeated calls
 // for the same frame are harmless; no CPU, PPU, or disk cycles are skipped.
 void fds_automation_frame(uint64_t frame);
+
+bool fds_state_capture(NesStateWriter *writer);
+bool fds_state_validate(NesStateReader *reader);
+bool fds_state_apply(NesStateReader *reader);
 
 #endif

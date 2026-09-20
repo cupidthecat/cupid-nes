@@ -27,6 +27,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "../state/state_io.h"
 
 typedef struct {
     uint8_t buttons;   // bit0..bit7 = A,B,Select,Start,Up,Down,Left,Right
@@ -246,5 +247,9 @@ bool    joypad_set_oeka_kids_tablet(int x, int y, bool touch, bool click);
 bool    joypad_persistent_configure(const char *rom_path);
 bool    joypad_persistent_flush(void);
 bool    joypad_persistent_shutdown(void);
+
+bool joypad_state_capture(NesStateWriter *writer);
+bool joypad_state_validate(NesStateReader *reader);
+bool joypad_state_apply(NesStateReader *reader);
 
 #endif // JOYPAD_H

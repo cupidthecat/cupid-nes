@@ -93,6 +93,10 @@ bool nes_state_write_u64(NesStateWriter *writer, uint64_t value) {
     return nes_state_write_bytes(writer, bytes, sizeof(bytes));
 }
 
+bool nes_state_write_bool(NesStateWriter *writer, bool value) {
+    return nes_state_write_u8(writer, value ? 1 : 0);
+}
+
 bool nes_state_write_f32(NesStateWriter *writer, float value) {
     uint32_t bits;
     memcpy(&bits, &value, sizeof(bits));
@@ -116,6 +120,16 @@ void nes_state_reader_init(NesStateReader *reader, const void *data, size_t size
 size_t nes_state_reader_remaining(const NesStateReader *reader) {
     return reader && !reader->failed && reader->offset <= reader->size
          ? reader->size - reader->offset : 0;
+}
+
+bool nes_state_reader_slice(NesStateReader *reader, size_t size, NesStateReader *slice) {
+    if (!reader || !slice || reader->failed || size > nes_state_reader_remaining(reader)) {
+        if (reader) reader->failed = true;
+        return false;
+    }
+    nes_state_reader_init(slice, reader->data + reader->offset, size);
+    reader->offset += size;
+    return true;
 }
 
 bool nes_state_read_bytes(NesStateReader *reader, void *out, size_t size) {
@@ -152,6 +166,16 @@ bool nes_state_read_u64(NesStateReader *reader, uint64_t *value) {
     if (!value || !nes_state_read_bytes(reader, bytes, sizeof(bytes))) return false;
     *value = 0;
     for (unsigned i = 0; i < 8; ++i) *value |= (uint64_t)bytes[i] << (i * 8);
+    return true;
+}
+
+bool nes_state_read_bool(NesStateReader *reader, bool *value) {
+    uint8_t encoded;
+    if (!value || !nes_state_read_u8(reader, &encoded) || encoded > 1) {
+        if (reader) reader->failed = true;
+        return false;
+    }
+    *value = encoded != 0;
     return true;
 }
 

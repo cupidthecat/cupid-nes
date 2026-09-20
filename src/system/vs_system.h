@@ -19,6 +19,7 @@
 #include "../apu/apu.h"
 #include "../ppu/ppu.h"
 #include "../rom/rom.h"
+#include "../state/state_io.h"
 #include "timing.h"
 
 typedef enum {
@@ -102,5 +103,9 @@ bool vs_ppu_is_2c05(void);
 bool vs_ppu_status_signature(uint8_t *signature);
 bool vs_ppu_rgb_color(uint8_t color, uint8_t mask, uint32_t *argb);
 uint8_t vs_ppu_light_sensor_index(uint8_t color);
+
+bool vs_state_capture(NesStateWriter *writer);
+bool vs_state_validate(NesStateReader *reader);
+bool vs_state_apply(NesStateReader *reader);
 
 #endif

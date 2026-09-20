@@ -958,3 +958,227 @@ bool joypad_persistent_shutdown(void) {
     bool battle_ok = battle_box_shutdown();
     return turbo_ok && battle_ok;
 }
+
+typedef struct {
+    Joypad pads[NES_INPUT_PLAYERS];
+    bool microphone;
+    NesInputAdapter adapter;
+    uint8_t configuration_overrides;
+    uint8_t adapter_strobe;
+    uint8_t adapter_remaining[2];
+    uint8_t adapter_signature[2];
+    NesPortDevice port_devices[2];
+    NesExpansionDevice expansion_device;
+    Zapper zappers[3];
+    unsigned zapper_radius;
+    ExtendedSerialPad extended_pads[2];
+    uint32_t ntt_keys[2];
+    uint16_t virtual_boy_extra[2];
+    SnesMouseState snes_mice[2];
+    uint16_t fcns_keys;
+    uint32_t fcns_shift;
+    bool fcns_strobe;
+    Mat mats[3];
+    uint8_t family_trainer_rows;
+    Paddle paddles[3];
+} JoypadSavedState;
+
+static bool joypad_state_write_pad(NesStateWriter *writer, const Joypad *pad) {
+    return nes_state_write_u8(writer, pad->buttons)
+        && nes_state_write_u8(writer, pad->shift)
+        && nes_state_write_u8(writer, pad->strobe);
+}
+
+static bool joypad_state_read_pad(NesStateReader *reader, Joypad *pad) {
+    return nes_state_read_u8(reader, &pad->buttons)
+        && nes_state_read_u8(reader, &pad->shift)
+        && nes_state_read_u8(reader, &pad->strobe)
+        && pad->strobe <= 1;
+}
+
+static bool joypad_state_write(NesStateWriter *writer, const JoypadSavedState *saved) {
+    for (unsigned i = 0; i < NES_INPUT_PLAYERS; ++i)
+        if (!joypad_state_write_pad(writer, &saved->pads[i])) return false;
+    if (!nes_state_write_bool(writer, saved->microphone)
+        || !nes_state_write_u8(writer, (uint8_t)saved->adapter)
+        || !nes_state_write_u8(writer, saved->configuration_overrides)
+        || !nes_state_write_u8(writer, saved->adapter_strobe)
+        || !nes_state_write_bytes(writer, saved->adapter_remaining, sizeof(saved->adapter_remaining))
+        || !nes_state_write_bytes(writer, saved->adapter_signature, sizeof(saved->adapter_signature))
+        || !nes_state_write_u8(writer, (uint8_t)saved->port_devices[0])
+        || !nes_state_write_u8(writer, (uint8_t)saved->port_devices[1])
+        || !nes_state_write_u8(writer, (uint8_t)saved->expansion_device)) return false;
+    for (unsigned i = 0; i < 3; ++i) {
+        if (!nes_state_write_u32(writer, (uint32_t)(int32_t)saved->zappers[i].x)
+            || !nes_state_write_u32(writer, (uint32_t)(int32_t)saved->zappers[i].y)
+            || !nes_state_write_bool(writer, saved->zappers[i].trigger)) return false;
+    }
+    if (!nes_state_write_u32(writer, saved->zapper_radius)) return false;
+    for (unsigned i = 0; i < 2; ++i) {
+        if (!nes_state_write_u16(writer, saved->extended_pads[i].extra_buttons)
+            || !nes_state_write_u32(writer, saved->extended_pads[i].shift)
+            || !nes_state_write_bool(writer, saved->extended_pads[i].strobe)
+            || !nes_state_write_u32(writer, saved->ntt_keys[i])
+            || !nes_state_write_u16(writer, saved->virtual_boy_extra[i])
+            || !nes_state_write_u32(writer, saved->snes_mice[i].shift)
+            || !nes_state_write_u32(writer, (uint32_t)(int32_t)saved->snes_mice[i].dx)
+            || !nes_state_write_u32(writer, (uint32_t)(int32_t)saved->snes_mice[i].dy)
+            || !nes_state_write_bool(writer, saved->snes_mice[i].left)
+            || !nes_state_write_bool(writer, saved->snes_mice[i].right)
+            || !nes_state_write_bool(writer, saved->snes_mice[i].strobe)
+            || !nes_state_write_u8(writer, saved->snes_mice[i].sensitivity)
+            || !nes_state_write_u8(writer, saved->snes_mice[i].up_flag)
+            || !nes_state_write_u8(writer, saved->snes_mice[i].left_flag)) return false;
+    }
+    if (!nes_state_write_u16(writer, saved->fcns_keys)
+        || !nes_state_write_u32(writer, saved->fcns_shift)
+        || !nes_state_write_bool(writer, saved->fcns_strobe)) return false;
+    for (unsigned i = 0; i < 3; ++i) {
+        if (!nes_state_write_u16(writer, saved->mats[i].buttons)
+            || !nes_state_write_u8(writer, saved->mats[i].low)
+            || !nes_state_write_u8(writer, saved->mats[i].high)
+            || !nes_state_write_u8(writer, saved->mats[i].strobe)) return false;
+    }
+    if (!nes_state_write_u8(writer, saved->family_trainer_rows)) return false;
+    for (unsigned i = 0; i < 3; ++i) {
+        if (!nes_state_write_u8(writer, saved->paddles[i].position)
+            || !nes_state_write_u8(writer, saved->paddles[i].shift)
+            || !nes_state_write_u8(writer, saved->paddles[i].strobe)
+            || !nes_state_write_bool(writer, saved->paddles[i].fire)) return false;
+    }
+    return true;
+}
+
+static bool joypad_state_decode(NesStateReader *reader, JoypadSavedState *saved) {
+    uint8_t adapter, port0, port1, expansion;
+    memset(saved, 0, sizeof(*saved));
+    for (unsigned i = 0; i < NES_INPUT_PLAYERS; ++i)
+        if (!joypad_state_read_pad(reader, &saved->pads[i])) return false;
+    if (!nes_state_read_bool(reader, &saved->microphone)
+        || !nes_state_read_u8(reader, &adapter)
+        || !nes_state_read_u8(reader, &saved->configuration_overrides)
+        || !nes_state_read_u8(reader, &saved->adapter_strobe)
+        || !nes_state_read_bytes(reader, saved->adapter_remaining, sizeof(saved->adapter_remaining))
+        || !nes_state_read_bytes(reader, saved->adapter_signature, sizeof(saved->adapter_signature))
+        || !nes_state_read_u8(reader, &port0)
+        || !nes_state_read_u8(reader, &port1)
+        || !nes_state_read_u8(reader, &expansion)
+        || adapter > NES_ADAPTER_FAMICOM_FOUR || port0 > NES_PORT_VIRTUAL_BOY
+        || port1 > NES_PORT_VIRTUAL_BOY || expansion > NES_EXPANSION_FCNS_CONTROLLER
+        || saved->adapter_strobe > 1) return false;
+    saved->adapter = (NesInputAdapter)adapter;
+    saved->port_devices[0] = (NesPortDevice)port0;
+    saved->port_devices[1] = (NesPortDevice)port1;
+    saved->expansion_device = (NesExpansionDevice)expansion;
+    for (unsigned i = 0; i < 3; ++i) {
+        uint32_t x, y;
+        if (!nes_state_read_u32(reader, &x) || !nes_state_read_u32(reader, &y)
+            || !nes_state_read_bool(reader, &saved->zappers[i].trigger)) return false;
+        saved->zappers[i].x = (int)(int32_t)x;
+        saved->zappers[i].y = (int)(int32_t)y;
+    }
+    if (!nes_state_read_u32(reader, &saved->zapper_radius)
+        || saved->zapper_radius > NES_ZAPPER_MAX_RADIUS) return false;
+    for (unsigned i = 0; i < 2; ++i) {
+        uint32_t dx, dy;
+        if (!nes_state_read_u16(reader, &saved->extended_pads[i].extra_buttons)
+            || !nes_state_read_u32(reader, &saved->extended_pads[i].shift)
+            || !nes_state_read_bool(reader, &saved->extended_pads[i].strobe)
+            || !nes_state_read_u32(reader, &saved->ntt_keys[i])
+            || !nes_state_read_u16(reader, &saved->virtual_boy_extra[i])
+            || !nes_state_read_u32(reader, &saved->snes_mice[i].shift)
+            || !nes_state_read_u32(reader, &dx)
+            || !nes_state_read_u32(reader, &dy)
+            || !nes_state_read_bool(reader, &saved->snes_mice[i].left)
+            || !nes_state_read_bool(reader, &saved->snes_mice[i].right)
+            || !nes_state_read_bool(reader, &saved->snes_mice[i].strobe)
+            || !nes_state_read_u8(reader, &saved->snes_mice[i].sensitivity)
+            || !nes_state_read_u8(reader, &saved->snes_mice[i].up_flag)
+            || !nes_state_read_u8(reader, &saved->snes_mice[i].left_flag)
+            || saved->snes_mice[i].sensitivity > 2) return false;
+        saved->snes_mice[i].dx = (int)(int32_t)dx;
+        saved->snes_mice[i].dy = (int)(int32_t)dy;
+    }
+    if (!nes_state_read_u16(reader, &saved->fcns_keys)
+        || !nes_state_read_u32(reader, &saved->fcns_shift)
+        || !nes_state_read_bool(reader, &saved->fcns_strobe)) return false;
+    for (unsigned i = 0; i < 3; ++i) {
+        if (!nes_state_read_u16(reader, &saved->mats[i].buttons)
+            || !nes_state_read_u8(reader, &saved->mats[i].low)
+            || !nes_state_read_u8(reader, &saved->mats[i].high)
+            || !nes_state_read_u8(reader, &saved->mats[i].strobe)
+            || saved->mats[i].strobe > 1) return false;
+    }
+    if (!nes_state_read_u8(reader, &saved->family_trainer_rows)) return false;
+    for (unsigned i = 0; i < 3; ++i) {
+        if (!nes_state_read_u8(reader, &saved->paddles[i].position)
+            || !nes_state_read_u8(reader, &saved->paddles[i].shift)
+            || !nes_state_read_u8(reader, &saved->paddles[i].strobe)
+            || !nes_state_read_bool(reader, &saved->paddles[i].fire)
+            || saved->paddles[i].strobe > 1) return false;
+    }
+    return nes_state_reader_remaining(reader) == 0;
+}
+
+bool joypad_state_capture(NesStateWriter *writer) {
+    JoypadSavedState saved = {0};
+    if (!writer) return false;
+    saved.pads[0] = pad1;
+    saved.pads[1] = pad2;
+    memcpy(saved.pads + 2, expansion_pads, sizeof(expansion_pads));
+    saved.microphone = microphone_active;
+    saved.adapter = input_adapter;
+    saved.configuration_overrides = configuration_overrides;
+    saved.adapter_strobe = adapter_strobe;
+    memcpy(saved.adapter_remaining, adapter_remaining, sizeof(adapter_remaining));
+    memcpy(saved.adapter_signature, adapter_signature, sizeof(adapter_signature));
+    memcpy(saved.port_devices, port_devices, sizeof(port_devices));
+    saved.expansion_device = expansion_device;
+    memcpy(saved.zappers, zappers, sizeof(zappers));
+    saved.zapper_radius = zapper_radius;
+    memcpy(saved.extended_pads, extended_pads, sizeof(extended_pads));
+    memcpy(saved.ntt_keys, ntt_keys, sizeof(ntt_keys));
+    memcpy(saved.virtual_boy_extra, virtual_boy_extra, sizeof(virtual_boy_extra));
+    memcpy(saved.snes_mice, snes_mice, sizeof(snes_mice));
+    saved.fcns_keys = fcns_keys;
+    saved.fcns_shift = fcns_shift;
+    saved.fcns_strobe = fcns_strobe;
+    memcpy(saved.mats, mats, sizeof(mats));
+    saved.family_trainer_rows = family_trainer_rows;
+    memcpy(saved.paddles, paddles, sizeof(paddles));
+    return joypad_state_write(writer, &saved);
+}
+
+bool joypad_state_validate(NesStateReader *reader) {
+    JoypadSavedState saved;
+    return reader && joypad_state_decode(reader, &saved);
+}
+
+bool joypad_state_apply(NesStateReader *reader) {
+    JoypadSavedState saved;
+    if (!reader || !joypad_state_decode(reader, &saved)) return false;
+    pad1 = saved.pads[0];
+    pad2 = saved.pads[1];
+    memcpy(expansion_pads, saved.pads + 2, sizeof(expansion_pads));
+    microphone_active = saved.microphone;
+    input_adapter = saved.adapter;
+    configuration_overrides = saved.configuration_overrides;
+    adapter_strobe = saved.adapter_strobe;
+    memcpy(adapter_remaining, saved.adapter_remaining, sizeof(adapter_remaining));
+    memcpy(adapter_signature, saved.adapter_signature, sizeof(adapter_signature));
+    memcpy(port_devices, saved.port_devices, sizeof(port_devices));
+    expansion_device = saved.expansion_device;
+    memcpy(zappers, saved.zappers, sizeof(zappers));
+    zapper_radius = saved.zapper_radius;
+    memcpy(extended_pads, saved.extended_pads, sizeof(extended_pads));
+    memcpy(ntt_keys, saved.ntt_keys, sizeof(ntt_keys));
+    memcpy(virtual_boy_extra, saved.virtual_boy_extra, sizeof(virtual_boy_extra));
+    memcpy(snes_mice, saved.snes_mice, sizeof(snes_mice));
+    fcns_keys = saved.fcns_keys;
+    fcns_shift = saved.fcns_shift;
+    fcns_strobe = saved.fcns_strobe;
+    memcpy(mats, saved.mats, sizeof(mats));
+    family_trainer_rows = saved.family_trainer_rows;
+    memcpy(paddles, saved.paddles, sizeof(paddles));
+    return true;
+}

@@ -99,3 +99,37 @@ NesRegion nes_resolve_region(NesRegion detected_region) {
         default: return nes_timing_for_region(detected_region)->region;
     }
 }
+
+static bool timing_state_decode(NesStateReader *reader, NesRegion *region,
+                                NesRegionMode *mode) {
+    uint8_t encoded_region, encoded_mode;
+    if (!nes_state_read_u8(reader, &encoded_region)
+        || !nes_state_read_u8(reader, &encoded_mode)
+        || encoded_region > NES_REGION_DENDY
+        || encoded_mode > NES_REGION_MODE_DENDY
+        || nes_state_reader_remaining(reader) != 0) return false;
+    *region = (NesRegion)encoded_region;
+    *mode = (NesRegionMode)encoded_mode;
+    return true;
+}
+
+bool timing_state_capture(NesStateWriter *writer) {
+    return writer
+        && nes_state_write_u8(writer, (uint8_t)active_timing->region)
+        && nes_state_write_u8(writer, (uint8_t)region_mode);
+}
+
+bool timing_state_validate(NesStateReader *reader) {
+    NesRegion region;
+    NesRegionMode mode;
+    return reader && timing_state_decode(reader, &region, &mode);
+}
+
+bool timing_state_apply(NesStateReader *reader) {
+    NesRegion region;
+    NesRegionMode mode;
+    if (!reader || !timing_state_decode(reader, &region, &mode)) return false;
+    active_timing = &timings[region];
+    region_mode = mode;
+    return true;
+}

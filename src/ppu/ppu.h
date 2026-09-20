@@ -27,6 +27,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "../state/state_io.h"
 
 // PPU Memory Sizes
 #define NT_RAM_SIZE 0x1000    // 4KB nametable RAM (supports four-screen; normal carts use 2KB)
@@ -223,5 +224,13 @@ extern uint8_t bg_opaque[256 * 240];
 // Cycle-stepped API
 void ppu_step(int cpu_cycles);
 void ppu_step_dots(int ppu_cycles);
+
+bool ppu_state_capture(NesStateWriter *writer);
+bool ppu_state_validate(NesStateReader *reader);
+bool ppu_state_apply(NesStateReader *reader);
+bool ppu_machine_state_capture(NesStateWriter *writer, const PpuMachineContext *context,
+                               const uint32_t *framebuffer_data);
+bool ppu_machine_state_decode(NesStateReader *reader, PpuMachineContext *context,
+                              uint32_t *framebuffer_data);
 
 #endif // PPU_H
