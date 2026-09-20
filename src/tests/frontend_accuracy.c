@@ -20,6 +20,7 @@
 #include "../ui/machine_actions.h"
 #include "../ui/frontend_panels.h"
 #include "../ui/frontend_session.h"
+#include "../ui/session_actions.h"
 #include "../ui/settings.h"
 #include "../util/file_io.h"
 #include <SDL2/SDL.h>
@@ -627,6 +628,73 @@ static int settings_text_editing(void) {
     return 0;
 }
 
+static bool transactional_open_probe(void *userdata, const FrontendImageRequest *request,
+                                     FrontendImageResult *result,
+                                     char *error, size_t error_size) {
+    (void)userdata;
+    build_nrom(0);
+    if (strstr(request->path, "replacement")) image[16 + 0x123] ^= 0x5Au;
+    if (load_rom_memory(image, sizeof(image)) != 0) {
+        snprintf(error, error_size, "probe image load failed");
+        return false;
+    }
+    memset(result, 0, sizeof(*result));
+    snprintf(result->title, sizeof(result->title), "%s", request->path);
+    snprintf(result->save_identity, sizeof(result->save_identity), "%s", request->path);
+    return true;
+}
+
+static int session_replacement_rollback(void) {
+    static unsigned serial;
+    unsigned token = (unsigned)time(NULL) ^ ++serial;
+    char original_path[128];
+    char replacement_path[128];
+    char replacement_storage[160];
+    snprintf(original_path, sizeof(original_path), ".frontend-session-original-%u.nes", token);
+    snprintf(replacement_path, sizeof(replacement_path),
+             ".frontend-session-replacement-%u.nes", token);
+    snprintf(replacement_storage, sizeof(replacement_storage),
+             ".frontend-session-replacement-%u.turbofile.sav", token);
+    (void)nes_file_remove(replacement_storage);
+
+    unload_rom();
+    CHECK(nes_set_region_mode(NES_REGION_MODE_NTSC));
+    FrontendSession session;
+    frontend_session_init(&session, transactional_open_probe, NULL);
+    FrontendImageRequest original;
+    CHECK(frontend_image_request_init(&original, original_path));
+    char error[320] = {0};
+    CHECK(frontend_session_open(&session, &original, error, sizeof(error)));
+    CHECK(frontend_machine_power_cycle());
+    uint32_t original_crc = rom_file_crc32();
+    write_mem(0x0010, 0xA5);
+    CHECK(read_mem(0x0010) == 0xA5);
+
+    NesExpansionDevice previous_expansion = joypad_expansion_device();
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_TURBO_FILE));
+    CHECK(joypad_persistent_configure(original_path));
+    const uint8_t malformed_storage[] = {0x11};
+    CHECK(nes_file_write_atomic(replacement_storage, malformed_storage,
+                                sizeof(malformed_storage)) == NES_FILE_OK);
+
+    FrontendSettings settings;
+    frontend_settings_defaults(&settings);
+    FrontendSessionActions actions;
+    frontend_session_actions_init(&actions, &session, &settings, NULL);
+    CHECK(!frontend_session_action_open_path(&actions, replacement_path,
+                                             error, sizeof(error)));
+    CHECK(strstr(error, "previous session was restored") != NULL);
+    CHECK(session.active && strcmp(session.current.path, original_path) == 0);
+    CHECK(rom_file_crc32() == original_crc);
+    CHECK(read_mem(0x0010) == 0xA5);
+    CHECK(joypad_expansion_device() == NES_EXPANSION_TURBO_FILE);
+    CHECK(joypad_persistent_flush());
+    CHECK(joypad_persistent_shutdown());
+    CHECK(joypad_set_expansion_device(previous_expansion));
+    CHECK(nes_file_remove(replacement_storage) == NES_FILE_OK);
+    return 0;
+}
+
 int test_frontend_accuracy(void) {
     const NesRegionMode saved_mode = nes_region_mode();
     const NesRegion saved_region = nes_timing()->region;
@@ -643,6 +711,7 @@ int test_frontend_accuracy(void) {
     failures += remapped_execution_shortcuts();
     failures += session_transitions_and_recents();
     failures += settings_text_editing();
+    failures += session_replacement_rollback();
     unload_rom();
     frontend_commands_reset();
     nes_set_region_mode(saved_mode);

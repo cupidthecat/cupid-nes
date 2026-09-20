@@ -15,6 +15,7 @@
 #include "../joypad/joypad.h"
 #include "../rom/fds.h"
 #include "../rom/rom.h"
+#include "../state/state.h"
 #include <ctype.h>
 #include <stdio.h>
 #include <string.h>
@@ -90,18 +91,141 @@ static bool persist_recent(FrontendSessionActions *actions, char *error, size_t 
     return frontend_session_save_recent(actions->session, actions->recent_path, error, error_size);
 }
 
+static const char *session_storage_identity(const FrontendSession *session) {
+    if (!session || !session->active) return NULL;
+    return session->current_result.save_identity[0]
+        ? session->current_result.save_identity : session->current.path;
+}
+
+static void sync_active_session(FrontendSessionActions *actions, bool notify_image_changed) {
+    if (!actions || !actions->session) return;
+    bool active = rom_metadata_source() != ROM_METADATA_NONE;
+    frontend_command_set_session_active(active);
+    frontend_panel_set_session_active(active);
+    if (actions->execution && active && actions->session->active) {
+        actions->execution->rom_path = actions->session->current.path;
+        actions->execution->save_identity = session_storage_identity(actions->session);
+        actions->execution->fds_bios_path = actions->session->current.fds_bios_path[0]
+            ? actions->session->current.fds_bios_path : NULL;
+        actions->execution->studybox_bios_path = actions->session->current.studybox_bios_path[0]
+            ? actions->session->current.studybox_bios_path : NULL;
+        if (actions->execution->fds_side && rom_is_fds() && fds_side_count())
+            *actions->execution->fds_side = fds_current_side();
+    }
+    if (notify_image_changed && actions->image_changed)
+        actions->image_changed(actions->image_changed_context);
+}
+
+static bool restore_previous_session(FrontendSessionActions *actions,
+                                     const FrontendSession *previous,
+                                     const NesStateBlob *state,
+                                     CpuStartupAlignment alignment,
+                                     bool was_fds, bool disk_inserted, size_t disk_side,
+                                     char *rollback_error, size_t rollback_error_size) {
+    if (!actions || !actions->session || !previous) return false;
+    if (!previous->active) {
+        if (!unload_rom()) {
+            set_error(rollback_error, rollback_error_size,
+                      "could not unload the failed replacement image");
+            sync_active_session(actions, true);
+            return false;
+        }
+        *actions->session = *previous;
+        sync_active_session(actions, false);
+        return true;
+    }
+
+    cpu_use_default_startup_alignment();
+    FrontendImageResult ignored;
+    memset(&ignored, 0, sizeof(ignored));
+    char open_error[256] = {0};
+    if (!previous->open
+        || !previous->open(previous->userdata, &previous->current, &ignored,
+                           open_error, sizeof(open_error))) {
+        if (rollback_error && rollback_error_size) {
+            snprintf(rollback_error, rollback_error_size,
+                     "could not reopen the previous image%s%s",
+                     open_error[0] ? ": " : "", open_error);
+        }
+        sync_active_session(actions, true);
+        return false;
+    }
+    *actions->session = *previous;
+    if (!cpu_set_startup_alignment(alignment.cpu_offset, alignment.ppu_phase)) {
+        set_error(rollback_error, rollback_error_size,
+                  "could not restore the previous startup alignment");
+        sync_active_session(actions, true);
+        return false;
+    }
+    const char *storage_identity = session_storage_identity(previous);
+    if (storage_identity && !joypad_persistent_configure(storage_identity)) {
+        set_error(rollback_error, rollback_error_size,
+                  "could not restore the previous peripheral storage");
+        sync_active_session(actions, true);
+        return false;
+    }
+    if (was_fds && rom_is_fds()) {
+        if (disk_inserted) {
+            if (!fds_insert_disk(disk_side)) {
+                set_error(rollback_error, rollback_error_size,
+                          "could not restore the previous disk side");
+                sync_active_session(actions, true);
+                return false;
+            }
+        } else {
+            fds_eject_disk();
+        }
+    }
+    if (state && state->data) {
+        NesStateResult restored = nes_state_restore(state->data, state->size);
+        if (restored != NES_STATE_OK) {
+            if (rollback_error && rollback_error_size)
+                snprintf(rollback_error, rollback_error_size,
+                         "could not restore the previous machine state: %s",
+                         nes_state_result_string(restored));
+            sync_active_session(actions, true);
+            return false;
+        }
+    }
+    sync_active_session(actions, false);
+    return true;
+}
+
 static bool activate_request(FrontendSessionActions *actions,
                              const FrontendImageRequest *request,
                              bool preserve_disk, char *error, size_t error_size) {
     if (!actions || !actions->session || !request) return false;
+    FrontendSession previous = *actions->session;
+    bool previous_machine_active = rom_metadata_source() != ROM_METADATA_NONE;
+    if (previous_machine_active && !previous.active) {
+        set_error(error, error_size, "The active image has no frontend session metadata");
+        return false;
+    }
+    if (previous_machine_active && !joypad_persistent_flush()) {
+        set_error(error, error_size,
+                  "The current peripheral storage could not be saved; the image was not changed");
+        return false;
+    }
     if (actions->execution && actions->execution->before_machine_change
         && !actions->execution->before_machine_change(
             actions->execution->machine_change_context, error, error_size)) return false;
     if (actions->execution) frontend_execution_begin_machine_change(actions->execution);
     CpuStartupAlignment previous_alignment = cpu_get_startup_alignment();
-    bool was_fds = preserve_disk && rom_is_fds();
-    bool disk_inserted = was_fds && fds_disk_inserted();
+    bool previous_was_fds = rom_is_fds();
+    bool preserve_fds = preserve_disk && previous_was_fds;
+    bool disk_inserted = previous_was_fds && fds_disk_inserted();
     size_t disk_side = disk_inserted ? fds_current_side() : 0;
+    NesStateBlob previous_state = {0};
+    if (previous_machine_active) {
+        NesStateResult captured = nes_state_capture(&previous_state);
+        if (captured != NES_STATE_OK) {
+            if (error && error_size)
+                snprintf(error, error_size, "The current session could not be preserved: %s",
+                         nes_state_result_string(captured));
+            if (actions->execution) frontend_execution_end_machine_change(actions->execution);
+            return false;
+        }
+    }
     if (!preserve_disk) cpu_use_default_startup_alignment();
 
     bool opened = preserve_disk
@@ -111,11 +235,11 @@ static bool activate_request(FrontendSessionActions *actions,
         if (!preserve_disk)
             (void)cpu_set_startup_alignment(previous_alignment.cpu_offset,
                                             previous_alignment.ppu_phase);
+        nes_state_blob_free(&previous_state);
         if (actions->execution) frontend_execution_end_machine_change(actions->execution);
         return false;
     }
-    if (actions->execution) frontend_execution_clear_timeline(actions->execution);
-    if (was_fds && rom_is_fds()) {
+    if (preserve_fds && rom_is_fds()) {
         if (disk_inserted) (void)fds_insert_disk(disk_side);
         else fds_eject_disk();
     }
@@ -127,42 +251,40 @@ static bool activate_request(FrontendSessionActions *actions,
         fds_set_automation_options(automation);
     }
 
-    const char *storage_identity = actions->session->current_result.save_identity[0]
-        ? actions->session->current_result.save_identity : actions->session->current.path;
+    const char *storage_identity = session_storage_identity(actions->session);
     bool storage_ready = joypad_persistent_configure(storage_identity);
     bool powered = frontend_machine_power_cycle();
-    remember_firmware(actions);
-    frontend_command_set_session_active(true);
-    frontend_panel_set_session_active(true);
-    if (actions->execution) {
-        actions->execution->rom_path = actions->session->current.path;
-        actions->execution->save_identity = storage_identity;
-        actions->execution->fds_bios_path = actions->session->current.fds_bios_path[0]
-            ? actions->session->current.fds_bios_path : NULL;
-        actions->execution->studybox_bios_path = actions->session->current.studybox_bios_path[0]
-            ? actions->session->current.studybox_bios_path : NULL;
-        if (actions->execution->fds_side && rom_is_fds() && fds_side_count())
-            *actions->execution->fds_side = fds_current_side();
-    }
-    if (actions->image_changed)
-        actions->image_changed(actions->image_changed_context);
     char recent_error[160] = {0};
     bool recent_saved = persist_recent(actions, recent_error, sizeof(recent_error));
-    if (!powered) {
-        set_error(error, error_size, "The image opened but its startup alignment is invalid");
+    if (!powered || !storage_ready || !recent_saved) {
+        char failure[256];
+        if (!powered)
+            snprintf(failure, sizeof(failure),
+                     "The replacement image has an invalid startup alignment");
+        else if (!storage_ready)
+            snprintf(failure, sizeof(failure),
+                     "The replacement image peripheral storage could not be loaded");
+        else
+            snprintf(failure, sizeof(failure), "%s",
+                     recent_error[0] ? recent_error : "The recent-image list could not be saved");
+        char rollback_error[256] = {0};
+        bool rolled_back = restore_previous_session(actions, &previous, &previous_state,
+                                                    previous_alignment, previous_was_fds,
+                                                    disk_inserted, disk_side,
+                                                    rollback_error, sizeof(rollback_error));
+        nes_state_blob_free(&previous_state);
+        if (error && error_size) {
+            if (rolled_back) snprintf(error, error_size, "%s; the previous session was restored", failure);
+            else snprintf(error, error_size, "%s; rollback failed: %s", failure,
+                          rollback_error[0] ? rollback_error : "unknown rollback error");
+        }
         if (actions->execution) frontend_execution_end_machine_change(actions->execution);
         return false;
     }
-    if (!storage_ready) {
-        set_error(error, error_size, "The image opened but peripheral storage could not be loaded");
-        if (actions->execution) frontend_execution_end_machine_change(actions->execution);
-        return false;
-    }
-    if (!recent_saved) {
-        set_error(error, error_size, recent_error);
-        if (actions->execution) frontend_execution_end_machine_change(actions->execution);
-        return false;
-    }
+    nes_state_blob_free(&previous_state);
+    remember_firmware(actions);
+    sync_active_session(actions, true);
+    if (actions->execution) frontend_execution_clear_timeline(actions->execution);
     if (actions->execution) frontend_execution_end_machine_change(actions->execution);
     if (error && error_size) error[0] = '\0';
     return true;

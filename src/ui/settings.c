@@ -268,10 +268,16 @@ void frontend_settings_defaults(FrontendSettings *settings) {
     settings->console_model = NES_CONSOLE_NES001;
     settings->speed = 1.0;
     settings->fast_forward_speed = 4.0;
+    settings->rewind_seconds = 10;
     settings->pause_on_focus_loss = true;
     settings->pause_on_ui = true;
+    settings->vsync = true;
     settings->window_width = 768;
     settings->window_height = 640;
+    settings->audio_sample_rate = 44100;
+    settings->audio_buffer_samples = 1024;
+    nes_video_presentation_defaults(&settings->presentation);
+    nes_audio_mix_defaults(&settings->audio_mix);
     settings->disk_save_mode = FDS_SAVE_OVERLAY;
     nsf_player_options_defaults(&settings->nsf_player);
     nes_capture_options_defaults(&settings->capture);
@@ -279,6 +285,9 @@ void frontend_settings_defaults(FrontendSettings *settings) {
     settings->input.ports[0] = NES_PORT_GAMEPAD;
     settings->input.ports[1] = NES_PORT_GAMEPAD;
     settings->input.expansion = NES_EXPANSION_NONE;
+    settings->cpu_revision = APU_CPU_REVISION_LATE_2A03;
+    settings->ppu_revision = PPU_REVISION_2C02_E_PLUS;
+    settings->ram_power_state = NES_RAM_POWER_DEFAULT;
     settings->profile_count = 1;
     (void)frontend_binding_profile_preset(&settings->profiles[0], "default", "default");
     strcpy(settings->active_profile, "default");
@@ -356,6 +365,16 @@ static bool parse_unsigned_range(const char *text, unsigned max, unsigned *value
     unsigned long parsed = strtoul(text, &end, 10);
     if (errno || end == text || *end || parsed > max) return false;
     *value = (unsigned)parsed;
+    return true;
+}
+
+static bool parse_int_range(const char *text, int min, int max, int *value) {
+    if (!text || !*text || !value) return false;
+    char *end = NULL;
+    errno = 0;
+    long parsed = strtol(text, &end, 10);
+    if (errno || end == text || *end || parsed < min || parsed > max) return false;
+    *value = (int)parsed;
     return true;
 }
 
@@ -584,6 +603,10 @@ static bool set_known_setting(FrontendSettings *settings, const char *key,
         if (!parse_double_range(value, 0.1, 16.0, &settings->speed)) return false;
     } else if (strcmp(key, "fast_forward_speed") == 0) {
         if (!parse_double_range(value, 0.1, 16.0, &settings->fast_forward_speed)) return false;
+    } else if (strcmp(key, "rewind_seconds") == 0) {
+        if (!parse_unsigned_range(value, 60, &settings->rewind_seconds)) return false;
+    } else if (strcmp(key, "run_ahead_frames") == 0) {
+        if (!parse_unsigned_range(value, 4, &settings->run_ahead_frames)) return false;
     } else if (strcmp(key, "reopen_last_image") == 0) {
         if (!parse_boolean(value, &settings->reopen_last_image)) return false;
     } else if (strcmp(key, "pause_on_focus_loss") == 0) {
@@ -596,8 +619,30 @@ static bool set_known_setting(FrontendSettings *settings, const char *key,
         if (!parse_boolean(value, &settings->fullscreen)) return false;
     } else if (strcmp(key, "integer_scaling") == 0) {
         if (!parse_boolean(value, &settings->integer_scaling)) return false;
+    } else if (strcmp(key, "vsync") == 0) {
+        if (!parse_boolean(value, &settings->vsync)) return false;
+    } else if (strcmp(key, "aspect_ratio") == 0) {
+        if (text_equal_ci(value, "source")) settings->aspect_mode = FRONTEND_ASPECT_SOURCE;
+        else if (text_equal_ci(value, "4:3")) settings->aspect_mode = FRONTEND_ASPECT_4_3;
+        else return false;
+    } else if (strcmp(key, "show_background") == 0) {
+        if (!parse_boolean(value, &settings->presentation.show_background)) return false;
+    } else if (strcmp(key, "show_sprites") == 0) {
+        if (!parse_boolean(value, &settings->presentation.show_sprites)) return false;
     } else if (strcmp(key, "muted") == 0) {
         if (!parse_boolean(value, &settings->muted)) return false;
+        settings->audio_mix.muted = settings->muted;
+    } else if (strcmp(key, "audio_master_volume") == 0) {
+        if (!parse_unsigned_range(value, 100, &settings->audio_mix.master_volume)) return false;
+    } else if (strcmp(key, "audio_device") == 0) {
+        if (strlen(value) >= sizeof(settings->audio_device)) return false;
+        if (!text_equal_ci(value, "default")) strcpy(settings->audio_device, value);
+    } else if (strcmp(key, "audio_sample_rate") == 0) {
+        if (!parse_unsigned_range(value, 192000, &settings->audio_sample_rate)
+            || settings->audio_sample_rate < 8000) return false;
+    } else if (strcmp(key, "audio_buffer_samples") == 0) {
+        if (!parse_unsigned_range(value, 8192, &settings->audio_buffer_samples)
+            || settings->audio_buffer_samples < 64) return false;
     } else if (strcmp(key, "window_width") == 0) {
         if (!parse_unsigned_range(value, 16384, &settings->window_width)
             || settings->window_width < 320) return false;
@@ -617,6 +662,18 @@ static bool set_known_setting(FrontendSettings *settings, const char *key,
     } else if (strcmp(key, "studybox_bios_path") == 0) {
         if (strlen(value) >= sizeof(settings->studybox_bios_path)) return false;
         strcpy(settings->studybox_bios_path, value);
+    } else if (strcmp(key, "epsm_adpcm_path") == 0) {
+        if (strlen(value) >= sizeof(settings->epsm_adpcm_path)) return false;
+        strcpy(settings->epsm_adpcm_path, value);
+    } else if (strcmp(key, "fcns_kanji_path") == 0) {
+        if (strlen(value) >= sizeof(settings->fcns_kanji_path)) return false;
+        strcpy(settings->fcns_kanji_path, value);
+    } else if (strcmp(key, "tape_play_path") == 0) {
+        if (strlen(value) >= sizeof(settings->tape_play_path)) return false;
+        strcpy(settings->tape_play_path, value);
+    } else if (strcmp(key, "tape_record_path") == 0) {
+        if (strlen(value) >= sizeof(settings->tape_record_path)) return false;
+        strcpy(settings->tape_record_path, value);
     } else if (strcmp(key, "fds_write_protected") == 0) {
         if (!parse_boolean(value, &settings->fds_write_protected)) return false;
     } else if (strcmp(key, "fds_auto_insert") == 0) {
@@ -691,6 +748,68 @@ static bool set_known_setting(FrontendSettings *settings, const char *key,
     } else if (strcmp(key, "zapper_radius") == 0) {
         if (!parse_unsigned_range(value, NES_ZAPPER_MAX_RADIUS, &settings->zapper_radius))
             return false;
+    } else if (strcmp(key, "cpu_revision") == 0) {
+        if (text_equal_ci(value, "early-2a03")) settings->cpu_revision = APU_CPU_REVISION_EARLY_2A03;
+        else if (text_equal_ci(value, "late-2a03")) settings->cpu_revision = APU_CPU_REVISION_LATE_2A03;
+        else return false;
+    } else if (strcmp(key, "ppu_revision") == 0) {
+        if (text_equal_ci(value, "2c02-pre-e")) settings->ppu_revision = PPU_REVISION_2C02_PRE_E;
+        else if (text_equal_ci(value, "2c02e-plus")) settings->ppu_revision = PPU_REVISION_2C02_E_PLUS;
+        else return false;
+    } else if (strcmp(key, "ram_power_on") == 0) {
+        static const char *const names[] = {"default", "zero", "ones", "random"};
+        int found = -1;
+        for (int i = 0; i < 4; ++i) if (text_equal_ci(value, names[i])) found = i;
+        if (found < 0) return false;
+        settings->ram_power_state = (NesRamPowerOnState)found;
+    } else if (strcmp(key, "random_vblank") == 0) {
+        if (!parse_boolean(value, &settings->randomize_vblank)) return false;
+    } else if (strcmp(key, "apu_disable_noise_mode") == 0) {
+        if (!parse_boolean(value, &settings->apu_disable_noise_mode)) return false;
+    } else if (strcmp(key, "apu_swap_duty_cycles") == 0) {
+        if (!parse_boolean(value, &settings->apu_swap_duty_cycles)) return false;
+    } else if (strcmp(key, "ppu_oam_row_corruption") == 0) {
+        if (!parse_boolean(value, &settings->ppu_oam_row_corruption)) return false;
+    } else if (strcmp(key, "ppu_startup_restriction") == 0) {
+        if (!parse_boolean(value, &settings->ppu_startup_restriction)) return false;
+    } else if (strcmp(key, "ppu_oam_decay") == 0) {
+        if (!parse_boolean(value, &settings->ppu_oam_decay)) return false;
+    } else if (strcmp(key, "ppu_sprite_eval_wrap_bug") == 0) {
+        if (!parse_boolean(value, &settings->ppu_sprite_eval_wrap_bug)) return false;
+    } else if (strcmp(key, "ppu_disable_oamdata_read") == 0) {
+        if (!parse_boolean(value, &settings->ppu_oamdata_read_disabled)) return false;
+    } else if (strcmp(key, "ppu_disable_palette_readback") == 0) {
+        if (!parse_boolean(value, &settings->ppu_palette_readback_disabled)) return false;
+    } else if (strcmp(key, "ppu_reset_suppression") == 0) {
+        if (!parse_boolean(value, &settings->ppu_reset_suppression)) return false;
+    } else if (strcmp(key, "mmc3_revision") == 0) {
+        if (text_equal_ci(value, "standard")) settings->mmc3_revision_a = false;
+        else if (text_equal_ci(value, "a")) settings->mmc3_revision_a = true;
+        else return false;
+    } else if (strcmp(key, "cart_dips") == 0) {
+        if (!parse_unsigned_range(value, 255, &settings->cart_dips)) return false;
+    } else if (strcmp(key, "vs_dips") == 0) {
+        unsigned dips;
+        if (!parse_unsigned_range(value, 65535, &dips)) return false;
+        settings->vs_dips = (uint16_t)dips;
+    } else if (strcmp(key, "startup_phase_set") == 0) {
+        if (!parse_boolean(value, &settings->startup_phase_set)) return false;
+    } else if (strcmp(key, "startup_cpu_offset") == 0) {
+        if (!parse_unsigned_range(value, 15, &settings->startup_cpu_offset)) return false;
+    } else if (strcmp(key, "startup_ppu_phase") == 0) {
+        if (!parse_unsigned_range(value, 4, &settings->startup_ppu_phase)) return false;
+    } else if (strcmp(key, "startup_seed_set") == 0) {
+        if (!parse_boolean(value, &settings->startup_seed_set)) return false;
+    } else if (strcmp(key, "startup_seed") == 0) {
+        uint64_t seed;
+        if (!parse_u64_range(value, UINT32_MAX, &seed)) return false;
+        settings->startup_seed = (uint32_t)seed;
+    } else if (strcmp(key, "power_on_seed_set") == 0) {
+        if (!parse_boolean(value, &settings->power_on_seed_set)) return false;
+    } else if (strcmp(key, "power_on_seed") == 0) {
+        uint64_t seed;
+        if (!parse_u64_range(value, UINT32_MAX, &seed)) return false;
+        settings->power_on_seed = (uint32_t)seed;
     } else if (strcmp(key, "active_profile") == 0) {
         if (!valid_profile_name(value)) return false;
         if (strlen(value) >= sizeof(settings->active_profile)) return false;
@@ -702,6 +821,31 @@ static bool set_known_setting(FrontendSettings *settings, const char *key,
             || strlen(value) >= FRONTEND_SETTINGS_GUID_TEXT) return false;
         if (text_equal_ci(value, "auto")) settings->device_guid[player - 1][0] = '\0';
         else strcpy(settings->device_guid[player - 1], value);
+    } else if (strncmp(key, "audio_channel.", 14) == 0) {
+        unsigned channel;
+        char field[16];
+        int used = 0;
+        if (sscanf(key, "audio_channel.%u.%15s%n", &channel, field, &used) != 2
+            || key[used] || channel >= NES_AUDIO_CHANNEL_COUNT) return false;
+        if (!strcmp(field, "volume")) {
+            if (!parse_unsigned_range(value, 200, &settings->audio_mix.volume[channel])) return false;
+        } else if (!strcmp(field, "pan")) {
+            if (!parse_int_range(value, -100, 100, &settings->audio_mix.pan[channel])) return false;
+        } else return false;
+    } else if (strncmp(key, "video_overscan.", 15) == 0) {
+        unsigned region;
+        char field[16];
+        int used = 0;
+        unsigned parsed_value;
+        if (sscanf(key, "video_overscan.%u.%15s%n", &region, field, &used) != 2
+            || key[used] || region >= 3 || !parse_unsigned_range(value, 239, &parsed_value))
+            return false;
+        NesVideoOverscan *o = &settings->presentation.overscan[region];
+        if (!strcmp(field, "left")) o->left = parsed_value;
+        else if (!strcmp(field, "right")) o->right = parsed_value;
+        else if (!strcmp(field, "top")) o->top = parsed_value;
+        else if (!strcmp(field, "bottom")) o->bottom = parsed_value;
+        else return false;
     } else if (strncmp(key, "profile.", 8) == 0) {
         if (!parse_profile_key(settings, key, value)) return false;
     } else if (strcmp(key, "version") == 0) {
@@ -814,6 +958,18 @@ bool frontend_settings_load(const char *path, FrontendSettings *settings,
         report_error(report, line_number, NES_FILE_OK, "Active input profile does not exist", NULL);
         return false;
     }
+    if ((loaded.startup_phase_set && loaded.startup_seed_set)
+        || (loaded.tape_play_path[0] && loaded.tape_record_path[0])) {
+        report_error(report, line_number, NES_FILE_OK,
+                     "Settings select mutually exclusive startup or tape modes", NULL);
+        return false;
+    }
+    for (unsigned i = 0; i < 3; ++i) {
+        if (!nes_video_overscan_valid(loaded.presentation.overscan[i])) {
+            report_error(report, line_number, NES_FILE_OK, "Video overscan is invalid", NULL);
+            return false;
+        }
+    }
     *settings = loaded;
     if (report) {
         if (report->migrated)
@@ -913,6 +1069,72 @@ bool frontend_settings_save(const char *path, const FrontendSettings *settings,
                                          sizeof(expansion_names) / sizeof(expansion_names[0]),
                                          settings->input.expansion),
                           settings->zapper_radius, settings->active_profile);
+    ok = ok && append_text(buffer, SETTINGS_SAVE_CAPACITY, &used,
+                          "rewind_seconds=%u\nrun_ahead_frames=%u\n"
+                          "vsync=%s\naspect_ratio=%s\n"
+                          "show_background=%s\nshow_sprites=%s\n"
+                          "audio_master_volume=%u\naudio_device=%s\n"
+                          "audio_sample_rate=%u\naudio_buffer_samples=%u\n"
+                          "epsm_adpcm_path=%s\nfcns_kanji_path=%s\n"
+                          "tape_play_path=%s\ntape_record_path=%s\n"
+                          "cpu_revision=%s\nppu_revision=%s\nram_power_on=%s\n"
+                          "random_vblank=%s\napu_disable_noise_mode=%s\n"
+                          "apu_swap_duty_cycles=%s\nppu_oam_row_corruption=%s\n"
+                          "ppu_startup_restriction=%s\nppu_oam_decay=%s\n"
+                          "ppu_sprite_eval_wrap_bug=%s\nppu_disable_oamdata_read=%s\n"
+                          "ppu_disable_palette_readback=%s\nppu_reset_suppression=%s\n"
+                          "mmc3_revision=%s\ncart_dips=%u\nvs_dips=%u\n"
+                          "startup_phase_set=%s\nstartup_cpu_offset=%u\nstartup_ppu_phase=%u\n"
+                          "startup_seed_set=%s\nstartup_seed=%u\n"
+                          "power_on_seed_set=%s\npower_on_seed=%u\n",
+                          settings->rewind_seconds, settings->run_ahead_frames,
+                          settings->vsync ? "true" : "false",
+                          settings->aspect_mode == FRONTEND_ASPECT_4_3 ? "4:3" : "source",
+                          settings->presentation.show_background ? "true" : "false",
+                          settings->presentation.show_sprites ? "true" : "false",
+                          settings->audio_mix.master_volume,
+                          settings->audio_device[0] ? settings->audio_device : "default",
+                          settings->audio_sample_rate, settings->audio_buffer_samples,
+                          settings->epsm_adpcm_path, settings->fcns_kanji_path,
+                          settings->tape_play_path, settings->tape_record_path,
+                          settings->cpu_revision == APU_CPU_REVISION_EARLY_2A03
+                              ? "early-2a03" : "late-2a03",
+                          settings->ppu_revision == PPU_REVISION_2C02_PRE_E
+                              ? "2c02-pre-e" : "2c02e-plus",
+                          settings->ram_power_state == NES_RAM_POWER_ZERO ? "zero"
+                              : settings->ram_power_state == NES_RAM_POWER_ONES ? "ones"
+                              : settings->ram_power_state == NES_RAM_POWER_RANDOM ? "random"
+                              : "default",
+                          settings->randomize_vblank ? "true" : "false",
+                          settings->apu_disable_noise_mode ? "true" : "false",
+                          settings->apu_swap_duty_cycles ? "true" : "false",
+                          settings->ppu_oam_row_corruption ? "true" : "false",
+                          settings->ppu_startup_restriction ? "true" : "false",
+                          settings->ppu_oam_decay ? "true" : "false",
+                          settings->ppu_sprite_eval_wrap_bug ? "true" : "false",
+                          settings->ppu_oamdata_read_disabled ? "true" : "false",
+                          settings->ppu_palette_readback_disabled ? "true" : "false",
+                          settings->ppu_reset_suppression ? "true" : "false",
+                          settings->mmc3_revision_a ? "a" : "standard",
+                          settings->cart_dips, (unsigned)settings->vs_dips,
+                          settings->startup_phase_set ? "true" : "false",
+                          settings->startup_cpu_offset, settings->startup_ppu_phase,
+                          settings->startup_seed_set ? "true" : "false", settings->startup_seed,
+                          settings->power_on_seed_set ? "true" : "false",
+                          settings->power_on_seed);
+    for (unsigned region = 0; ok && region < 3; ++region) {
+        const NesVideoOverscan *o = &settings->presentation.overscan[region];
+        ok = append_text(buffer, SETTINGS_SAVE_CAPACITY, &used,
+                         "video_overscan.%u.left=%u\nvideo_overscan.%u.right=%u\n"
+                         "video_overscan.%u.top=%u\nvideo_overscan.%u.bottom=%u\n",
+                         region, o->left, region, o->right,
+                         region, o->top, region, o->bottom);
+    }
+    for (unsigned channel = 0; ok && channel < NES_AUDIO_CHANNEL_COUNT; ++channel)
+        ok = append_text(buffer, SETTINGS_SAVE_CAPACITY, &used,
+                         "audio_channel.%u.volume=%u\naudio_channel.%u.pan=%d\n",
+                         channel, settings->audio_mix.volume[channel],
+                         channel, settings->audio_mix.pan[channel]);
     for (unsigned player = 0; ok && player < NES_INPUT_PLAYERS; ++player)
         ok = append_text(buffer, SETTINGS_SAVE_CAPACITY, &used, "device.%u=%s\n", player + 1,
                          settings->device_guid[player][0]

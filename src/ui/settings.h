@@ -15,15 +15,19 @@
 #include <stdint.h>
 #include "../joypad/joypad.h"
 #include "../capture/capture_session.h"
+#include "../apu/apu.h"
+#include "../audio/audio_mix.h"
+#include "../ppu/ppu.h"
 #include "../rom/rom.h"
 #include "../state/state.h"
 #include "../system/hardware.h"
 #include "../system/timing.h"
 #include "../util/file_io.h"
+#include "../video/presentation.h"
 #include "nsf_player.h"
 
 enum {
-    FRONTEND_SETTINGS_VERSION = 3,
+    FRONTEND_SETTINGS_VERSION = 4,
     FRONTEND_SETTINGS_MAX_PROFILES = 8,
     FRONTEND_SETTINGS_PROFILE_NAME = 32,
     FRONTEND_SETTINGS_GUID_TEXT = 64,
@@ -71,6 +75,11 @@ typedef enum {
     FRONTEND_OVERRIDE_ZAPPER_RADIUS = 1u << 9
 } FrontendSettingOverride;
 
+typedef enum {
+    FRONTEND_ASPECT_SOURCE,
+    FRONTEND_ASPECT_4_3
+} FrontendAspectMode;
+
 typedef struct {
     unsigned version;
     NesRegionMode region_mode;
@@ -84,13 +93,26 @@ typedef struct {
     bool show_fps;
     bool fullscreen;
     bool integer_scaling;
+    bool vsync;
+    FrontendAspectMode aspect_mode;
     bool muted;
+    unsigned rewind_seconds;
+    unsigned run_ahead_frames;
     unsigned window_width;
     unsigned window_height;
+    NesVideoPresentationSettings presentation;
+    NesAudioMixSettings audio_mix;
+    char audio_device[256];
+    unsigned audio_sample_rate;
+    unsigned audio_buffer_samples;
     FdsSaveMode disk_save_mode;
     char disk_overlay_path[FRONTEND_SETTINGS_PATH_TEXT];
     char fds_bios_path[FRONTEND_SETTINGS_PATH_TEXT];
     char studybox_bios_path[FRONTEND_SETTINGS_PATH_TEXT];
+    char epsm_adpcm_path[FRONTEND_SETTINGS_PATH_TEXT];
+    char fcns_kanji_path[FRONTEND_SETTINGS_PATH_TEXT];
+    char tape_play_path[FRONTEND_SETTINGS_PATH_TEXT];
+    char tape_record_path[FRONTEND_SETTINGS_PATH_TEXT];
     bool fds_write_protected;
     bool fds_auto_insert;
     bool fds_loading_fast_forward;
@@ -106,6 +128,29 @@ typedef struct {
     FrontendBindingProfile profiles[FRONTEND_SETTINGS_MAX_PROFILES];
     size_t profile_count;
     char device_guid[NES_INPUT_PLAYERS][FRONTEND_SETTINGS_GUID_TEXT];
+    ApuCpuRevision cpu_revision;
+    PpuRevision ppu_revision;
+    NesRamPowerOnState ram_power_state;
+    bool randomize_vblank;
+    bool apu_disable_noise_mode;
+    bool apu_swap_duty_cycles;
+    bool ppu_oam_row_corruption;
+    bool ppu_startup_restriction;
+    bool ppu_oam_decay;
+    bool ppu_sprite_eval_wrap_bug;
+    bool ppu_oamdata_read_disabled;
+    bool ppu_palette_readback_disabled;
+    bool ppu_reset_suppression;
+    bool mmc3_revision_a;
+    unsigned cart_dips;
+    uint16_t vs_dips;
+    bool startup_phase_set;
+    unsigned startup_cpu_offset;
+    unsigned startup_ppu_phase;
+    bool startup_seed_set;
+    uint32_t startup_seed;
+    bool power_on_seed_set;
+    uint32_t power_on_seed;
     uint32_t cli_overrides;
 } FrontendSettings;
 
