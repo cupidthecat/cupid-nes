@@ -62,6 +62,11 @@ class Waixing162 final : public Board {
         _regs[(address >> 8) & 3] = value;
         UpdateState();
     }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("waixing162.regs", _regs);
+    }
 };
 
 class Waixing164 final : public Board {
@@ -89,6 +94,11 @@ class Waixing164 final : public Board {
                 SelectPrgPage(0, _prgBank);
                 break;
         }
+    }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("waixing164.prgBank", _prgBank);
     }
 };
 
@@ -366,6 +376,37 @@ public:
         if (_irqCounter == 0 && _irqEnabled) _irqDelay = 2;
         _irqReload = false;
     }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("fk23c.prgBankingMode", _prgBankingMode)
+            && state.Field("fk23c.outerChrBankSize", _outerChrBankSize)
+            && state.Field("fk23c.selectChrRam", _selectChrRam)
+            && state.Field("fk23c.mmc3ChrMode", _mmc3ChrMode)
+            && state.Field("fk23c.cnromChrMode", _cnromChrMode)
+            && state.Field("fk23c.prgBaseBits", _prgBaseBits)
+            && state.Field("fk23c.chrBaseBits", _chrBaseBits)
+            && state.Field("fk23c.extendedMmc3Mode", _extendedMmc3Mode)
+            && state.Field("fk23c.wramBankSelect", _wramBankSelect)
+            && state.Field("fk23c.ramInFirstChrBank", _ramInFirstChrBank)
+            && state.Field("fk23c.allowSingleScreenMirroring", _allowSingleScreenMirroring)
+            && state.Field("fk23c.fk23RegistersEnabled", _fk23RegistersEnabled)
+            && state.Field("fk23c.wramConfigEnabled", _wramConfigEnabled)
+            && state.Field("fk23c.wramEnabled", _wramEnabled)
+            && state.Field("fk23c.wramWriteProtected", _wramWriteProtected)
+            && state.Field("fk23c.invertPrgA14", _invertPrgA14)
+            && state.Field("fk23c.invertChrA12", _invertChrA12)
+            && state.Field("fk23c.currentRegister", _currentRegister)
+            && state.Field("fk23c.irqReloadValue", _irqReloadValue)
+            && state.Field("fk23c.irqCounter", _irqCounter)
+            && state.Field("fk23c.irqReload", _irqReload)
+            && state.Field("fk23c.irqEnabled", _irqEnabled)
+            && state.Field("fk23c.mirroringReg", _mirroringReg)
+            && state.Field("fk23c.cnromChrReg", _cnromChrReg)
+            && state.Field("fk23c.mmc3Registers", _mmc3Registers)
+            && state.Field("fk23c.irqDelay", _irqDelay)
+            && _a12.VisitState(state);
+    }
 };
 
 class Waixing178 final : public Board {
@@ -410,6 +451,11 @@ class Waixing178 final : public Board {
         _regs[address & 3] = value;
         UpdateState();
     }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("waixing178.regs", _regs);
+    }
 };
 
 class Waixing242 final : public Board {
@@ -439,6 +485,7 @@ class Waixing252 final : public Board {
     uint16_t GetPrgPageSize() override { return 0x2000; }
     uint16_t GetChrPageSize() override { return 0x0400; }
     bool EnableCpuClockHook() override { return true; }
+    bool StateChrRomContentsMutable() const override { return true; }
 
     void UpdateState() {
         for (unsigned i = 0; i < 8; ++i)
@@ -478,6 +525,12 @@ class Waixing252 final : public Board {
                 case 0xF00C: _irq.Acknowledge(); SetIrq(false); break;
             }
         }
+    }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("waixing252.chrRegs", _chrRegs)
+            && _irq.VisitState(state);
     }
 };
 
@@ -570,6 +623,17 @@ class Waixing253 final : public Board {
                 SetIrq(false);
                 break;
         }
+    }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("waixing253.chrLow", _chrLow)
+            && state.Field("waixing253.chrHigh", _chrHigh)
+            && state.Field("waixing253.forceChrRom", _forceChrRom)
+            && state.Field("waixing253.irqReloadValue", _irqReloadValue)
+            && state.Field("waixing253.irqCounter", _irqCounter)
+            && state.Field("waixing253.irqEnabled", _irqEnabled)
+            && state.Field("waixing253.irqScaler", _irqScaler);
     }
 };
 

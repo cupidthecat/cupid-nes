@@ -48,6 +48,11 @@ class Racermate final : public Board {
             SetIrq(false);
         }
     }
+
+public:
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state) && state.Field("racermate.irq_counter", _irqCounter);
+    }
 };
 
 } // namespace cupid::boards

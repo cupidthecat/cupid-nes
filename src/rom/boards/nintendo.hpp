@@ -199,6 +199,38 @@ class FnsMmc1 final : public Board {
             UpdateState();
         }
     }
+
+public:
+    bool VisitState(BoardStateVisitor &state) override {
+        uint8_t mirroring = static_cast<uint8_t>(_mirroringSelect);
+        if (!Board::VisitState(state)
+            || !state.Field("fcns_mmc1.write_buffer", _writeBuffer, 0x1F)
+            || !state.Field("fcns_mmc1.shift_count", _shiftCount, 4)
+            || !state.Field("fcns_mmc1.wram_disable", _wramDisable)
+            || !state.Field("fcns_mmc1.chr_mode", _chrMode)
+            || !state.Field("fcns_mmc1.prg_mode", _prgMode)
+            || !state.Field("fcns_mmc1.slot_select", _slotSelect)
+            || !state.InvariantBool("fcns_mmc1.force_wram_on", _forceWramOn)
+            || !state.Field("fcns_mmc1.chr_reg0", _chrReg0, 31)
+            || !state.Field("fcns_mmc1.chr_reg1", _chrReg1, 31)
+            || !state.Field("fcns_mmc1.prg_reg", _prgReg, 15)
+            || !state.Field("fcns_mmc1.last_chr_reg", _lastChrReg)
+            || !state.Field("fcns_mmc1.last_write_cycle", _lastWriteCycle)
+            || !state.Field("fcns_mmc1.has_write_cycle", _hasWriteCycle)
+            || !state.InvariantBytes("fcns_mmc1.kanji_rom", _kanjiRomData.data(),
+                                     _kanjiRomData.size())
+            || !state.ValueU8("fcns_mmc1.mirroring_select", mirroring,
+                              static_cast<uint8_t>(MirroringType::FourScreens))
+            || !state.Field("fcns_mmc1.kanji_rom_pos", _kanjiRomPos, 31)
+            || !state.Field("fcns_mmc1.kanji_rom_bank", _kanjiRomBank, 1)
+            || !state.Field("fcns_mmc1.chr_ram_bank", _chrRamBank, 1)
+            || !state.Field("fcns_mmc1.work_ram_enable1", _workRamEnable1)
+            || !state.Field("fcns_mmc1.work_ram_enable2", _workRamEnable2))
+            return false;
+        if (state.GetMode() == BoardStateVisitor::Mode::Apply)
+            _mirroringSelect = static_cast<MirroringType>(mirroring);
+        return true;
+    }
 };
 
 } // namespace cupid::boards

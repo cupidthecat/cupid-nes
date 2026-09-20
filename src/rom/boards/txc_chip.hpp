@@ -12,6 +12,7 @@
  */
 #ifndef CUPID_BOARDS_TXC_CHIP_HPP
 #define CUPID_BOARDS_TXC_CHIP_HPP
+#include "state_codec.hpp"
 #include <cstdint>
 
 namespace cupid::boards {
@@ -25,6 +26,18 @@ class TxcChip {
 public:
     explicit TxcChip(bool isJv001)
         : _invert(isJv001), _mask(isJv001 ? 0x0F : 0x07), _isJv001(isJv001) {}
+
+    bool VisitState(BoardStateVisitor &state) {
+        return state.Field("txc.accumulator", _accumulator)
+            && state.Field("txc.inverter", _inverter)
+            && state.Field("txc.staging", _staging)
+            && state.Field("txc.output", _output)
+            && state.Field("txc.increase", _increase)
+            && state.Field("txc.y_flag", _yFlag)
+            && state.Field("txc.invert", _invert)
+            && state.InvariantU8("txc.mask", _mask)
+            && state.InvariantBool("txc.jv001", _isJv001);
+    }
 
     bool GetInvertFlag() const { return _invert; }
     bool GetY() const { return _yFlag; }

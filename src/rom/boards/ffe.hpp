@@ -96,6 +96,14 @@ class FrontFareast final : public Board {
                 break;
         }
     }
+
+public:
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("ffe.irq_counter", _irqCounter)
+            && state.Field("ffe.irq_enabled", _irqEnabled)
+            && state.Field("ffe.alternate_mode", _alternateMode);
+    }
 };
 
 } // namespace cupid::boards

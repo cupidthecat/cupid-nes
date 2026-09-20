@@ -88,6 +88,26 @@ class SunsoftFme7 final : public Board {
     }
 
 public:
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("sunsoft5b.registers", _audio.registers)
+            && state.Field("sunsoft5b.selected_register", _audio.selected_register)
+            && state.Field("sunsoft5b.master_divider", _audio.master_divider)
+            && state.Field("sunsoft5b.tone_counter", _audio.tone_counter)
+            && state.Field("sunsoft5b.tone_output", _audio.tone_output)
+            && state.Field("sunsoft5b.noise_counter", _audio.noise_counter)
+            && state.Field("sunsoft5b.noise_phase", _audio.noise_phase)
+            && state.Field("sunsoft5b.noise_lfsr", _audio.noise_lfsr)
+            && state.Field("sunsoft5b.envelope_counter", _audio.envelope_counter)
+            && state.Field("sunsoft5b.envelope_level", _audio.envelope_level, 31)
+            && state.Field("sunsoft5b.envelope_attack", _audio.envelope_attack)
+            && state.Field("sunsoft5b.envelope_holding", _audio.envelope_holding)
+            && state.Field("fme7.command", _command, 15)
+            && state.Field("fme7.irq_counter", _irqCounter)
+            && state.Field("fme7.irq_enabled", _irqEnabled)
+            && state.Field("fme7.irq_counter_enabled", _irqCounterEnabled);
+    }
+
     void ProcessCpuClock() override {
         if (_irqCounterEnabled && --_irqCounter == 0xFFFF && _irqEnabled) SetIrq(true);
         sunsoft5b_clock(&_audio, 1);

@@ -14,6 +14,7 @@
 #define CUPID_BOARD_RUNTIME_HPP
 
 #include "../board.h"
+#include "state_codec.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -100,6 +101,8 @@ protected:
     virtual bool EnableVramAddressHook() { return false; }
     virtual bool EnableCustomVramRead() { return false; }
     virtual bool EnableCustomRamRead() { return false; }
+    virtual bool StatePrgRomContentsMutable() const { return false; }
+    virtual bool StateChrRomContentsMutable() const { return false; }
     virtual uint16_t RegisterStartAddress() { return 0x8000; }
     virtual uint16_t RegisterEndAddress() { return 0xFFFF; }
     virtual uint8_t ReadRegister(uint16_t) { return 0; }
@@ -177,6 +180,7 @@ protected:
 
 public:
     virtual ~Board() = default;
+    virtual bool VisitState(BoardStateVisitor &state);
     void Initialize(const iNESHeader &header, uint8_t *prg, size_t prgBytes,
                      uint8_t *chr, size_t chrBytes,
                      const RomDatabaseInfo *database = nullptr);

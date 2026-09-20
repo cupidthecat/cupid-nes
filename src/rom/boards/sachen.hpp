@@ -102,6 +102,12 @@ class SachenJv001 final : public Board {
 
 public:
     explicit SachenJv001(bool bankPrg) : _bankPrg(bankPrg) {}
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && _chip.VisitState(state)
+            && state.InvariantBool("sachenjv001.bankPrg", _bankPrg);
+    }
 };
 
 enum class Sachen8259Variant { A, B, C, D };
@@ -165,6 +171,15 @@ public:
           _chrOr(variant == Sachen8259Variant::A ? std::array<uint8_t, 3>{1, 0, 1}
                  : variant == Sachen8259Variant::C ? std::array<uint8_t, 3>{1, 2, 3}
                                                   : std::array<uint8_t, 3>{0, 0, 0}) {}
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.InvariantU32("sachen8259.variant", static_cast<uint32_t>(_variant))
+            && state.Field("sachen8259.current", _current)
+            && state.Field("sachen8259.regs", _regs)
+            && state.InvariantU8("sachen8259.shift", _shift)
+            && state.InvariantBytes("sachen8259.chrOr", _chrOr.data(), _chrOr.size());
+    }
 };
 
 class Sachen74LS374 final : public Board {
@@ -215,6 +230,12 @@ class Sachen74LS374 final : public Board {
                 break;
         }
     }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("sachen74ls374.current", _current)
+            && state.Field("sachen74ls374.regs", _regs);
+    }
 };
 
 class Sachen9602 final : public Mmc3 {
@@ -248,6 +269,12 @@ class Sachen9602 final : public Mmc3 {
                 break;
         }
         Mmc3::WriteRegister(address, value);
+    }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Mmc3::VisitState(state)
+            && state.Field("sachen9602.selected", _selected)
+            && state.Field("sachen9602.outerPrg", _outerPrg);
     }
 };
 

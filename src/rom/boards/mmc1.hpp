@@ -120,6 +120,23 @@ protected:
             ProcessBitWrite(address, value);
         _lastWriteCycle = cycle;
     }
+
+public:
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("mmc1.write_buffer", _writeBuffer, 0x1F)
+            && state.Field("mmc1.shift_count", _shiftCount, 4)
+            && state.Field("mmc1.wram_disable", _wramDisable)
+            && state.Field("mmc1.chr_mode", _chrMode)
+            && state.Field("mmc1.prg_mode", _prgMode)
+            && state.Field("mmc1.slot_select", _slotSelect)
+            && state.Field("mmc1.chr_reg0", _chrReg0, 31)
+            && state.Field("mmc1.chr_reg1", _chrReg1, 31)
+            && state.Field("mmc1.prg_reg", _prgReg, 15)
+            && state.Field("mmc1.last_write_cycle", _lastWriteCycle)
+            && state.InvariantBool("mmc1.force_wram_on", _forceWramOn)
+            && state.Field("mmc1.last_chr_reg", _lastChrReg);
+    }
 };
 
 } // namespace cupid::boards

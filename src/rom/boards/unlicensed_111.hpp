@@ -42,6 +42,12 @@ class Subor166 final : public Board {
     }
 public:
     explicit Subor166(bool is166) : _is166(is166) {}
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("subor166.regs", _regs)
+            && state.InvariantBool("subor166.is166", _is166);
+    }
 };
 
 class Mapper170 final : public Board {
@@ -63,6 +69,11 @@ class Mapper170 final : public Board {
     void WriteRegister(uint16_t, uint8_t value) override { _reg = (value << 1) & 0x80; }
 public:
     void Reset(bool) override { _reg = 0; }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("mapper170.reg", _reg);
+    }
 };
 
 class Henggedianzi177 final : public Board {

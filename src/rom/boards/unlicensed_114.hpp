@@ -36,6 +36,12 @@ class Bmc80013B final : public Board {
     }
 public:
     void Reset(bool) override { _regs.fill(0); _mode = 0; UpdateState(); }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("bmc80013b.regs", _regs)
+            && state.Field("bmc80013b.mode", _mode);
+    }
 };
 
 class Gs2004 final : public Board {
@@ -98,6 +104,13 @@ class Bmc60311C final : public Board {
         else _mode = value & 15;
         UpdateState();
     }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("bmc60311c.inner", _inner)
+            && state.Field("bmc60311c.outer", _outer)
+            && state.Field("bmc60311c.mode", _mode);
+    }
 };
 
 class Bmc190in1 final : public Board {
@@ -134,6 +147,11 @@ class Bmc8157 final : public Board {
     }
     void InitMapper() override { UpdateState(); SelectChrPage(0, 0); }
     void WriteRegister(uint16_t address, uint8_t) override { _address = address; UpdateState(); }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("bmc8157.address", _address);
+    }
 };
 
 class Bmc64in1NoRepeat final : public Board {
@@ -156,6 +174,11 @@ class Bmc64in1NoRepeat final : public Board {
     }
 public:
     void Reset(bool) override { _regs = {0x80, 0x43, 0, 0}; UpdateState(); }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("bmc64in1norepeat.regs", _regs);
+    }
 };
 
 class Hp898f final : public Board {
@@ -176,6 +199,11 @@ class Hp898f final : public Board {
     void WriteRegister(uint16_t address, uint8_t value) override {
         if ((address & 0x6000) == 0x6000) { _regs[(address >> 2) & 1] = value; UpdateState(); }
     }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("hp898f.regs", _regs);
+    }
 };
 
 class Bmc830425C4391T final : public Board {
@@ -193,6 +221,13 @@ class Bmc830425C4391T final : public Board {
         _inner = value & 15;
         if ((address & 0xFFE0) == 0xF0E0) { _outer = address & 15; _mode = (address & 0x10) != 0; }
         UpdateState();
+    }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("bmc830425c4391t.inner", _inner)
+            && state.Field("bmc830425c4391t.outer", _outer)
+            && state.Field("bmc830425c4391t.mode", _mode);
     }
 };
 
@@ -224,6 +259,11 @@ class Edu2000 final : public Board {
     }
     void InitMapper() override { UpdateState(); SelectChrPage(0, 0); }
     void WriteRegister(uint16_t, uint8_t value) override { _reg = value; UpdateState(); }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("edu2000.reg", _reg);
+    }
 };
 
 } // namespace cupid::boards

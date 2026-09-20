@@ -38,6 +38,12 @@ class Caltron41 final : public Board {
             SelectChrPage(0, _chrBank);
         }
     }
+public:
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("caltron41.prg_bank", _prgBank, 7)
+            && state.Field("caltron41.chr_bank", _chrBank, 15);
+    }
 };
 
 class Ntdec63 final : public Board {
@@ -61,6 +67,10 @@ class Ntdec63 final : public Board {
             ? (address & 0x7C) | (address & 6 ? 3 : 1)
             : outer | (address & 2 ? 3 : (lower | 1)));
         SetMirroringType(address & 1 ? MirroringType::Horizontal : MirroringType::Vertical);
+    }
+public:
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state) && state.Field("ntdec63.open_bus", _openBus);
     }
 };
 
@@ -96,6 +106,13 @@ class Ntdec112 final : public Board {
                 break;
         }
         UpdateState();
+    }
+public:
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("ntdec112.current_reg", _currentReg, 7)
+            && state.Field("ntdec112.outer_chr_bank", _outerChrBank)
+            && state.Field("ntdec112.registers", _registers);
     }
 };
 
@@ -165,6 +182,12 @@ class Ntdec221 final : public Board {
         if ((address & 0xC000) == 0x8000) _mode = address;
         else if ((address & 0xC000) == 0xC000) _prgReg = address & 7;
         UpdateState();
+    }
+public:
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("ntdec221.mode", _mode)
+            && state.Field("ntdec221.prg_reg", _prgReg, 7);
     }
 };
 
@@ -240,6 +263,17 @@ class Tf1201 final : public Board {
                 case 0xF003: SetIrq(false); break;
             }
         }
+    }
+public:
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("tf1201.chr_regs", _chrRegs)
+            && state.Field("tf1201.prg_regs", _prgRegs)
+            && state.Field("tf1201.swap_prg", _swapPrg)
+            && state.Field("tf1201.irq_counter", _irqCounter)
+            && state.Field("tf1201.irq_reload", _irqReloadValue)
+            && state.Field("tf1201.irq_scaler", _irqScaler)
+            && state.Field("tf1201.irq_enabled", _irqEnabled);
     }
 };
 

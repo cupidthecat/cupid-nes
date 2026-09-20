@@ -36,6 +36,11 @@ class Unl60 final : public Board {
         SelectPrgPage(0, _resetCounter); SelectPrgPage(1, _resetCounter);
         SelectChrPage(0, _resetCounter);
     }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("unl60.resetCounter", _resetCounter);
+    }
 };
 
 class Unl62 final : public Board {
@@ -133,6 +138,18 @@ class Unl83 final : public Board {
             case 0x8201: _irqEnabled = (_mode & 0x80) != 0; _irqCounter = static_cast<uint16_t>((_irqCounter & 0xFF) | (value << 8)); break;
         }
     }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("unl83.regs", _regs)
+            && state.Field("unl83.exRegs", _exRegs)
+            && state.Field("unl83.is2kBank", _is2kBank)
+            && state.Field("unl83.isNot2kBank", _isNot2kBank)
+            && state.Field("unl83.mode", _mode)
+            && state.Field("unl83.bank", _bank)
+            && state.Field("unl83.irqCounter", _irqCounter)
+            && state.Field("unl83.irqEnabled", _irqEnabled);
+    }
 };
 
 class Unl103 final : public Board {
@@ -168,6 +185,12 @@ class Unl103 final : public Board {
             case 0xF000: _prgRamDisabled = (value & 0x10) != 0; UpdateState(); break;
         }
     }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("unl103.prgRamDisabled", _prgRamDisabled)
+            && state.Field("unl103.prgReg", _prgReg);
+    }
 };
 
 class Unl106 final : public Board {
@@ -194,6 +217,11 @@ class Unl106 final : public Board {
             case 0x0F: _irqCounter = static_cast<uint16_t>((_irqCounter & 0xFF) | (value << 8)); _irqEnabled = true; break;
         }
     }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("unl106.irqCounter", _irqCounter);
+    }
 };
 
 class Unl107 final : public Board {
@@ -213,6 +241,12 @@ class Unl108 final : public Board {
         if ((address & 0x9000) == 0x8000 || address >= 0xF000) _prgReg = _chrReg = value;
         else _chrReg = value & 1;
         UpdateState();
+    }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("unl108.prgReg", _prgReg)
+            && state.Field("unl108.chrReg", _chrReg);
     }
 };
 
@@ -264,6 +298,25 @@ class Unl116 final : public Board {
     void WriteMmc3(uint16_t a,uint8_t v){switch(a&0xE001){case 0x8000:_mmc3Ctrl=v;UpdateState();break;case 0x8001:_mmc3Regs[_mmc3Ctrl&7]=v;UpdateState();break;case 0xA000:_mmc3Mirroring=v;UpdateState();break;case 0xC000:_irqReloadValue=v;break;case 0xC001:_irqReload=true;break;case 0xE000:SetIrq(false);_irqEnabled=false;break;case 0xE001:_irqEnabled=true;break;}}
     void WriteMmc1(uint16_t a,uint8_t v){if(v&0x80){_mmc1Regs[0]|=0x0C;_mmc1Buffer=_mmc1Shift=0;UpdateState();return;}uint8_t i=static_cast<uint8_t>((a>>13)-4);_mmc1Buffer|=static_cast<uint8_t>((v&1)<<_mmc1Shift++);if(_mmc1Shift==5){_mmc1Regs[i]=_mmc1Buffer;_mmc1Buffer=_mmc1Shift=0;UpdateState();}}
     void WriteRegister(uint16_t a,uint8_t v) override {if(a<0x8000){if((a&0x4100)==0x4100){_mode=v;if(a&1){_mmc1Regs[0]=0x0C;_mmc1Regs[3]=0;_mmc1Buffer=_mmc1Shift=0;}UpdateState();}}else switch(_mode&3){case 0:WriteVrc2(a,v);break;case 1:WriteMmc3(a,v);break;default:WriteMmc1(a,v);break;}}
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("unl116.mode", _mode)
+            && state.Field("unl116.vrc2Chr", _vrc2Chr)
+            && state.Field("unl116.vrc2Prg", _vrc2Prg)
+            && state.Field("unl116.vrc2Mirroring", _vrc2Mirroring)
+            && state.Field("unl116.mmc3Regs", _mmc3Regs)
+            && state.Field("unl116.mmc3Ctrl", _mmc3Ctrl)
+            && state.Field("unl116.mmc3Mirroring", _mmc3Mirroring)
+            && state.Field("unl116.mmc1Regs", _mmc1Regs)
+            && state.Field("unl116.mmc1Buffer", _mmc1Buffer)
+            && state.Field("unl116.mmc1Shift", _mmc1Shift)
+            && state.Field("unl116.irqCounter", _irqCounter)
+            && state.Field("unl116.irqReloadValue", _irqReloadValue)
+            && state.Field("unl116.irqReload", _irqReload)
+            && state.Field("unl116.irqEnabled", _irqEnabled)
+            && _a12.VisitState(state);
+    }
 };
 
 class Unl117 final : public Board {
@@ -289,11 +342,25 @@ class Unl117 final : public Board {
             case 0xE000: _irqEnabled = (value & 1) != 0; SetIrq(false); break;
         }
     }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("unl117.irqCounter", _irqCounter)
+            && state.Field("unl117.irqReloadValue", _irqReloadValue)
+            && state.Field("unl117.irqEnabled", _irqEnabled)
+            && state.Field("unl117.irqEnabledAlt", _irqEnabledAlt)
+            && _a12.VisitState(state);
+    }
 };
 
 class Unl120 final : public Board {
     uint8_t _prgReg=0;uint16_t RegisterStartAddress() override{return 0x41FF;}uint16_t RegisterEndAddress() override{return 0x41FF;}uint16_t GetPrgPageSize() override{return 0x2000;}uint16_t GetChrPageSize() override{return 0x2000;}
     void UpdatePrg(){SetCpuMemoryMapping(0x6000,0x7FFF,_prgReg,PrgMemoryType::PrgRom);}void InitMapper() override{_prgReg=0;UpdatePrg();SelectPrgPage4x(0,8);SelectChrPage(0,0);}void WriteRegister(uint16_t,uint8_t v) override{_prgReg=v;UpdatePrg();}
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("unl120.prgReg", _prgReg);
+    }
 };
 
 class Unl156 final : public Board {
@@ -315,6 +382,12 @@ class Unl156 final : public Board {
         } else if (address == 0xC010) SelectPrgPage(0, value);
         else if (address == 0xC014)
             SetMirroringType(value & 1 ? MirroringType::Horizontal : MirroringType::Vertical);
+    }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("unl156.chrLow", _chrLow)
+            && state.Field("unl156.chrHigh", _chrHigh);
     }
 };
 
@@ -343,6 +416,11 @@ class Unl163 final : public Board {
     }
     uint8_t ReadRegister(uint16_t a) override{switch(a&0x7700){case 0x5100:return static_cast<uint8_t>(_regs[3]|_regs[1]|_regs[0]|(_regs[2]^0xFF));case 0x5500:return _toggle?static_cast<uint8_t>(_regs[3]|_regs[0]):0;default:return 4;}}
     void NotifyVramAddressChange(uint16_t) override{if(!_autoSwitch||ppu.dot<=256)return;if(ppu.scanline==239){SelectChrPage(0,0);SelectChrPage(1,0);}else if(ppu.scanline==127){SelectChrPage(0,1);SelectChrPage(1,1);}}
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("unl163.regs", _regs);
+    }
 };
 
 } // namespace cupid::boards

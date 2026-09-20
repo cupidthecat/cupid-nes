@@ -79,7 +79,8 @@ $coreSources += @('src/system/execution_policy.c',
                   'src/third_party/lzma/Ppmd7.c', 'src/third_party/lzma/Ppmd7Dec.c')
 $cppSources = @('src/apu/epsm.cpp', 'src/third_party/ymfm/ymfm_opn.cpp',
                 'src/third_party/ymfm/ymfm_ssg.cpp', 'src/third_party/ymfm/ymfm_adpcm.cpp',
-                'src/rom/game_db.cpp', 'src/rom/boards/runtime.cpp', 'src/rom/boards/factory.cpp')
+                'src/rom/game_db.cpp', 'src/rom/boards/runtime.cpp', 'src/rom/boards/factory.cpp',
+                'src/rom/boards/state.cpp')
 $testSources = @('src/tests/accuracy_test.c', 'src/tests/cpu_accuracy.c', 'src/tests/cpu_trace.c',
                  'src/tests/apu_accuracy.c', 'src/tests/ppu_accuracy.c', 'src/tests/mapper_accuracy.c',
                  'src/tests/region_accuracy.c', 'src/tests/file_io_accuracy.c', 'src/tests/persistence_accuracy.c',
@@ -111,7 +112,8 @@ $testSources = @('src/tests/accuracy_test.c', 'src/tests/cpu_accuracy.c', 'src/t
                  'src/tests/mmc5_extended_geometry_accuracy.c', 'src/tests/native_ram_accuracy.c',
                  'src/tests/board_irem77_accuracy.c', 'src/tests/default_prg_ram_geometry_accuracy.c',
                  'src/tests/native_chr_capacity_accuracy.c', 'src/tests/native_mixed_chr_accuracy.c',
-                 'src/tests/board_nina_fme7_accuracy.c', 'src/tests/frontend_accuracy.c')
+                 'src/tests/board_nina_fme7_accuracy.c', 'src/tests/board_state_accuracy.c',
+                 'src/tests/frontend_accuracy.c')
 $application = Join-Path $outputDirectory 'cupid-nes.exe'
 $testProgram = Join-Path $outputDirectory 'accuracy-tests.exe'
 $objectDirectory = Join-Path $outputDirectory 'objects'

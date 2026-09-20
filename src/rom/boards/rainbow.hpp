@@ -70,6 +70,8 @@ class Rainbow final : public Board {
     bool AllowRegisterRead() override { return true; }
     bool EnableCpuClockHook() override { return true; }
     bool EnableCustomVramRead() override { return true; }
+    bool StatePrgRomContentsMutable() const override { return true; }
+    bool StateChrRomContentsMutable() const override { return true; }
 
     void InitMapper() override {
         _prgFlash.Initialize(_prgRom, _prgSize);
@@ -221,6 +223,87 @@ class Rainbow final : public Board {
     void WriteRegister(uint16_t address, uint8_t value) override;
 
 public:
+    bool VisitState(BoardStateVisitor &state) override {
+        if (!Board::VisitState(state)
+            || !_prgFlash.VisitState(state) || !_chrFlash.VisitState(state)
+            || !_audio.VisitState(state)
+            || !state.Field("rainbow.high_banks", _highBanks)
+            || !state.Field("rainbow.low_banks", _lowBanks)
+            || !state.Field("rainbow.chr_banks", _chrBanks)
+            || !state.Field("rainbow.high_mode", _highMode)
+            || !state.Field("rainbow.low_mode", _lowMode)
+            || !state.Field("rainbow.chr_mode", _chrMode)
+            || !state.Field("rainbow.chr_source", _chrSource, 3)
+            || !state.Field("rainbow.fpga_bank", _fpgaBank)
+            || !state.Field("rainbow.background_bank", _backgroundBank)
+            || !state.Field("rainbow.fill_tile", _fillTile)
+            || !state.Field("rainbow.fill_attribute", _fillAttribute)
+            || !state.Field("rainbow.nt_banks", _ntBanks))
+            return false;
+        uint8_t ntControl[4] = {_ntControl[0].packed, _ntControl[1].packed,
+                                _ntControl[2].packed, _ntControl[3].packed};
+        uint8_t windowControl = _windowControl.packed;
+        if (!state.U8Array("rainbow.nt_control", ntControl)
+            || !state.ValueU8("rainbow.window_control", windowControl)
+            || !state.Field("rainbow.window_bank", _windowBank)
+            || !state.Field("rainbow.window_x1", _windowX1)
+            || !state.Field("rainbow.window_x2", _windowX2)
+            || !state.Field("rainbow.window_y1", _windowY1)
+            || !state.Field("rainbow.window_y2", _windowY2)
+            || !state.Field("rainbow.window_scroll_x", _windowScrollX)
+            || !state.Field("rainbow.window_scroll_y", _windowScrollY)
+            || !state.Field("rainbow.window_enabled", _windowEnabled)
+            || !state.Field("rainbow.in_window", _inWindow)
+            || !state.Field("rainbow.scanline_enabled", _scanlineEnabled)
+            || !state.Field("rainbow.scanline_pending", _scanlinePending)
+            || !state.Field("rainbow.scanline_target", _scanlineTarget)
+            || !state.Field("rainbow.scanline_offset", _scanlineOffset)
+            || !state.Field("rainbow.scanline", _scanline)
+            || !state.Field("rainbow.last_ppu_address", _lastPpuAddress, 0x3FFF)
+            || !state.Field("rainbow.idle_counter", _idleCounter)
+            || !state.Field("rainbow.repeat_reads", _repeatReads)
+            || !state.Field("rainbow.ppu_read_counter", _ppuReadCounter)
+            || !state.Field("rainbow.nt_fetch_counter", _ntFetchCounter)
+            || !state.Field("rainbow.in_frame", _inFrame)
+            || !state.Field("rainbow.in_hblank", _inHBlank)
+            || !state.Field("rainbow.jitter_counter", _jitterCounter)
+            || !state.Field("rainbow.parity_counter", _parityCounter)
+            || !state.Field("rainbow.cpu_counter", _cpuCounter)
+            || !state.Field("rainbow.cpu_reload", _cpuReload)
+            || !state.Field("rainbow.cpu_enabled", _cpuEnabled)
+            || !state.Field("rainbow.cpu_pending", _cpuPending)
+            || !state.Field("rainbow.cpu_enable_after_ack", _cpuEnableAfterAck)
+            || !state.Field("rainbow.cpu_ack_on_4011", _cpuAckOn4011)
+            || !state.Field("rainbow.fpga_address", _fpgaAddress)
+            || !state.Field("rainbow.fpga_increment", _fpgaIncrement)
+            || !state.Field("rainbow.vector_control", _vectorControl)
+            || !state.Field("rainbow.nmi_vector", _nmiVector)
+            || !state.Field("rainbow.irq_vector", _irqVector)
+            || !state.Field("rainbow.override_tile", _overrideTile)
+            || !state.Field("rainbow.extended_data", _extendedData)
+            || !state.Field("rainbow.sprite_data", _spriteData)
+            || !state.Field("rainbow.sprite_y", _spriteY)
+            || !state.Field("rainbow.sprite_mappings", _spriteMappings)
+            || !state.Field("rainbow.sprite_bank", _spriteBank)
+            || !state.Field("rainbow.oam_address", _oamAddress)
+            || !state.Field("rainbow.sprite_limit", _spriteLimit)
+            || !state.Field("rainbow.oam_slow_page", _oamSlowPage)
+            || !state.Field("rainbow.oam_ext_page", _oamExtPage)
+            || !state.Field("rainbow.oam_code", _oamCode)
+            || !state.Field("rainbow.oam_code_locked", _oamCodeLocked)
+            || !state.Field("rainbow.sprite_extended", _spriteExtended)
+            || !state.Field("rainbow.large_sprites", _largeSprites)
+            || !state.Field("rainbow.wifi_control", _wifiControl)
+            || !state.Field("rainbow.receive_page", _receivePage)
+            || !state.Field("rainbow.send_page", _sendPage))
+            return false;
+        if (state.GetMode() == BoardStateVisitor::Mode::Apply) {
+            for (unsigned i = 0; i < 4; ++i) _ntControl[i].packed = ntControl[i];
+            _windowControl.packed = windowControl;
+        }
+        return true;
+    }
+
     void Reset(bool) override {
         static constexpr uint16_t registers[] = {
             0x4100, 0x4108, 0x4118, 0x4120, 0x4130, 0x4140, 0x4126, 0x4127, 0x4128, 0x4129,

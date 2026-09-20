@@ -11,6 +11,7 @@
  * Public License for details. See <https://www.gnu.org/licenses/>.
  */
 #include "runtime.hpp"
+#include "board_internal.hpp"
 #include "studybox.hpp"
 #include "../../util/file_io.h"
 #include "../../system/execution_policy.h"
@@ -232,6 +233,139 @@ void Board::WriteCpuBus(uint16_t address, uint8_t value) { write_mem(address, va
 uint32_t Board::PpuFrameCycle() const {
     int line = ppu.scanline == (int)nes_timing()->scanlines - 1 ? -1 : ppu.scanline;
     return static_cast<uint32_t>((line + 1) * 341 + ppu.dot);
+}
+
+bool Board::VisitState(BoardStateVisitor &state) {
+    enum class Backing : uint8_t {
+        None,
+        PrgRom,
+        ChrRom,
+        SaveRam,
+        WorkRam,
+        ChrRam,
+        MapperRam,
+        NametableRam
+    };
+
+    auto visitPage = [&](const char *prefix, unsigned index, Page &page, bool cpu) {
+        uint8_t kind = static_cast<uint8_t>(Backing::None);
+        uint32_t offset = 0;
+        auto identify = [&](Backing candidate, uint8_t *base, uint32_t size) {
+            if (!page.data || !base || size < 0x100) return false;
+            uintptr_t mapped = reinterpret_cast<uintptr_t>(page.data);
+            uintptr_t first = reinterpret_cast<uintptr_t>(base);
+            if (mapped < first || mapped - first > size - 0x100) return false;
+            kind = static_cast<uint8_t>(candidate);
+            offset = static_cast<uint32_t>(mapped - first);
+            return true;
+        };
+        if (state.GetMode() == BoardStateVisitor::Mode::Capture && page.data) {
+            bool found = cpu
+                ? identify(Backing::PrgRom, _prgRom, _prgSize)
+                    || identify(Backing::SaveRam, _saveRam, _saveRamSize)
+                    || identify(Backing::WorkRam, _workRam, _workRamSize)
+                    || identify(Backing::MapperRam, _mapperRam, _mapperRamSize)
+                : identify(Backing::ChrRom, _chrRom, _chrRomSize)
+                    || identify(Backing::ChrRam, _chrRam, _chrRamSize)
+                    || identify(Backing::MapperRam, _mapperRam, _mapperRamSize)
+                    || identify(Backing::NametableRam, _nametableStorage.data(),
+                                static_cast<uint32_t>(_nametableStorage.size()));
+            if (!found) return false;
+        }
+
+        char name[48];
+        std::snprintf(name, sizeof(name), "%s.kind.%u", prefix, index);
+        if (!state.ValueU8(name, kind, static_cast<uint8_t>(Backing::NametableRam))) return false;
+
+        uint8_t *base = nullptr;
+        uint32_t size = 0;
+        switch (static_cast<Backing>(kind)) {
+            case Backing::None: break;
+            case Backing::PrgRom: base = _prgRom; size = _prgSize; break;
+            case Backing::ChrRom: base = _chrRom; size = _chrRomSize; break;
+            case Backing::SaveRam: base = _saveRam; size = _saveRamSize; break;
+            case Backing::WorkRam: base = _workRam; size = _workRamSize; break;
+            case Backing::ChrRam: base = _chrRam; size = _chrRamSize; break;
+            case Backing::MapperRam: base = _mapperRam; size = _mapperRamSize; break;
+            case Backing::NametableRam:
+                base = _nametableStorage.data();
+                size = static_cast<uint32_t>(_nametableStorage.size());
+                break;
+        }
+        bool validKind = kind == static_cast<uint8_t>(Backing::None)
+                      || (cpu && (kind == static_cast<uint8_t>(Backing::PrgRom)
+                               || kind == static_cast<uint8_t>(Backing::SaveRam)
+                               || kind == static_cast<uint8_t>(Backing::WorkRam)
+                               || kind == static_cast<uint8_t>(Backing::MapperRam)))
+                      || (!cpu && (kind == static_cast<uint8_t>(Backing::ChrRom)
+                                || kind == static_cast<uint8_t>(Backing::ChrRam)
+                                || kind == static_cast<uint8_t>(Backing::MapperRam)
+                                || kind == static_cast<uint8_t>(Backing::NametableRam)));
+        if (!validKind || (kind != static_cast<uint8_t>(Backing::None) && (!base || size < 0x100)))
+            return false;
+
+        uint32_t maximum = size >= 0x100 ? size - 0x100 : 0;
+        std::snprintf(name, sizeof(name), "%s.offset.%u", prefix, index);
+        if (!state.ValueU32(name, offset, maximum)) return false;
+        std::snprintf(name, sizeof(name), "%s.access.%u", prefix, index);
+        uint8_t access = page.access;
+        if (!state.ValueU8(name, access, static_cast<uint8_t>(ReadWrite))) return false;
+        if (kind == static_cast<uint8_t>(Backing::None) && (offset != 0 || access != 0)) return false;
+        if (state.GetMode() == BoardStateVisitor::Mode::Apply)
+            page = kind == static_cast<uint8_t>(Backing::None) ? Page{} : Page{base + offset, access};
+        return true;
+    };
+
+    if (!state.InvariantU32("board.mapper", _romInfo.MapperID)
+        || !state.InvariantU8("board.submapper", _romInfo.SubMapperID)
+        || !state.InvariantBool("board.nes20", _romInfo.IsNes20Header)
+        || !state.InvariantBool("board.battery", _romInfo.HasBattery)
+        || !state.InvariantU8("board.header6", _romInfo.Header.Byte6)
+        || !state.InvariantString("board.db.board", _romInfo.DatabaseInfo.Board)
+        || !state.InvariantString("board.db.chip", _romInfo.DatabaseInfo.Chip)
+        || !state.InvariantU32("board.prg.size", _prgSize)
+        || !state.InvariantU32("board.chrrom.size", _chrRomSize)
+        || !state.InvariantU32("board.chrram.size", _chrRamSize)
+        || !state.InvariantU32("board.saveram.size", _saveRamSize)
+        || !state.InvariantU32("board.workram.size", _workRamSize)
+        || !state.InvariantU32("board.mapperram.size", _mapperRamSize)
+        || !state.InvariantU32("board.nametable.count", _nametableCount))
+        return false;
+
+    if (_prgSize && !(StatePrgRomContentsMutable()
+        ? state.Bytes("board.prg.mutable", _prgRom, _prgSize)
+        : state.InvariantBytes("board.prg", _prgRom, _prgSize)))
+        return false;
+    if (_chrRomSize && !(StateChrRomContentsMutable()
+        ? state.Bytes("board.chrrom.mutable", _chrRom, _chrRomSize)
+        : state.InvariantBytes("board.chrrom", _chrRom, _chrRomSize)))
+        return false;
+
+    if ((_workRamSize && !state.Bytes("board.workram", _workRam, _workRamSize))
+        || (_saveRamSize && !state.Bytes("board.saveram", _saveRam, _saveRamSize))
+        || (_chrRamSize && !state.Bytes("board.chrram", _chrRam, _chrRamSize))
+        || (_mapperRamSize && !state.Bytes("board.mapperram", _mapperRam, _mapperRamSize))
+        || (!_nametableStorage.empty()
+            && !state.Bytes("board.nametables", _nametableStorage.data(), _nametableStorage.size()))
+        || !state.Bytes("board.register_access", _registerAccess.data(), _registerAccess.size()))
+        return false;
+
+    uint8_t mirroring = static_cast<uint8_t>(_mirroring);
+    if (!state.ValueU8("board.mirroring", mirroring,
+                       static_cast<uint8_t>(MirroringType::FourScreens))
+        || !state.Field("board.open_bus", _openBus)
+        || !state.Field("board.irq", _irq)
+        || !state.Field("board.ppu_clock", _ppuClock)
+        || !state.Field("board.write_cycle", _writeCycle))
+        return false;
+    if (state.GetMode() == BoardStateVisitor::Mode::Apply)
+        _mirroring = static_cast<MirroringType>(mirroring);
+
+    for (unsigned i = 0; i < _cpuPages.size(); ++i)
+        if (!visitPage("board.cpu", i, _cpuPages[i], true)) return false;
+    for (unsigned i = 0; i < _ppuPages.size(); ++i)
+        if (!visitPage("board.ppu", i, _ppuPages[i], false)) return false;
+    return true;
 }
 
 uint32_t Board::GetDipSwitches() {
@@ -530,11 +664,6 @@ bool Board::FlushBattery() {
 }
 
 } // namespace cupid::boards
-
-struct CartridgeBoard {
-    std::vector<uint8_t> ownedPrg;
-    std::unique_ptr<cupid::boards::Board> instance;
-};
 
 CartridgeBoard *board_create(const iNESHeader *header, uint8_t *prg, size_t prgBytes,
                              uint8_t *chr, size_t chrBytes) {

@@ -34,7 +34,7 @@ CORE_SRC += src/system/execution_policy.c \
             src/third_party/lzma/Ppmd7.c src/third_party/lzma/Ppmd7Dec.c
 CORE_CXX_SRC = src/apu/epsm.cpp src/third_party/ymfm/ymfm_opn.cpp \
                src/third_party/ymfm/ymfm_ssg.cpp src/third_party/ymfm/ymfm_adpcm.cpp \
-               src/rom/game_db.cpp src/rom/boards/runtime.cpp src/rom/boards/factory.cpp
+               src/rom/game_db.cpp src/rom/boards/runtime.cpp src/rom/boards/factory.cpp src/rom/boards/state.cpp
 TEST_SRC = src/tests/accuracy_test.c src/tests/cpu_accuracy.c \
            src/tests/cpu_trace.c src/tests/apu_accuracy.c src/tests/file_io_accuracy.c src/tests/persistence_accuracy.c \
            src/tests/ppu_accuracy.c src/tests/mapper_accuracy.c src/tests/region_accuracy.c \
@@ -62,7 +62,7 @@ TEST_SRC = src/tests/accuracy_test.c src/tests/cpu_accuracy.c \
            src/tests/mmc5_extended_geometry_accuracy.c src/tests/native_ram_accuracy.c \
            src/tests/board_irem77_accuracy.c src/tests/default_prg_ram_geometry_accuracy.c \
            src/tests/native_chr_capacity_accuracy.c src/tests/native_mixed_chr_accuracy.c \
-           src/tests/board_nina_fme7_accuracy.c src/tests/frontend_accuracy.c
+           src/tests/board_nina_fme7_accuracy.c src/tests/board_state_accuracy.c src/tests/frontend_accuracy.c
 TEST_SRC += src/tests/patch_accuracy.c src/tests/media_accuracy.c src/tests/fds_options_accuracy.c \
             src/tests/fds_automation_accuracy.c src/tests/execution_policy_accuracy.c \
             src/tests/nsf_player_accuracy.c

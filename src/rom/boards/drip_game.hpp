@@ -26,6 +26,18 @@ class DripFifoAudio {
     void UpdateOutput(uint8_t value) { _output = (static_cast<int>(value) - 0x80) * _volume; }
 
 public:
+    bool VisitState(BoardStateVisitor &state) {
+        return state.Field("drip.buffer", _buffer)
+            && state.Field("drip.read", _read)
+            && state.Field("drip.write", _write)
+            && state.Field("drip.volume", _volume, 15)
+            && state.Field("drip.period", _period, 0x0FFF)
+            && state.Field("drip.timer", _timer)
+            && state.Field("drip.output", _output)
+            && state.Field("drip.full", _full)
+            && state.Field("drip.empty", _empty);
+    }
+
     void Clock() {
         if (_empty) return;
         if (--_timer == 0) {
@@ -138,6 +150,18 @@ class DripGame final : public Board {
     }
 
 public:
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && _audio[0].VisitState(state)
+            && _audio[1].VisitState(state)
+            && state.Field("drip_game.irq_counter", _irqCounter)
+            && state.Field("drip_game.last_nametable", _lastNametable, 0x03FF)
+            && state.Field("drip_game.irq_low", _irqLow)
+            && state.Field("drip_game.irq_enabled", _irqEnabled)
+            && state.Field("drip_game.extended_attributes", _extendedAttributes)
+            && state.Field("drip_game.work_ram_enabled", _workRamEnabled);
+    }
+
     void ProcessCpuClock() override {
         if (_irqEnabled && _irqCounter && --_irqCounter == 0) {
             _irqEnabled = false;

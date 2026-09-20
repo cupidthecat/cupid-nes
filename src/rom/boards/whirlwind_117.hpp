@@ -52,6 +52,10 @@ class Whirlwind40 final : public Board {
                 break;
         }
     }
+public:
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state) && state.Field("whirlwind40.irq_counter", _irqCounter);
+    }
 };
 
 class Lh32 final : public Board {
@@ -79,6 +83,10 @@ class Lh32 final : public Board {
     void WriteRegister(uint16_t, uint8_t value) override {
         _prgReg = value;
         UpdateState();
+    }
+public:
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state) && state.Field("lh32.prg_reg", _prgReg);
     }
 };
 
@@ -126,6 +134,12 @@ class Smb2j final : public Board {
             _irqCounter = 0;
             SetIrq(false);
         }
+    }
+public:
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("smb2j.irq_counter", _irqCounter, 4096)
+            && state.Field("smb2j.irq_enabled", _irqEnabled);
     }
 };
 
@@ -186,6 +200,12 @@ class Lh10 final : public Board {
                 UpdateState();
                 break;
         }
+    }
+public:
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("lh10.current_register", _currentRegister, 7)
+            && state.Field("lh10.regs", _regs);
     }
 };
 

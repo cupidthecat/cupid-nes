@@ -47,6 +47,11 @@ class Mapper234 final : public Board {
         WriteRegister(address, value);
         return value;
     }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("mapper234.regs", _regs);
+    }
 };
 
 class Bmc235 final : public Board {
@@ -108,6 +113,15 @@ class Bmc70in1 final : public Board {
     }
 public:
     void Reset(bool) override { _mode = 0; _outer = 0; }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("bmc70in1.mode", _mode)
+            && state.Field("bmc70in1.outer", _outer)
+            && state.Field("bmc70in1.prg", _prg)
+            && state.Field("bmc70in1.chr", _chr)
+            && state.Field("bmc70in1.useOuter", _useOuter);
+    }
 };
 
 class Mapper240 final : public Board {
@@ -245,6 +259,16 @@ public:
     void ProcessCpuClock() override {
         if (_enabled && --_counter == 0) { _enabled = false; _counter = 0xFFFF; SetIrq(true); }
     }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("yoko.regs", _regs)
+            && state.Field("yoko.extra", _extra)
+            && state.Field("yoko.mode", _mode)
+            && state.Field("yoko.bank", _bank)
+            && state.Field("yoko.counter", _counter)
+            && state.Field("yoko.enabled", _enabled);
+    }
 };
 
 class T262 final : public Board {
@@ -262,6 +286,13 @@ class T262 final : public Board {
         }
         SelectPrgPage(0, _base | (value & 7));
         SelectPrgPage(1, _base | (_mode ? value & 7 : 7));
+    }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("t262.locked", _locked)
+            && state.Field("t262.mode", _mode)
+            && state.Field("t262.base", _base);
     }
 };
 
@@ -310,6 +341,16 @@ class CityFighter final : public Board {
     }
 public:
     void ProcessCpuClock() override { if (_enabled && --_counter == 0) SetIrq(true); }
+
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("cityfighter.prg", _prg)
+            && state.Field("cityfighter.mode", _mode)
+            && state.Field("cityfighter.mirroring", _mirroring)
+            && state.Field("cityfighter.chr", _chr)
+            && state.Field("cityfighter.counter", _counter)
+            && state.Field("cityfighter.enabled", _enabled);
+    }
 };
 
 } // namespace cupid::boards

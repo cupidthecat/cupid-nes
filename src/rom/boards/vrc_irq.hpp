@@ -12,6 +12,7 @@
  */
 #ifndef CUPID_BOARDS_VRC_IRQ_HPP
 #define CUPID_BOARDS_VRC_IRQ_HPP
+#include "state_codec.hpp"
 #include <cstdint>
 
 namespace cupid::boards {
@@ -22,6 +23,15 @@ class VrcIrq {
     bool _enabled = false, _enableAfterAck = false, _cycleMode = false;
 
 public:
+    bool VisitState(BoardStateVisitor &state) {
+        return state.Field("vrc_irq.reload", _reload)
+            && state.Field("vrc_irq.counter", _counter)
+            && state.Field("vrc_irq.prescaler", _prescaler)
+            && state.Field("vrc_irq.enabled", _enabled)
+            && state.Field("vrc_irq.enable_after_ack", _enableAfterAck)
+            && state.Field("vrc_irq.cycle_mode", _cycleMode);
+    }
+
     bool Clock() {
         if (!_enabled) return false;
         _prescaler = static_cast<uint16_t>(_prescaler - 3);

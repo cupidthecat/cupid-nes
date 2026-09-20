@@ -415,6 +415,51 @@ class StudyBox final : public Board {
 public:
     explicit StudyBox(StudyBoxTape tape) : _tapeData(std::move(tape)) {}
 
+    bool VisitState(BoardStateVisitor &state) override {
+        if (!Board::VisitState(state)
+            || !state.InvariantU32("studybox.page_count",
+                                   static_cast<uint32_t>(_tapeData.Pages.size()))
+            || !state.InvariantBytes("studybox.audio_file", _tapeData.AudioFile.data(),
+                                     _tapeData.AudioFile.size()))
+            return false;
+        for (size_t i = 0; i < _tapeData.Pages.size(); ++i) {
+            char name[64];
+            std::snprintf(name, sizeof(name), "studybox.page.%zu.lead_in", i);
+            if (!state.InvariantU32(name, _tapeData.Pages[i].LeadInOffset)) return false;
+            std::snprintf(name, sizeof(name), "studybox.page.%zu.audio_offset", i);
+            if (!state.InvariantU32(name, _tapeData.Pages[i].AudioOffset)) return false;
+            std::snprintf(name, sizeof(name), "studybox.page.%zu.data", i);
+            if (!state.InvariantBytes(name, _tapeData.Pages[i].Data.data(),
+                                      _tapeData.Pages[i].Data.size()))
+                return false;
+        }
+        return state.Field("studybox.wav_valid", _wavValid)
+            && state.Field("studybox.audio_sample_rate", _audioSampleRate)
+            && state.Field("studybox.audio_data_offset", _audioDataOffset)
+            && state.Field("studybox.audio_sample_count", _audioSampleCount)
+            && state.Field("studybox.audio_position", _audioPosition)
+            && state.Field("studybox.audio_phase", _audioPhase)
+            && state.Field("studybox.audio_playing", _audioPlaying)
+            && state.Field("studybox.ready_for_bit", _readyForBit)
+            && state.Field("studybox.process_bit_delay", _processBitDelay)
+            && state.Field("studybox.reg4202", _reg4202)
+            && state.Field("studybox.command_counter", _commandCounter, 7)
+            && state.Field("studybox.command", _command)
+            && state.Field("studybox.current_page", _currentPage)
+            && state.Field("studybox.seek_page", _seekPage)
+            && state.Field("studybox.seek_page_delay", _seekPageDelay)
+            && state.Field("studybox.enable_decoder", _enableDecoder)
+            && state.Field("studybox.audio_enabled", _audioEnabled)
+            && state.Field("studybox.motor_disabled", _motorDisabled)
+            && state.Field("studybox.byte_read_delay", _byteReadDelay)
+            && state.Field("studybox.irq_enabled", _irqEnabled)
+            && state.Field("studybox.page_found", _pageFound)
+            && state.Field("studybox.page_index", _pageIndex)
+            && state.Field("studybox.page_position", _pagePosition)
+            && state.Field("studybox.in_data_delay", _inDataDelay)
+            && state.Field("studybox.in_data_region", _inDataRegion);
+    }
+
     float AudioOutput() const override {
         (void)_audioEnabled;
         if (_motorDisabled || !_audioPlaying) return 0.0f;

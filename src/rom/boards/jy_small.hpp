@@ -49,6 +49,14 @@ class Jy35 final : public Board {
     }
 
 public:
+    bool VisitState(BoardStateVisitor &state) override {
+        return Board::VisitState(state)
+            && state.Field("jy35.counter", _counter)
+            && state.Field("jy35.enabled", _enabled)
+            && state.Field("jy35.last_frame_cycle", _lastFrameCycle)
+            && state.Field("jy35.cycles_down", _cyclesDown);
+    }
+
     void NotifyVramAddressChange(uint16_t address) override {
         uint32_t frameCycle = PpuFrameCycle();
         if (_cyclesDown) {
