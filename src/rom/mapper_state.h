@@ -19,6 +19,7 @@
 typedef struct MapperStateRestore MapperStateRestore;
 
 bool mapper_state_capture(NesStateWriter *writer);
+bool mapper_hardware_state_capture(NesStateWriter *writer);
 NesStateResult mapper_state_prepare(NesStateReader *reader, MapperStateRestore **out_restore);
 void mapper_state_apply_prepared(MapperStateRestore *restore);
 void mapper_state_restore_free(MapperStateRestore *restore);

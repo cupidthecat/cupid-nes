@@ -230,8 +230,11 @@ void ppu_step_dots(int ppu_cycles);
 bool ppu_state_capture(NesStateWriter *writer);
 bool ppu_state_validate(NesStateReader *reader);
 bool ppu_state_apply(NesStateReader *reader);
+bool ppu_hardware_state_capture(NesStateWriter *writer);
 bool ppu_machine_state_capture(NesStateWriter *writer, const PpuMachineContext *context,
                                const uint32_t *framebuffer_data);
+bool ppu_machine_hardware_state_capture(NesStateWriter *writer,
+                                        const PpuMachineContext *context);
 bool ppu_machine_state_decode(NesStateReader *reader, PpuMachineContext *context,
                               uint32_t *framebuffer_data);
 

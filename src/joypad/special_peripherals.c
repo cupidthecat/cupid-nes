@@ -1066,13 +1066,14 @@ static bool special_state_read(NesStateReader *reader, SpecialPeripheralSavedSta
         && s->tablet.y >= -1 && s->tablet.y <= 239;
 }
 
-bool special_peripherals_state_capture(NesStateWriter *writer) {
+static bool special_peripherals_capture(NesStateWriter *writer,
+                                        bool include_persistence) {
     if (!writer) return false;
     SpecialPeripheralSavedState s = {0};
     memcpy(s.turbo_data, turbo_file.data, sizeof(s.turbo_data));
     s.turbo_position = turbo_file.position;
     s.turbo_last_write = turbo_file.last_write;
-    s.turbo_dirty = turbo_file.dirty;
+    s.turbo_dirty = include_persistence && turbo_file.dirty;
     memcpy(s.battle_data, battle_box.data, sizeof(s.battle_data));
     s.battle_last_write = battle_box.last_write;
     s.battle_address = battle_box.address;
@@ -1083,7 +1084,7 @@ bool special_peripherals_state_capture(NesStateWriter *writer) {
     s.battle_input_data = battle_box.input_data;
     s.battle_writing = battle_box.writing;
     s.battle_reading = battle_box.reading;
-    s.battle_dirty = battle_box.dirty;
+    s.battle_dirty = include_persistence && battle_box.dirty;
     s.keyboard = subor_keyboard;
     s.mouse = subor_mouse;
     s.track = hori_track;
@@ -1096,6 +1097,14 @@ bool special_peripherals_state_capture(NesStateWriter *writer) {
     s.barcode = barcode_battler;
     s.tablet = oeka_kids_tablet;
     return special_state_write(writer, &s);
+}
+
+bool special_peripherals_state_capture(NesStateWriter *writer) {
+    return special_peripherals_capture(writer, true);
+}
+
+bool special_peripherals_hardware_state_capture(NesStateWriter *writer) {
+    return special_peripherals_capture(writer, false);
 }
 
 bool special_peripherals_state_validate(NesStateReader *reader) {

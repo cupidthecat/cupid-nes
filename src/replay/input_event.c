@@ -11,8 +11,8 @@
 #include "../joypad/family_basic.h"
 #include "../cpu/cpu.h"
 #include "../system/vs_system.h"
-#include "../rom/mapper.h"
 #include "../rom/fds.h"
+#include "../rom/mapper.h"
 #include "../ui/machine_actions.h"
 
 #include <string.h>
@@ -41,6 +41,116 @@ bool nes_input_event_submit(const NesInputEvent *event) {
 void nes_input_event_suppress_begin(void) { ++suppression_depth; }
 void nes_input_event_suppress_end(void) {
     if (suppression_depth) --suppression_depth;
+}
+
+static bool bool_arg(int32_t value) {
+    return value == 0 || value == 1;
+}
+
+static bool digits_valid(const char *digits) {
+    size_t count = digits ? strlen(digits) : 0;
+    if (count != 8 && count != 13) return false;
+    for (size_t i = 0; i < count; ++i)
+        if (digits[i] < '0' || digits[i] > '9') return false;
+    return true;
+}
+
+bool nes_input_event_validate(const NesInputEvent *event) {
+    if (!event || event->type < NES_INPUT_EVENT_PLAYER_BUTTON
+        || event->type > NES_INPUT_EVENT_LAST
+        || !memchr(event->text, '\0', sizeof(event->text))) return false;
+    switch (event->type) {
+        case NES_INPUT_EVENT_PLAYER_BUTTON:
+            return event->a >= 0 && event->a < NES_INPUT_PLAYERS
+                && event->b >= BTN_A && event->b <= BTN_RIGHT && bool_arg(event->c);
+        case NES_INPUT_EVENT_MICROPHONE:
+            return bool_arg(event->a);
+        case NES_INPUT_EVENT_PADDLE:
+            return event->a >= 0 && event->a < 3
+                && event->b >= 0x54 && event->b <= 0xF4 && bool_arg(event->c);
+        case NES_INPUT_EVENT_MAT:
+            return event->a >= 0 && event->a < 3 && event->b >= 0 && event->b < 12
+                && bool_arg(event->c);
+        case NES_INPUT_EVENT_ZAPPER:
+            return event->a >= 0 && event->a < 3 && bool_arg(event->d);
+        case NES_INPUT_EVENT_SUBOR_KEY:
+            return event->a >= 0 && event->a < SUBOR_KEY_COUNT && bool_arg(event->b);
+        case NES_INPUT_EVENT_SUBOR_MOUSE_MOTION:
+            return joypad_port_device(1) == NES_PORT_SUBOR_MOUSE;
+        case NES_INPUT_EVENT_SUBOR_MOUSE_BUTTONS:
+            return joypad_port_device(1) == NES_PORT_SUBOR_MOUSE
+                && bool_arg(event->a) && bool_arg(event->b);
+        case NES_INPUT_EVENT_SNES_BUTTON:
+            return event->a >= 0 && event->a < 2
+                && (joypad_port_device((unsigned)event->a) == NES_PORT_SNES_CONTROLLER
+                    || joypad_port_device((unsigned)event->a) == NES_PORT_NTT_KEYPAD)
+                && event->b >= 0 && event->b < SNES_BUTTON_COUNT && bool_arg(event->c);
+        case NES_INPUT_EVENT_SNES_MOUSE_MOTION:
+            return event->a >= 0 && event->a < 2
+                && joypad_port_device((unsigned)event->a) == NES_PORT_SNES_MOUSE;
+        case NES_INPUT_EVENT_SNES_MOUSE_BUTTONS:
+            return event->a >= 0 && event->a < 2
+                && joypad_port_device((unsigned)event->a) == NES_PORT_SNES_MOUSE
+                && bool_arg(event->b) && bool_arg(event->c);
+        case NES_INPUT_EVENT_NTT_KEY:
+            return event->a >= 0 && event->a < 2
+                && joypad_port_device((unsigned)event->a) == NES_PORT_NTT_KEYPAD
+                && event->b >= 0 && event->b < NTT_KEY_COUNT && bool_arg(event->c);
+        case NES_INPUT_EVENT_FCNS_KEY:
+            return joypad_expansion_device() == NES_EXPANSION_FCNS_CONTROLLER
+                && event->a >= 0 && event->a < FCNS_KEY_COUNT && bool_arg(event->b);
+        case NES_INPUT_EVENT_VIRTUAL_BOY_BUTTON:
+            return event->a >= 0 && event->a < 2
+                && joypad_port_device((unsigned)event->a) == NES_PORT_VIRTUAL_BOY
+                && event->b >= 0 && event->b < VB_BUTTON_COUNT && bool_arg(event->c);
+        case NES_INPUT_EVENT_HORI_TRACK_MOTION:
+            return joypad_expansion_device() == NES_EXPANSION_HORI_TRACK;
+        case NES_INPUT_EVENT_PARTY_TAP:
+            return joypad_expansion_device() == NES_EXPANSION_PARTY_TAP
+                && event->a >= 0 && event->a < 6 && bool_arg(event->b);
+        case NES_INPUT_EVENT_PACHINKO:
+            return joypad_expansion_device() == NES_EXPANSION_PACHINKO
+                && bool_arg(event->a) && bool_arg(event->b);
+        case NES_INPUT_EVENT_BOXING:
+            return joypad_expansion_device() == NES_EXPANSION_EXCITING_BOXING
+                && event->a >= 0 && event->a < 8 && bool_arg(event->b);
+        case NES_INPUT_EVENT_JISSEN:
+            return joypad_expansion_device() == NES_EXPANSION_JISSEN_MAHJONG
+                && event->a >= 0 && event->a < JISSEN_KEY_COUNT && bool_arg(event->b);
+        case NES_INPUT_EVENT_BARCODE_BATTLER:
+            return joypad_expansion_device() == NES_EXPANSION_BARCODE_BATTLER
+                && digits_valid(event->text);
+        case NES_INPUT_EVENT_OEKA_KIDS:
+            return joypad_expansion_device() == NES_EXPANSION_OEKA_KIDS_TABLET
+                && bool_arg(event->c) && bool_arg(event->d);
+        case NES_INPUT_EVENT_VS_COIN:
+            return vs_enabled() && event->a >= 0
+                && event->a < (vs_dual_system() ? 4 : 2) && bool_arg(event->b);
+        case NES_INPUT_EVENT_VS_SERVICE:
+            return vs_enabled() && event->a >= 0
+                && event->a < (vs_dual_system() ? 2 : 1) && bool_arg(event->b);
+        case NES_INPUT_EVENT_CART_BARCODE:
+            return cart_barcode_supported() && digits_valid(event->text);
+        case NES_INPUT_EVENT_FAMILY_BASIC_KEY:
+            return joypad_expansion_device() == NES_EXPANSION_FAMILY_BASIC
+                && event->a >= 0 && event->a < FB_KEY_COUNT && bool_arg(event->b);
+        case NES_INPUT_EVENT_FAMILY_BASIC_TAPE_PLAY:
+        case NES_INPUT_EVENT_FAMILY_BASIC_TAPE_RECORD:
+        case NES_INPUT_EVENT_FAMILY_BASIC_TAPE_STOP:
+            return joypad_expansion_device() == NES_EXPANSION_FAMILY_BASIC;
+        case NES_INPUT_EVENT_SOFT_RESET:
+        case NES_INPUT_EVENT_POWER_CYCLE:
+            return true;
+        case NES_INPUT_EVENT_FDS_INSERT:
+            return fds_active() && event->a >= 0 && (uint64_t)event->a < fds_side_count();
+        case NES_INPUT_EVENT_FDS_EJECT:
+            return fds_active();
+        case NES_INPUT_EVENT_CART_KARAOKE:
+            return event->a >= 0 && event->a < CART_KARAOKE_INPUT_COUNT
+                && bool_arg(event->b);
+        default:
+            return false;
+    }
 }
 
 static bool apply_event(const NesInputEvent *event) {
@@ -124,7 +234,7 @@ static bool apply_event(const NesInputEvent *event) {
 }
 
 bool nes_input_event_apply(const NesInputEvent *event) {
-    if (!event) return false;
+    if (!nes_input_event_validate(event)) return false;
     ++injection_depth;
     bool ok = apply_event(event);
     --injection_depth;

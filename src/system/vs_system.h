@@ -120,6 +120,7 @@ bool vs_ppu_rgb_color(uint8_t color, uint8_t mask, uint32_t *argb);
 uint8_t vs_ppu_light_sensor_index(uint8_t color);
 
 bool vs_state_capture(NesStateWriter *writer);
+bool vs_hardware_state_capture(NesStateWriter *writer);
 bool vs_state_validate(NesStateReader *reader);
 bool vs_state_apply(NesStateReader *reader);
 

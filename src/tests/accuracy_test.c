@@ -121,7 +121,10 @@ int run_legacy_diagnostic_rom(const char *path, unsigned frame_limit);
 int render_diagnostic_rom(const char *path, unsigned frames, const char *output);
 int run_accuracycoin_rom(const char *path, unsigned frames, const char *output);
 
+int test_netplay_peer(const char *role, unsigned port, const char *scenario);
 int main(int argc, char **argv) {
+    if (argc == 5 && !strcmp(argv[1], "--netplay-peer"))
+        return test_netplay_peer(argv[2], (unsigned)strtoul(argv[3], NULL, 10), argv[4]);
     if (argc > 1) {
         if (argc == 4 && strcmp(argv[1], "--trace") == 0) {
             int result = test_cpu_trace(argv[2], argv[3]);

@@ -91,6 +91,7 @@ bool fds_loading_fast_forward(void);
 void fds_automation_frame(uint64_t frame);
 
 bool fds_state_capture(NesStateWriter *writer);
+bool fds_hardware_state_capture(NesStateWriter *writer);
 bool fds_state_validate(NesStateReader *reader);
 bool fds_state_apply(NesStateReader *reader);
 

@@ -52,6 +52,8 @@ jobs:
         run: python3 scripts/check-source-size.py
       - name: Build emulator and run hardware regressions
         run: make -j2 CC='${{ matrix.compiler }}' CXX='${{ matrix.cpp_compiler }}' CFLAGS='${{ matrix.flags }}' all test
+      - name: Check network sessions
+        run: python3 scripts/check-netplay.py build/accuracy-tests
       - name: Check region launch options
         run: python3 scripts/check-region-cli.py ./cupid-nes
       - name: Check game database discovery

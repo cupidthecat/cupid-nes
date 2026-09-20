@@ -7,6 +7,7 @@
  * GNU General Public License, version 3 or any later version.
  */
 #include "desktop_ui.h"
+#include "../system/execution_policy.h"
 #include "app_paths.h"
 #include "frontend_commands.h"
 #include "frontend_panels.h"
@@ -160,6 +161,10 @@ static void restore_runtime_settings(FrontendDesktopUi *ui,
 }
 
 static bool save_settings(FrontendDesktopUi *ui) {
+    if (nes_execution_policy() != NES_EXECUTION_LIVE) {
+        copy_status(ui, "Stop the deterministic session before applying settings");
+        return false;
+    }
     if (!ui || !ui->settings) return false;
     ui->staged.audio_mix.muted = ui->staged.muted;
     char error[256] = {0};

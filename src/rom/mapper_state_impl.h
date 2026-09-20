@@ -133,7 +133,7 @@ static bool mapper_state_read_config(NesStateReader *reader) {
         && nes_state_read_u32(reader, &dip) && dip == cart_dip_value;
 }
 
-static bool mapper_state_write_common(NesStateWriter *writer) {
+static bool mapper_state_write_common(NesStateWriter *writer, bool include_persistence) {
     unsigned kind = mapper_state_kind();
     bool mapper_memory = kind == MAPPER_STATE_NATIVE || kind == MAPPER_STATE_NSF;
     bool mutable_prg = mapper_memory
@@ -148,12 +148,14 @@ static bool mapper_state_write_common(NesStateWriter *writer) {
         || !mapper_state_write_ram(writer, &chr_work_ram)
         || !mapper_state_write_ram(writer, &chr_save_ram)
         || !mapper_state_write_optional_memory(writer, mutable_prg, C.prg, C.prg_sz)
-        || !mapper_state_write_optional_memory(writer, mutable_chr, C.chr, C.chr_sz)
-        || !nes_state_write_bool(writer, prg_ram_dirty)
-        || !nes_state_write_bool(writer, chr_ram_dirty)
-        || !nes_state_write_bool(writer, mmc5_exram_dirty)
-        || !nes_state_write_bool(writer, namco163_audio_dirty)
-        || !nes_state_write_bool(writer, flash_dirty)) return false;
+        || !mapper_state_write_optional_memory(writer, mutable_chr, C.chr, C.chr_sz))
+        return false;
+    if (include_persistence
+        && (!nes_state_write_bool(writer, prg_ram_dirty)
+            || !nes_state_write_bool(writer, chr_ram_dirty)
+            || !nes_state_write_bool(writer, mmc5_exram_dirty)
+            || !nes_state_write_bool(writer, namco163_audio_dirty)
+            || !nes_state_write_bool(writer, flash_dirty))) return false;
     bool mmc5_ram = cart == &mapper_mmc5
         || (cart == &mapper_nsf && (nsf_player.metadata.sound_chips & NSF_SOUND_MMC5));
     return mapper_state_write_optional_memory(writer, mmc5_ram, mmc5_exram, sizeof(mmc5_exram));
@@ -438,9 +440,10 @@ static NesStateResult mapper_state_read_board(NesStateReader *reader,
     return board_state_validate(active_board, &nested, out_restore);
 }
 
-static bool mapper_state_write_payload(NesStateWriter *writer) {
+static bool mapper_state_write_payload(NesStateWriter *writer, bool include_persistence) {
     unsigned kind = mapper_state_kind();
-    if (!mapper_state_write_config(writer) || !mapper_state_write_common(writer)) return false;
+    if (!mapper_state_write_config(writer)
+        || !mapper_state_write_common(writer, include_persistence)) return false;
     if (kind == MAPPER_STATE_BOARD) return mapper_state_write_board(writer);
     if (kind == MAPPER_STATE_NSF) return mapper_state_write_nsf(writer);
     if (kind == MAPPER_STATE_FDS) return true;
@@ -471,7 +474,11 @@ static NesStateResult mapper_state_read_payload(NesStateReader *reader, bool app
 }
 
 bool mapper_state_capture(NesStateWriter *writer) {
-    return writer && mapper_state_write_payload(writer);
+    return writer && mapper_state_write_payload(writer, true);
+}
+
+bool mapper_hardware_state_capture(NesStateWriter *writer) {
+    return writer && mapper_state_write_payload(writer, false);
 }
 
 NesStateResult mapper_state_prepare(NesStateReader *reader, MapperStateRestore **out_restore) {

@@ -169,7 +169,8 @@ static bool fds_state_read_automation(NesStateReader *reader,
     return true;
 }
 
-static bool fds_state_write_mutable(NesStateWriter *writer, const FdsState *state) {
+static bool fds_state_write_mutable(NesStateWriter *writer, const FdsState *state,
+                                    bool include_persistence) {
     bool inserted = state->image && state->current_side < state->image->side_count;
     if (!nes_state_write_bytes(writer, state->work_ram, sizeof(state->work_ram))
         || !nes_state_write_bytes(writer, state->chr_ram, sizeof(state->chr_ram))
@@ -201,10 +202,11 @@ static bool fds_state_write_mutable(NesStateWriter *writer, const FdsState *stat
         || !nes_state_write_bool(writer, state->gap_ended)
         || !nes_state_write_bool(writer, state->previous_crc_control)
         || !nes_state_write_bool(writer, state->bad_crc)
-        || !nes_state_write_bool(writer, state->dirty)
+        || (include_persistence && !nes_state_write_bool(writer, state->dirty))
         || !nes_state_write_u8(writer, (uint8_t)state->mirroring)
-        || !fds_state_write_audio(writer, &state->audio)
-        || !fds_state_write_automation(writer, &state->automation)) return false;
+        || !fds_state_write_audio(writer, &state->audio)) return false;
+    if (include_persistence
+        && !fds_state_write_automation(writer, &state->automation)) return false;
     return true;
 }
 
@@ -372,7 +374,7 @@ bool fds_state_capture(NesStateWriter *writer) {
         || !nes_state_write_bool(writer, fds.image->headered)
         || !nes_state_write_bool(writer, fds.image->qd_format)
         || !nes_state_write_u8(writer, (uint8_t)fds.image->save_mode)
-        || !fds_state_write_mutable(writer, &fds)) return false;
+        || !fds_state_write_mutable(writer, &fds, true)) return false;
     for (size_t side = 0; side < fds.image->side_count; ++side) {
         const FdsSide *value = &fds.image->sides[side];
         if (value->drive_size > UINT32_MAX
@@ -381,6 +383,31 @@ bool fds_state_capture(NesStateWriter *writer) {
             || !nes_state_write_bytes(writer, value->raw, fds.image->side_capacity)
             || !nes_state_write_bytes(writer, value->drive, value->drive_size)
             || !nes_state_write_bool(writer, value->dirty)) return false;
+    }
+    return true;
+}
+
+bool fds_hardware_state_capture(NesStateWriter *writer) {
+    if (!writer || !nes_state_write_bool(writer, fds.image != NULL)) return false;
+    if (!fds.image) return fds_state_write_audio(writer, &fds.audio);
+    if (fds.image->side_count > UINT32_MAX || fds.image->side_capacity > UINT32_MAX
+        || !nes_state_write_u32(writer, fds_state_crc32(fds.image->bios, sizeof(fds.image->bios)))
+        || !nes_state_write_u32(writer, fds_state_crc32(fds.image->original_disk,
+                                                        fds.image->original_disk_size))
+        || !nes_state_write_u64(writer, (uint64_t)fds.image->original_disk_size)
+        || !nes_state_write_u32(writer, (uint32_t)fds.image->side_count)
+        || !nes_state_write_u32(writer, (uint32_t)fds.image->side_capacity)
+        || !nes_state_write_bool(writer, fds.image->headered)
+        || !nes_state_write_bool(writer, fds.image->qd_format)
+        || !fds_state_write_mutable(writer, &fds, false)) return false;
+    for (size_t side = 0; side < fds.image->side_count; ++side) {
+        const FdsSide *value = &fds.image->sides[side];
+        if (value->drive_size > UINT32_MAX
+            || !nes_state_write_u32(writer, (uint32_t)value->drive_size)
+            || !nes_state_write_bytes(writer, value->identity_header,
+                                      sizeof(value->identity_header))
+            || !nes_state_write_bytes(writer, value->raw, fds.image->side_capacity)
+            || !nes_state_write_bytes(writer, value->drive, value->drive_size)) return false;
     }
     return true;
 }

@@ -14,6 +14,8 @@
 #include <stddef.h>
 #include "execution_control.h"
 #include "../replay/movie.h"
+#include "../replay/netplay.h"
+#include "netplay_frontend.h"
 #include "../replay/rewind.h"
 #include "settings.h"
 
@@ -39,6 +41,8 @@ typedef struct FrontendExecutionRuntime {
     unsigned run_ahead_frames;
     NesReplayResult replay_status;
     NesStateResult replay_state_status;
+    NesNetplaySession *netplay;
+    FrontendNetplay *network;
     NesMovieSession *movie;
     char movie_path[FRONTEND_MOVIE_PATH_CAPACITY];
     NesMovieStartKind movie_start_kind;

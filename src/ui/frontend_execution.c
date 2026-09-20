@@ -104,6 +104,8 @@ static bool command_pause(void *userdata, char *error, size_t error_size) {
     (void)error;
     (void)error_size;
     FrontendExecutionRuntime *runtime = (FrontendExecutionRuntime *)userdata;
+    if (nes_netplay_mode(runtime->netplay) == NES_NETPLAY_CONNECTED)
+        return frontend_netplay_pause(runtime->network, !nes_netplay_paused(runtime->netplay), error, error_size);
     if (debugger_is_paused()) {
         debugger_resume();
         frontend_execution_sync_debugger(runtime);
@@ -126,6 +128,10 @@ static bool command_open(void *userdata, char *error, size_t error_size) {
 
 static bool command_frame_advance(void *userdata, char *error, size_t error_size) {
     FrontendExecutionRuntime *runtime = (FrontendExecutionRuntime *)userdata;
+    if (nes_netplay_mode(runtime->netplay) == NES_NETPLAY_CONNECTED) {
+        set_error(error, error_size, "Resume the shared session to advance netplay");
+        return false;
+    }
     if (debugger_is_paused()) {
         debugger_resume();
         runtime->debugger_pause_revision = debugger_pause_revision();
@@ -293,6 +299,8 @@ void frontend_execution_init(FrontendExecutionRuntime *runtime,
     runtime->debugger_pause_revision = debugger_pause_revision();
     runtime->replay_status = NES_REPLAY_OK;
     runtime->replay_state_status = NES_STATE_OK;
+    runtime->netplay = nes_netplay_create();
+    runtime->network = frontend_netplay_create(runtime);
     runtime->movie = nes_movie_create();
     runtime->movie_start_kind = NES_MOVIE_START_STATE;
     nes_rewind_init(&runtime->rewind);
@@ -393,7 +401,7 @@ bool frontend_execution_register_commands(FrontendExecutionRuntime *runtime) {
         if (!frontend_command_register(&spec)) return false;
     }
     replay_frontend_unregister();
-    return replay_frontend_register(runtime);
+    return replay_frontend_register(runtime) && frontend_netplay_register(runtime->network);
 }
 
 bool frontend_execution_handle_shortcut(FrontendExecutionRuntime *runtime,
@@ -513,6 +521,7 @@ bool frontend_execution_run_frame(FrontendExecutionRuntime *runtime) {
         execution_control_set_loading_fast_forward(&runtime->execution, loading_fast_forward);
         if (!deterministic_session_owned()) refresh_audio(runtime);
     }
+    if (!frontend_netplay_before_frame(runtime->network)) return false;
     if (!execution_control_should_run_frame(&runtime->execution)) return false;
 
     if (runtime->movie && nes_movie_mode(runtime->movie) != NES_MOVIE_IDLE) {
@@ -561,6 +570,7 @@ bool frontend_execution_run_frame(FrontendExecutionRuntime *runtime) {
     } else {
         ran = run_emulation_frame(NULL);
     }
+    frontend_netplay_after_frame(runtime->network, ran);
     if (ran) execution_control_frame_complete(&runtime->execution);
     if (runtime->movie && nes_movie_mode(runtime->movie) != NES_MOVIE_IDLE) {
         NesMovieResult movie = nes_movie_frame_complete(runtime->movie, ran);
@@ -648,12 +658,18 @@ void frontend_execution_clear_timeline(FrontendExecutionRuntime *runtime) {
 void frontend_execution_shutdown(FrontendExecutionRuntime *runtime) {
     if (!runtime) return;
     replay_frontend_unregister();
+    lock_audio_for_machine_change(runtime);
+    nes_netplay_destroy(runtime->netplay);
+    runtime->netplay = NULL;
+    frontend_netplay_destroy(runtime->network);
+    runtime->network = NULL;
     nes_movie_destroy(runtime->movie);
     runtime->movie = NULL;
     nes_rewind_destroy(&runtime->rewind);
     nes_runahead_shutdown();
     runtime->rewind_seconds = 0;
     runtime->run_ahead_frames = 0;
+    unlock_audio_after_machine_change(runtime);
 }
 
 static bool movie_result_ok(FrontendExecutionRuntime *runtime, NesMovieResult result,

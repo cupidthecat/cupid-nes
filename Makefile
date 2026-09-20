@@ -20,7 +20,7 @@ CORE_SRC = src/system/timing.c src/system/hardware.c src/system/vs_system.c src/
            src/joypad/joypad.c src/joypad/family_basic.c src/joypad/special_peripherals.c \
            src/apu/apu.c src/third_party/blip_buf.c src/video/ntsc_composite.c src/video/video_trace.c src/ui/palette_tool.c src/ui/nsf_frontend.c \
            src/ui/frontend_commands.c src/ui/execution_control.c src/ui/machine_actions.c src/ui/app_paths.c \
-           src/ui/frontend_execution.c src/ui/replay_frontend.c src/ui/frontend_panels.c src/ui/frontend_session.c \
+           src/ui/frontend_execution.c src/ui/replay_frontend.c src/ui/netplay_frontend.c src/ui/frontend_panels.c src/ui/frontend_session.c \
            src/ui/platform_frontend.c src/ui/settings.c src/ui/game_database.c src/ui/hd_pack_frontend.c \
            src/ui/idle_frontend.c src/ui/image_open.c src/ui/session_actions.c \
            src/ui/ui_font.c src/ui/desktop_ui.c src/ui/state_frontend.c src/ui/state_runtime.c \
@@ -28,6 +28,7 @@ CORE_SRC = src/system/timing.c src/system/hardware.c src/system/vs_system.c src/
            src/ui/video_runtime.c src/ui/audio_runtime.c
 CORE_SRC += src/system/execution_policy.c src/replay/rewind.c src/video/frame_snapshot.c \
             src/replay/input_event.c src/replay/movie.c \
+            src/replay/netplay.c src/replay/netplay_hash.c src/replay/netplay_transport.c \
             src/audio/audio_observer.c src/audio/audio_mix.c src/video/presentation.c \
             src/ui/nsf_player.c src/ui/nsf_player_ui.c \
             src/ui/nsf_player_runtime.c \
@@ -58,7 +59,7 @@ CORE_CXX_SRC = src/apu/epsm.cpp src/third_party/ymfm/ymfm_opn.cpp \
                src/rom/game_db.cpp src/rom/boards/runtime.cpp src/rom/boards/factory.cpp src/rom/boards/state.cpp \
                src/hd/hd_assets.cpp src/hd/hd_pack_loader.cpp src/hd/hd_conditions.cpp \
                src/hd/hd_renderer.cpp src/hd/hd_runtime.cpp src/third_party/stb/stb_vorbis.cpp
-TEST_SRC = src/tests/accuracy_test.c src/tests/cpu_accuracy.c \
+TEST_SRC = src/tests/netplay_accuracy.c src/tests/accuracy_test.c src/tests/cpu_accuracy.c \
            src/tests/cpu_trace.c src/tests/apu_accuracy.c src/tests/file_io_accuracy.c src/tests/persistence_accuracy.c \
            src/tests/ppu_accuracy.c src/tests/mapper_accuracy.c src/tests/region_accuracy.c \
            src/tests/native_flash_geometry_accuracy.c src/tests/mapper30_111_prg_ram_accuracy.c \

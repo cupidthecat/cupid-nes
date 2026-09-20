@@ -86,6 +86,7 @@ void oeka_kids_tablet_write(uint8_t value);
 uint8_t oeka_kids_tablet_read(unsigned port);
 
 bool special_peripherals_state_capture(NesStateWriter *writer);
+bool special_peripherals_hardware_state_capture(NesStateWriter *writer);
 bool special_peripherals_state_validate(NesStateReader *reader);
 bool special_peripherals_state_apply(NesStateReader *reader);
 

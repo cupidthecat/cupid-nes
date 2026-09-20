@@ -61,7 +61,7 @@ $coreSources = @('src/system/timing.c', 'src/system/hardware.c', 'src/system/vs_
                  'src/joypad/joypad.c', 'src/joypad/family_basic.c', 'src/joypad/special_peripherals.c',
                  'src/apu/apu.c', 'src/third_party/blip_buf.c', 'src/video/ntsc_composite.c', 'src/video/video_trace.c', 'src/ui/palette_tool.c',
                  'src/ui/nsf_frontend.c', 'src/ui/frontend_commands.c', 'src/ui/execution_control.c',
-                 'src/ui/machine_actions.c', 'src/ui/app_paths.c', 'src/ui/frontend_execution.c', 'src/ui/replay_frontend.c',
+                 'src/ui/machine_actions.c', 'src/ui/app_paths.c', 'src/ui/frontend_execution.c', 'src/ui/replay_frontend.c', 'src/ui/netplay_frontend.c',
                  'src/ui/frontend_panels.c', 'src/ui/frontend_session.c', 'src/ui/platform_frontend.c',
                  'src/ui/settings.c', 'src/ui/game_database.c', 'src/ui/hd_pack_frontend.c', 'src/ui/idle_frontend.c',
                  'src/ui/image_open.c', 'src/ui/session_actions.c', 'src/ui/ui_font.c',
@@ -70,6 +70,7 @@ $coreSources = @('src/system/timing.c', 'src/system/hardware.c', 'src/system/vs_
                  'src/ui/video_runtime.c', 'src/ui/audio_runtime.c')
 $coreSources += @('src/system/execution_policy.c', 'src/replay/rewind.c', 'src/video/frame_snapshot.c',
                   'src/replay/input_event.c', 'src/replay/movie.c',
+                  'src/replay/netplay.c', 'src/replay/netplay_hash.c', 'src/replay/netplay_transport.c',
                   'src/audio/audio_observer.c', 'src/audio/audio_mix.c', 'src/video/presentation.c',
                   'src/ui/nsf_player.c', 'src/ui/nsf_player_ui.c',
                   'src/ui/nsf_player_runtime.c',
@@ -101,7 +102,7 @@ $cppSources = @('src/apu/epsm.cpp', 'src/third_party/ymfm/ymfm_opn.cpp',
                 'src/rom/boards/state.cpp', 'src/hd/hd_assets.cpp', 'src/hd/hd_pack_loader.cpp',
                 'src/hd/hd_conditions.cpp', 'src/hd/hd_renderer.cpp', 'src/hd/hd_runtime.cpp',
                 'src/third_party/stb/stb_vorbis.cpp')
-$testSources = @('src/tests/accuracy_test.c', 'src/tests/cpu_accuracy.c', 'src/tests/cpu_trace.c',
+$testSources = @('src/tests/netplay_accuracy.c', 'src/tests/accuracy_test.c', 'src/tests/cpu_accuracy.c', 'src/tests/cpu_trace.c',
                  'src/tests/apu_accuracy.c', 'src/tests/ppu_accuracy.c', 'src/tests/mapper_accuracy.c',
                  'src/tests/region_accuracy.c', 'src/tests/file_io_accuracy.c', 'src/tests/persistence_accuracy.c',
                  'src/tests/patch_accuracy.c', 'src/tests/media_accuracy.c', 'src/tests/fds_options_accuracy.c',
@@ -164,9 +165,9 @@ try {
         foreach ($source in $testSources) { Compile-Source $source $Compiler $flags }
         foreach ($source in $cppTestSources) { Compile-Source $source $CxxCompiler $cppFlags }
     )
-    & $CxxCompiler @cppFlags @coreObjects $mainObject $sdkLibrary '-lshell32' '-lcomdlg32' '-o' $application
+    & $CxxCompiler @cppFlags @coreObjects $mainObject $sdkLibrary '-lshell32' '-lcomdlg32' '-lws2_32' '-o' $application
     if ($LASTEXITCODE -ne 0) { throw 'Emulator build failed' }
-    & $CxxCompiler @cppFlags @coreObjects @testObjects $sdkLibrary '-lshell32' '-lcomdlg32' '-o' $testProgram
+    & $CxxCompiler @cppFlags @coreObjects @testObjects $sdkLibrary '-lshell32' '-lcomdlg32' '-lws2_32' '-o' $testProgram
     if ($LASTEXITCODE -ne 0) { throw 'Hardware test build failed' }
     & $testProgram
     if ($LASTEXITCODE -ne 0) { throw 'Hardware regressions failed' }
@@ -174,6 +175,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Region CLI regressions failed' }
     & python (Join-Path $projectRoot 'scripts/check-unicode-cli.py') $application
     if ($LASTEXITCODE -ne 0) { throw 'Unicode CLI regressions failed' }
+    & python (Join-Path $projectRoot 'scripts/check-netplay.py') $testProgram
+    if ($LASTEXITCODE -ne 0) { throw 'Netplay regressions failed' }
     Write-Output "Emulator: $application"
     Write-Output "Diagnostic runner: $testProgram"
 } finally {

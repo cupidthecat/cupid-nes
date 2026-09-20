@@ -250,6 +250,7 @@ bool    joypad_persistent_flush(void);
 bool    joypad_persistent_shutdown(void);
 
 bool joypad_state_capture(NesStateWriter *writer);
+bool joypad_hardware_state_capture(NesStateWriter *writer);
 bool joypad_state_validate(NesStateReader *reader);
 bool joypad_state_apply(NesStateReader *reader);
 

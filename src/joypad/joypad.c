@@ -1211,7 +1211,7 @@ static bool joypad_state_decode(NesStateReader *reader, JoypadSavedState *saved)
     return nes_state_reader_remaining(reader) == 0;
 }
 
-bool joypad_state_capture(NesStateWriter *writer) {
+static bool joypad_capture(NesStateWriter *writer, bool include_host_configuration) {
     JoypadSavedState saved = {0};
     if (!writer) return false;
     saved.pads[0] = pad1;
@@ -1219,7 +1219,7 @@ bool joypad_state_capture(NesStateWriter *writer) {
     memcpy(saved.pads + 2, expansion_pads, sizeof(expansion_pads));
     saved.microphone = microphone_active;
     saved.adapter = input_adapter;
-    saved.configuration_overrides = configuration_overrides;
+    saved.configuration_overrides = include_host_configuration ? configuration_overrides : 0;
     saved.adapter_strobe = adapter_strobe;
     memcpy(saved.adapter_remaining, adapter_remaining, sizeof(adapter_remaining));
     memcpy(saved.adapter_signature, adapter_signature, sizeof(adapter_signature));
@@ -1238,6 +1238,14 @@ bool joypad_state_capture(NesStateWriter *writer) {
     saved.family_trainer_rows = family_trainer_rows;
     memcpy(saved.paddles, paddles, sizeof(paddles));
     return joypad_state_write(writer, &saved);
+}
+
+bool joypad_state_capture(NesStateWriter *writer) {
+    return joypad_capture(writer, true);
+}
+
+bool joypad_hardware_state_capture(NesStateWriter *writer) {
+    return joypad_capture(writer, false);
 }
 
 bool joypad_state_validate(NesStateReader *reader) {

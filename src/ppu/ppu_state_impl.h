@@ -218,6 +218,16 @@ bool ppu_machine_state_capture(NesStateWriter *writer, const PpuMachineContext *
     return true;
 }
 
+bool ppu_machine_hardware_state_capture(NesStateWriter *writer,
+                                        const PpuMachineContext *context) {
+    if (!writer || !context || !ppu_state_write_core(writer, &context->state)
+        || !nes_state_write_bytes(writer, context->vram, sizeof(context->vram))
+        || !nes_state_write_bytes(writer, context->palette, sizeof(context->palette))) return false;
+    for (unsigned i = 0; i < 8; ++i)
+        if (!nes_state_write_u64(writer, context->open_bus_expire[i])) return false;
+    return true;
+}
+
 bool ppu_machine_state_decode(NesStateReader *reader, PpuMachineContext *context,
                               uint32_t *framebuffer_data) {
     if (!reader || !context || !framebuffer_data || !ppu_state_read_core(reader, &context->state)
@@ -270,6 +280,24 @@ bool ppu_state_capture(NesStateWriter *writer) {
     memcpy(context.bg_opaque, bg_opaque, sizeof(context.bg_opaque));
     memcpy(context.open_bus_expire, main_ppu_ob_expire, sizeof(context.open_bus_expire));
     return ppu_machine_state_capture(writer, &context, framebuffer)
+        && nes_state_write_u8(writer, (uint8_t)active_ppu_revision)
+        && nes_state_write_bool(writer, oam_row_corruption_worst_case)
+        && nes_state_write_bool(writer, startup_write_restriction)
+        && nes_state_write_bool(writer, oam_decay)
+        && nes_state_write_bool(writer, reset_suppression)
+        && nes_state_write_bool(writer, sprite_eval_wrap_bug)
+        && nes_state_write_bool(writer, oamdata_read_disabled)
+        && nes_state_write_bool(writer, palette_readback_disabled);
+}
+
+bool ppu_hardware_state_capture(NesStateWriter *writer) {
+    if (!writer || active_ppu != main_ppu) return false;
+    PpuMachineContext context = {0};
+    context.state = *main_ppu;
+    memcpy(context.vram, ppu_vram, sizeof(context.vram));
+    memcpy(context.palette, ppu_palette, sizeof(context.palette));
+    memcpy(context.open_bus_expire, main_ppu_ob_expire, sizeof(context.open_bus_expire));
+    return ppu_machine_hardware_state_capture(writer, &context)
         && nes_state_write_u8(writer, (uint8_t)active_ppu_revision)
         && nes_state_write_bool(writer, oam_row_corruption_worst_case)
         && nes_state_write_bool(writer, startup_write_restriction)

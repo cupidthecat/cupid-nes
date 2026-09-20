@@ -71,6 +71,7 @@ typedef bool (*NesInputEventObserver)(const NesInputEvent *event, void *userdata
 void nes_input_event_set_observer(NesInputEventObserver observer, void *userdata);
 void nes_input_event_clear_observer(void);
 bool nes_input_event_submit(const NesInputEvent *event);
+bool nes_input_event_validate(const NesInputEvent *event);
 
 /* Replay injection uses the ordinary public setters with observation bypassed,
  * keeping validation and device-specific behavior in one place. */

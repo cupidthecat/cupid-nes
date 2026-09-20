@@ -48,6 +48,7 @@
 #include "ui/capture_runtime.h"
 #include "ui/audio_runtime.h"
 #include "ui/frontend_execution.h"
+#include "ui/netplay_frontend.h"
 #include "ui/app_paths.h"
 #include "ui/game_database.h"
 #include "ui/platform_frontend.h"
@@ -1209,7 +1210,10 @@ static int application_main(int argc, char *argv[]) {
         frontend_desktop_render(&desktop_ui, video_width, video_height,
             frontend_session.current_result.title,
             nes_region_name(nes_timing()->region),
-            frontend_execution_paused(&execution_runtime) ? "Paused" : "Running");
+            nes_netplay_mode(execution_runtime.netplay) == NES_NETPLAY_CONNECTED
+                || nes_netplay_mode(execution_runtime.netplay) == NES_NETPLAY_LISTENING
+                ? frontend_netplay_status(execution_runtime.network)
+                : frontend_execution_paused(&execution_runtime) ? "Paused" : "Running");
         SDL_RenderPresent(renderer);
     
         Uint32 frameTime = SDL_GetTicks() - frameStart;

@@ -829,6 +829,45 @@ bool vs_state_capture(NesStateWriter *writer) {
     return ok;
 }
 
+bool vs_hardware_state_capture(NesStateWriter *writer) {
+    if (!writer || vs.active_side != 0 || !vs_state_write_config(writer, &vs.config)
+        || !nes_state_write_u32(writer, vs.active_side)
+        || !nes_state_write_u16(writer, vs.dips)
+        || !nes_state_write_bytes(writer, vs.coin_frames, sizeof(vs.coin_frames))) return false;
+    for (unsigned i = 0; i < 4; ++i)
+        if (!nes_state_write_bool(writer, vs.coin_pressed[i])
+            || !nes_state_write_u64(writer, vs.coin_frame_mark[i])) return false;
+    for (unsigned side = 0; side < 2; ++side) {
+        if (!nes_state_write_bool(writer, vs.service[side])
+            || !nes_state_write_bytes(writer, vs.shift[side], 2)
+            || !nes_state_write_bool(writer, vs.strobe[side])
+            || !nes_state_write_u8(writer, vs.select_bit[side])) return false;
+    }
+    if (!nes_state_write_u32(writer, vs.ram_owner)) return false;
+    for (unsigned side = 0; side < 2; ++side) {
+        if (!nes_state_write_bool(writer, vs.main_sub_bit[side])
+            || !nes_state_write_bool(writer, vs.external_irq[side])
+            || !nes_state_write_u8(writer, vs.protection_counter[side])) return false;
+    }
+    if (!nes_state_write_bool(writer, vs.config.dual) || !vs.config.dual) return true;
+
+    NesStateWriter nested;
+    nes_state_writer_init(&nested, NES_STATE_MAX_SIZE);
+    bool ok = cpu_machine_state_capture(&nested, &vs.sub_cpu) && vs_state_write_nested(writer, &nested);
+    nes_state_writer_destroy(&nested);
+    if (!ok) return false;
+    nes_state_writer_init(&nested, NES_STATE_MAX_SIZE);
+    ok = ppu_machine_hardware_state_capture(&nested, &vs.sub_ppu)
+        && vs_state_write_nested(writer, &nested);
+    nes_state_writer_destroy(&nested);
+    if (!ok) return false;
+    nes_state_writer_init(&nested, NES_STATE_MAX_SIZE);
+    ok = apu_machine_hardware_state_capture(&nested, &vs.sub_apu)
+        && vs_state_write_nested(writer, &nested);
+    nes_state_writer_destroy(&nested);
+    return ok;
+}
+
 bool vs_state_validate(NesStateReader *reader) {
     return reader && vs_state_decode(reader, &vs_saved_scratch);
 }
