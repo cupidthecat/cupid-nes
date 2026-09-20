@@ -42,6 +42,7 @@
 #include "../apu/epsm.h"
 #include "../joypad/joypad.h"
 #include "../util/file_io.h"
+#include "../cheats/cheats.h"
 
 #define PRG_ROM_BANK_SIZE 0x4000  // 16KB
 #define CHR_ROM_BANK_SIZE 0x2000  // 8KB
@@ -424,6 +425,7 @@ static int load_unif_data(const uint8_t *data, size_t size, const char *filename
     loaded_file_crc32 = file_crc;
     loaded_prg_crc32 = prg_crc;
     loaded_prg_chr_crc32 = prg_chr_crc;
+    cheats_set_game_identity(loaded_file_crc32);
     if (apply_input_config) (void)joypad_apply_configuration(&input_config);
     printf("UNIF board: %s\n", board_name);
     printf("Mapper: %d  (CHR %s)\n", mapper_no, chr_bytes ? "ROM" : "RAM");
@@ -489,6 +491,7 @@ static int load_nsf_data(const uint8_t *data, size_t size, const char *filename)
     loaded_file_crc32 = file_crc;
     loaded_prg_crc32 = payload_crc;
     loaded_prg_chr_crc32 = payload_crc;
+    cheats_set_game_identity(loaded_file_crc32);
     printf("%s: %u track%s, starting at %u\n",
            image.metadata.nsfe ? "NSFe" : "NSF", (unsigned)image.metadata.total_songs,
            image.metadata.total_songs == 1 ? "" : "s",
@@ -811,6 +814,7 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
     loaded_file_crc32 = file_crc;
     loaded_prg_crc32 = prg_crc;
     loaded_prg_chr_crc32 = prg_chr_crc;
+    cheats_set_game_identity(loaded_file_crc32);
     if (apply_input_config) (void)joypad_apply_configuration(&input_config);
 
     printf("Mapper: %d  (CHR %s%s)\n", mapper_no, rom_chr_size ? "ROM" : "RAM",
@@ -881,6 +885,7 @@ int load_fds_memory_options(const uint8_t *disk, size_t disk_size,
     loaded_file_crc32 = game_db_crc32(disk, disk_size);
     loaded_prg_crc32 = 0;
     loaded_prg_chr_crc32 = 0;
+    cheats_set_game_identity(loaded_file_crc32);
     printf("Famicom Disk System: %zu side%s\n", fds_side_count(), fds_side_count() == 1 ? "" : "s");
     return 0;
 }
@@ -1085,6 +1090,7 @@ int load_studybox_memory(const uint8_t *media, size_t media_size,
     loaded_file_crc32 = game_db_crc32(media, media_size);
     loaded_prg_crc32 = 0;
     loaded_prg_chr_crc32 = 0;
+    cheats_set_game_identity(loaded_file_crc32);
     printf("StudyBox: STBX tape loaded\n");
     return 0;
 }
@@ -1126,6 +1132,7 @@ bool unload_rom(void) {
     loaded_file_crc32 = 0;
     loaded_prg_crc32 = 0;
     loaded_prg_chr_crc32 = 0;
+    cheats_set_game_identity(0);
     vs_clear_config();
     epsm_activate(NULL);
     nes_set_region(NES_REGION_NTSC);

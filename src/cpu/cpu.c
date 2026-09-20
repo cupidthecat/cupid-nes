@@ -37,6 +37,7 @@
 #include "../system/timing.h"
 #include "../system/vs_system.h"
 #include "../debugger/debugger.h"
+#include "../cheats/cheats.h"
 
 uint8_t ram[0x0800];        // 2KB internal RAM
 #define APU_IO_SIZE 0x20              // cover $4000-$401F
@@ -458,6 +459,7 @@ static uint8_t finish_bus_read_target(uint16_t addr, BusLatchTarget target, uint
         value = ppu_reg_read_finish((uint16_t)(0x2000 | (addr & 7)), value);
         bus_latch(target, value);
     }
+    value = cheats_apply_read(addr, value);
     debugger_on_cpu_read(addr, &value);
     return value;
 }
