@@ -35,7 +35,7 @@ CORE_SRC += src/system/execution_policy.c src/replay/rewind.c src/video/frame_sn
             src/ui/capture_frontend.c src/ui/capture_runtime.c \
             src/media/patch.c src/media/patch_create.c src/media/image_source.c \
             src/media/archive_common.c src/media/archive_zip.c src/media/archive_7z.c \
-            src/third_party/miniz/miniz.c src/third_party/lzma/7zArcIn.c \
+            src/third_party/miniz/miniz.c src/third_party/spng/spng.c src/third_party/lzma/7zArcIn.c \
             src/third_party/lzma/7zBuf.c src/third_party/lzma/7zBuf2.c \
             src/third_party/lzma/7zCrc.c src/third_party/lzma/7zCrcOpt.c \
             src/third_party/lzma/7zDec.c src/third_party/lzma/7zStream.c \
@@ -55,7 +55,8 @@ CORE_SRC += src/third_party/lua/lapi.c src/third_party/lua/lauxlib.c src/third_p
             src/third_party/lua/lutf8lib.c src/third_party/lua/lvm.c src/third_party/lua/lzio.c
 CORE_CXX_SRC = src/apu/epsm.cpp src/third_party/ymfm/ymfm_opn.cpp \
                src/third_party/ymfm/ymfm_ssg.cpp src/third_party/ymfm/ymfm_adpcm.cpp \
-               src/rom/game_db.cpp src/rom/boards/runtime.cpp src/rom/boards/factory.cpp src/rom/boards/state.cpp
+               src/rom/game_db.cpp src/rom/boards/runtime.cpp src/rom/boards/factory.cpp src/rom/boards/state.cpp \
+               src/hd/hd_assets.cpp src/hd/hd_pack_loader.cpp src/third_party/stb/stb_vorbis.cpp
 TEST_SRC = src/tests/accuracy_test.c src/tests/cpu_accuracy.c \
            src/tests/cpu_trace.c src/tests/apu_accuracy.c src/tests/file_io_accuracy.c src/tests/persistence_accuracy.c \
            src/tests/ppu_accuracy.c src/tests/mapper_accuracy.c src/tests/region_accuracy.c \
@@ -93,8 +94,9 @@ TEST_SRC += src/tests/patch_accuracy.c src/tests/media_accuracy.c src/tests/fds_
             src/tests/nsf_player_accuracy.c src/tests/capture_container_accuracy.c \
             src/tests/capture_session_accuracy.c src/tests/video_trace_accuracy.c \
             src/tests/video_presentation_accuracy.c src/tests/audio_mix_accuracy.c
+TEST_CXX_SRC = src/tests/hd_pack_accuracy.cpp
 CORE_OBJ = $(CORE_SRC:.c=.o) $(CORE_CXX_SRC:.cpp=.o)
-TEST_OBJ = $(TEST_SRC:.c=.o)
+TEST_OBJ = $(TEST_SRC:.c=.o) $(TEST_CXX_SRC:.cpp=.o)
 OBJ = $(CORE_OBJ) $(TEST_OBJ) src/main.o
 
 all: $(TARGET)

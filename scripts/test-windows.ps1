@@ -77,7 +77,7 @@ $coreSources += @('src/system/execution_policy.c', 'src/replay/rewind.c', 'src/v
                   'src/ui/capture_frontend.c', 'src/ui/capture_runtime.c',
                   'src/media/patch.c', 'src/media/patch_create.c', 'src/media/image_source.c',
                   'src/media/archive_common.c', 'src/media/archive_zip.c', 'src/media/archive_7z.c',
-                  'src/third_party/miniz/miniz.c', 'src/third_party/lzma/7zArcIn.c',
+                  'src/third_party/miniz/miniz.c', 'src/third_party/spng/spng.c', 'src/third_party/lzma/7zArcIn.c',
                   'src/third_party/lzma/7zBuf.c', 'src/third_party/lzma/7zBuf2.c',
                   'src/third_party/lzma/7zCrc.c', 'src/third_party/lzma/7zCrcOpt.c',
                   'src/third_party/lzma/7zDec.c', 'src/third_party/lzma/7zStream.c',
@@ -98,7 +98,8 @@ $coreSources += @('src/third_party/lua/lapi.c', 'src/third_party/lua/lauxlib.c',
 $cppSources = @('src/apu/epsm.cpp', 'src/third_party/ymfm/ymfm_opn.cpp',
                 'src/third_party/ymfm/ymfm_ssg.cpp', 'src/third_party/ymfm/ymfm_adpcm.cpp',
                 'src/rom/game_db.cpp', 'src/rom/boards/runtime.cpp', 'src/rom/boards/factory.cpp',
-                'src/rom/boards/state.cpp')
+                'src/rom/boards/state.cpp', 'src/hd/hd_assets.cpp', 'src/hd/hd_pack_loader.cpp',
+                'src/third_party/stb/stb_vorbis.cpp')
 $testSources = @('src/tests/accuracy_test.c', 'src/tests/cpu_accuracy.c', 'src/tests/cpu_trace.c',
                  'src/tests/apu_accuracy.c', 'src/tests/ppu_accuracy.c', 'src/tests/mapper_accuracy.c',
                  'src/tests/region_accuracy.c', 'src/tests/file_io_accuracy.c', 'src/tests/persistence_accuracy.c',
@@ -138,6 +139,7 @@ $testSources = @('src/tests/accuracy_test.c', 'src/tests/cpu_accuracy.c', 'src/t
                  'src/tests/cheat_accuracy.c', 'src/tests/rewind_accuracy.c', 'src/tests/movie_accuracy.c',
                  'src/tests/movie_frontend_accuracy.c',
                  'src/tests/frontend_accuracy.c')
+$cppTestSources = @('src/tests/hd_pack_accuracy.cpp')
 $application = Join-Path $outputDirectory 'cupid-nes.exe'
 $testProgram = Join-Path $outputDirectory 'accuracy-tests.exe'
 $objectDirectory = Join-Path $outputDirectory 'objects'
@@ -157,7 +159,10 @@ try {
         foreach ($source in $cppSources) { Compile-Source $source $CxxCompiler $cppFlags }
     )
     $mainObject = Compile-Source 'src/main.c' $Compiler $flags
-    $testObjects = @(foreach ($source in $testSources) { Compile-Source $source $Compiler $flags })
+    $testObjects = @(
+        foreach ($source in $testSources) { Compile-Source $source $Compiler $flags }
+        foreach ($source in $cppTestSources) { Compile-Source $source $CxxCompiler $cppFlags }
+    )
     & $CxxCompiler @cppFlags @coreObjects $mainObject $sdkLibrary '-lshell32' '-lcomdlg32' '-o' $application
     if ($LASTEXITCODE -ne 0) { throw 'Emulator build failed' }
     & $CxxCompiler @cppFlags @coreObjects @testObjects $sdkLibrary '-lshell32' '-lcomdlg32' '-o' $testProgram
