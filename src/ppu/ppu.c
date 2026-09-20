@@ -79,6 +79,8 @@ static bool oam_row_corruption_worst_case = false;
 static bool startup_write_restriction = false;
 static bool oam_decay = false;
 static bool reset_suppression = false;
+static bool sprite_eval_wrap_bug = false;
+
 static const char *const ppu_revision_names[] = {"2c02-pre-e", "2c02e-plus"};
 
 PpuRevision ppu_revision(void) {
@@ -139,6 +141,14 @@ bool ppu_reset_suppression_enabled(void) {
 
 void ppu_set_reset_suppression(bool enabled) {
     reset_suppression = enabled;
+}
+
+bool ppu_sprite_eval_wrap_bug_enabled(void) {
+    return sprite_eval_wrap_bug;
+}
+
+void ppu_set_sprite_eval_wrap_bug(bool enabled) {
+    sprite_eval_wrap_bug = enabled;
 }
 
 static bool rendering_line(void) {
@@ -719,15 +729,22 @@ static void ppu_evaluate_sprites(void) {
     uint8_t m = ppu.oam_addr & 3;
     int height = (ppu.ctrl & 0x20) ? 16 : 8;
     bool in_range = ppu.scanline >= ppu.oam_bus && ppu.scanline < ppu.oam_bus + height;
-    if (ppu.eval_done) {
+    if (ppu.eval_done && !sprite_eval_wrap_bug) {
         n = (n + 1) & 63;
         ppu.oam_bus = ppu.secondary_oam[ppu.secondary_index & 31];
     } else {
-        if (in_range) ppu.eval_in_range = true;
+        // Early PPUs keep copying Y after wrapping, but stop qualifying new
+        // sprites. The next slot retains its cleared tile, attributes and X.
+        if (!ppu.eval_in_range && in_range) {
+            ppu.eval_in_range = !ppu.eval_done;
+        }
+
         if (!ppu.secondary_oam_full) {
             ppu.secondary_oam[ppu.secondary_index] = ppu.oam_bus;
             if (ppu.eval_in_range) {
-                if (ppu.dot == 66) ppu.secondary_sprite_zero = true;
+                if (ppu.dot == 66) {
+                    ppu.secondary_sprite_zero = true;
+                }
                 m++;
                 uint8_t old_secondary = ppu.secondary_index;
                 ppu.secondary_index = (uint8_t)((ppu.secondary_index + 1) & 0x1F);
@@ -751,14 +768,18 @@ static void ppu_evaluate_sprites(void) {
             }
         } else {
             ppu.oam_bus = ppu.secondary_oam[ppu.secondary_index & 31];
-            if (ppu.eval_in_range) {
+            if (ppu.eval_done) {
+                n = (n + 1) & 63;
+                m = 0;
+            } else if (ppu.eval_in_range) {
                 ppu.sprite_status_pending |= 0x20;
                 if (++m == 4) {
                     m = 0;
                     n = (n + 1) & 63;
                 }
-                if (!ppu.overflow_count) ppu.overflow_count = 3;
-                else if (--ppu.overflow_count == 0) {
+                if (!ppu.overflow_count) {
+                    ppu.overflow_count = 3;
+                } else if (--ppu.overflow_count == 0) {
                     ppu.eval_done = true;
                     m = 0;
                 }

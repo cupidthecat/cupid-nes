@@ -600,6 +600,8 @@ int main(int argc, char *argv[]) {
             ppu_set_startup_write_restriction(true);
         } else if (strcmp(argv[i], "--ppu-oam-decay") == 0) {
             ppu_set_oam_decay(true);
+        } else if (strcmp(argv[i], "--ppu-sprite-eval-wrap-bug") == 0) {
+            ppu_set_sprite_eval_wrap_bug(true);
         } else if (strcmp(argv[i], "--ppu-reset-suppression") == 0) {
             ppu_set_reset_suppression(true);
         } else if (strcmp(argv[i], "--video-filter") == 0) {
@@ -742,7 +744,8 @@ int main(int argc, char *argv[]) {
                "[--startup-phase CPU:PPU | --startup-seed SEED] "
                "[--ram-power-on STATE] [--power-on-seed SEED] [--random-vblank] "
                "[--ppu-revision REVISION] [--ppu-oam-row-corruption] "
-               "[--ppu-startup-restriction] [--ppu-oam-decay] [--ppu-reset-suppression] "
+               "[--ppu-startup-restriction] [--ppu-oam-decay] [--ppu-sprite-eval-wrap-bug] "
+               "[--ppu-reset-suppression] "
                "[--video-filter direct|ntsc-composite] "
                "[--mmc3-revision REVISION] [--cart-dip VALUE] "
                "[--adapter TYPE] [--port1 DEVICE] [--port2 DEVICE] "
@@ -778,13 +781,12 @@ int main(int argc, char *argv[]) {
     if (power_on_seed_set) printf("Power-on seed: %llu\n", (unsigned long long)power_on_seed);
     printf("PPU revision: %s\n", ppu_revision_name());
     printf("CPU test-register reads: %s\n", cpu_test_mode_enabled() ? "enabled" : "disabled");
-    printf("PPU OAM row corruption: %s\n",
-           ppu_oam_row_corruption_worst_case() ? "worst-case" : "compatibility");
+    printf("PPU OAM row corruption: %s\n", ppu_oam_row_corruption_worst_case() ? "worst-case" : "compatibility");
     printf("PPU startup write restriction: %s\n",
            ppu_startup_write_restriction_enabled() ? "enabled" : "compatibility");
     printf("PPU OAM decay: %s\n", ppu_oam_decay_enabled() ? "enabled" : "compatibility");
-    printf("PPU soft-reset suppression: %s\n",
-           ppu_reset_suppression_enabled() ? "enabled" : "disabled");
+    printf("PPU sprite-evaluation wrap bug: %s\n", ppu_sprite_eval_wrap_bug_enabled() ? "enabled" : "disabled");
+    printf("PPU soft-reset suppression: %s\n", ppu_reset_suppression_enabled() ? "enabled" : "disabled");
     printf("MMC3 revision: %s\n", cart_mmc3_revision_name());
     printf("Input adapter: %s\n", joypad_adapter_name());
     printf("Loading ROM: %s\n", rom_path);

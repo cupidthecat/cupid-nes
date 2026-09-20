@@ -209,6 +209,8 @@ bool ppu_oam_decay_enabled(void);
 void ppu_set_oam_decay(bool enabled);
 bool ppu_reset_suppression_enabled(void);
 void ppu_set_reset_suppression(bool enabled);
+bool ppu_sprite_eval_wrap_bug_enabled(void);
+void ppu_set_sprite_eval_wrap_bug(bool enabled);
 void ppu_oam_dma(uint8_t page);
 void ppu_begin_vblank(void);
 void ppu_end_vblank(void);
