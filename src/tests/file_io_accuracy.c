@@ -30,6 +30,11 @@ static int test_file_roundtrip(const char *directory) {
     BOARD_CHECK(nes_file_read_all(path, sizeof(original), &loaded, &size) == NES_FILE_OK);
     BOARD_CHECK(size == sizeof(original) && memcmp(loaded, original, size) == 0);
     free(loaded);
+    bool same = false;
+    BOARD_CHECK(nes_file_same(path, path, &same) == NES_FILE_OK && same);
+    char equivalent[260];
+    BOARD_CHECK(snprintf(equivalent, sizeof(equivalent), "./%s", path) > 0);
+    BOARD_CHECK(nes_file_same(path, equivalent, &same) == NES_FILE_OK && same);
     BOARD_CHECK(nes_file_read_all(path, sizeof(original) - 1, &loaded, &size) == NES_FILE_TOO_LARGE);
     BOARD_CHECK(!loaded && size == 0);
 
@@ -54,6 +59,7 @@ static int test_file_roundtrip(const char *directory) {
     free(loaded);
     BOARD_CHECK(nes_file_remove(path) == NES_FILE_OK);
     BOARD_CHECK(nes_file_read_all(path, 32, &loaded, &size) == NES_FILE_NOT_FOUND && !loaded && !size);
+    BOARD_CHECK(nes_file_same(path, equivalent, &same) == NES_FILE_NOT_FOUND && !same);
     return 0;
 }
 
@@ -62,6 +68,8 @@ static int test_file_rejected_operations(const char *directory) {
     size_t size = 7;
     BOARD_CHECK(nes_file_read_all(NULL, 32, &loaded, &size) == NES_FILE_INVALID_ARGUMENT);
     BOARD_CHECK(!loaded && !size);
+    bool same = true;
+    BOARD_CHECK(nes_file_same(NULL, directory, &same) == NES_FILE_INVALID_ARGUMENT && !same);
     BOARD_CHECK(nes_file_open("\xC0\xAF", "rb") == NULL);
     BOARD_CHECK(nes_file_open(directory, "invalid") == NULL);
     BOARD_CHECK(nes_file_write_atomic("\xED\xA0\x80", "x", 1) == NES_FILE_INVALID_ARGUMENT);

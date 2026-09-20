@@ -4,7 +4,7 @@ ifeq ($(origin CXX),default)
 CXX = $(if $(findstring clang,$(CC)),clang++,g++)
 endif
 CXXFLAGS ?= $(filter-out -std=c%,$(CFLAGS)) -std=c++17
-CPPFLAGS += -DSDL_MAIN_HANDLED
+CPPFLAGS += -DSDL_MAIN_HANDLED -DZ7_PPMD_SUPPORT -DZ7_EXTRACT_ONLY
 LDLIBS ?= -lSDL2 -lm
 
 TARGET = cupid-nes
@@ -18,6 +18,17 @@ CORE_SRC = src/system/timing.c src/system/hardware.c src/system/vs_system.c src/
            src/ui/frontend_commands.c src/ui/execution_control.c src/ui/machine_actions.c src/ui/app_paths.c \
            src/ui/frontend_execution.c src/ui/frontend_panels.c src/ui/frontend_session.c \
            src/ui/platform_frontend.c src/ui/settings.c src/ui/game_database.c
+CORE_SRC += src/media/patch.c src/media/patch_create.c src/media/image_source.c \
+            src/media/archive_common.c src/media/archive_zip.c src/media/archive_7z.c \
+            src/third_party/miniz/miniz.c src/third_party/lzma/7zArcIn.c \
+            src/third_party/lzma/7zBuf.c src/third_party/lzma/7zBuf2.c \
+            src/third_party/lzma/7zCrc.c src/third_party/lzma/7zCrcOpt.c \
+            src/third_party/lzma/7zDec.c src/third_party/lzma/7zStream.c \
+            src/third_party/lzma/Bcj2.c src/third_party/lzma/Bra.c \
+            src/third_party/lzma/Bra86.c src/third_party/lzma/BraIA64.c \
+            src/third_party/lzma/CpuArch.c src/third_party/lzma/Delta.c \
+            src/third_party/lzma/Lzma2Dec.c src/third_party/lzma/LzmaDec.c \
+            src/third_party/lzma/Ppmd7.c src/third_party/lzma/Ppmd7Dec.c
 CORE_CXX_SRC = src/apu/epsm.cpp src/third_party/ymfm/ymfm_opn.cpp \
                src/third_party/ymfm/ymfm_ssg.cpp src/third_party/ymfm/ymfm_adpcm.cpp \
                src/rom/game_db.cpp src/rom/boards/runtime.cpp src/rom/boards/factory.cpp
@@ -49,6 +60,7 @@ TEST_SRC = src/tests/accuracy_test.c src/tests/cpu_accuracy.c \
            src/tests/board_irem77_accuracy.c src/tests/default_prg_ram_geometry_accuracy.c \
            src/tests/native_chr_capacity_accuracy.c src/tests/native_mixed_chr_accuracy.c \
            src/tests/board_nina_fme7_accuracy.c src/tests/frontend_accuracy.c
+TEST_SRC += src/tests/patch_accuracy.c src/tests/media_accuracy.c src/tests/fds_options_accuracy.c
 CORE_OBJ = $(CORE_SRC:.c=.o) $(CORE_CXX_SRC:.cpp=.o)
 TEST_OBJ = $(TEST_SRC:.c=.o)
 OBJ = $(CORE_OBJ) $(TEST_OBJ) src/main.o

@@ -205,6 +205,12 @@ The production loaders now refuse an image replacement or unload when cartridge 
 
 Both groups passed with the complete hardware suite in strict Windows normal and AddressSanitizer/UndefinedBehaviorSanitizer builds. The region and database launch checks passed in both builds. Each AccuracyCoin run passed 144/144 with zero skipped or unfinished tests in 4,182 frames, matching the cartridge's tally. These local results cover the persistence changes on the combined integration branch; they do not establish results for later frontend or archive changes. The existing ROM pins and pass requirements were unchanged.
 
+## Archive, patch, and disk-overlay checkpoint
+
+The prepared-image loader passed six patch-format groups, seven archive and image groups, and four FDS save-option groups in the complete Windows hardware suite. The archive fixtures contain owned synthetic cartridges and cover ZIP, LZMA 7z, solid LZMA2 7z, Unicode names, member selection, corruption, entry and output limits, separate save identities, and database lookup after patching. The disk tests exercise headered and headerless FDS and QD images, multiple sides, read-only sources, reloads with pending writes, and failed overlay replacement.
+
+The same implementation passed strict normal and AddressSanitizer/UndefinedBehaviorSanitizer builds, the region and database launch suites, and AccuracyCoin 144/144 with zero skipped or unfinished tests in 4,182 frames. Sanitizer testing found and fixed unaligned integer access in the bundled archive decoder and a freed-buffer read in the recent-image parser. Malformed recent lists now leave the previous list intact. These local checkpoints cover the prepared-image and disk-overlay APIs; later application controls and automatic disk operations require their own integration checks. Existing diagnostic ROM pins and pass requirements were unchanged.
+
 ## Reproducing a checkpoint
 
 Check out the listed commit in a separate worktree, prepare SDL2 and the pinned ROM as described in [development and testing](development.md), then run:

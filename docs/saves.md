@@ -36,7 +36,7 @@ Rainbow saves the complete writable PRG and CHR flash images independently, rega
 
 Persistent cartridge data is flushed when the cartridge is shut down, including normal application exit. The main loop has no timed autosave. Close the emulator normally after making progress you want to retain.
 
-The derived filename can collide when two image files share the same stem in one directory. For example, `game.nes` and `game.bin` both derive `game.sav`. Renaming a cartridge image also changes the save path Cupid looks for.
+The derived filename can collide when two plain image files share the same stem in one directory. For example, `game.nes` and `game.bin` both derive `game.sav`. Renaming a cartridge image also changes the save path Cupid looks for. The prepared-image loader gives archive members and patched images separate save stems using the member name, patch checksum, and resulting image checksum, so they do not share the ordinary save merely because they came from the same archive.
 
 ## Board-specific cartridge formats
 
@@ -63,7 +63,9 @@ Expansion saves are written to a sibling temporary file and replace the destinat
 
 ## Writable FDS and QD images
 
-Disk-system writes replace the image path passed to Cupid. There is no separate disk `.sav` overlay.
+The disk loader supports two save modes. In-place mode replaces the supplied FDS or QD image. Overlay mode writes an IPS patch beside the image, or to an explicitly selected overlay path, and leaves the original bytes unchanged. An automatically derived overlay name contains the source image's CRC. Archive members and patched disk images use their separate image identity for that destination.
+
+`load_fds_with_options()` and `load_fds_memory_options()` select the mode through `FdsLoadOptions`. The older `load_fds()` and `load_fds_memory()` calls keep in-place saving. `nes_image_load()` chooses overlays for archived or patched disks. The loader applies an existing overlay before activating the disk and rejects a corrupt patch, changed image length, changed FDS header, or a destination that aliases the original file.
 
 The adapter's 32 KiB work RAM and 8 KiB CHR RAM are volatile and are not part of the disk file. Loading a new image initializes them with the selected [power-on profile](configuration.md#console-and-cpuppu-profiles). Soft reset and side changes retain their contents.
 
@@ -75,11 +77,11 @@ For an image you want to preserve unchanged, launch a copy or start it write-pro
 
 F10 toggles write protection at runtime. F8 ejects or reinserts the selected side, and F9 selects the next side. Ejecting a side does not save the image.
 
-When dirty media is flushed, Cupid rebuilds every side at the image's original 65,500-byte FDS or 65,536-byte QD size and preserves whether the image had a 16-byte FDS header. It writes a sibling temporary file named with the `.cupid-fds.tmp` suffix and replaces the original image only after the temporary write closes successfully.
+When dirty media is flushed, Cupid rebuilds every side at the image's original 65,500-byte FDS or 65,536-byte QD size and preserves whether the image had a 16-byte FDS header. In-place mode saves those bytes; overlay mode computes the IPS differences against the original source. Both modes write a unique sibling temporary file and replace their destination only after a complete write and successful close. An untouched side retains its original bytes.
 
 If that replacement fails, the dirty disk remains in memory. A normal window-close request reports the FDS save error and leaves the emulator open so you can correct the destination problem and try closing again. The loader also refuses to replace or unload dirty FDS media when it cannot flush it.
 
-If the image became dirty before write protection was enabled, F10 must turn write protection off again before a retry can succeed. Check directory permissions and free space as well. A stale `*.cupid-fds.tmp` file left by an interrupted process can block creation of the next temporary file because Cupid creates it exclusively; preserve or move the stale file aside after confirming no other running instance is using the image.
+If the image became dirty before write protection was enabled, F10 must turn write protection off again before a retry can succeed. Check directory permissions and free space as well. A stale temporary file does not block the next save; the writer chooses a fresh name and leaves the old file untouched. A read-only source is compatible with overlay saving as long as the overlay destination is writable. Reloading first flushes pending disk changes, then reads the current image or overlay, so it does not restore an older copy over those changes.
 
 ## Family BASIC tape files
 

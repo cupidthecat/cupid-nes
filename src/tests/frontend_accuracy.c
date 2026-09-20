@@ -24,6 +24,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 static unsigned frontend_checks;
 
@@ -425,6 +426,19 @@ static int session_transitions_and_recents(void) {
     CHECK(recent->fds_write_protected);
     CHECK(frontend_session_open_recent(&restored, 0, error, sizeof(error)));
     CHECK(restored.active && probe.calls == 3);
+    FrontendImageRequest retained = *frontend_session_recent(&restored, 0);
+    const char wrong_version[] = "version=999\n";
+    const char truncated_entry[] = "version=1\nrecent=missing-fields\n";
+    const char embedded_nul[] = "version=1\n\0recent=hidden\n";
+    const char *invalid_lists[] = {wrong_version, truncated_entry, embedded_nul};
+    const size_t invalid_sizes[] = {sizeof(wrong_version) - 1, sizeof(truncated_entry) - 1,
+                                    sizeof(embedded_nul) - 1};
+    for (size_t i = 0; i < sizeof(invalid_lists) / sizeof(invalid_lists[0]); i++) {
+        CHECK(nes_file_write_atomic(recent_path, invalid_lists[i], invalid_sizes[i]) == NES_FILE_OK);
+        CHECK(!frontend_session_load_recent(&restored, recent_path, error, sizeof(error)));
+        CHECK(error[0] && frontend_session_recent_count(&restored) == 1);
+        CHECK(memcmp(frontend_session_recent(&restored, 0), &retained, sizeof(retained)) == 0);
+    }
     CHECK(nes_file_remove(recent_path) == NES_FILE_OK);
     return 0;
 }

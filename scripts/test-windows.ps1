@@ -37,7 +37,8 @@ New-Item -ItemType Directory -Force -Path $sdlIncludeDirectory | Out-Null
 Get-ChildItem -LiteralPath $sdkInclude -Filter '*.h' | Copy-Item -Destination $sdlIncludeDirectory -Force
 Copy-Item -LiteralPath $sdkRuntime -Destination (Join-Path $outputDirectory 'SDL2.dll') -Force
 
-$flags = @('-std=c11', '-Wall', '-Wextra', '-Werror', '-D_CRT_SECURE_NO_WARNINGS', '-DSDL_MAIN_HANDLED', "-I$includeDirectory")
+$flags = @('-std=c11', '-Wall', '-Wextra', '-Werror', '-D_CRT_SECURE_NO_WARNINGS', '-DSDL_MAIN_HANDLED',
+           '-DZ7_PPMD_SUPPORT', '-DZ7_EXTRACT_ONLY', "-I$includeDirectory")
 if ($Sanitize) {
     $flags += @('-O1', '-g', '-fsanitize=address,undefined', '-fno-omit-frame-pointer')
     $resourceDirectory = & $Compiler '-print-resource-dir'
@@ -62,12 +63,24 @@ $coreSources = @('src/system/timing.c', 'src/system/hardware.c', 'src/system/vs_
                  'src/ui/machine_actions.c', 'src/ui/app_paths.c', 'src/ui/frontend_execution.c',
                  'src/ui/frontend_panels.c', 'src/ui/frontend_session.c', 'src/ui/platform_frontend.c',
                  'src/ui/settings.c', 'src/ui/game_database.c')
+$coreSources += @('src/media/patch.c', 'src/media/patch_create.c', 'src/media/image_source.c',
+                  'src/media/archive_common.c', 'src/media/archive_zip.c', 'src/media/archive_7z.c',
+                  'src/third_party/miniz/miniz.c', 'src/third_party/lzma/7zArcIn.c',
+                  'src/third_party/lzma/7zBuf.c', 'src/third_party/lzma/7zBuf2.c',
+                  'src/third_party/lzma/7zCrc.c', 'src/third_party/lzma/7zCrcOpt.c',
+                  'src/third_party/lzma/7zDec.c', 'src/third_party/lzma/7zStream.c',
+                  'src/third_party/lzma/Bcj2.c', 'src/third_party/lzma/Bra.c',
+                  'src/third_party/lzma/Bra86.c', 'src/third_party/lzma/BraIA64.c',
+                  'src/third_party/lzma/CpuArch.c', 'src/third_party/lzma/Delta.c',
+                  'src/third_party/lzma/Lzma2Dec.c', 'src/third_party/lzma/LzmaDec.c',
+                  'src/third_party/lzma/Ppmd7.c', 'src/third_party/lzma/Ppmd7Dec.c')
 $cppSources = @('src/apu/epsm.cpp', 'src/third_party/ymfm/ymfm_opn.cpp',
                 'src/third_party/ymfm/ymfm_ssg.cpp', 'src/third_party/ymfm/ymfm_adpcm.cpp',
                 'src/rom/game_db.cpp', 'src/rom/boards/runtime.cpp', 'src/rom/boards/factory.cpp')
 $testSources = @('src/tests/accuracy_test.c', 'src/tests/cpu_accuracy.c', 'src/tests/cpu_trace.c',
                  'src/tests/apu_accuracy.c', 'src/tests/ppu_accuracy.c', 'src/tests/mapper_accuracy.c',
                  'src/tests/region_accuracy.c', 'src/tests/file_io_accuracy.c', 'src/tests/persistence_accuracy.c',
+                 'src/tests/patch_accuracy.c', 'src/tests/media_accuracy.c', 'src/tests/fds_options_accuracy.c',
                  'src/tests/native_flash_geometry_accuracy.c', 'src/tests/mapper30_111_prg_ram_accuracy.c',
                  'src/tests/fds_accuracy.c',
                  'src/tests/studybox_accuracy.c', 'src/tests/nsf_accuracy.c',

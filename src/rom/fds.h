@@ -35,6 +35,9 @@ typedef struct FdsImage FdsImage;
 FdsImage *fds_image_create(const uint8_t *disk, size_t disk_size,
                            const uint8_t *bios, size_t bios_size,
                            const char *disk_path, bool write_protected);
+FdsImage *fds_image_create_options(const uint8_t *disk, size_t disk_size,
+                                   const uint8_t *bios, size_t bios_size,
+                                   const char *disk_path, const FdsLoadOptions *options);
 void fds_image_destroy(FdsImage *image);
 
 // Takes ownership of a prepared image. Preparation is fallible; activation is not.
@@ -61,6 +64,8 @@ float fds_nsf_audio_output(void);
 // Disk persistence leaves the in-memory image dirty if writing or replacement fails.
 bool fds_flush(void);
 bool fds_disk_dirty(void);
+FdsSaveMode fds_save_mode(void);
+const char *fds_save_path(void);
 
 size_t fds_side_count(void);
 bool fds_disk_inserted(void);

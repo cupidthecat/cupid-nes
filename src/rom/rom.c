@@ -829,6 +829,13 @@ int load_rom_image(const uint8_t *data, size_t size, const char *save_path) {
 int load_fds_memory(const uint8_t *disk, size_t disk_size,
                     const uint8_t *bios, size_t bios_size,
                     const char *disk_path, bool write_protected) {
+    FdsLoadOptions options = {FDS_SAVE_IN_PLACE, NULL, write_protected};
+    return load_fds_memory_options(disk, disk_size, bios, bios_size, disk_path, &options);
+}
+
+int load_fds_memory_options(const uint8_t *disk, size_t disk_size,
+                             const uint8_t *bios, size_t bios_size,
+                             const char *disk_path, const FdsLoadOptions *options) {
     if (nes_resolve_region(NES_REGION_NTSC) != NES_REGION_NTSC) {
         fprintf(stderr, "FDS requires NTSC timing; choose --region auto or ntsc\n");
         return -1;
@@ -838,15 +845,13 @@ int load_fds_memory(const uint8_t *disk, size_t disk_size,
         fprintf(stderr, "FDS startup alignment must fit the NTSC dividers\n");
         return -1;
     }
-    FdsImage *image = fds_image_create(disk, disk_size, bios, bios_size,
-                                       disk_path, write_protected);
+    // An overlay for the active image may have changed in memory. Flush it
+    // before preparing the replacement so a reload sees the latest bytes.
+    if (!rom_flush_persistent()) return -1;
+    FdsImage *image = fds_image_create_options(disk, disk_size, bios, bios_size,
+                                               disk_path, options);
     if (!image) {
-        fprintf(stderr, "Invalid FDS disk image or BIOS\n");
-        return -1;
-    }
-
-    if (!rom_flush_persistent()) {
-        fds_image_destroy(image);
+        fprintf(stderr, "Invalid FDS disk image, BIOS, or disk save overlay\n");
         return -1;
     }
 
@@ -1143,7 +1148,15 @@ bool rom_set_fcns_kanji_firmware(const char *path) {
 }
 
 int load_fds(const char *disk_path, const char *bios_path, bool write_protected) {
+    FdsLoadOptions options = {FDS_SAVE_IN_PLACE, NULL, write_protected};
+    return load_fds_with_options(disk_path, bios_path, &options);
+}
+
+int load_fds_with_options(const char *disk_path, const char *bios_path,
+                           const FdsLoadOptions *options) {
     if (!disk_path || !bios_path) return -1;
+    // In-place reloads must read after saving the current disk, too.
+    if (!rom_flush_persistent()) return -1;
     uint8_t *disk = NULL, *bios = NULL;
     size_t disk_size = 0, bios_size = 0;
     if (read_file(disk_path, &disk, &disk_size) != 0
@@ -1153,8 +1166,7 @@ int load_fds(const char *disk_path, const char *bios_path, bool write_protected)
         free(bios);
         return -1;
     }
-    int result = load_fds_memory(disk, disk_size, bios, bios_size,
-                                 disk_path, write_protected);
+    int result = load_fds_memory_options(disk, disk_size, bios, bios_size, disk_path, options);
     free(disk);
     free(bios);
     return result;

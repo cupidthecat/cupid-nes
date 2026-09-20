@@ -164,6 +164,47 @@ NesFileResult nes_file_remove(const char *path) {
     return removed == 0 ? NES_FILE_OK : file_error();
 }
 
+NesFileResult nes_file_same(const char *left, const char *right, bool *same) {
+    if (same) *same = false;
+    if (!same || !valid_path(left) || !valid_path(right)) return NES_FILE_INVALID_ARGUMENT;
+    if (!strcmp(left, right)) {
+        *same = true;
+        return NES_FILE_OK;
+    }
+
+    FILE *first = nes_file_open(left, "rb");
+    if (!first) return file_error();
+    FILE *second = nes_file_open(right, "rb");
+    if (!second) {
+        NesFileResult result = file_error();
+        fclose(first);
+        return result;
+    }
+
+    NesFileResult result = NES_FILE_OK;
+#ifdef _WIN32
+    BY_HANDLE_FILE_INFORMATION a, b;
+    HANDLE first_handle = (HANDLE)_get_osfhandle(_fileno(first));
+    HANDLE second_handle = (HANDLE)_get_osfhandle(_fileno(second));
+    if (!GetFileInformationByHandle(first_handle, &a) || !GetFileInformationByHandle(second_handle, &b)) {
+        result = NES_FILE_IO_ERROR;
+    } else {
+        *same = a.dwVolumeSerialNumber == b.dwVolumeSerialNumber
+             && a.nFileIndexHigh == b.nFileIndexHigh && a.nFileIndexLow == b.nFileIndexLow;
+    }
+#else
+    struct stat a, b;
+    if (fstat(fileno(first), &a) != 0 || fstat(fileno(second), &b) != 0) {
+        result = NES_FILE_IO_ERROR;
+    } else {
+        *same = a.st_dev == b.st_dev && a.st_ino == b.st_ino;
+    }
+#endif
+    if (fclose(first) != 0) result = NES_FILE_IO_ERROR;
+    if (fclose(second) != 0) result = NES_FILE_IO_ERROR;
+    return result;
+}
+
 static FILE *create_exclusive(const char *path) {
 #ifdef _WIN32
     wchar_t *wide = wide_path(path);

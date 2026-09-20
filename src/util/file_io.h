@@ -13,6 +13,7 @@
 #define CUPID_FILE_IO_H
 
 #include <stddef.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 
@@ -39,6 +40,9 @@ NesFileResult nes_file_read_all(const char *path, size_t limit, uint8_t **data, 
 // A failure leaves any existing destination in place.
 NesFileResult nes_file_write_atomic(const char *path, const void *data, size_t size);
 NesFileResult nes_file_remove(const char *path);
+// Compare existing file identities, following links. A missing path returns
+// NES_FILE_NOT_FOUND with *same false; identical valid spellings return true.
+NesFileResult nes_file_same(const char *left, const char *right, bool *same);
 const char *nes_file_result_message(NesFileResult result);
 
 #ifdef __cplusplus

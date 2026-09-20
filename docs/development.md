@@ -38,6 +38,10 @@ Tests use the device code listed in [Makefile](../Makefile) and [test-windows.ps
 
 `python3 scripts/check-region-cli.py ./cupid-nes` checks the production launch parser and loader with a synthetic PAL cartridge. On Windows, use `python scripts/check-region-cli.py build/windows/cupid-nes.exe`. Its eleven cases cover Auto, explicit regions, independent console wiring, repeated selectors and invalid values. The fixture adds `--barcode` to an NROM image. The ROM loads, then the option is rejected because it requires a Datach cartridge, before SDL starts. CI runs the check with both compiler configurations and treats sanitizer diagnostics as failures.
 
+Archive tests include owned synthetic cartridges in ZIP, LZMA 7z, and solid LZMA2 7z files. They exercise Unicode paths, member selection, corrupt archives, unsupported compression, size limits, separate cartridge saves, and database lookup after patching. The fixed patch examples cover every BPS command, reversible UPS changes, IPS records and generation, invalid offsets, and checksum failures. Disk-overlay tests drive real disk registers through writes and reloads for headered and headerless FDS and QD images, including read-only sources and failed save replacement.
+
+The fixtures are checked into `src/tests/media_fixtures.h`; running the suite does not require an archive program. To regenerate those owned fixtures, run `python scripts/generate-media-fixtures.py --seven-zip /path/to/7z`. The generator uses only its own temporary directory under `build`. The bundled decoders, licenses, and local portability change are described in [archive codecs](../src/third_party/archive-codecs.md).
+
 ## Prepare the pinned test collections
 
 The external ROM collections are separate from the internal hardware suite. Clone them once into an ignored build directory:

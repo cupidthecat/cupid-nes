@@ -662,7 +662,7 @@ static int test_fds_persistence(void) {
     fds_clock_cpu(150);
     CHECK(!fds_disk_dirty() && read_file_byte(paths.disk, 17) == 0xA5);
 
-    // Exclusive temp creation must preserve a stale temp file and the dirty active disk.
+    // A legacy temporary file remains untouched and does not block a new save.
     CHECK(load_fds_memory(disk, disk_size, bios, sizeof(bios), paths.disk, false) == 0);
     cart_cpu_write(0x4025, 0xC5);
     CHECK(wait_for_disk_irq(700000));
@@ -675,7 +675,30 @@ static int test_fds_persistence(void) {
     snprintf(stale_temp, sizeof(stale_temp), "%s.cupid-fds.tmp", paths.disk);
     const uint8_t sentinel = 0x7B;
     CHECK(write_disk_file(stale_temp, &sentinel, 1) == 0);
-    CHECK(!fds_flush() && fds_disk_dirty() && read_file_byte(stale_temp, 0) == sentinel);
+    CHECK(fds_flush() && !fds_disk_dirty() && read_file_byte(stale_temp, 0) == sentinel);
+    CHECK(read_file_byte(paths.disk, 17) == 0x33);
+
+    CHECK(fds_insert_disk(0));
+    cart_cpu_write(0x4025, 0xC5);
+    CHECK(wait_for_disk_irq(700000));
+    CHECK(cart_cpu_read_bus(0x4031, 0) == 1);
+    cart_cpu_write(0x4024, 0x44);
+    cart_cpu_write(0x4025, 0x41);
+    fds_clock_cpu(150);
+    CHECK(fds_disk_dirty());
+
+    // Force a real destination-replacement failure after the temporary write.
+    char backup[160], blocked_child[160];
+    snprintf(backup, sizeof(backup), "%s.retained", paths.disk);
+    snprintf(blocked_child, sizeof(blocked_child), "%s/retained.bin", paths.disk);
+    CHECK(rename(paths.disk, backup) == 0);
+#ifdef _WIN32
+    CHECK(_mkdir(paths.disk) == 0);
+#else
+    CHECK(mkdir(paths.disk, 0700) == 0);
+#endif
+    CHECK(write_disk_file(blocked_child, &sentinel, 1) == 0);
+    CHECK(!fds_flush() && fds_disk_dirty());
 
     // Unload is transactional too: failed persistence keeps the active machine intact.
     CHECK(!unload_rom());
@@ -688,8 +711,18 @@ static int test_fds_persistence(void) {
     CHECK(load_rom_memory(nrom, nrom_size) == -1);
     CHECK(rom_is_fds() && fds_disk_dirty() && cart_cpu_read(0xE000) == bios[0]);
     CHECK(read_file_byte(stale_temp, 0) == sentinel);
+    CHECK(read_file_byte(blocked_child, 0) == sentinel);
+    CHECK(read_file_byte(backup, 17) == 0x33);
     CHECK(remove(stale_temp) == 0);
+    CHECK(remove(blocked_child) == 0);
+#ifdef _WIN32
+    CHECK(_rmdir(paths.disk) == 0);
+#else
+    CHECK(rmdir(paths.disk) == 0);
+#endif
+    CHECK(rename(backup, paths.disk) == 0);
     CHECK(fds_flush() && !fds_disk_dirty());
+    CHECK(read_file_byte(paths.disk, 17) == 0x44);
     CHECK(load_rom_memory(nrom, nrom_size) == 0);
     free(nrom);
     free(disk);

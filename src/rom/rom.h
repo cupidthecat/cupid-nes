@@ -91,7 +91,20 @@ extern uint8_t   *chr_rom;
 
 int load_rom(const char *filename);
 bool rom_set_fcns_kanji_firmware(const char *path);
+typedef enum {
+    FDS_SAVE_IN_PLACE,
+    FDS_SAVE_OVERLAY
+} FdsSaveMode;
+
+typedef struct {
+    FdsSaveMode mode;
+    const char *overlay_path; // NULL derives an IPS path from the image identity.
+    bool write_protected;
+} FdsLoadOptions;
+
 int load_fds(const char *disk_path, const char *bios_path, bool write_protected);
+int load_fds_with_options(const char *disk_path, const char *bios_path,
+                           const FdsLoadOptions *options);
 int load_studybox(const char *media_path, const char *bios_path);
 // Eject the cartridge and release loader-owned buffers. A failed persistent
 // write leaves the active machine loaded so the caller can retry.
@@ -108,6 +121,9 @@ int load_rom_image(const uint8_t *data, size_t size, const char *save_path);
 int load_fds_memory(const uint8_t *disk, size_t disk_size,
                     const uint8_t *bios, size_t bios_size,
                     const char *disk_path, bool write_protected);
+int load_fds_memory_options(const uint8_t *disk, size_t disk_size,
+                             const uint8_t *bios, size_t bios_size,
+                             const char *disk_path, const FdsLoadOptions *options);
 int load_studybox_memory(const uint8_t *media, size_t media_size,
                          const uint8_t *bios, size_t bios_size);
 bool rom_is_fds(void);

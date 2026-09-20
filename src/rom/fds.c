@@ -25,6 +25,10 @@
 
 #include "fds.h"
 #include "../system/hardware.h"
+#include "../media/patch.h"
+#include "../util/file_io.h"
+#include "game_db.h"
+#include <inttypes.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -92,6 +96,9 @@ struct FdsImage {
     uint8_t header[16];
     char *disk_path;
     bool write_protected;
+    FdsSaveMode save_mode;
+    uint8_t *original_disk;
+    size_t original_disk_size;
 };
 
 typedef struct {
@@ -228,9 +235,9 @@ static void free_side(FdsSide *side) {
     memset(side, 0, sizeof(*side));
 }
 
-FdsImage *fds_image_create(const uint8_t *disk, size_t disk_size,
-                           const uint8_t *bios, size_t bios_size,
-                           const char *disk_path, bool write_protected) {
+static FdsImage *fds_image_create_data(const uint8_t *disk, size_t disk_size,
+                                       const uint8_t *bios, size_t bios_size,
+                                       const char *disk_path, bool write_protected) {
     if (!disk || !bios || bios_size != FDS_BIOS_SIZE) return NULL;
 
     bool headered = disk_size >= 16 && memcmp(disk, "FDS\x1A", 4) == 0;
@@ -291,8 +298,11 @@ void fds_image_destroy(FdsImage *image) {
     for (size_t i = 0; i < image->side_count; ++i) free_side(&image->sides[i]);
     free(image->sides);
     free(image->disk_path);
+    free(image->original_disk);
     free(image);
 }
+
+#include "fds_image_options.h"
 
 static void envelope_reset_timer(FdsEnvelope *channel) {
     channel->timer = 8u * ((uint32_t)channel->speed + 1u) * ((uint32_t)channel->master_speed + 1u);
@@ -556,36 +566,6 @@ static bool rebuild_side(const FdsImage *image, const FdsSide *side, uint8_t *ou
     return true;
 }
 
-static bool atomic_replace(const char *path, const uint8_t *data, size_t size) {
-    size_t path_len = strlen(path);
-    const char suffix[] = ".cupid-fds.tmp";
-    if (path_len > SIZE_MAX - sizeof(suffix)) return false;
-    char *temp = (char *)malloc(path_len + sizeof(suffix));
-    if (!temp) return false;
-    memcpy(temp, path, path_len);
-    memcpy(temp + path_len, suffix, sizeof(suffix));
-
-    FILE *fp = fopen(temp, "wbx");
-    if (!fp) { free(temp); return false; }
-    size_t written = fwrite(data, 1, size, fp);
-    int close_result = fclose(fp);
-    if (written != size || close_result != 0) {
-        remove(temp);
-        free(temp);
-        return false;
-    }
-
-    bool replaced;
-#ifdef _WIN32
-    replaced = MoveFileExA(temp, path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
-#else
-    replaced = rename(temp, path) == 0;
-#endif
-    if (!replaced) remove(temp);
-    free(temp);
-    return replaced;
-}
-
 bool fds_flush(void) {
     if (!fds.image || !fds.dirty) return true;
     if (fds.image->write_protected || !fds.image->disk_path) return false;
@@ -602,7 +582,20 @@ bool fds_flush(void) {
             return false;
         }
     }
-    bool ok = atomic_replace(fds.image->disk_path, output, size);
+    bool ok;
+    if (fds.image->save_mode == FDS_SAVE_OVERLAY) {
+        uint8_t *patch = NULL;
+        size_t patch_size = 0;
+        NesPatchResult patched = nes_patch_create_ips(fds.image->original_disk,
+                                                       fds.image->original_disk_size,
+                                                       output, size, 32u * 1024u * 1024u,
+                                                       &patch, &patch_size);
+        ok = patched == NES_PATCH_OK
+            && nes_file_write_atomic(fds.image->disk_path, patch, patch_size) == NES_FILE_OK;
+        free(patch);
+    } else {
+        ok = nes_file_write_atomic(fds.image->disk_path, output, size) == NES_FILE_OK;
+    }
     if (ok) {
         for (size_t side = 0; side < fds.image->side_count; ++side) {
             FdsSide *disk_side = &fds.image->sides[side];
@@ -627,6 +620,8 @@ void fds_shutdown(void) {
 }
 
 bool fds_disk_dirty(void) { return fds.dirty; }
+FdsSaveMode fds_save_mode(void) { return fds.image ? fds.image->save_mode : FDS_SAVE_IN_PLACE; }
+const char *fds_save_path(void) { return fds.image ? fds.image->disk_path : NULL; }
 size_t fds_side_count(void) { return fds.image ? fds.image->side_count : 0; }
 bool fds_disk_inserted(void) { return fds.image && fds.current_side < fds.image->side_count; }
 size_t fds_current_side(void) { return fds_disk_inserted() ? fds.current_side : FDS_NO_SIDE; }

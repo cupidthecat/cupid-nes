@@ -292,6 +292,11 @@ bool frontend_session_load_recent(FrontendSession *session, const char *path,
         set_error(error, error_size, message);
         return false;
     }
+    if (memchr(data, '\0', size)) {
+        free(data);
+        set_error(error, error_size, "Recent image list contains an embedded NUL byte");
+        return false;
+    }
     char *text = (char *)malloc(size + 1);
     if (!text) {
         free(data);
@@ -301,7 +306,8 @@ bool frontend_session_load_recent(FrontendSession *session, const char *path,
     memcpy(text, data, size);
     text[size] = '\0';
     free(data);
-    session->recent_count = 0;
+    FrontendImageRequest parsed[FRONTEND_RECENT_MAX];
+    size_t parsed_count = 0;
     char *cursor = text;
     bool version = false;
     unsigned line_number = 0;
@@ -314,24 +320,26 @@ bool frontend_session_load_recent(FrontendSession *session, const char *path,
         if (!version) {
             if (strcmp(cursor, "version=1") != 0) break;
             version = true;
-        } else if (strncmp(cursor, "recent=", 7) == 0 && session->recent_count < FRONTEND_RECENT_MAX) {
+        } else if (strncmp(cursor, "recent=", 7) == 0 && parsed_count < FRONTEND_RECENT_MAX) {
             FrontendImageRequest request;
             memset(&request, 0, sizeof(request));
             if (!parse_recent_line(cursor + 7, &request)) break;
-            session->recent[session->recent_count++] = request;
+            parsed[parsed_count++] = request;
         } else if (*cursor) {
             break;
         }
         cursor = next;
     }
+    bool valid = version && (!cursor || !*cursor);
     free(text);
-    if (!version || (cursor && *cursor)) {
-        session->recent_count = 0;
+    if (!valid) {
         char message[160];
         snprintf(message, sizeof(message), "Recent image list is malformed near line %u", line_number);
         set_error(error, error_size, message);
         return false;
     }
+    memcpy(session->recent, parsed, parsed_count * sizeof(parsed[0]));
+    session->recent_count = parsed_count;
     if (error && error_size) error[0] = '\0';
     return true;
 }
