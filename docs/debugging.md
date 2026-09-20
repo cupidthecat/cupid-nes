@@ -45,7 +45,8 @@ without the grid or selection outline through a Save dialog.
 Pause the game and leave Live enabled to edit. In VRAM or palettes, select a byte
 and choose Edit byte, press Enter, or double-click it. Addresses and byte values
 are hexadecimal. In the tile editor, choose a pixel value from 0 through 3 and
-click the tile to paint. CHR ROM, unmapped memory, and protected pages are read-only.
+click the tile to paint. The tile editor keeps the pattern viewer's bank selection;
+select CPU banks before painting mapped memory. CHR ROM, unmapped memory, and protected pages are read-only.
 Writable CHR, nametable RAM, palette RAM, and OAM edits affect the running machine;
 they do not modify the cartridge file. The game can overwrite RAM after resuming.
 Undo or Ctrl+Z reverses the last edit while its memory and frame still match.

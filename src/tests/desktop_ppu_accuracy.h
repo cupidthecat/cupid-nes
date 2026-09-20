@@ -61,6 +61,19 @@ static void ppu_windows(FrontendDesktopUi *ui) {
                         click_control(tool, HIT_PPU_ACTION, 7, 0);
                         render(tool);
                     }
+                    click_control(tool, HIT_PPU_ACTION, 7, 0);
+                    render(tool);
+                    SDL_FRect tile;
+                    CHECK(desktop_clay_bounds(tool->clay, HIT_PPU_CANVAS, 0, 0, &tile));
+                    SDL_Event open_tile = {.type = SDL_MOUSEBUTTONDOWN};
+                    open_tile.button.button = SDL_BUTTON_LEFT;
+                    open_tile.button.clicks = 2;
+                    open_tile.button.x = (int)((tile.x + 4) * tool->ui_scale);
+                    open_tile.button.y = (int)((tile.y + 4) * tool->ui_scale);
+                    CHECK(frontend_desktop_handle_event(tool, &open_tile));
+                    CHECK(ui->tools->panel_id == DEBUG_PPU_TILE);
+                    render(ui->tools);
+                    CHECK(desktop_clay_contains_text(ui->tools->clay, "BG banks"));
                     bool choose = true;
                     frontend_set_file_chooser(ppu_export_chooser, &choose);
                     click_control(tool, HIT_PPU_ACTION, 9, 0);
@@ -120,6 +133,7 @@ static void ppu_windows(FrontendDesktopUi *ui) {
         DebugPpuSnapshot before, after;
         debugger_get_ppu(&before);
         click_control(tool, HIT_PPU_ACTION, 1, 0);
+        render(tool); /* A paint before emulation advances must not lose the requested refresh. */
         CHECK(frontend_execution_run_frame(ui->execution));
         render(tool);
         debugger_get_ppu(&after);

@@ -225,7 +225,7 @@ static void refresh(FrontendDesktopUi *ui) {
         for (unsigned y = 0; y < 8; ++y) {
             for (unsigned x = 0; x < 8; ++x) {
                 v->pixels[y * 8 + x] =
-                    debug_ppu_color(&v->image, v->palette, debug_ppu_pixel(v->image.memory + address, x, y), false);
+                    debug_ppu_color(&v->image, v->palette, debug_ppu_pixel(pattern_bytes(v) + address, x, y), false);
             }
         }
     } else if (ui->panel_id == DEBUG_PPU_PALETTE) {
@@ -473,7 +473,7 @@ void desktop_ppu_layout(FrontendDesktopUi *ui, float width, float height) {
         CLAY_AUTO_ID({.layout = {.childGap = 6}}) {
             button(ui, "Previous", ACTION_PREVIOUS, false, ui->panel_id != DEBUG_PPU_REGISTERS);
             button(ui, "Next", ACTION_NEXT, false, ui->panel_id != DEBUG_PPU_REGISTERS);
-            if (ui->panel_id == DEBUG_PPU_PATTERNS) {
+            if (ui->panel_id == DEBUG_PPU_PATTERNS || ui->panel_id == DEBUG_PPU_TILE) {
                 button(ui,
                        v->source == 0   ? "CPU banks"
                        : v->source == 1 ? "BG banks"
@@ -682,6 +682,10 @@ static void canvas_click(FrontendDesktopUi *ui, int x, int y, bool double_click)
         if (!editable(ui)) {
             return;
         }
+        if (v->source != 0) {
+            desktop_copy_status(ui, "Select CPU banks to edit the mapped CHR memory.");
+            return;
+        }
         remember(v, false, v->selection * 16, 16);
         if (debug_ppu_paint(v->selection * 16, px, py, v->brush)) {
             changed(ui);
@@ -696,6 +700,7 @@ static void canvas_click(FrontendDesktopUi *ui, int x, int y, bool double_click)
             if (tool && viewer(tool)) {
                 tool->ppu_viewer->selection = v->selection;
                 tool->ppu_viewer->palette = v->palette;
+                tool->ppu_viewer->source = v->source;
                 tool->ppu_viewer->dirty = tool->ppu_viewer->capture_requested = true;
             }
         }
