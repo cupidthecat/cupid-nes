@@ -59,6 +59,7 @@
 #include "ui/desktop_ui.h"
 #include "ui/state_runtime.h"
 #include "ui/debug_frontend.h"
+#include "ui/cheat_frontend.h"
 #include "ui/frontend_commands.h"
 #include "ui/frontend_panels.h"
 #include "system/timing.h"
@@ -369,6 +370,7 @@ static void oeka_kids_pointer_event(int pointer_x, int pointer_y, bool pointer_o
 typedef struct {
     NsfPlayer *music;
     DebugFrontend *debug;
+    CheatFrontend *cheats;
     NesCaptureRuntime *capture;
     bool image_changed;
 } LiveFrontend;
@@ -378,6 +380,7 @@ static void live_image_changed(void *context) {
     if (!live) return;
     if (live->music) nsf_player_image_changed(live->music);
     if (live->debug) debug_frontend_image_changed(live->debug);
+    if (live->cheats) cheat_frontend_image_changed(live->cheats, rom_file_crc32());
     if (live->capture) nes_capture_frontend_refresh(&live->capture->frontend);
     live->image_changed = true;
 }
@@ -410,10 +413,8 @@ static void reopen_audio_output(SDL_AudioDeviceID *device, SDL_AudioSpec *have) 
 
 static int application_main(int argc, char *argv[]) {
     SDL_AudioSpec have;
-    SDL_AudioDeviceID audio_dev = 0;
-    SDL_Window *window = NULL;
+    SDL_AudioDeviceID audio_dev = 0; SDL_Window *window = NULL;
     SDL_Renderer *renderer = NULL;
-
     const char *rom_path = NULL;
     const char *barcode = NULL;
     const char *barcode_battler = NULL;
@@ -1007,7 +1008,6 @@ static int application_main(int argc, char *argv[]) {
         return 1;
     }
     frontend_host_input_open_controllers(&frontend_settings);
-
     reopen_audio_output(&audio_dev, &have);
     if (audio_dev) {
         printf("=== Audio Info ===\n");
@@ -1016,7 +1016,6 @@ static int application_main(int argc, char *argv[]) {
         printf("Cycles per sample: %.6f\n", nes_timing()->cpu_hz / have.freq);
         printf("==================\n");
     }
-
     int video_width = ntsc_composite_active ? NTSC_COMPOSITE_WIDTH : (int)vs_video_width();
     int video_height = ntsc_composite_active ? NTSC_COMPOSITE_HEIGHT : SCREEN_HEIGHT;
     if (!window) window = SDL_CreateWindow("Cupid NES Emulator",
@@ -1034,7 +1033,6 @@ static int application_main(int argc, char *argv[]) {
         fprintf(stderr, "SDL_CreateTexture Error: %s\n", SDL_GetError());
         return 1;
     }
-
     bool running = true;
     SDL_Event e;
     FrontendExecutionRuntime execution_runtime;
@@ -1080,6 +1078,11 @@ static int application_main(int argc, char *argv[]) {
         fprintf(stderr, "Could not initialize debugger controls\n");
         running = false;
     }
+    CheatFrontend *cheat_frontend = cheat_frontend_create(frontend_paths_data_dir());
+    if (running && (!cheat_frontend || !cheat_frontend_register_ui(cheat_frontend))) {
+        fprintf(stderr, "Could not initialize cheat controls\n"); running = false;
+    }
+    if (cheat_frontend) cheat_frontend_image_changed(cheat_frontend, rom_file_crc32());
     NsfPlayer music_player = {0};
     if (running && !nsf_player_bind_frontend(&music_player, &execution_runtime, SDL_GetTicks())) {
         fprintf(stderr, "Could not initialize the music player\n");
@@ -1116,21 +1119,19 @@ static int application_main(int argc, char *argv[]) {
         }
     }
     LiveFrontend live = {
-        .music = &music_player, .debug = debug_frontend, .capture = &capture_runtime
+        .music = &music_player, .debug = debug_frontend, .cheats = cheat_frontend,
+        .capture = &capture_runtime
     };
     frontend_session_actions_set_image_changed(&session_actions, live_image_changed, &live);
     state_runtime_set_restored(&state_runtime, live_state_restored, &live);
     frontend_command_set_session_active(frontend_session.active);
     frontend_panel_set_session_active(frontend_session.active);
     char last_capture_error[256] = {0};
-
     palette_tool_init();
     const double performance_frequency = (double)SDL_GetPerformanceFrequency();
     double frame_deadline = (double)SDL_GetPerformanceCounter();
-    
     while (running) {
         Uint32 frameStart = SDL_GetTicks();
-    
         while (SDL_PollEvent(&e)) {
             if (!frontend_desktop_input_captured(&desktop_ui))
                 frontend_host_input_event(&e, &frontend_settings, &execution_runtime);
@@ -1458,12 +1459,12 @@ static int application_main(int argc, char *argv[]) {
             frame_deadline = current_ticks;
         }
     }
-
     frontend_desktop_update_window_settings(&desktop_ui);
     bool capture_saved = nes_capture_runtime_shutdown(&capture_runtime) == NES_FILE_OK;
     if (!capture_saved) fprintf(stderr, "%s\n", capture_runtime.frontend.session.error);
     state_runtime_shutdown(&state_runtime);
     frontend_execution_shutdown(&execution_runtime);
+    cheat_frontend_destroy(cheat_frontend);
     debug_frontend_destroy(debug_frontend);
     nsf_player_shutdown(&music_player);
     frontend_desktop_shutdown(&desktop_ui);

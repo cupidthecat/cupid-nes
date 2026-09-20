@@ -16,8 +16,12 @@
 #include "../system/hardware.h"
 #include "../system/timing.h"
 #include "../util/file_io.h"
+#include "../ui/cheat_frontend.h"
+#include "../ui/frontend_commands.h"
+#include "../ui/frontend_panels.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -203,6 +207,52 @@ static int game_replacement_identity(void) {
     return 0;
 }
 
+static int frontend_panel_crud(void) {
+    char path[160];
+    const uint32_t identity = 0xA11CE123u;
+    snprintf(path, sizeof(path), "build/cheats-%08X.txt", identity);
+    (void)nes_file_remove(path);
+    frontend_commands_reset();
+    frontend_panels_reset();
+    frontend_command_set_session_active(true);
+    frontend_panel_set_session_active(true);
+    CheatFrontend *frontend = cheat_frontend_create("build/");
+    CHECK(frontend != NULL);
+    CHECK(cheat_frontend_register_ui(frontend));
+    cheat_frontend_image_changed(frontend, identity);
+
+    FrontendPanelControl controls[16];
+    FrontendPanelModel model = {.controls = controls, .capacity = 16};
+    char error[160] = {0};
+    CHECK(frontend_panel_snapshot(CHEATS_FRONTEND_PANEL, &model, error, sizeof(error)));
+    CHECK(model.count == 13 && controls[0].id == CHEAT_CONTROL_LIST);
+    CHECK(frontend_panel_action(CHEATS_FRONTEND_PANEL, CHEAT_CONTROL_CODE,
+                                "8000:7F", -1, error, sizeof(error)));
+    CHECK(frontend_panel_action(CHEATS_FRONTEND_PANEL, CHEAT_CONTROL_DESCRIPTION,
+                                "frontend", -1, error, sizeof(error)));
+    CHECK(frontend_panel_action(CHEATS_FRONTEND_PANEL, CHEAT_CONTROL_ENABLED,
+                                NULL, -1, error, sizeof(error)));
+    CHECK(frontend_panel_action(CHEATS_FRONTEND_PANEL, CHEAT_CONTROL_ADD,
+                                NULL, -1, error, sizeof(error)));
+    CHECK(cheats_count() == 1);
+    CheatRecord record;
+    CHECK(cheats_at(0, &record) && !record.enabled && !strcmp(record.code, "8000:7F"));
+    uint8_t *saved = NULL; size_t saved_size = 0;
+    CHECK(nes_file_read_all(path, 4096, &saved, &saved_size) == NES_FILE_OK);
+    CHECK(saved_size > 0);
+    free(saved);
+    CHECK(frontend_panel_action(CHEATS_FRONTEND_PANEL, CHEAT_CONTROL_ENABLED,
+                                NULL, -1, error, sizeof(error)));
+    CHECK(cheats_at(0, &record) && record.enabled);
+    CHECK(frontend_panel_action(CHEATS_FRONTEND_PANEL, CHEAT_CONTROL_REMOVE,
+                                NULL, -1, error, sizeof(error)));
+    CHECK(cheats_count() == 0);
+    cheat_frontend_destroy(frontend);
+    CHECK(!frontend_panel_get(CHEATS_FRONTEND_PANEL, &(FrontendPanelInfo){0}));
+    CHECK(nes_file_remove(path) == NES_FILE_OK);
+    return 0;
+}
+
 int test_cheat_accuracy(void) {
     cheat_checks = 0;
     int failures = 0;
@@ -211,6 +261,7 @@ int test_cheat_accuracy(void) {
     failures += crud_policy_and_hash();
     failures += persistence_and_retention();
     failures += game_replacement_identity();
+    failures += frontend_panel_crud();
     (void)nes_execution_set_policy(NES_EXECUTION_LIVE);
     cheats_set_execution_policy(NES_EXECUTION_LIVE);
     unload_rom();
