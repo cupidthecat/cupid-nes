@@ -136,6 +136,7 @@ $testSources = @('src/tests/accuracy_test.c', 'src/tests/cpu_accuracy.c', 'src/t
                  'src/tests/state_ui_accuracy.c',
                  'src/tests/debugger_accuracy.c',
                  'src/tests/cheat_accuracy.c', 'src/tests/rewind_accuracy.c', 'src/tests/movie_accuracy.c',
+                 'src/tests/movie_frontend_accuracy.c',
                  'src/tests/frontend_accuracy.c')
 $application = Join-Path $outputDirectory 'cupid-nes.exe'
 $testProgram = Join-Path $outputDirectory 'accuracy-tests.exe'

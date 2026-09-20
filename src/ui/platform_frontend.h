@@ -16,12 +16,15 @@ typedef int (*FrontendApplicationEntry)(int argc, char **argv);
 typedef enum {
     FRONTEND_SAVE_PNG,
     FRONTEND_SAVE_WAV,
-    FRONTEND_SAVE_AVI
+    FRONTEND_SAVE_AVI,
+    FRONTEND_SAVE_MOVIE
 } FrontendSaveFileType;
 
 int frontend_application_entry_utf8(int argc, char **argv,
                                     FrontendApplicationEntry entry);
 bool frontend_open_image_dialog(char *path, size_t path_size,
+                                char *error, size_t error_size);
+bool frontend_open_movie_dialog(char *path, size_t path_size,
                                 char *error, size_t error_size);
 bool frontend_save_file_dialog(FrontendSaveFileType type, char *path, size_t path_size,
                                 char *error, size_t error_size);

@@ -19,6 +19,7 @@
 
 typedef bool (*FrontendOpenHandler)(void *userdata, char *error, size_t error_size);
 typedef bool (*FrontendReloadHandler)(void *userdata, char *error, size_t error_size);
+typedef void (*FrontendRestoreHandler)(void *userdata);
 
 enum { FRONTEND_MOVIE_PATH_CAPACITY = 1024 };
 
@@ -41,6 +42,11 @@ typedef struct FrontendExecutionRuntime {
     NesMovieSession *movie;
     char movie_path[FRONTEND_MOVIE_PATH_CAPACITY];
     NesMovieStartKind movie_start_kind;
+    char movie_status[192];
+    const char *const *protected_paths;
+    size_t protected_path_count;
+    FrontendRestoreHandler restore_handler;
+    void *restore_userdata;
     bool (*before_machine_change)(void *context, char *error, size_t error_size);
     void *machine_change_context;
     FrontendOpenHandler open_handler;
@@ -58,6 +64,10 @@ void frontend_execution_set_open_handler(FrontendExecutionRuntime *runtime,
                                          FrontendOpenHandler handler, void *userdata);
 void frontend_execution_set_reload_handler(FrontendExecutionRuntime *runtime,
                                            FrontendReloadHandler handler, void *userdata);
+void frontend_execution_set_restore_handler(FrontendExecutionRuntime *runtime,
+                                            FrontendRestoreHandler handler, void *userdata);
+void frontend_execution_set_protected_paths(FrontendExecutionRuntime *runtime,
+                                            const char *const *paths, size_t count);
 void frontend_execution_begin_machine_change(FrontendExecutionRuntime *runtime);
 void frontend_execution_end_machine_change(FrontendExecutionRuntime *runtime);
 void frontend_execution_end_machine_change_preserving_audio(FrontendExecutionRuntime *runtime);

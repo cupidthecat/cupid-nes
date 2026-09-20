@@ -1,5 +1,5 @@
 /*
- * replay_frontend.h - Rewind and run-ahead command/panel registration
+ * replay_frontend.h - Rewind, run-ahead, and input movie controls
  *
  * Author: @frankischilling
  *
@@ -30,10 +30,13 @@ enum {
     REPLAY_CONTROL_MOVIE_RECORD,
     REPLAY_CONTROL_MOVIE_PLAY,
     REPLAY_CONTROL_MOVIE_STOP,
-    REPLAY_CONTROL_MOVIE_STATUS
+    REPLAY_CONTROL_MOVIE_STATUS,
+    REPLAY_CONTROL_MOVIE_OPEN_FILE,
+    REPLAY_CONTROL_MOVIE_SAVE_FILE
 };
 
 bool replay_frontend_register(FrontendExecutionRuntime *runtime);
+void replay_frontend_refresh(FrontendExecutionRuntime *runtime);
 void replay_frontend_unregister(void);
 
 #endif

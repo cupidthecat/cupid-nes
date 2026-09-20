@@ -1,5 +1,5 @@
 /*
- * replay_frontend.c - Rewind and run-ahead command/panel registration
+ * replay_frontend.c - Rewind, run-ahead, and input movie controls
  *
  * Author: @frankischilling
  *
@@ -10,6 +10,8 @@
 #include "frontend_commands.h"
 #include "frontend_execution.h"
 #include "frontend_panels.h"
+#include "platform_frontend.h"
+#include "../system/execution_policy.h"
 
 #include <stdio.h>
 
@@ -35,6 +37,10 @@ static bool command_rewind(void *userdata, char *error, size_t error_size) {
 
 static bool command_runahead_cycle(void *userdata, char *error, size_t error_size) {
     FrontendExecutionRuntime *runtime = (FrontendExecutionRuntime *)userdata;
+    if (nes_execution_policy() != NES_EXECUTION_LIVE) {
+        set_error(error, error_size, "Stop the replay session before changing run-ahead");
+        return false;
+    }
     unsigned next = (frontend_execution_run_ahead(runtime) + 1u) % 5u;
     if (!frontend_execution_set_run_ahead(runtime, next)) {
         set_error(error, error_size, "Run-ahead setting is outside the supported range");
@@ -58,6 +64,36 @@ static bool command_movie_stop(void *userdata, char *error, size_t error_size) {
                                          error, error_size);
 }
 
+static bool choose_movie(FrontendExecutionRuntime *runtime, bool save,
+                          char *error, size_t error_size) {
+    if (!runtime || !runtime->movie) return false;
+    NesMovieMode mode = nes_movie_mode(runtime->movie);
+    if (mode == NES_MOVIE_PLAYBACK || (!save && mode != NES_MOVIE_IDLE)) {
+        set_error(error, error_size, "Stop the input movie before selecting a file to play");
+        return false;
+    }
+    char path[FRONTEND_MOVIE_PATH_CAPACITY] = {0};
+    bool selected = save
+        ? frontend_save_file_dialog(FRONTEND_SAVE_MOVIE, path, sizeof(path), error, error_size)
+        : frontend_open_movie_dialog(path, sizeof(path), error, error_size);
+    return selected && frontend_execution_movie_set_path(runtime, path, error, error_size);
+}
+
+void replay_frontend_refresh(FrontendExecutionRuntime *runtime) {
+    if (!runtime) return;
+    NesMovieMode mode = nes_movie_mode(runtime->movie);
+    bool live = nes_execution_policy() == NES_EXECUTION_LIVE;
+    bool start = runtime->movie && mode == NES_MOVIE_IDLE && live;
+    (void)frontend_command_set_enabled(REPLAY_COMMAND_MOVIE_RECORD, start);
+    (void)frontend_command_set_enabled(REPLAY_COMMAND_MOVIE_PLAY, start);
+    (void)frontend_command_set_enabled(REPLAY_COMMAND_MOVIE_STOP, mode != NES_MOVIE_IDLE);
+    (void)frontend_command_set_checked(REPLAY_COMMAND_MOVIE_RECORD, mode == NES_MOVIE_RECORDING);
+    (void)frontend_command_set_checked(REPLAY_COMMAND_MOVIE_PLAY, mode == NES_MOVIE_PLAYBACK);
+    (void)frontend_command_set_enabled(REPLAY_COMMAND_REWIND_FRAME,
+                                      live && frontend_execution_rewind_available(runtime) != 0);
+    (void)frontend_command_set_enabled(REPLAY_COMMAND_RUNAHEAD_CYCLE, live);
+}
+
 static int selected_history(unsigned seconds) {
     for (size_t i = 0; i < sizeof(history_seconds) / sizeof(history_seconds[0]); ++i)
         if (history_seconds[i] == seconds) return (int)i;
@@ -70,6 +106,8 @@ static bool replay_panel_snapshot(void *userdata, FrontendPanelModel *model,
     (void)error_size;
     FrontendExecutionRuntime *runtime = (FrontendExecutionRuntime *)userdata;
     if (!runtime || !model) return false;
+    replay_frontend_refresh(runtime);
+    bool live = nes_execution_policy() == NES_EXECUTION_LIVE;
 
     FrontendPanelControl history = {
         .id = REPLAY_CONTROL_HISTORY,
@@ -78,7 +116,7 @@ static bool replay_panel_snapshot(void *userdata, FrontendPanelModel *model,
         .items = history_items,
         .item_count = sizeof(history_items) / sizeof(history_items[0]),
         .selected = selected_history(frontend_execution_rewind_seconds(runtime)),
-        .enabled = true
+        .enabled = live
     };
     FrontendPanelControl runahead = {
         .id = REPLAY_CONTROL_RUNAHEAD,
@@ -87,19 +125,19 @@ static bool replay_panel_snapshot(void *userdata, FrontendPanelModel *model,
         .items = runahead_items,
         .item_count = sizeof(runahead_items) / sizeof(runahead_items[0]),
         .selected = (int)frontend_execution_run_ahead(runtime),
-        .enabled = true
+        .enabled = live
     };
     FrontendPanelControl rewind = {
         .id = REPLAY_CONTROL_REWIND,
         .type = FRONTEND_PANEL_ACTION,
         .label = "Rewind one frame",
-        .enabled = frontend_execution_rewind_available(runtime) != 0
+        .enabled = live && frontend_execution_rewind_available(runtime) != 0
     };
     FrontendPanelControl clear = {
         .id = REPLAY_CONTROL_CLEAR,
         .type = FRONTEND_PANEL_ACTION,
         .label = "Clear rewind history",
-        .enabled = frontend_execution_rewind_available(runtime) != 0
+        .enabled = live && frontend_execution_rewind_available(runtime) != 0
     };
 
     size_t bytes = nes_rewind_bytes(&runtime->rewind);
@@ -134,20 +172,32 @@ static bool replay_panel_snapshot(void *userdata, FrontendPanelModel *model,
         .label = "Input movie start",
         .items = movie_start_items,
         .item_count = sizeof(movie_start_items) / sizeof(movie_start_items[0]),
-        .selected = (int)runtime->movie_start_kind,
+        .selected = (int)(idle ? runtime->movie_start_kind : progress.start_kind),
         .enabled = idle
+    };
+    FrontendPanelControl movie_open_file = {
+        .id = REPLAY_CONTROL_MOVIE_OPEN_FILE,
+        .type = FRONTEND_PANEL_ACTION,
+        .label = "Choose a movie to play...",
+        .enabled = idle && live
+    };
+    FrontendPanelControl movie_save_file = {
+        .id = REPLAY_CONTROL_MOVIE_SAVE_FILE,
+        .type = FRONTEND_PANEL_ACTION,
+        .label = "Choose recording destination...",
+        .enabled = progress.mode != NES_MOVIE_PLAYBACK
     };
     FrontendPanelControl movie_record = {
         .id = REPLAY_CONTROL_MOVIE_RECORD,
         .type = FRONTEND_PANEL_ACTION,
         .label = "Record input movie",
-        .enabled = idle
+        .enabled = runtime->movie && idle && live
     };
     FrontendPanelControl movie_play = {
         .id = REPLAY_CONTROL_MOVIE_PLAY,
         .type = FRONTEND_PANEL_ACTION,
         .label = "Play input movie",
-        .enabled = idle
+        .enabled = runtime->movie && idle && live
     };
     FrontendPanelControl movie_stop = {
         .id = REPLAY_CONTROL_MOVIE_STOP,
@@ -158,7 +208,7 @@ static bool replay_panel_snapshot(void *userdata, FrontendPanelModel *model,
     const char *mode = progress.mode == NES_MOVIE_RECORDING ? "Recording"
                      : progress.mode == NES_MOVIE_PLAYBACK ? "Playback" : "Stopped";
     snprintf(movie_status_text, sizeof(movie_status_text),
-             "%s | %s start | frame %llu/%llu | %zu events | %s; isolated timeline, Stop restores pre-movie session",
+             "%s | %s start | frame %llu/%llu | %zu events | %s",
              mode, progress.start_kind == NES_MOVIE_START_POWER_ON ? "power-on" : "state",
              (unsigned long long)progress.frame,
              (unsigned long long)progress.total_frames, progress.event_count,
@@ -171,6 +221,8 @@ static bool replay_panel_snapshot(void *userdata, FrontendPanelModel *model,
         .enabled = true,
         .read_only = true
     };
+    model->status = runtime->movie_status[0] ? runtime->movie_status
+        : "Stopping an input movie returns to the session you had before it started.";
 
     return frontend_panel_add_control(model, &history)
         && frontend_panel_add_control(model, &runahead)
@@ -178,6 +230,8 @@ static bool replay_panel_snapshot(void *userdata, FrontendPanelModel *model,
         && frontend_panel_add_control(model, &clear)
         && frontend_panel_add_control(model, &status)
         && frontend_panel_add_control(model, &movie_path)
+        && frontend_panel_add_control(model, &movie_open_file)
+        && frontend_panel_add_control(model, &movie_save_file)
         && frontend_panel_add_control(model, &movie_start)
         && frontend_panel_add_control(model, &movie_record)
         && frontend_panel_add_control(model, &movie_play)
@@ -191,6 +245,11 @@ static bool replay_panel_action(void *userdata, unsigned control_id,
     (void)value;
     FrontendExecutionRuntime *runtime = (FrontendExecutionRuntime *)userdata;
     if (!runtime) return false;
+    if (control_id >= REPLAY_CONTROL_HISTORY && control_id <= REPLAY_CONTROL_CLEAR
+        && nes_execution_policy() != NES_EXECUTION_LIVE) {
+        set_error(error, error_size, "Stop the replay session before changing rewind or run-ahead");
+        return false;
+    }
     switch (control_id) {
         case REPLAY_CONTROL_HISTORY:
             if (selected < 0 || (size_t)selected >= sizeof(history_seconds) / sizeof(history_seconds[0])
@@ -227,6 +286,10 @@ static bool replay_panel_action(void *userdata, unsigned control_id,
             return frontend_execution_movie_play(runtime, error, error_size);
         case REPLAY_CONTROL_MOVIE_STOP:
             return frontend_execution_movie_stop(runtime, error, error_size);
+        case REPLAY_CONTROL_MOVIE_OPEN_FILE:
+            return choose_movie(runtime, false, error, error_size);
+        case REPLAY_CONTROL_MOVIE_SAVE_FILE:
+            return choose_movie(runtime, true, error, error_size);
         default:
             set_error(error, error_size, "Unknown replay control");
             return false;
@@ -258,7 +321,7 @@ bool replay_frontend_register(FrontendExecutionRuntime *runtime) {
         .label = "Record Input Movie",
         .menu = "Emulation",
         .shortcut = "",
-        .flags = FRONTEND_COMMAND_NEEDS_SESSION,
+        .flags = FRONTEND_COMMAND_NEEDS_SESSION | FRONTEND_COMMAND_CHECKABLE,
         .handler = command_movie_record,
         .userdata = runtime
     };
@@ -267,7 +330,7 @@ bool replay_frontend_register(FrontendExecutionRuntime *runtime) {
         .label = "Play Input Movie",
         .menu = "Emulation",
         .shortcut = "",
-        .flags = FRONTEND_COMMAND_NEEDS_SESSION,
+        .flags = FRONTEND_COMMAND_NEEDS_SESSION | FRONTEND_COMMAND_CHECKABLE,
         .handler = command_movie_play,
         .userdata = runtime
     };
@@ -282,7 +345,7 @@ bool replay_frontend_register(FrontendExecutionRuntime *runtime) {
     };
     FrontendPanelSpec panel = {
         .id = REPLAY_PANEL,
-        .title = "Rewind and Run-Ahead",
+        .title = "Rewind, Run-Ahead and Movies",
         .category = "Emulation",
         .flags = FRONTEND_PANEL_NEEDS_SESSION,
         .snapshot = replay_panel_snapshot,
@@ -312,6 +375,7 @@ bool replay_frontend_register(FrontendExecutionRuntime *runtime) {
         (void)frontend_command_unregister(REPLAY_COMMAND_REWIND_FRAME);
         return false;
     }
+    replay_frontend_refresh(runtime);
     return true;
 }
 

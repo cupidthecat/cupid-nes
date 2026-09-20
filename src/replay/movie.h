@@ -69,6 +69,9 @@ void nes_movie_destroy(NesMovieSession *movie);
 NesMovieResult nes_movie_record_start(NesMovieSession *movie, const char *path);
 NesMovieResult nes_movie_record_start_power_on(NesMovieSession *movie, const char *path);
 NesMovieResult nes_movie_play_start(NesMovieSession *movie, const char *path);
+/* Stop saves all completed recording frames, including when a breakpoint or
+ * input limit interrupted the next frame. A write failure keeps the session
+ * and its events available for retrying at another destination. */
 NesMovieResult nes_movie_stop(NesMovieSession *movie);
 NesMovieResult nes_movie_set_path(NesMovieSession *movie, const char *path);
 

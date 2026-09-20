@@ -85,7 +85,8 @@ TEST_SRC = src/tests/accuracy_test.c src/tests/cpu_accuracy.c \
            src/tests/board_nina_fme7_accuracy.c src/tests/board_state_accuracy.c src/tests/state_accuracy.c \
            src/tests/state_ui_accuracy.c \
            src/tests/debugger_accuracy.c src/tests/cheat_accuracy.c \
-           src/tests/rewind_accuracy.c src/tests/movie_accuracy.c src/tests/frontend_accuracy.c
+           src/tests/rewind_accuracy.c src/tests/movie_accuracy.c src/tests/movie_frontend_accuracy.c \
+           src/tests/frontend_accuracy.c
 TEST_SRC += src/tests/patch_accuracy.c src/tests/media_accuracy.c src/tests/fds_options_accuracy.c \
             src/tests/fds_automation_accuracy.c src/tests/execution_policy_accuracy.c \
             src/tests/nsf_player_accuracy.c src/tests/capture_container_accuracy.c \

@@ -907,11 +907,16 @@ NesMovieResult nes_movie_set_path(NesMovieSession *movie, const char *path) {
 NesMovieResult nes_movie_stop(NesMovieSession *movie) {
     if (!movie) return NES_MOVIE_INVALID_ARGUMENT;
     if (movie->mode == NES_MOVIE_IDLE) return movie_set_result(movie, NES_MOVIE_CONFLICT);
-    if (movie->frame_in_progress) return movie_set_result(movie, NES_MOVIE_CONFLICT);
     if (movie->mode == NES_MOVIE_RECORDING) {
-        if (movie->recording_error != NES_MOVIE_OK)
-            return movie_set_result(movie, movie->recording_error);
+        /* A breakpoint or an input limit may leave the last frame incomplete.
+         * Save the completed prefix, while retaining every event for a retry
+         * if the destination cannot be written. */
+        size_t original_count = movie->event_count;
+        while (movie->event_count
+               && movie->events[movie->event_count - 1].frame >= movie->frame)
+            --movie->event_count;
         NesMovieResult write = movie_write_file(movie);
+        movie->event_count = original_count;
         if (write != NES_MOVIE_OK) return movie_set_result(movie, write);
     }
 

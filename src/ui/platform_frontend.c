@@ -115,8 +115,11 @@ static bool native_file_dialog(unsigned kind, char *path, size_t path_size,
     static const wchar_t png_filters[] = L"PNG image\0*.png\0All files\0*.*\0\0";
     static const wchar_t wav_filters[] = L"PCM wave audio\0*.wav\0All files\0*.*\0\0";
     static const wchar_t avi_filters[] = L"AVI video\0*.avi\0All files\0*.*\0\0";
-    const wchar_t *const filters[] = {image_filters, png_filters, wav_filters, avi_filters};
-    const wchar_t *const extensions[] = {NULL, L"png", L"wav", L"avi"};
+    static const wchar_t movie_filters[] = L"Input movie\0*.cmv;*.movie\0All files\0*.*\0\0";
+    const wchar_t *const filters[] = {
+        image_filters, png_filters, wav_filters, avi_filters, movie_filters, movie_filters
+    };
+    const wchar_t *const extensions[] = {NULL, L"png", L"wav", L"avi", L"cmv", L"cmv"};
     if (kind >= sizeof(filters) / sizeof(filters[0])) return false;
     OPENFILENAMEW dialog;
     memset(&dialog, 0, sizeof(dialog));
@@ -125,9 +128,10 @@ static bool native_file_dialog(unsigned kind, char *path, size_t path_size,
     dialog.lpstrDefExt = extensions[kind];
     dialog.lpstrFile = selected;
     dialog.nMaxFile = (DWORD)(sizeof(selected) / sizeof(selected[0]));
+    bool save = kind != 0 && kind != 5;
     dialog.Flags = OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR
-        | (kind ? OFN_OVERWRITEPROMPT : OFN_FILEMUSTEXIST);
-    BOOL accepted = kind ? GetSaveFileNameW(&dialog) : GetOpenFileNameW(&dialog);
+        | (save ? OFN_OVERWRITEPROMPT : OFN_FILEMUSTEXIST);
+    BOOL accepted = save ? GetSaveFileNameW(&dialog) : GetOpenFileNameW(&dialog);
     if (!accepted) {
         DWORD code = CommDlgExtendedError();
         if (code) set_error(error, error_size, "The file dialog could not be opened");
@@ -166,7 +170,13 @@ static bool native_file_dialog(unsigned kind, char *path, size_t path_size,
         "elif command -v kdialog >/dev/null 2>&1; then exec kdialog --getsavefilename . '*.wav|Wave audio'; else exit 127; fi",
         "if command -v zenity >/dev/null 2>&1; then exec zenity --file-selection --save --confirm-overwrite "
         "--title='Record Video' --file-filter='AVI video | *.avi'; "
-        "elif command -v kdialog >/dev/null 2>&1; then exec kdialog --getsavefilename . '*.avi|AVI video'; else exit 127; fi"
+        "elif command -v kdialog >/dev/null 2>&1; then exec kdialog --getsavefilename . '*.avi|AVI video'; else exit 127; fi",
+        "if command -v zenity >/dev/null 2>&1; then exec zenity --file-selection --save --confirm-overwrite "
+        "--title='Record Input Movie' --file-filter='Input movies | *.cmv *.movie'; "
+        "elif command -v kdialog >/dev/null 2>&1; then exec kdialog --getsavefilename . '*.cmv *.movie|Input movies'; else exit 127; fi",
+        "if command -v zenity >/dev/null 2>&1; then exec zenity --file-selection "
+        "--title='Play Input Movie' --file-filter='Input movies | *.cmv *.movie'; "
+        "elif command -v kdialog >/dev/null 2>&1; then exec kdialog --getopenfilename . '*.cmv *.movie|Input movies'; else exit 127; fi"
     };
     if (error && error_size) error[0] = '\0';
     if (!path || path_size < 2 || path_size > NES_FILE_PATH_LIMIT
@@ -217,9 +227,14 @@ bool frontend_open_image_dialog(char *path, size_t path_size,
 
 bool frontend_save_file_dialog(FrontendSaveFileType type, char *path, size_t path_size,
                                 char *error, size_t error_size) {
-    if ((unsigned)type > FRONTEND_SAVE_AVI) {
+    if ((unsigned)type > FRONTEND_SAVE_MOVIE) {
         set_error(error, error_size, "The requested output format is not supported");
         return false;
     }
     return native_file_dialog((unsigned)type + 1u, path, path_size, error, error_size);
+}
+
+bool frontend_open_movie_dialog(char *path, size_t path_size,
+                                char *error, size_t error_size) {
+    return native_file_dialog(5, path, path_size, error, error_size);
 }

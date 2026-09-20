@@ -466,11 +466,11 @@ static int test_replay_frontend_contract(void) {
     FrontendPanelInfo panel;
     CHECK(frontend_panel_get(REPLAY_PANEL, &panel));
 
-    FrontendPanelControl controls[12];
-    FrontendPanelModel model = {.controls = controls, .capacity = 12};
+    FrontendPanelControl controls[13];
+    FrontendPanelModel model = {.controls = controls, .capacity = 13};
     char error[160] = {0};
     CHECK(frontend_panel_snapshot(REPLAY_PANEL, &model, error, sizeof(error)));
-    CHECK(model.count == 11);
+    CHECK(model.count == 13);
     CHECK(frontend_panel_action(REPLAY_PANEL, REPLAY_CONTROL_RUNAHEAD,
                                 NULL, 2, error, sizeof(error)));
     CHECK(frontend_execution_run_ahead(&runtime) == 2);
@@ -481,6 +481,7 @@ static int test_replay_frontend_contract(void) {
     CHECK(nes_video_trace_use(NES_VIDEO_TRACE_EXPORT, true));
     CHECK(frontend_execution_run_frame(&runtime));
     CHECK(frontend_execution_rewind_available(&runtime) == 1);
+    CHECK(frontend_command_get(REPLAY_COMMAND_REWIND_FRAME, &command) && command.enabled);
     CHECK(nes_runahead_presented_frame(NULL, NULL) != NULL);
     CHECK(nes_video_trace_frame(0)->complete);
     unsigned guard_calls = 0;
@@ -500,6 +501,7 @@ static int test_replay_frontend_contract(void) {
     CHECK(frontend_panel_action(REPLAY_PANEL, REPLAY_CONTROL_CLEAR,
                                 NULL, 0, error, sizeof(error)));
     CHECK(frontend_execution_rewind_available(&runtime) == 0);
+    CHECK(frontend_command_get(REPLAY_COMMAND_REWIND_FRAME, &command) && !command.enabled);
     CHECK(nes_video_trace_use(NES_VIDEO_TRACE_EXPORT, false));
 
     frontend_execution_shutdown(&runtime);
