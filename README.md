@@ -516,4 +516,3 @@ retains its [MIT license](src/rom/emu2413.LICENSE), and ymfm retains its
 sources, and hardware documentation.
 
 The [desktop guide](docs/desktop.md) covers menus, settings, feature panels, and storage locations.
->>>>>>> 1061409 (Rewrite the README introduction)
