@@ -7,7 +7,7 @@ video, audio, and controllers. The CPU and PPU core is C11; cartridge board modu
 and the EPSM YMF288 sound engine use C++17.
 
 The core implements NTSC, PAL, and Dendy timing. The
-[tested implementation](docs/cartridge-checkpoints.md#combined-validation) passes
+[tested implementation](docs/accuracy-checkpoints.md#hardware-revision-and-chr-checkpoints) passes
 all 144 AccuracyCoin tests with zero skipped or unfinished results, the 91-ROM
 diagnostic collection, and the 8,991-state canonical CPU trace in normal and
 sanitizer builds. The
@@ -26,12 +26,12 @@ does not exercise.
 
 | Area | Implemented behavior |
 | --- | --- |
-| CPU and PPU | Official and undocumented instructions, shared OAM/DMC DMA timing, register delays, sprite evaluation, regional frame timing, selectable startup alignment and RAM contents, and optional PPU reset suppression |
-| Cartridges | Board-specific PRG/CHR banking, nametable routing, bus conflicts, RAM permissions, IRQs, EEPROM, and flash; the [mapper table](docs/hardware.md#cartridge-mappers) lists supported families and variants |
-| Sound | Five base APU channels, CPU-cycle band-limited reconstruction, cartridge and disk expansion audio, and EPSM stereo output with timer IRQs |
+| CPU and PPU | Official and undocumented instructions, shared OAM/DMC DMA timing, register delays, selectable PPU readback and sprite-evaluation behavior, regional frame timing, startup alignment and RAM contents, and optional PPU reset suppression |
+| Cartridges | Board-specific PRG/CHR banking, mixed CHR RAM/NVRAM with separate persistence, nametable routing, bus conflicts, RAM permissions, IRQs, EEPROM, and flash; the [mapper table](docs/hardware.md#cartridge-mappers) lists supported families and variants |
+| Sound | Five base APU channels, optional oldest-Famicom noise and clone pulse duty behavior, CPU-cycle band-limited reconstruction, cartridge and disk expansion audio, and EPSM stereo output with timer IRQs |
 | Music and other media | NSF/NSFe initialization and play scheduling, bank switching and expansion sound; StudyBox tape transport and audio; Famicom Network System RAM, character-ROM, and controller interfaces |
 | Controllers and storage | NES, SNES, and Virtual Boy gamepads; SNES and Subor mice; NTT Data keypads; multiplayer adapters, light guns, paddles, mats, keyboards, trackballs, tablets, specialty expansion controllers, Turbo File, and BattleBox |
-| VS System | Header-selected RGB PPU and controller behavior, cabinet controls and protection, and dual machines with shared RAM, two screens, and mixed audio |
+| VS System | Header-selected RGB PPU and controller behavior, hardware-palette light sensing, cabinet controls and protection, and dual machines with shared RAM, two screens, and mixed audio |
 
 Cartridge loading supports iNES, NES 2.0, named UNIF boards, and an optional CRC
 database for legacy corrections and recognized headerless images. Database

@@ -2,7 +2,7 @@
 
 [Documentation index](README.md)
 
-Cartridge and media work from issue #77 onward is recorded in [cartridge and media checkpoints](cartridge-checkpoints.md). The earlier implementation and validation history remains below.
+The [hardware revision and CHR checkpoints](#hardware-revision-and-chr-checkpoints) record issues #125 through #130 and #139. Earlier cartridge and media work is recorded in [cartridge and media checkpoints](cartridge-checkpoints.md). The earlier core implementation and validation history remains below.
 
 Each issue or review checkpoint below passed the production hardware regressions and the full pinned AccuracyCoin cartridge: 144/144 passed, zero skipped, and zero unfinished. These records identify the commits tested after integration. Later fixes require their own checks, and the final pull-request commit must pass the complete CI workflow.
 
@@ -127,6 +127,26 @@ The same revision passed local strict Windows builds, Windows AddressSanitizer/U
 
 These are historical results for the named revision. A later documentation or source commit needs its own CI result; consult the pull request's checks for that revision. The frontend harnesses were separate review tools, while the tracked CI suite is defined in [the workflow](../.github/workflows/accuracy.yml).
 
+## Hardware revision and CHR checkpoints
+
+Each integration commit below passed a strict Windows build, production hardware regressions, and AccuracyCoin in both normal and AddressSanitizer/UndefinedBehaviorSanitizer builds. Every run reported 144/144 passed, zero skipped, zero unfinished, and 4,182 frames, matching the cartridge's own tally. The ROM pin and result requirements above were unchanged.
+
+| Issue | Implemented behavior | Tested integration commit |
+| --- | --- | --- |
+| #125 | Optional disabled OAMDATA reads return decaying PPU open bus without reading OAM or refreshing the latch | `dbfc8b7304badc35787246cecf26adb4d7968ee8` |
+| #126 | Optional disabled palette readback uses buffered PPUDATA reads with the ordinary external transfer and address increment | `350780df92200dae50cc538bd6439ac3dbd6ee30` |
+| #127 | Early sprite-evaluation wrap behavior feeds the ordinary sprite pipeline, including the possible X=255 pixel | `0213e74415d4d5a61e2c68f249a518191734f327` |
+| #128 | Oldest-Famicom noise profile retains the written mode flag and selects the long-sequence feedback tap | `bed43aed297ebe0da1ace4f0a65724be802fa553` |
+| #129 | Clone pulse duty profile swaps selections 1 and 2 at base-APU register writes while preserving MMC5 behavior | `4f97d11bf7c1658b30d33dc2a261a1d512cdd00e` |
+| #130 | VS light sensing uses the selected hardware palette independently of display settings | `c0012ca2fb9763cd8e5568604e398cfcba5efd2d` |
+| #139 | Native no-ROM CHR storage accepts a volatile prefix and NVRAM tail, with banking and NVRAM-relative save offsets | `a3c8afd8d5cd155d297917079072aad7ee430151` |
+
+The PPU regressions cover register recovery, bus decay, sprite counts and heights, wrapped Y coordinates, fetch addresses, flips, palette selection, and reset behavior. The APU regressions cover all regional noise rates, both pulse channels and volume modes, write-time selection, reset persistence, and MMC5 independence. VS tests cover palette variants, sensor thresholds, beam timing, and separation from display edits.
+
+The CHR regressions cover a fixed 4 KiB + 4 KiB allocation, unequal CPROM banks, and UNROM 512 nametable and pattern aliases. They compare complete save files, reload volatile and persistent data, retain short-save initialization, and verify the active cartridge after a rejected replacement. With 16 KiB of volatile CHR followed by 16 KiB of NVRAM, physical offset `$6000` persists at `.chr.sav` offset `$2000`. The unsupported ROM-plus-two-sidecar four-screen layout remains rejected.
+
+The combined implementation is `a3c8afd8d5cd155d297917079072aad7ee430151`. Its Linux GCC and Clang AddressSanitizer/UndefinedBehaviorSanitizer builds also passed the production hardware suite, 8,991-state CPU trace, all 91 pinned diagnostic ROMs, and AccuracyCoin 144/144. The Linux sanitizer run enabled leak detection. These results belong to that source revision; the final pull-request commit must pass its own GCC and Clang sanitizer CI jobs.
+
 ## Reproducing a checkpoint
 
 Check out the listed commit in a separate worktree, prepare SDL2 and the pinned ROM as described in [development and testing](development.md), then run:
@@ -134,6 +154,8 @@ Check out the listed commit in a separate worktree, prepare SDL2 and the pinned 
 ```powershell
 .\scripts\test-windows.ps1 -SdlRoot C:\path\to\SDL2-2.32.10
 .\build\windows\accuracy-tests.exe --accuracycoin 12000 C:\path\to\AccuracyCoin.nes
+.\scripts\test-windows.ps1 -SdlRoot C:\path\to\SDL2-2.32.10 -Sanitize
+.\build\windows-sanitized\accuracy-tests.exe --accuracycoin 12000 C:\path\to\AccuracyCoin.nes
 ```
 
 The Linux equivalents, canonical CPU trace, 91-ROM collection, and sanitizer commands are in [the accuracy notes](accuracy.md). AccuracyCoin is a regression baseline for CPU/PPU/APU interactions; passing it does not substitute for the focused mapper, disk, audio, and input-device tests.

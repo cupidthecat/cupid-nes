@@ -17,6 +17,8 @@ On Windows, replace `./cupid-nes` with `.\build\windows\cupid-nes.exe`. Supply o
 | `--console MODEL` | `nes-001`, `nes-101`, `famicom`, `av-famicom` | `nes-001` | Console controller-port wiring |
 | `--cpu-revision REVISION` | `early-2a03`, `late-2a03` | `early-2a03` | CPU/APU revision behavior used by the DMC model |
 | `--cpu-test-mode` | No value | Off | Enables the 2A03 channel-output diagnostic reads at `$4018-$401A` |
+| `--apu-disable-noise-mode` | No value | Off | Uses the long noise sequence even when `$400E` selects short mode |
+| `--apu-swap-duty-cycles` | No value | Off | Swaps duty selections 1 and 2 on the two base APU pulse channels |
 | `--startup-phase CPU:PPU` | Decimal master-clock offsets within the regional dividers | CPU `0`, PPU divider minus one | Selects a reproducible power-on alignment |
 | `--startup-seed SEED` | Decimal integer from `0` through `4294967295` | No randomization | Generates a reproducible sequence of legal power-on alignments |
 | `--ram-power-on STATE` | `default`, `zero`, `ones`, `random` | `default` | Selects the initial CPU RAM, PPU RAM, and cartridge board RAM contents |
@@ -26,6 +28,9 @@ On Windows, replace `./cupid-nes` with `.\build\windows\cupid-nes.exe`. Supply o
 | `--ppu-oam-row-corruption` | No value | Off | Enables the deterministic worst-case OAM row-corruption profile |
 | `--ppu-startup-restriction` | No value | Off | Enables the protected PPU register-write interval after power-on and soft reset |
 | `--ppu-oam-decay` | No value | Off | Enables OAM row refresh and decay tracking |
+| `--ppu-disable-oamdata-read` | No value | Off | Leaves `$2004` reads on the PPU I/O bus without driving OAM data |
+| `--ppu-disable-palette-readback` | No value | Off | Uses buffered `$2007` reads in palette space |
+| `--ppu-sprite-eval-wrap-bug` | No value | Off | Models the early PPU's partial sprite entry after evaluation wraps through OAM |
 | `--ppu-reset-suppression` | No value | Off | Preserves PPU registers, scrolling, and rendering state during a CPU soft reset |
 | `--video-filter` | `direct`, `ntsc-composite` | `direct` | Selects direct RGB output or NTSC composite reconstruction for ordinary NTSC hardware |
 | `--mmc3-revision REVISION` | `standard`, `a` | `standard` | Selects the MMC3 IRQ counter revision for compatible MMC3-family cartridges |
@@ -33,7 +38,11 @@ On Windows, replace `./cupid-nes` with `.\build\windows\cupid-nes.exe`. Supply o
 
 The ROM header selects the timing region. `--console famicom` changes console wiring and does not force NTSC, PAL, or Dendy timing. There is no application `--region` option.
 
-The three optional PPU profiles are compatibility models with documented assumptions. Their timing and limits are in [accuracy](accuracy.md).
+The optional PPU controls are independent. Selecting `--ppu-revision 2c02-pre-e` does not enable disabled register readback or the sprite-evaluation wrap behavior. Their timing and limits are in [accuracy](accuracy.md).
+
+`--apu-disable-noise-mode` models the oldest Famicom noise behavior. It retains the written `$400E` mode bit and uses the long-sequence feedback tap at each noise clock. `--apu-swap-duty-cycles` models clone pulse wiring: a write to `$4000` or `$4004` maps duty fields `0, 1, 2, 3` to `0, 2, 1, 3`. MMC5 pulse channels keep their ordinary mapping. Both controls are independent of `--cpu-revision` and remain selected across reset.
+
+`--ppu-disable-oamdata-read` keeps the existing I/O latch value on `$2004` reads, including its decay behavior. `--ppu-disable-palette-readback` returns the normal delayed read buffer in palette space while keeping external memory fetches and address increments. `--ppu-sprite-eval-wrap-bug` lets a Y-only secondary-OAM entry reach the ordinary sprite pipeline, with tile, attributes, and X left at `$FF`. All three controls remain selected across reset and default to off.
 
 The `default` RAM profile clears CPU and nametable RAM and fills primary and secondary OAM with `$FF`. `zero` fills those areas with `$00`; `ones` fills them with `$FF`. All three retain the fixed boot palette. `random` fills RAM from the controlled random source and limits palette entries to six bits. The C++ cartridge board modules apply the same profile to their work, save, CHR, and nametable RAM before trainer and save data are loaded. Existing C cartridge implementations keep their board-specific initialization.
 
