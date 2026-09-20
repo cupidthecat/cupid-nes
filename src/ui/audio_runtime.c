@@ -18,7 +18,7 @@ static bool fail(char *error, size_t error_size, const char *message) {
 
 static bool should_pause(const FrontendAudioRuntime *runtime) {
     return runtime && runtime->execution
-        && (runtime->execution->execution.paused || runtime->execution->muted);
+        && (frontend_execution_paused(runtime->execution) || runtime->execution->rewind_held || runtime->execution->muted);
 }
 
 void frontend_audio_runtime_bind(FrontendAudioRuntime *runtime,
@@ -118,7 +118,8 @@ void frontend_audio_runtime_commit(FrontendAudioRuntime *runtime,
     prepared->device = 0;
     prepared->replacement = false;
     if (runtime->execution) runtime->execution->audio_output_rate = runtime->have->freq;
-    vs_audio_init(runtime->have->freq);
+    if (runtime->execution) frontend_execution_refresh_audio(runtime->execution);
+    else vs_audio_init(runtime->have->freq);
     if (!should_pause(runtime)) SDL_PauseAudioDevice(*runtime->device, 0);
 }
 

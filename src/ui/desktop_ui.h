@@ -27,7 +27,10 @@ typedef enum {
     FRONTEND_IDLE_OPEN = 1
 } FrontendIdleResult;
 
-typedef struct {
+typedef struct FrontendDesktopUi {
+    struct FrontendDesktopUi *parent, *tools, *next;
+    bool native_windows, focused, palette_window;
+    uint32_t tool_rendered;
     struct DesktopClay *clay;
     const FrontendSession *idle_session;
     int idle_recent_index;
@@ -111,6 +114,7 @@ bool frontend_desktop_quit_requested(const FrontendDesktopUi *ui);
 void frontend_desktop_set_status(FrontendDesktopUi *ui, const char *message);
 void frontend_desktop_set_fps(FrontendDesktopUi *ui, double fps);
 void frontend_desktop_update_window_settings(FrontendDesktopUi *ui);
+void frontend_desktop_update_activity(FrontendDesktopUi *ui);
 void frontend_desktop_shutdown(FrontendDesktopUi *ui);
 
 #endif

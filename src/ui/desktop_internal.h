@@ -24,4 +24,9 @@ void desktop_commit_edit(FrontendDesktopUi *ui);
 void desktop_settings_button(FrontendDesktopUi *ui, int button);
 void desktop_binding_key(FrontendDesktopUi *ui, const SDL_KeyboardEvent *key);
 void desktop_binding_gamepad(FrontendDesktopUi *ui, SDL_GameControllerButton button);
+bool desktop_palette_visible(const FrontendDesktopUi *ui);
+FrontendDesktopUi *desktop_open_window(FrontendDesktopUi *ui, int kind, unsigned id);
+bool desktop_route_window(FrontendDesktopUi *ui, const SDL_Event *event);
+void desktop_render_windows(FrontendDesktopUi *ui);
+void desktop_close_windows(FrontendDesktopUi *ui);
 #endif

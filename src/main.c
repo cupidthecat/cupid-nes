@@ -839,6 +839,7 @@ static int application_main(int argc, char *argv[]) {
     FrontendDesktopUi desktop_ui;
     frontend_desktop_init(&desktop_ui, window, renderer, &frontend_settings,
                           &execution_runtime, &session_actions, settings_path);
+    desktop_ui.native_windows = true;
     frontend_desktop_set_runtime(&desktop_ui, &audio_runtime, &video_runtime);
     if (running && !frontend_desktop_register_commands(&desktop_ui)) {
         fprintf(stderr, "Could not initialize desktop commands\n");
@@ -939,9 +940,13 @@ static int application_main(int argc, char *argv[]) {
     double frame_deadline = (double)SDL_GetPerformanceCounter();
     double fps_started = frame_deadline;
     unsigned fps_frames = 0;
+    uint64_t timing_revision = UINT64_MAX;
+    double paced_speed = 0;
+    int active_vsync = -1;
     while (running) {
         while (SDL_PollEvent(&e)) {
-            if (!frontend_desktop_input_captured(&desktop_ui))
+            if (!frontend_desktop_input_captured(&desktop_ui) ||
+                e.type == SDL_CONTROLLERDEVICEADDED || e.type == SDL_CONTROLLERDEVICEREMOVED)
                 frontend_host_input_event(&e, &frontend_settings, &execution_runtime);
             if (e.type == SDL_WINDOWEVENT
                 && e.window.windowID == SDL_GetWindowID(window)
@@ -949,9 +954,12 @@ static int application_main(int argc, char *argv[]) {
                 frontend_host_input_release_all();
                 frontend_execution_release_host_input(&execution_runtime);
             }
+            bool was_captured = frontend_desktop_input_captured(&desktop_ui);
             if (frontend_desktop_handle_event(&desktop_ui, &e)) {
-                frontend_host_input_release_all();
-                frontend_execution_release_host_input(&execution_runtime);
+                if (!was_captured && frontend_desktop_input_captured(&desktop_ui)) {
+                    frontend_host_input_release_all();
+                    frontend_execution_release_host_input(&execution_runtime);
+                }
                 continue;
             }
             bool main_mouse_event = e.type == SDL_MOUSEMOTION
@@ -1074,26 +1082,9 @@ static int application_main(int argc, char *argv[]) {
                     continue;
                 }
             }
-            if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
-                && e.key.windowID == SDL_GetWindowID(window)) {
-                const FrontendBindingProfile *profile =
-                    frontend_settings_active_profile_const(&frontend_settings);
-                if (e.type == SDL_KEYUP && profile
-                    && execution_runtime.execution.fast_forward_held
-                    && profile->shortcuts[FRONTEND_SHORTCUT_FAST_FORWARD_HOLD].key
-                        == e.key.keysym.scancode) {
-                    (void)frontend_execution_handle_shortcut_action(
-                        &execution_runtime, FRONTEND_SHORTCUT_FAST_FORWARD_HOLD, false, false);
-                    continue;
-                }
-                FrontendShortcut shortcut;
-                if (profile && frontend_profile_shortcut_key(profile, &e.key, &shortcut)) {
-                    (void)frontend_execution_handle_shortcut_action(
-                        &execution_runtime, shortcut, e.type == SDL_KEYDOWN, e.key.repeat != 0);
-                    continue;
-                }
-                if (frontend_host_input_bound_player_key(profile, &e.key)) continue;
-            }
+            if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP) &&
+                e.key.windowID == SDL_GetWindowID(window) && frontend_host_input_bound_player_key(
+                    frontend_settings_active_profile_const(&frontend_settings), &e.key)) continue;
             
             if (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP) {
                 int down = (e.type == SDL_KEYDOWN);
@@ -1211,7 +1202,22 @@ static int application_main(int argc, char *argv[]) {
                 ? frontend_session.current_result.title : "Cupid NES Emulator");
         }
     
-        if (execution_control_should_run_frame(&execution_runtime.execution))
+        frontend_desktop_update_activity(&desktop_ui);
+        double loop_speed = frontend_execution_speed(&execution_runtime);
+        double loop_now = (double)SDL_GetPerformanceCounter();
+        if (timing_revision != execution_runtime.timing_revision || paced_speed != loop_speed ||
+            loop_now - frame_deadline > performance_frequency * 0.050) {
+            frame_deadline = loop_now;
+            timing_revision = execution_runtime.timing_revision;
+            paced_speed = loop_speed;
+        }
+        int wanted_vsync = frontend_settings.vsync && loop_speed == 1.0;
+        if (active_vsync != wanted_vsync) {
+            (void)SDL_RenderSetVSync(renderer, wanted_vsync);
+            active_vsync = wanted_vsync;
+        }
+        if (!execution_runtime.suspend_reasons && !execution_runtime.rewind_held &&
+            execution_control_should_run_frame(&execution_runtime.execution))
             nes_capture_frontend_begin_frame(&capture_runtime.frontend);
         uint64_t frame_start_cycles = cpu_total_cycles;
         bool ran_frame = frontend_execution_run_frame(&execution_runtime);
@@ -1266,6 +1272,7 @@ static int application_main(int argc, char *argv[]) {
             nes_netplay_mode(execution_runtime.netplay) == NES_NETPLAY_CONNECTED
                 || nes_netplay_mode(execution_runtime.netplay) == NES_NETPLAY_LISTENING
                 ? frontend_netplay_status(execution_runtime.network)
+                : execution_runtime.rewind_held ? "Rewinding"
                 : frontend_execution_paused(&execution_runtime) ? "Paused" : "Running");
         SDL_RenderPresent(renderer);
     
@@ -1283,12 +1290,15 @@ static int application_main(int argc, char *argv[]) {
         double current_ticks = (double)SDL_GetPerformanceCounter();
         if (!ran_frame) {
             frame_deadline = current_ticks;
-            SDL_Delay(8);
+            double rewind_wait = performance_frequency / nes_timing()->fps - (current_ticks - loop_now);
+            if (execution_runtime.rewind_held) {
+                if (rewind_wait > 0) SDL_Delay((Uint32)(rewind_wait * 1000.0 / performance_frequency));
+            } else SDL_Delay(8);
         } else if (frame_deadline > current_ticks) {
             // Carry fractional milliseconds into the next deadline instead of
             // running every frame early after truncating SDL's delay argument.
             SDL_Delay((Uint32)((frame_deadline - current_ticks) * 1000.0 / performance_frequency));
-        } else if (current_ticks - frame_deadline > performance_frequency * 0.25) {
+        } else if (current_ticks - frame_deadline > performance_frequency * 0.050) {
             frame_deadline = current_ticks;
         }
     }

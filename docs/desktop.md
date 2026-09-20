@@ -19,6 +19,12 @@ entry use Clay layouts with cached TrueType text. Controls follow the layout
 when the window or display scale changes. No separate font installation is
 needed.
 
+Settings, game information, the palette editor, and feature panels open in separate resizable windows.
+Drag their title bars to move them beside the game or onto another display.
+Opening a debugger or inspection tool leaves emulation running. A breakpoint,
+Pause, or a stepping command can still stop it. Moving focus between Cupid
+windows does not trigger the pause-on-focus-loss preference.
+
 ## Settings
 
 Ctrl+Comma opens Settings. The eight categories cover General, Emulation,
@@ -39,7 +45,10 @@ settings. Explicit launch options retain precedence over saved preferences.
 The settings window indicates when those overrides are present.
 
 Display, mixing, speed, and binding changes apply to the running session.
-Rewind speed selects 1 through 30 retained frames per activation.
+Rewind speed selects 1 through 30 retained frames per step. Holding the rewind
+binding repeats steps at the emulated frame rate. A menu step pauses on the
+restored frame; Resume continues from there. Applying unrelated settings keeps
+the retained history.
 Timing changes take effect on reload; startup alignment, RAM initialization,
 and VS DIP changes take effect on power cycle. Firmware changes require a
 restart. The application reports these boundaries after Apply. Invalid firmware,
@@ -48,9 +57,11 @@ the preceding configuration. Stop a deterministic session before applying
 settings, and stop recording before changing its output configuration.
 
 Text entry and dialog navigation are captured by the interface. They do not
-reach the game. Closing a panel releases captured host input. Controller removal
+reach the game. Leaving the game window releases held keyboard input. Controller removal
 releases that player's held buttons. Mouse aiming uses the actual game rectangle
 after menus, aspect scaling, overscan, HD rendering, and dual-display layout.
+
+![Settings in its own window](images/desktop-settings-window.png)
 
 ## Feature panels
 
@@ -72,15 +83,27 @@ after menus, aspect scaling, overscan, HD rendering, and dual-display layout.
 Panels use Up/Down or Tab to select a row and Enter to activate it. Text rows
 accept paths or values, choice rows cycle through their entries, and long panels
 scroll. A disabled action belongs to hardware or a session that is unavailable;
-its panel status explains relevant conflicts. Use the visible Edit, Toggle, or
-Run buttons with the mouse; minus and plus buttons move through choices.
+clicking an unavailable menu item explains the requirement. Disk commands need
+a loaded FDS image; tape commands need the Family BASIC keyboard selected as
+the expansion device. Click an action row or its Edit, Toggle, or Run button;
+minus and plus buttons move through choices. Long values stay within their
+columns, with the selected value shown below the rows.
 
-View > Palette editor (F7) shows all 64 colors. Select a swatch, drag an RGB
+View > Palette editor (F7) opens a separate window with all 64 colors. Select a swatch, drag an RGB
 slider, or use its minus/plus buttons. Load palette opens a `.pal` file; Reset
 palette restores the default colors. Ctrl+V accepts palette text while the
 editor is open. Escape or Close returns to the game.
 
+![Debugger in its own window](images/desktop-debugger-window.png)
+
 ## Frame and audio performance
+
+Settings and menus follow the pause-on-UI preference. This automatic pause is
+separate from manual pause, so closing a window or returning from another app
+does not undo a manual pause. Returning to the game resets its pacing deadline
+and audio output buffer. Selecting a speed ends held or toggled fast-forward;
+VSync is suspended at speeds other than 100%. Tool windows refresh at most
+30 times per second and do not wait for VSync.
 
 Rewind snapshots lock audio state briefly without pausing and restarting the
 output device every frame. Snapshot checksums process eight bytes at a time;

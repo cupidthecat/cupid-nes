@@ -513,6 +513,26 @@ static int test_replay_frontend_contract(void) {
     CHECK(cpu_total_cycles==rewind_target && frontend_execution_rewind_available(&runtime)==1);
     CHECK(frontend_execution_rewind_step(&runtime,error,sizeof(error)));
     CHECK(frontend_execution_rewind_available(&runtime)==0);
+    settings.rewind_step_frames = 1;
+    for (int i = 0; i < 6; ++i) CHECK(frontend_execution_run_frame(&runtime));
+    size_t history = frontend_execution_rewind_available(&runtime);
+    CHECK(frontend_execution_set_rewind_seconds(&runtime, runtime.rewind_seconds));
+    CHECK(frontend_execution_rewind_available(&runtime) == history);
+    CHECK(frontend_execution_handle_shortcut_action(&runtime, FRONTEND_SHORTCUT_REWIND, true, false));
+    for (int i = 0; i < 3; ++i) {
+        uint64_t cycles = cpu_total_cycles;
+        CHECK(!frontend_execution_run_frame(&runtime));
+        CHECK(cpu_total_cycles < cycles);
+    }
+    CHECK(frontend_execution_rewind_available(&runtime) == history - 3);
+    CHECK(frontend_execution_handle_shortcut_action(&runtime, FRONTEND_SHORTCUT_REWIND, false, false));
+    CHECK(frontend_execution_run_frame(&runtime));
+    CHECK(frontend_command_invoke(REPLAY_COMMAND_REWIND_FRAME, error, sizeof(error)));
+    CHECK(frontend_execution_paused(&runtime));
+    uint64_t restored = cpu_total_cycles;
+    CHECK(!frontend_execution_run_frame(&runtime) && cpu_total_cycles == restored);
+    CHECK(frontend_command_invoke(FRONTEND_COMMAND_PAUSE, error, sizeof(error)));
+    CHECK(frontend_execution_run_frame(&runtime));
     CHECK(nes_video_trace_use(NES_VIDEO_TRACE_EXPORT, false));
 
     frontend_execution_shutdown(&runtime);

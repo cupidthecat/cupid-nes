@@ -1,5 +1,10 @@
 /* Desktop event, layout and device regression checks. SPDX-License-Identifier: GPL-3.0-or-later */
 #include "../apu/apu.h"
+#include "../cpu/cpu.h"
+#include "../debugger/debugger.h"
+#include "../rom/rom.h"
+#include "../ui/debug_frontend.h"
+#include "../ui/machine_actions.h"
 #include "../capture/capture_writer.h"
 #include "../joypad/family_basic.h"
 #include "../joypad/joypad.h"
@@ -7,6 +12,8 @@
 #include "../ui/app_paths.h"
 #include "../ui/clay_backend.h"
 #include "../ui/desktop_ui.h"
+#include "../ui/desktop_internal.h"
+#include "../ui/host_input.h"
 #include "../ui/device_frontend.h"
 #include "../ui/frontend_commands.h"
 #include "../ui/frontend_panels.h"
@@ -206,6 +213,20 @@ static void audio_settings(void) {
     ui.staged.speed = 3;
     key(&ui, SDL_SCANCODE_RETURN, KMOD_NONE);
     CHECK(settings.speed == 1 && execution.machine_change_depth == 0 && execution.execution.speed == 1);
+    key(&ui, SDL_SCANCODE_ESCAPE, KMOD_NONE);
+    frontend_execution_set_muted(&execution, false);
+    for (int i = 0; i < 6; ++i) {
+        frontend_execution_suspend(&execution, FRONTEND_SUSPEND_UI, true);
+        frontend_execution_suspend(&execution, FRONTEND_SUSPEND_FOCUS, true);
+        frontend_execution_suspend(&execution, FRONTEND_SUSPEND_UI, false);
+        CHECK(SDL_GetAudioDeviceStatus(device) == SDL_AUDIO_PAUSED);
+        frontend_execution_suspend(&execution, FRONTEND_SUSPEND_FOCUS, false);
+        CHECK(SDL_GetAudioDeviceStatus(device) == SDL_AUDIO_PLAYING);
+        CHECK(frontend_execution_set_speeds(&execution, 2, 4));
+        CHECK(apu.sample_rate == have.freq / 2.0);
+        CHECK(frontend_execution_set_speeds(&execution, 1, 4));
+        CHECK(apu.sample_rate == have.freq);
+    }
     frontend_desktop_shutdown(&ui);
     frontend_execution_shutdown(&execution);
     SDL_CloseAudioDevice(device);
@@ -251,6 +272,207 @@ static void storage_settings(void) {
     frontend_execution_shutdown(&execution);
     frontend_panels_reset();
 }
+static void focus_event(FrontendDesktopUi *root, SDL_Window *window, bool focused) {
+    SDL_Event event = {.type = SDL_WINDOWEVENT};
+    event.window.windowID = SDL_GetWindowID(window);
+    event.window.event = focused ? SDL_WINDOWEVENT_FOCUS_GAINED : SDL_WINDOWEVENT_FOCUS_LOST;
+    (void)frontend_desktop_handle_event(root, &event);
+}
+static void menu_activate(FrontendDesktopUi *ui, int menu, unsigned id) {
+    ui->open_menu = menu;
+    DesktopMenuItem items[128];
+    int count = desktop_menu_items(ui, items), row = -1;
+    for (int i = 0; i < count; ++i) if (items[i].id == id) row = i;
+    CHECK(row >= 0);
+    if (row < 0) return;
+    ui->menu_row = ui->menu_scroll = row;
+    render(ui);
+    click_control(ui, HIT_MENU_ROW, row, 0);
+}
+
+static void window_regressions(FrontendDesktopUi *ui) {
+    uint8_t image[16 + 16384 + 8192] = {0};
+    memcpy(image, "NES\x1a", 4); image[4] = image[5] = 1;
+    image[16] = 0x4c; image[17] = 0; image[18] = 0x80;
+    image[16 + 0x3ffd] = 0x80;
+    CHECK(load_rom_memory(image, sizeof(image)) == 0);
+    debugger_init();
+    CHECK(frontend_machine_power_cycle());
+    FrontendExecutionRuntime runtime;
+    frontend_execution_init(&runtime, NULL, 44100, NULL, NULL, NULL, NULL);
+    ui->execution = &runtime;
+    runtime.settings = ui->settings;
+    CHECK(frontend_execution_register_commands(&runtime));
+    frontend_command_set_session_active(true);
+    CHECK(frontend_desktop_register_commands(ui));
+    ui->native_windows = true;
+    ui->settings->pause_on_ui = ui->settings->pause_on_focus_loss = true;
+    FrontendDesktopUi *tool = desktop_open_window(ui, 1, 0x7F00);
+    CHECK(tool && tool->window != ui->window && tool->renderer != ui->renderer);
+    if (!tool) return;
+    focus_event(ui, ui->window, false);
+    focus_event(ui, tool->window, true);
+    frontend_desktop_update_activity(ui);
+    CHECK(!frontend_execution_paused(&runtime));
+    CHECK(!frontend_desktop_input_captured(ui));
+    SDL_SetWindowPosition(tool->window, 100, 120);
+    render(tool);
+    screenshot(tool, "build/desktop-detached-tool.png");
+    SDL_FRect row;
+    CHECK(desktop_clay_bounds(tool->clay, HIT_PANEL, 1, 0, &row));
+    SDL_Event click = {.type = SDL_MOUSEBUTTONDOWN};
+    click.button.windowID = SDL_GetWindowID(tool->window);
+    click.button.button = SDL_BUTTON_LEFT;
+    click.button.x = (int)((row.x + 10) * tool->ui_scale);
+    click.button.y = (int)((row.y + row.h / 2) * tool->ui_scale);
+    CHECK(frontend_desktop_handle_event(ui, &click));
+    CHECK(tool->panel_row == 1);
+    for (int i = 0; i < 8; ++i) {
+        focus_event(ui, tool->window, false);
+        frontend_desktop_update_activity(ui);
+        CHECK(frontend_execution_paused(&runtime) && !runtime.execution.paused);
+        focus_event(ui, tool->window, true);
+        frontend_desktop_update_activity(ui);
+        CHECK(!frontend_execution_paused(&runtime));
+    }
+    /* SDL sends a left or right modifier, never the combined default binding. */
+    key(ui, SDL_SCANCODE_3, KMOD_LCTRL);
+    CHECK(frontend_execution_speed(&runtime) == 2);
+    key(ui, SDL_SCANCODE_F, (SDL_Keymod)(KMOD_RCTRL | KMOD_LSHIFT));
+    CHECK(runtime.execution.fast_forward_toggled);
+    key(ui, SDL_SCANCODE_2, KMOD_RCTRL);
+    CHECK(frontend_execution_speed(&runtime) == 1 && !runtime.execution.fast_forward_toggled);
+    key(ui, SDL_SCANCODE_F, KMOD_LCTRL);
+    CHECK(runtime.execution.fast_forward_held);
+    SDL_Event release = {.type = SDL_KEYUP};
+    release.key.keysym.scancode = SDL_SCANCODE_F;
+    (void)frontend_desktop_handle_event(ui, &release);
+    CHECK(!runtime.execution.fast_forward_held);
+    key(ui, SDL_SCANCODE_P, KMOD_RCTRL);
+    CHECK(runtime.execution.paused);
+    focus_event(ui, tool->window, false);
+    frontend_desktop_update_activity(ui);
+    focus_event(ui, tool->window, true);
+    frontend_desktop_update_activity(ui);
+    CHECK(runtime.execution.paused);
+    key(ui, SDL_SCANCODE_P, KMOD_LCTRL);
+    CHECK(!runtime.execution.paused);
+    key(ui, SDL_SCANCODE_3, KMOD_LCTRL);
+    CHECK(frontend_command_invoke(FRONTEND_COMMAND_SETTINGS, NULL, 0));
+    FrontendDesktopUi *settings = ui->tools;
+    CHECK(settings != tool && settings->settings_open && settings->staged.speed == 2);
+    frontend_desktop_update_activity(ui);
+    CHECK(frontend_execution_paused(&runtime) && !runtime.execution.paused);
+    render(settings);
+    screenshot(settings, "build/desktop-settings-window.png");
+    settings->capture_binding = true;
+    settings->capture_shortcut = true;
+    settings->capture_index = FRONTEND_SHORTCUT_PAUSE;
+    key(settings, SDL_SCANCODE_LCTRL, KMOD_LCTRL);
+    CHECK(settings->capture_binding);
+    key(settings, SDL_SCANCODE_P, KMOD_LCTRL);
+    CHECK(!settings->capture_binding);
+    const FrontendBindingProfile *captured = frontend_settings_active_profile_const(&settings->staged);
+    CHECK(captured->shortcuts[FRONTEND_SHORTCUT_PAUSE].key == SDL_SCANCODE_P);
+    SDL_Event close = {.type = SDL_WINDOWEVENT};
+    close.window.windowID = SDL_GetWindowID(settings->window);
+    close.window.event = SDL_WINDOWEVENT_CLOSE;
+    CHECK(frontend_desktop_handle_event(ui, &close));
+    CHECK(ui->tools == tool);
+    frontend_desktop_update_activity(ui);
+    CHECK(!frontend_execution_paused(&runtime));
+    CHECK(frontend_execution_speed(&runtime) == 2);
+    close.window.windowID = SDL_GetWindowID(tool->window);
+    CHECK(frontend_desktop_handle_event(ui, &close));
+    CHECK(!ui->tools && !ui->quit_requested);
+    CHECK(frontend_desktop_handle_event(ui, &close)); /* Stale tool event. */
+    ui->focused = true;
+    frontend_desktop_update_activity(ui);
+    CHECK(frontend_command_invoke(0x1B00, NULL, 0));
+    CHECK(ui->tools && ui->tools->palette_window && !palette_tool_is_visible());
+    if (ui->tools) {
+        render(ui->tools);
+        click_control(ui->tools, HIT_COLOR, 7, 0);
+        CHECK(ui->tools->palette_index == 7);
+        close.window.windowID = SDL_GetWindowID(ui->tools->window);
+        CHECK(frontend_desktop_handle_event(ui, &close));
+        CHECK(!ui->tools);
+    }
+    DebugFrontend *debug = debug_frontend_create(&runtime);
+    CHECK(debug && debug_frontend_register_ui(debug));
+    frontend_panel_set_session_active(true);
+    menu_activate(ui, 5, DEBUGGER_FRONTEND_PANEL);
+    FrontendDesktopUi *debug_window = ui->tools;
+    CHECK(debug_window);
+    if (debug_window) {
+        focus_event(ui, ui->window, false);
+        focus_event(ui, debug_window->window, true);
+        frontend_desktop_update_activity(ui);
+        uint64_t cycles = cpu_total_cycles;
+        for (int i = 0; i < 8; ++i) CHECK(frontend_execution_run_frame(&runtime));
+        CHECK(cpu_total_cycles > cycles && !frontend_execution_paused(&runtime));
+        render(debug_window);
+        screenshot(debug_window, "build/desktop-debugger-window.png");
+        CHECK(desktop_open_window(ui, 1, DEBUGGER_FRONTEND_PANEL) == debug_window);
+        for (int scale = 1; scale <= 2; ++scale) {
+            SDL_SetWindowSize(debug_window->window, 640 * scale, 480 * scale);
+            SDL_RenderSetLogicalSize(debug_window->renderer, 640 * scale, 480 * scale);
+            debug_window->ui_scale = (float)scale;
+            render(debug_window);
+            click_control(debug_window, HIT_SCROLL, 0, 1);
+            render(debug_window);
+        }
+        desktop_close_windows(ui);
+    }
+    FrontendDeviceRuntime devices;
+    frontend_devices_init(&devices, &runtime, ui->settings, NULL);
+    ui->devices = &devices;
+    CHECK(frontend_devices_register(&devices));
+    menu_activate(ui, 4, DEVICE_COMMAND_DISK_TOGGLE);
+    CHECK(strstr(ui->status, "FDS image") && ui->open_menu == -1);
+    NesInputConfiguration old_inputs = {
+        joypad_adapter(), {joypad_port_device(0), joypad_port_device(1)}, joypad_expansion_device()};
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_FAMILY_BASIC));
+    const uint8_t tape[] = {0, 1, 0, 1};
+    CHECK(nes_file_write_atomic("build/ui-menu-tape.bin", tape, sizeof(tape)) == NES_FILE_OK);
+    CHECK(frontend_devices_set_tape_paths(&devices, "build/ui-menu-tape.bin", "build/ui-menu-record.bin", NULL, 0));
+    CHECK(frontend_devices_tape_load(&devices, "build/ui-menu-tape.bin", NULL, 0));
+    frontend_devices_refresh(&devices);
+    menu_activate(ui, 4, DEVICE_COMMAND_TAPE_PLAY);
+    CHECK(family_basic_tape_mode() == FB_TAPE_PLAYING);
+    menu_activate(ui, 4, DEVICE_COMMAND_TAPE_STOP);
+    CHECK(family_basic_tape_mode() == FB_TAPE_STOPPED);
+    menu_activate(ui, 4, DEVICE_COMMAND_TAPE_RECORD);
+    CHECK(family_basic_tape_mode() == FB_TAPE_RECORDING && devices.tape_capture_pending);
+    menu_activate(ui, 4, DEVICE_COMMAND_TAPE_STOP);
+    CHECK(!devices.tape_capture_pending);
+    CHECK(joypad_apply_configuration(&old_inputs));
+    frontend_devices_unregister(); ui->devices = NULL;
+    (void)nes_file_remove("build/ui-menu-tape.bin");
+    (void)nes_file_remove("build/ui-menu-record.bin");
+    debug_frontend_destroy(debug);
+    CHECK(unload_rom());
+    debugger_shutdown();
+    frontend_execution_shutdown(&runtime);
+    ui->execution = NULL;
+    ui->native_windows = false;
+}
+
+static void modifier_bindings(void) {
+    FrontendSettings settings;
+    frontend_settings_defaults(&settings);
+    const FrontendBindingProfile *profile = frontend_settings_active_profile_const(&settings);
+    SDL_KeyboardEvent event = {.type = SDL_KEYDOWN};
+    event.keysym.scancode = SDL_SCANCODE_RSHIFT;
+    event.keysym.mod = KMOD_RSHIFT;
+    CHECK(frontend_host_input_bound_player_key(profile, &event));
+    CHECK(joypad_player(0)->buttons & (1u << BTN_SELECT));
+    event.type = SDL_KEYUP;
+    event.keysym.mod = KMOD_RCTRL;
+    CHECK(frontend_host_input_bound_player_key(profile, &event));
+    CHECK(!(joypad_player(0)->buttons & (1u << BTN_SELECT)));
+}
+
 int test_desktop_accuracy(void) {
     failures = 0;
     audio_settings();
@@ -357,6 +579,8 @@ int test_desktop_accuracy(void) {
     frontend_desktop_update_window_settings(&ui);
     CHECK(settings.window_width == width);
     mouse_controls(&ui);
+    modifier_bindings();
+    window_regressions(&ui);
     frontend_desktop_shutdown(&ui);
     frontend_commands_reset();
     frontend_panels_reset();

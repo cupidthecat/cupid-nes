@@ -31,8 +31,12 @@ static void set_error(char *error, size_t error_size, const char *message) {
 }
 
 static bool command_rewind(void *userdata, char *error, size_t error_size) {
-    return frontend_execution_rewind_step((FrontendExecutionRuntime *)userdata,
-                                          error, error_size);
+    FrontendExecutionRuntime *runtime = userdata;
+    if (!frontend_execution_rewind_step(runtime, error, error_size)) return false;
+    execution_control_set_paused(&runtime->execution, true);
+    frontend_command_set_checked(FRONTEND_COMMAND_PAUSE, true);
+    frontend_execution_refresh_audio(runtime);
+    return true;
 }
 
 static bool command_runahead_cycle(void *userdata, char *error, size_t error_size) {
@@ -266,7 +270,7 @@ static bool replay_panel_action(void *userdata, unsigned control_id,
             }
             return true;
         case REPLAY_CONTROL_REWIND:
-            return frontend_execution_rewind_step(runtime, error, error_size);
+            return command_rewind(runtime, error, error_size);
         case REPLAY_CONTROL_CLEAR:
             frontend_execution_clear_timeline(runtime);
             return true;

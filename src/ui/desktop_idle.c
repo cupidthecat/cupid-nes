@@ -25,6 +25,7 @@ FrontendIdleResult frontend_desktop_idle_open(FrontendSettings *settings,const F
     if(!*renderer)*renderer=SDL_CreateRenderer(*window,-1,SDL_RENDERER_SOFTWARE);
     if(!*renderer)goto failure;
     FrontendDesktopUi ui;frontend_desktop_init(&ui,*window,*renderer,settings,NULL,NULL,settings_path);
+    ui.native_windows=true;
     ui.idle_session=session;
     if(error&&error_size&&error[0])frontend_desktop_set_status(&ui,error);
     frontend_commands_reset();frontend_panels_reset();

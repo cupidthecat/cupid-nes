@@ -154,6 +154,18 @@ void frontend_host_input_event(const SDL_Event *event, const FrontendSettings *s
 
 bool frontend_host_input_bound_player_key(const FrontendBindingProfile *profile,
                                           const SDL_KeyboardEvent *event) {
+    if (profile && event && event->type == SDL_KEYUP) {
+        bool released = false;
+        for (unsigned p = 0; p < NES_INPUT_PLAYERS; ++p)
+            for (unsigned b = 0; b < 8; ++b)
+                if (profile->players[p][b].key == event->keysym.scancode) {
+                    (void)joypad_set_player(p, (int)b, false);
+                    if (p == 0 && b == BTN_A) (void)cart_set_karaoke_input(CART_KARAOKE_A, false);
+                    if (p == 0 && b == BTN_B) (void)cart_set_karaoke_input(CART_KARAOKE_B, false);
+                    released = true;
+                }
+        return released;
+    }
     unsigned player, button;
     if (!profile || !event
         || !frontend_profile_player_key(profile, event, &player, &button)) return false;

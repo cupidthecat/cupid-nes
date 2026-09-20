@@ -34,6 +34,7 @@ static bool movie_result_ok(FrontendExecutionRuntime *runtime, NesMovieResult re
                             const char *success, char *error, size_t error_size);
 
 static void notify_timeline_restored(FrontendExecutionRuntime *runtime) {
+    ++runtime->timing_revision;
     bool paused = runtime->execution.paused;
     debugger_reset_session();
     runtime->debugger_pause_revision = debugger_pause_revision();
@@ -53,7 +54,8 @@ static bool deterministic_session_owned(void) {
                                     | NES_EXECUTION_NETPLAY)) != 0;
 }
 
-static void refresh_audio(FrontendExecutionRuntime *runtime) {
+void frontend_execution_refresh_audio(FrontendExecutionRuntime *runtime) {
+    if (runtime) ++runtime->timing_revision;
     if (!runtime || !runtime->audio_device || !*runtime->audio_device
         || runtime->audio_output_rate <= 0) return;
     SDL_AudioDeviceID device = *runtime->audio_device;
@@ -67,15 +69,29 @@ static void refresh_audio(FrontendExecutionRuntime *runtime) {
     vs_audio_init(emulated_sample_rate);
     if (!runtime->machine_change_depth) {
         SDL_UnlockAudioDevice(device);
-        if (!runtime->execution.paused && !runtime->muted) SDL_PauseAudioDevice(device, 0);
+        if (!frontend_execution_paused(runtime) && !runtime->rewind_held && !runtime->muted) SDL_PauseAudioDevice(device, 0);
     }
 }
 
 static void update_audio_pause(FrontendExecutionRuntime *runtime) {
     if(!runtime||runtime->machine_change_depth||!runtime->audio_device||!*runtime->audio_device)return;
-    bool paused=runtime->execution.paused||runtime->muted;
+    bool paused=frontend_execution_paused(runtime)||runtime->rewind_held||runtime->muted;
     SDL_AudioStatus desired=paused?SDL_AUDIO_PAUSED:SDL_AUDIO_PLAYING;
     if(SDL_GetAudioDeviceStatus(*runtime->audio_device)!=desired)SDL_PauseAudioDevice(*runtime->audio_device,paused?1:0);
+}
+
+void frontend_execution_set_suspension(FrontendExecutionRuntime *runtime, unsigned reasons) {
+    if (!runtime || runtime->suspend_reasons == reasons) return;
+    runtime->suspend_reasons = reasons;
+    ++runtime->timing_revision;
+    if (!reasons) frontend_execution_refresh_audio(runtime);
+    else update_audio_pause(runtime);
+}
+
+void frontend_execution_suspend(FrontendExecutionRuntime *runtime, unsigned reason, bool suspended) {
+    if (!runtime) return;
+    frontend_execution_set_suspension(runtime, suspended ? runtime->suspend_reasons | reason
+                                                       : runtime->suspend_reasons & ~reason);
 }
 
 void frontend_execution_sync_debugger(FrontendExecutionRuntime *runtime) {
@@ -103,7 +119,7 @@ static bool release_machine_lock(FrontendExecutionRuntime *runtime) {
 }
 
 static void unlock_audio_after_machine_change(FrontendExecutionRuntime *runtime) {
-    if(release_machine_lock(runtime))refresh_audio(runtime);
+    if(release_machine_lock(runtime))frontend_execution_refresh_audio(runtime);
 }
 
 static void unlock_audio_without_refresh(FrontendExecutionRuntime *runtime) {
@@ -121,6 +137,7 @@ static bool command_pause(void *userdata, char *error, size_t error_size) {
         frontend_execution_sync_debugger(runtime);
         return true;
     }
+    ++runtime->timing_revision;
     execution_control_toggle_paused(&runtime->execution);
     frontend_command_set_checked(FRONTEND_COMMAND_PAUSE, runtime->execution.paused);
     update_audio_pause(runtime);
@@ -245,7 +262,10 @@ static bool set_speed(void *userdata, double speed) {
     FrontendExecutionRuntime *runtime = (FrontendExecutionRuntime *)userdata;
     if (deterministic_session_owned()) return false;
     if (!execution_control_set_speed(&runtime->execution, speed)) return false;
-    refresh_audio(runtime);
+    runtime->execution.fast_forward_held = false;
+    runtime->execution.fast_forward_toggled = false;
+    frontend_command_set_checked(FRONTEND_COMMAND_FAST_FORWARD_TOGGLE, false);
+    frontend_execution_refresh_audio(runtime);
     return true;
 }
 
@@ -276,7 +296,7 @@ static bool command_fast_forward_toggle(void *userdata, char *error, size_t erro
     execution_control_toggle_fast_forward(&runtime->execution);
     frontend_command_set_checked(FRONTEND_COMMAND_FAST_FORWARD_TOGGLE,
                                  runtime->execution.fast_forward_toggled);
-    refresh_audio(runtime);
+    frontend_execution_refresh_audio(runtime);
     return true;
 }
 
@@ -287,7 +307,7 @@ static bool command_fast_forward_hold(void *userdata, char *error, size_t error_
     }
     FrontendExecutionRuntime *runtime = (FrontendExecutionRuntime *)userdata;
     execution_control_set_fast_forward_held(&runtime->execution, true);
-    refresh_audio(runtime);
+    frontend_execution_refresh_audio(runtime);
     return true;
 }
 
@@ -474,11 +494,21 @@ bool frontend_execution_handle_shortcut_action(FrontendExecutionRuntime *runtime
                                                FrontendShortcut shortcut,
                                                bool down, bool repeat) {
     if (!runtime || (unsigned)shortcut >= FRONTEND_SHORTCUT_COUNT) return false;
+    if (shortcut == FRONTEND_SHORTCUT_REWIND) {
+        if (deterministic_session_owned()) return true;
+        if (runtime->rewind_held != down) {
+            runtime->rewind_held = down;
+            ++runtime->timing_revision;
+            if (down) update_audio_pause(runtime);
+            else frontend_execution_refresh_audio(runtime);
+        }
+        return true;
+    }
     if (shortcut == FRONTEND_SHORTCUT_FAST_FORWARD_HOLD) {
         if (deterministic_session_owned()) return true;
-        if (!repeat) {
+        if (!repeat && runtime->execution.fast_forward_held != down) {
             execution_control_set_fast_forward_held(&runtime->execution, down);
-            refresh_audio(runtime);
+            frontend_execution_refresh_audio(runtime);
         }
         return true;
     }
@@ -492,9 +522,13 @@ bool frontend_execution_handle_shortcut_action(FrontendExecutionRuntime *runtime
 
 void frontend_execution_release_host_input(FrontendExecutionRuntime *runtime) {
     if (!runtime) return;
+    if (runtime->rewind_held) {
+        runtime->rewind_held = false;
+        frontend_execution_refresh_audio(runtime);
+    }
     if (runtime->execution.fast_forward_held) {
         execution_control_set_fast_forward_held(&runtime->execution, false);
-        refresh_audio(runtime);
+        frontend_execution_refresh_audio(runtime);
     }
 }
 
@@ -509,7 +543,7 @@ bool frontend_execution_set_speeds(FrontendExecutionRuntime *runtime,
         || !execution_control_set_fast_forward_speed(&next, fast_forward_speed)) return false;
     double previous_speed = execution_control_effective_speed(&runtime->execution);
     runtime->execution = next;
-    if (execution_control_effective_speed(&next) != previous_speed) refresh_audio(runtime);
+    if (execution_control_effective_speed(&next) != previous_speed) frontend_execution_refresh_audio(runtime);
     return true;
 }
 
@@ -537,10 +571,14 @@ bool frontend_execution_run_frame(FrontendExecutionRuntime *runtime) {
     bool loading_fast_forward = fds_loading_fast_forward();
     if (runtime->execution.loading_fast_forward != loading_fast_forward) {
         execution_control_set_loading_fast_forward(&runtime->execution, loading_fast_forward);
-        if (!deterministic_session_owned()) refresh_audio(runtime);
+        if (!deterministic_session_owned()) frontend_execution_refresh_audio(runtime);
     }
     if (!frontend_netplay_before_frame(runtime->network)) return false;
-    if (!execution_control_should_run_frame(&runtime->execution)) return false;
+    if (runtime->rewind_held && !runtime->suspend_reasons) {
+        (void)frontend_execution_rewind_step(runtime, NULL, 0);
+        return false;
+    }
+    if (runtime->suspend_reasons || !execution_control_should_run_frame(&runtime->execution)) return false;
 
     if (runtime->movie && nes_movie_mode(runtime->movie) != NES_MOVIE_IDLE) {
         lock_audio_for_machine_change(runtime);
@@ -606,7 +644,7 @@ bool frontend_execution_run_frame(FrontendExecutionRuntime *runtime) {
 }
 
 bool frontend_execution_paused(const FrontendExecutionRuntime *runtime) {
-    return runtime && runtime->execution.paused;
+    return runtime && (runtime->execution.paused || runtime->suspend_reasons != 0);
 }
 
 double frontend_execution_speed(const FrontendExecutionRuntime *runtime) {
@@ -620,6 +658,7 @@ bool frontend_execution_set_rewind_seconds(FrontendExecutionRuntime *runtime,
     double fps = timing && timing->fps > 0.0 ? timing->fps : 60.0;
     size_t frames = seconds ? (size_t)ceil((double)seconds * fps) : 0;
     if (frames > NES_REWIND_MAX_FRAMES) return false;
+    if (frames == runtime->rewind.capacity && seconds == runtime->rewind_seconds) return true;
     if (!nes_rewind_configure(&runtime->rewind, frames,
                               NES_REWIND_DEFAULT_MEMORY_LIMIT)) return false;
     runtime->rewind_seconds = seconds;
@@ -652,7 +691,9 @@ bool frontend_execution_rewind_step(FrontendExecutionRuntime *runtime,
     do {
         runtime->replay_status = nes_rewind_step(&runtime->rewind, &runtime->replay_state_status);
     } while(runtime->replay_status==NES_REPLAY_OK && --steps && nes_rewind_count(&runtime->rewind));
-    if (runtime->replay_status == NES_REPLAY_OK) notify_timeline_restored(runtime);
+    if (runtime->replay_status == NES_REPLAY_OK) {
+        notify_timeline_restored(runtime);
+    }
     unlock_audio_without_refresh(runtime);
     replay_frontend_refresh(runtime);
     if (runtime->replay_status == NES_REPLAY_OK) return true;

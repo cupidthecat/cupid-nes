@@ -2,6 +2,12 @@
 
 Cupid exposes one debugger service to the desktop tools and Lua scripts. The same service handles instruction control, breakpoints, memory inspection, PPU viewers, disassembly, watches, and tracing. Inspection reads use dedicated peek paths. They do not acknowledge the APU frame IRQ, clear PPU status, advance controller shift registers, change mapper read latches, or trigger FDS status-read automation.
 
+Open Tools > Debugger to inspect the running game in a separate resizable
+window. Drag its title bar to place it beside the game or on another display.
+Memory and PPU Viewers and Lua Scripting also have their own windows. Opening
+or focusing these tools leaves gameplay and audio running; Pause, breakpoints,
+and stepping commands control when the machine stops.
+
 ## Execution control and breakpoints
 
 The debugger supports execute, CPU-read, and CPU-write breakpoints over an address or inclusive address range. Execute breakpoints stop before the matching instruction. Read and write breakpoints record the access and pause at the instruction boundary after the access completes, so the hardware bus transaction itself remains complete.

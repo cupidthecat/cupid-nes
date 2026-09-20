@@ -99,11 +99,20 @@ bool desktop_invoke_command(FrontendDesktopUi *ui, unsigned id) {
     char error[256] = {0};
     bool ok = frontend_command_invoke(id, error, sizeof(error));
     if (error[0]) desktop_copy_status(ui, error);
+    if (ok && ui->execution && ui->settings &&
+        (id == FRONTEND_COMMAND_SPEED_HALF || id == FRONTEND_COMMAND_SPEED_NORMAL || id == FRONTEND_COMMAND_SPEED_DOUBLE))
+        ui->settings->speed = ui->execution->execution.speed;
     return ok;
 }
 
 void desktop_settings_open(FrontendDesktopUi *ui, bool open) {
-    if (!ui || ui->settings_open == open) return;
+    if (!ui) return;
+    if (open && ui->native_windows && !ui->parent) {
+        ui->open_menu = -1;
+        (void)desktop_open_window(ui, 0, 0);
+        return;
+    }
+    if (ui->settings_open == open) return;
     if (open) {
         palette_tool_hide_overlay();
         ui->panel_open=ui->info_open=false;
@@ -113,21 +122,24 @@ void desktop_settings_open(FrontendDesktopUi *ui, bool open) {
         if(ui->devices){snprintf(ui->settings->tape_play_path,sizeof(ui->settings->tape_play_path),"%s",ui->devices->tape_input);snprintf(ui->settings->tape_record_path,sizeof(ui->settings->tape_record_path),"%s",ui->devices->tape_output);}
         if(ui->music)ui->settings->nsf_player=ui->music->options;
         ui->staged = *ui->settings;
+        if (ui->execution) {
+            ui->staged.speed = ui->execution->execution.speed;
+            ui->staged.fast_forward_speed = ui->execution->execution.fast_forward_speed;
+            ui->staged.muted = ui->execution->muted;
+            ui->staged.rewind_seconds = ui->execution->rewind_seconds;
+            ui->staged.run_ahead_frames = ui->execution->run_ahead_frames;
+        }
         ui->settings_category = 0;
         ui->settings_row = 0;
         ui->settings_scroll = 0;
         ui->settings_open = true;
-        if (ui->execution && ui->settings->pause_on_ui && !frontend_execution_paused(ui->execution)) {
-            ui->paused_for_ui = desktop_invoke_command(ui, FRONTEND_COMMAND_PAUSE);
-        }
+
     } else {
         ui->settings_open = false;
         SDL_StopTextInput();
         ui->edit_text_active = false;
         ui->capture_binding = false;
-        if (ui->execution && ui->paused_for_ui && frontend_execution_paused(ui->execution))
-            (void)desktop_invoke_command(ui, FRONTEND_COMMAND_PAUSE);
-        ui->paused_for_ui = false;
+
     }
 }
 
@@ -151,10 +163,9 @@ static void restore_runtime_settings(FrontendDesktopUi *ui,
         (void)frontend_execution_set_run_ahead(ui->execution, previous->run_ahead_frames);
         frontend_execution_set_muted(ui->execution, previous->muted);
     }
-    if (ui->window)
-        (void)SDL_SetWindowFullscreen(ui->window,
+    if ((ui->parent ? ui->parent->window : ui->window))
+        (void)SDL_SetWindowFullscreen((ui->parent ? ui->parent->window : ui->window),
             previous->fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
-    if (ui->renderer) (void)SDL_RenderSetVSync(ui->renderer, previous->vsync ? 1 : 0);
     if (ui->video) {
         if (!frontend_settings_cli_overridden(previous, FRONTEND_OVERRIDE_VIDEO_FILTER))
             frontend_video_runtime_set_composite(ui->video, previous->ntsc_composite);
@@ -197,20 +208,10 @@ static bool save_settings(FrontendDesktopUi *ui) {
         trace_prepared = true;
     }
 
-    bool fullscreen_changed = ui->window && previous.fullscreen != ui->staged.fullscreen;
+    bool fullscreen_changed = (ui->parent ? ui->parent->window : ui->window) && previous.fullscreen != ui->staged.fullscreen;
     if (fullscreen_changed
-        && SDL_SetWindowFullscreen(ui->window,
+        && SDL_SetWindowFullscreen((ui->parent ? ui->parent->window : ui->window),
             ui->staged.fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0) != 0) {
-        if (trace_prepared) (void)nes_video_trace_use(NES_VIDEO_TRACE_LAYERS, false);
-        frontend_audio_runtime_cancel(&prepared_audio);
-        desktop_copy_status(ui, SDL_GetError());
-        return false;
-    }
-    bool vsync_changed = ui->renderer && previous.vsync != ui->staged.vsync;
-    if (vsync_changed && SDL_RenderSetVSync(ui->renderer, ui->staged.vsync ? 1 : 0) != 0) {
-        if (fullscreen_changed)
-            (void)SDL_SetWindowFullscreen(ui->window,
-                previous.fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
         if (trace_prepared) (void)nes_video_trace_use(NES_VIDEO_TRACE_LAYERS, false);
         frontend_audio_runtime_cancel(&prepared_audio);
         desktop_copy_status(ui, SDL_GetError());
@@ -317,6 +318,7 @@ void frontend_desktop_init(FrontendDesktopUi *ui, SDL_Window *window,
     ui->settings_path = settings_path;
     ui->settings_player = 0;
     ui->open_menu = -1;
+    ui->focused = true;
     desktop_sync_scale(ui);
 }
 
@@ -329,7 +331,11 @@ void frontend_desktop_set_runtime(FrontendDesktopUi *ui,
 }
 
 static bool command_palette(void *context, char *error, size_t size) {
-    (void)context;(void)error;(void)size;palette_tool_toggle_overlay();return true;
+    (void)error; (void)size;
+    FrontendDesktopUi *ui = context;
+    if (ui->native_windows) return desktop_open_window(ui, 3, 0) != NULL;
+    palette_tool_toggle_overlay();
+    return true;
 }
 static bool command_palette_load(void *context, char *error, size_t size) {
     (void)context;char path[4096]={0};
@@ -742,6 +748,10 @@ void desktop_commit_edit(FrontendDesktopUi *ui) {
 void desktop_binding_key(FrontendDesktopUi *ui, const SDL_KeyboardEvent *key) {
     FrontendBindingProfile *profile = frontend_settings_active_profile(&ui->staged);
     if (!profile) return;
+    SDL_Scancode sc = key->keysym.scancode;
+    if (key->type == SDL_KEYDOWN && (sc == SDL_SCANCODE_LCTRL || sc == SDL_SCANCODE_RCTRL || sc == SDL_SCANCODE_LSHIFT ||
+        sc == SDL_SCANCODE_RSHIFT || sc == SDL_SCANCODE_LALT || sc == SDL_SCANCODE_RALT ||
+        sc == SDL_SCANCODE_LGUI || sc == SDL_SCANCODE_RGUI)) return;
     FrontendHostBinding *binding = ui->capture_shortcut ? &profile->shortcuts[ui->capture_index] : &profile->players[ui->settings_player][ui->capture_index];
     if (key->keysym.scancode == SDL_SCANCODE_BACKSPACE) { binding->key = SDL_SCANCODE_UNKNOWN; binding->modifiers = KMOD_NONE; }
     else { binding->key = key->keysym.scancode; binding->modifiers = (SDL_Keymod)(key->keysym.mod & (KMOD_CTRL|KMOD_SHIFT|KMOD_ALT|KMOD_GUI)); }
@@ -799,12 +809,21 @@ int desktop_menu_items(FrontendDesktopUi *ui, DesktopMenuItem items[128]) {
         items[count]=(DesktopMenuItem){.kind=5,.enabled=true}; snprintf(items[count++].label,128,"Documentation");
         items[count]=(DesktopMenuItem){.kind=6,.enabled=true};snprintf(items[count++].label,128,"Recent messages");
     }
+    if (ui->open_menu == 5) {
+        /* Put the tools themselves before their less common direct commands. */
+        int next = 0;
+        for (int i = 0; i < count; ++i) if (items[i].kind == 1) {
+            DesktopMenuItem item = items[i];
+            memmove(&items[next + 1], &items[next], (size_t)(i - next) * sizeof(items[0]));
+            items[next++] = item;
+        }
+    }
     return count;
 }
 
 void frontend_desktop_render(FrontendDesktopUi *ui,int vw,int vh,const char *title,const char *region,const char *state) {
     (void)vw;(void)vh;
-    if(ui&&ui->window&&ui->renderer)desktop_layout(ui,title,region,state);
+    if(ui&&ui->window&&ui->renderer) { desktop_layout(ui,title,region,state); desktop_render_windows(ui); }
 }
 
 static void category_defaults(FrontendDesktopUi *ui) {
@@ -917,7 +936,17 @@ void desktop_settings_button(FrontendDesktopUi *ui, int button) {
     }
 }
 
-bool frontend_desktop_input_captured(const FrontendDesktopUi *ui){return ui&&(ui->settings_open||ui->panel_open||ui->info_open||ui->edit_text_active||ui->capture_binding||ui->open_menu>=0||palette_tool_is_visible());}
+bool frontend_desktop_input_captured(const FrontendDesktopUi *ui) {
+    if (!ui) return false;
+    for (const FrontendDesktopUi *tool = ui->tools; tool; tool = tool->next)
+        if (tool->focused && (tool->settings_open || tool->edit_text_active || tool->capture_binding)) return true;
+    return ui->settings_open || ui->panel_open || ui->info_open || ui->edit_text_active ||
+        ui->capture_binding || ui->open_menu >= 0 || desktop_palette_visible(ui);
+}
 bool frontend_desktop_quit_requested(const FrontendDesktopUi *ui){return ui&&ui->quit_requested;}
-void frontend_desktop_update_window_settings(FrontendDesktopUi *ui){if(!ui||!ui->window||!ui->settings||!ui->settings->remember_window_size)return;int w,h;SDL_GetWindowSize(ui->window,&w,&h);if(w>0&&h>0){ui->settings->window_width=(unsigned)w;ui->settings->window_height=(unsigned)h;}}
-void frontend_desktop_shutdown(FrontendDesktopUi *ui){if(!ui)return;desktop_settings_open(ui,false);SDL_StopTextInput();desktop_clay_destroy(ui->clay);ui->clay=NULL;}
+void frontend_desktop_update_window_settings(FrontendDesktopUi *ui){if(!ui||ui->parent||!ui->window||!ui->settings||!ui->settings->remember_window_size)return;int w,h;SDL_GetWindowSize(ui->window,&w,&h);if(w>0&&h>0){ui->settings->window_width=(unsigned)w;ui->settings->window_height=(unsigned)h;}}
+void frontend_desktop_shutdown(FrontendDesktopUi *ui){if(!ui)return;desktop_close_windows(ui);desktop_settings_open(ui,false);SDL_StopTextInput();desktop_clay_destroy(ui->clay);ui->clay=NULL;}
+
+bool desktop_palette_visible(const FrontendDesktopUi *ui) {
+    return ui && (ui->palette_window || (!ui->parent && palette_tool_is_visible()));
+}

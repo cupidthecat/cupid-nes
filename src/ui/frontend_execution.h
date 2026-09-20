@@ -33,6 +33,9 @@ typedef struct FrontendExecutionRuntime {
     unsigned machine_change_depth;
     int audio_output_rate;
     bool muted;
+    bool rewind_held;
+    unsigned suspend_reasons;
+    uint64_t timing_revision;
     const char *rom_path;
     const char *save_identity;
     const char *fds_bios_path;
@@ -87,6 +90,10 @@ bool frontend_execution_handle_shortcut_action(FrontendExecutionRuntime *runtime
 void frontend_execution_release_host_input(FrontendExecutionRuntime *runtime);
 bool frontend_execution_set_speeds(FrontendExecutionRuntime *runtime,
                                    double speed, double fast_forward_speed);
+enum { FRONTEND_SUSPEND_UI = 1, FRONTEND_SUSPEND_FOCUS = 2 };
+void frontend_execution_set_suspension(FrontendExecutionRuntime *runtime, unsigned reasons);
+void frontend_execution_suspend(FrontendExecutionRuntime *runtime, unsigned reason, bool suspended);
+void frontend_execution_refresh_audio(FrontendExecutionRuntime *runtime);
 void frontend_execution_set_muted(FrontendExecutionRuntime *runtime, bool muted);
 bool frontend_execution_muted(const FrontendExecutionRuntime *runtime);
 bool frontend_execution_run_frame(FrontendExecutionRuntime *runtime);

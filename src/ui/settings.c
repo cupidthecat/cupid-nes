@@ -415,15 +415,24 @@ static bool parse_boolean(const char *text, bool *value) {
 }
 
 static SDL_Keymod normalized_modifiers(SDL_Keymod mods) {
-    return (SDL_Keymod)(mods & (KMOD_CTRL | KMOD_SHIFT | KMOD_ALT | KMOD_GUI));
+    return (SDL_Keymod)(((mods & KMOD_CTRL) ? KMOD_CTRL : 0)
+        | ((mods & KMOD_SHIFT) ? KMOD_SHIFT : 0)
+        | ((mods & KMOD_ALT) ? KMOD_ALT : 0)
+        | ((mods & KMOD_GUI) ? KMOD_GUI : 0));
 }
 
 static bool key_binding_matches(const FrontendHostBinding *binding,
                                 const SDL_KeyboardEvent *event) {
     if (!binding || !event || binding->key == SDL_SCANCODE_UNKNOWN) return false;
+    SDL_Keymod mods = (SDL_Keymod)event->keysym.mod;
+    SDL_Keymod expected = binding->modifiers;
+    unsigned own = binding->key == SDL_SCANCODE_LSHIFT || binding->key == SDL_SCANCODE_RSHIFT ? KMOD_SHIFT
+        : binding->key == SDL_SCANCODE_LCTRL || binding->key == SDL_SCANCODE_RCTRL ? KMOD_CTRL
+        : binding->key == SDL_SCANCODE_LALT || binding->key == SDL_SCANCODE_RALT ? KMOD_ALT
+        : binding->key == SDL_SCANCODE_LGUI || binding->key == SDL_SCANCODE_RGUI ? KMOD_GUI : 0;
     return binding->key == event->keysym.scancode
-        && normalized_modifiers(binding->modifiers)
-            == normalized_modifiers((SDL_Keymod)event->keysym.mod);
+        && normalized_modifiers((SDL_Keymod)(expected & ~own))
+            == normalized_modifiers((SDL_Keymod)(mods & ~own));
 }
 
 bool frontend_profile_player_key(const FrontendBindingProfile *profile,

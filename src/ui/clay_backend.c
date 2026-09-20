@@ -55,6 +55,7 @@ void desktop_clay_begin(DesktopClay *clay, float width, float height, float scal
     Clay_SetLayoutDimensions((Clay_Dimensions){width, height});
     int x, y;
     Uint32 buttons = SDL_GetMouseState(&x, &y);
+    if (SDL_GetMouseFocus() != SDL_RenderGetWindow(clay->renderer)) x = y = -10000;
     Clay_SetPointerState((Clay_Vector2){x / scale, y / scale}, (buttons & SDL_BUTTON_LMASK) != 0);
     clay->used = 0;
     clay->count = clay->first = 0;
