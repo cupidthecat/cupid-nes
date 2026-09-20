@@ -147,6 +147,8 @@ The CHR regressions cover a fixed 4 KiB + 4 KiB allocation, unequal CPROM banks,
 
 The combined implementation is `a3c8afd8d5cd155d297917079072aad7ee430151`. Its Linux GCC and Clang AddressSanitizer/UndefinedBehaviorSanitizer builds also passed the production hardware suite, 8,991-state CPU trace, all 91 pinned diagnostic ROMs, and AccuracyCoin 144/144. The Linux sanitizer run enabled leak detection. These results belong to that source revision; the final pull-request commit must pass its own GCC and Clang sanitizer CI jobs.
 
+Revision `6cbf43b6ddb4ad03c09675f63ae732eff3bbfb88` updates the README and five technical guides while retaining that implementation, build scripts, and test pins. Its [push workflow](https://github.com/cupidthecat/cupid-nes/actions/runs/35484461117) and [pull-request workflow](https://github.com/cupidthecat/cupid-nes/actions/runs/35484472930) both passed the GCC and Clang sanitizer jobs. Each job passed the production hardware suite, 8,991-state CPU trace, all 91 diagnostic ROMs, and AccuracyCoin 144/144 with zero skipped or unfinished tests. These are results for the named revision; later commits require their own CI checks.
+
 ## Reproducing a checkpoint
 
 Check out the listed commit in a separate worktree, prepare SDL2 and the pinned ROM as described in [development and testing](development.md), then run:
