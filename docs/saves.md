@@ -65,6 +65,8 @@ Expansion saves are written to a sibling temporary file and replace the destinat
 
 Disk-system writes replace the image path passed to Cupid. There is no separate disk `.sav` overlay.
 
+The adapter's 32 KiB work RAM and 8 KiB CHR RAM are volatile and are not part of the disk file. Loading a new image initializes them with the selected [power-on profile](configuration.md#console-and-cpuppu-profiles). Soft reset and side changes retain their contents.
+
 For an image you want to preserve unchanged, launch a copy or start it write-protected:
 
 ```sh

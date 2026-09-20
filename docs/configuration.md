@@ -21,7 +21,7 @@ On Windows, replace `./cupid-nes` with `.\build\windows\cupid-nes.exe`. Supply o
 | `--apu-swap-duty-cycles` | No value | Off | Swaps duty selections 1 and 2 on the two base APU pulse channels |
 | `--startup-phase CPU:PPU` | Decimal master-clock offsets within the regional dividers | CPU `0`, PPU divider minus one | Selects a reproducible power-on alignment |
 | `--startup-seed SEED` | Decimal integer from `0` through `4294967295` | No randomization | Generates a reproducible sequence of legal power-on alignments |
-| `--ram-power-on STATE` | `default`, `zero`, `ones`, `random` | `default` | Selects the initial CPU RAM, PPU RAM, and cartridge board RAM contents |
+| `--ram-power-on STATE` | `default`, `zero`, `ones`, `random` | `default` | Selects the initial CPU, PPU, cartridge, and disk-adapter RAM contents |
 | `--power-on-seed SEED` | Decimal integer from `0` through `4294967295` | Fixed initial seed | Makes random RAM contents and the optional startup VBL flag reproducible |
 | `--random-vblank` | No value | Off | Randomizes the PPU VBL flag at power-on independently of the RAM profile |
 | `--ppu-revision REVISION` | `2c02-pre-e`, `2c02e-plus` | `2c02e-plus` | PPU silicon revision used by optional OAM behavior |
@@ -45,6 +45,8 @@ The optional PPU controls are independent. Selecting `--ppu-revision 2c02-pre-e`
 `--ppu-disable-oamdata-read` keeps the existing I/O latch value on `$2004` reads, including its decay behavior. `--ppu-disable-palette-readback` returns the normal delayed read buffer in palette space while keeping external memory fetches and address increments. `--ppu-sprite-eval-wrap-bug` lets a Y-only secondary-OAM entry reach the ordinary sprite pipeline, with tile, attributes, and X left at `$FF`. All three controls remain selected across reset and default to off.
 
 The `default` RAM profile clears CPU and nametable RAM and fills primary and secondary OAM with `$FF`. `zero` fills those areas with `$00`; `ones` fills them with `$FF`. All three retain the fixed boot palette. `random` fills RAM from the controlled random source and limits palette entries to six bits. The C++ cartridge board modules apply the same profile to their work, save, CHR, and nametable RAM before trainer and save data are loaded. Existing C cartridge implementations keep their board-specific initialization.
+
+Loading a disk image applies the same profile to the adapter's 32 KiB work RAM and 8 KiB CHR RAM. `default` and `zero` clear both areas, `ones` fills them with `$FF`, and `random` uses the configured power-on seed. Soft reset and disk-side changes preserve this RAM.
 
 `--power-on-seed` sets a separate random source from `--startup-seed`; it may be supplied once. Repeating the same seed, image, and options reproduces the startup state. RAM initialization occurs on hard power-on or cartridge insertion, depending on the memory's owner. Soft reset preserves RAM. `--random-vblank` can be used with any RAM profile and remains off unless supplied.
 

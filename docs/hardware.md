@@ -399,6 +399,8 @@ The disk loader accepts supported headered and raw FDS images, plus the QD layou
 
 The device supplies 32 KiB work RAM, 8 KiB CHR RAM, BIOS mapping, disk transport and block timing, CRC handling, timer and transfer interrupts, and audio. Side selection, ejection, and write protection are available through the application. [Disk tests](../src/tests/fds_accuracy.c) exercise the production loader and cartridge bus with synthetic media and BIOS data.
 
+The work and CHR RAM use the selected power-on profile when a disk image is loaded. CPU startup, soft reset, and side changes preserve their contents. A rejected replacement leaves the active adapter's RAM intact.
+
 Writable images are updated at the loaded path. See [saves and media](saves.md) for backup and failure behavior.
 
 ## VS System

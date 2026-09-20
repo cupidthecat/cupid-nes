@@ -171,6 +171,12 @@ This revision includes the NSF multiplier and VRC7 reset fixes above. Its strict
 
 These local results belong to the named implementation revision. Later documentation commits retain that source, and the final pull-request revision must pass its own GCC and Clang sanitizer CI jobs.
 
+## Disk-adapter RAM checkpoint
+
+Revision `ecbd355d3d1d4e0dd9217df4877260fe45950cbe` applies the RAM power-on profile to the disk adapter's 32 KiB work RAM and 8 KiB CHR RAM. Previously both areas were always zeroed. The regression checks every byte for the fixed profiles, repeatable seeded initialization of both areas, preservation through CPU startup and soft reset, and fresh initialization on reload. A rejected image must preserve the active RAM and leave the random source unchanged.
+
+The new regression failed on the preceding implementation and passed with the fix. The production hardware suite and AccuracyCoin passed in normal and AddressSanitizer/UndefinedBehaviorSanitizer builds. Both AccuracyCoin runs reported 144/144 passed, zero skipped, zero unfinished, and 4,182 frames, matching the cartridge's tally. The test image revision and SHA-256 above were unchanged.
+
 ## Reproducing a checkpoint
 
 Check out the listed commit in a separate worktree, prepare SDL2 and the pinned ROM as described in [development and testing](development.md), then run:
