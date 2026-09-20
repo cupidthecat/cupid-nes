@@ -25,6 +25,9 @@
 
 #include "fds.h"
 #include "../system/hardware.h"
+#include "../system/execution_policy.h"
+#include "../cpu/cpu.h"
+#include "../ppu/ppu.h"
 #include "../media/patch.h"
 #include "../util/file_io.h"
 #include "game_db.h"
@@ -33,9 +36,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#ifdef _WIN32
-#include <windows.h>
-#endif
 
 #define FDS_BIOS_SIZE 0x2000u
 #define FDS_WORK_RAM_SIZE 0x8000u
@@ -51,6 +51,7 @@ typedef struct {
     uint8_t *drive;
     size_t drive_size;
     bool dirty;
+    uint8_t identity_header[10];
 } FdsSide;
 
 typedef struct {
@@ -102,6 +103,18 @@ struct FdsImage {
 };
 
 typedef struct {
+    uint64_t last_frame;
+    uint64_t last_check_frame;
+    uint32_t successive_checks;
+    int32_t eject_frames;
+    int32_t switch_frames;
+    int32_t retry_frames;
+    size_t previous_side;
+    bool game_started;
+    bool ambiguous;
+} FdsAutomationState;
+
+typedef struct {
     FdsImage *image;
     uint8_t work_ram[FDS_WORK_RAM_SIZE];
     uint8_t chr_ram[FDS_CHR_RAM_SIZE];
@@ -135,9 +148,12 @@ typedef struct {
     bool dirty;
     Mirroring mirroring;
     FdsAudio audio;
+    FdsAutomationState automation;
 } FdsState;
 
 static FdsState fds;
+
+#include "fds_automation.h"
 
 typedef struct {
     uint8_t *data;
@@ -285,6 +301,8 @@ static FdsImage *fds_image_create_data(const uint8_t *disk, size_t disk_size,
         image->sides[side].raw = (uint8_t *)malloc(side_capacity);
         if (!image->sides[side].raw) { fds_image_destroy(image); return NULL; }
         memcpy(image->sides[side].raw, disk + offset + side * side_capacity, side_capacity);
+        memcpy(image->sides[side].identity_header, image->sides[side].raw + 14,
+               sizeof(image->sides[side].identity_header));
         if (!build_drive_side(&image->sides[side], side_capacity, qd_format)) {
             fds_image_destroy(image);
             return NULL;
@@ -504,6 +522,7 @@ void fds_activate(FdsImage *image) {
     fds.ext_connector = 0;
     fds.gap_ended = true;
     audio_reset(&fds.audio);
+    fds_automation_reset();
 }
 
 bool fds_active(void) { return fds.image != NULL; }
@@ -567,6 +586,7 @@ static bool rebuild_side(const FdsImage *image, const FdsSide *side, uint8_t *ou
 }
 
 bool fds_flush(void) {
+    if (!nes_execution_allows_persistence()) return true;
     if (!fds.image || !fds.dirty) return true;
     if (fds.image->write_protected || !fds.image->disk_path) return false;
     size_t prefix = fds.image->headered ? 16u : 0u;
@@ -684,6 +704,7 @@ static void clock_disk(void) {
     if (!fds_disk_inserted() || !fds.motor_on) {
         fds.end_of_head = true;
         fds.scanning = false;
+        if (fds.automation.eject_frames < 0) fds.automation.eject_frames = 77;
         return;
     }
     if (fds.reset_transfer && !fds.scanning) return;
@@ -700,6 +721,8 @@ static void clock_disk(void) {
     }
 
     fds.scanning = true;
+    fds.automation.eject_frames = -1;
+    fds.automation.switch_frames = -1;
     uint8_t data = 0;
     bool need_irq = fds.transfer_irq_enabled;
     if (fds.read_mode) {
@@ -754,6 +777,7 @@ static void clock_disk(void) {
 
 void fds_clock_cpu(int cpu_cycles) {
     for (int cycle = 0; cycle < cpu_cycles; ++cycle) {
+        fds_automation_frame(ppu.frame_count);
         clock_timer();
         audio_clock(&fds.audio);
         clock_disk();
@@ -793,7 +817,10 @@ void fds_ppu_write(uint16_t addr, uint8_t value) {
 uint8_t fds_cpu_read_bus(uint16_t addr, uint8_t open_bus) {
     if (!fds.image) return open_bus;
     if (addr >= 0x6000 && addr <= 0xDFFF) return fds.work_ram[addr - 0x6000];
-    if (addr >= 0xE000) return fds.image->bios[addr - 0xE000];
+    if (addr >= 0xE000) {
+        fds_automation_bios_read(addr);
+        return fds.image->bios[addr - 0xE000];
+    }
     if (addr >= 0x4040 && addr <= 0x4097) return audio_read(&fds.audio, addr, open_bus);
     switch (addr) {
         case 0x4030: {
@@ -814,6 +841,7 @@ uint8_t fds_cpu_read_bus(uint16_t addr, uint8_t open_bus) {
             if (!fds_disk_inserted()) value |= 0x01;
             if (!fds_disk_inserted() || !fds.scanning) value |= 0x02;
             if (!fds_disk_inserted() || fds.image->write_protected) value |= 0x04;
+            fds_automation_status_read();
             return value;
         }
         case 0x4033:

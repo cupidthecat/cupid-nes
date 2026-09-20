@@ -128,6 +128,7 @@ void nes_image_source_free(NesImageSource *source) {
         free(source->data);
         free(source->path);
         free(source->member);
+        free(source->patch_path);
         free(source->save_path);
         memset(source, 0, sizeof(*source));
     }
@@ -240,11 +241,12 @@ NesMediaResult nes_image_prepare(const NesImageRequest *request, NesImageSource 
     }
 
     source->path = copy_string(request->path);
+    if (source->patched) source->patch_path = copy_string(request->patch_path);
     if (source->path) {
         source->save_path = save_identity(source);
     }
 
-    if (!source->path || !source->save_path) {
+    if (!source->path || !source->save_path || (source->patched && !source->patch_path)) {
         nes_image_source_free(source);
         return report(NES_MEDIA_OUT_OF_MEMORY, error, error_size);
     }
@@ -269,7 +271,27 @@ static bool extension_is(const char *path, const char *extension) {
 NesMediaResult nes_image_load(const NesImageSource *source, const char *fds_bios,
                               const char *studybox_bios, bool disk_write_protected,
                               char *error, size_t error_size) {
+    NesImageLoadOptions options = {fds_bios, studybox_bios, disk_write_protected,
+                                   source && (source->archived || source->patched)
+                                     ? FDS_SAVE_OVERLAY : FDS_SAVE_IN_PLACE, NULL};
+    return nes_image_load_with_options(source, &options, error, error_size);
+}
+
+static bool aliases_file(const char *destination, const char *protected_path) {
+    if (!destination || !protected_path) return false;
+    bool same = false;
+    (void)nes_file_same(destination, protected_path, &same);
+    return same;
+}
+
+NesMediaResult nes_image_load_with_options(const NesImageSource *source,
+                                           const NesImageLoadOptions *options,
+                                           char *error, size_t error_size) {
     if (!source || !source->data || !source->path || !source->save_path) {
+        return report(NES_MEDIA_INVALID, error, error_size);
+    }
+    if (!options || (options->disk_save_mode != FDS_SAVE_IN_PLACE
+                    && options->disk_save_mode != FDS_SAVE_OVERLAY)) {
         return report(NES_MEDIA_INVALID, error, error_size);
     }
 
@@ -277,9 +299,26 @@ NesMediaResult nes_image_load(const NesImageSource *source, const char *fds_bios
     bool disk = (source->size >= 4 && !memcmp(source->data, "FDS\x1a", 4))
              || extension_is(name, ".fds") || extension_is(name, ".qd");
     bool studybox = source->size >= 4 && !memcmp(source->data, "STBX", 4);
+    if (disk && options->disk_save_mode == FDS_SAVE_IN_PLACE
+        && (source->archived || source->patched || options->disk_overlay_path)) {
+        if (error && error_size) {
+            snprintf(error, error_size, "Archive members and patched disks require overlay saving");
+        }
+
+        return NES_MEDIA_INVALID;
+    }
+    if (disk && (aliases_file(options->disk_overlay_path, source->path)
+                 || aliases_file(options->disk_overlay_path, source->patch_path)
+                 || aliases_file(options->disk_overlay_path, options->fds_bios))) {
+        if (error && error_size) {
+            snprintf(error, error_size, "The disk overlay must be a separate file from its source, patch, and BIOS");
+        }
+
+        return NES_MEDIA_INVALID;
+    }
     int loaded;
     if (disk || studybox) {
-        const char *bios_path = disk ? fds_bios : studybox_bios;
+        const char *bios_path = disk ? options->fds_bios : options->studybox_bios;
         if (!bios_path || !*bios_path) {
             if (error && error_size) {
                 snprintf(error, error_size, "%s", disk ? "Select an 8 KiB disk-system BIOS before opening this image"
@@ -297,12 +336,12 @@ NesMediaResult nes_image_load(const NesImageSource *source, const char *fds_bios
         }
 
         if (disk) {
-            FdsLoadOptions options = {source->archived || source->patched ? FDS_SAVE_OVERLAY : FDS_SAVE_IN_PLACE,
-                                      NULL, disk_write_protected};
+            FdsLoadOptions disk_options = {options->disk_save_mode, options->disk_overlay_path,
+                                           options->disk_write_protected};
             loaded = source->archived || source->patched
                 ? load_fds_memory_options(source->data, source->size, bios, bios_size,
-                                           source->save_path, &options)
-                : load_fds_with_options(source->path, bios_path, &options);
+                                           source->save_path, &disk_options)
+                : load_fds_with_options(source->path, bios_path, &disk_options);
         } else {
             loaded = load_studybox_memory(source->data, source->size, bios, bios_size);
         }

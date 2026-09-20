@@ -42,6 +42,8 @@ int test_persistence_accuracy(void);
 int test_patch_accuracy(void);
 int test_media_accuracy(void);
 int test_fds_options_accuracy(void);
+int test_fds_automation_accuracy(void);
+int test_execution_policy_accuracy(void);
 int test_native_flash_geometry_accuracy(void);
 int test_mapper30_111_prg_ram_accuracy(void);
 int test_board_accuracy(void);
@@ -206,6 +208,8 @@ int main(int argc, char **argv) {
     failures += test_patch_accuracy();
     failures += test_media_accuracy();
     failures += test_fds_options_accuracy();
+    failures += test_fds_automation_accuracy();
+    failures += test_execution_policy_accuracy();
     failures += test_frontend_accuracy();
     unload_rom();
     printf("Hardware regressions: %s (%d failures)\n", failures ? "FAIL" : "PASS", failures);

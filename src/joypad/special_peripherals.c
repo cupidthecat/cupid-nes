@@ -15,6 +15,8 @@
  */
 
 #include "special_peripherals.h"
+#include "../system/execution_policy.h"
+#include "../util/file_io.h"
 #include "joypad.h"
 #include <errno.h>
 #include <stdio.h>
@@ -204,38 +206,11 @@ static char *storage_path(const char *rom_path, const char *suffix) {
 }
 
 static bool atomic_save(const char *path, const uint8_t *data, size_t size) {
-    if (!path || !data) return false;
-    size_t path_len = strlen(path);
-    if (path_len > SIZE_MAX - 40) return false;
-    char *temporary = malloc(path_len + 40);
-    if (!temporary) return false;
-    FILE *file = NULL;
-    for (unsigned serial = 0; serial < 1000 && !file; ++serial) {
-        snprintf(temporary, path_len + 40, "%s.cupid-%u.tmp", path, serial);
-        file = fopen(temporary, "wbx");
-        if (!file && errno != EEXIST) break;
-    }
-    if (!file) {
-        free(temporary);
-        return false;
-    }
-    bool ok = fwrite(data, 1, size, file) == size;
-    if (fclose(file) != 0) ok = false;
-    if (ok) {
-#ifdef _WIN32
-        ok = MoveFileExA(temporary, path,
-                         MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
-#else
-        ok = rename(temporary, path) == 0;
-#endif
-    }
-    if (!ok) remove(temporary);
-    free(temporary);
-    return ok;
+    return nes_file_write_atomic(path, data, size) == NES_FILE_OK;
 }
 
 static bool load_exact(const char *path, uint8_t *output, size_t size) {
-    FILE *file = fopen(path, "rb");
+    FILE *file = nes_file_open(path, "rb");
     if (!file) return errno == ENOENT;
     uint8_t *temporary = malloc(size);
     if (!temporary) {
@@ -277,6 +252,7 @@ void turbo_file_write(uint8_t value) {
 }
 
 bool turbo_file_flush(void) {
+    if (!nes_execution_allows_persistence()) return true;
     if (!turbo_file.dirty) return true;
     if (!turbo_file.save_path || !atomic_save(turbo_file.save_path, turbo_file.data,
                                                sizeof(turbo_file.data))) return false;
@@ -411,6 +387,7 @@ void battle_box_write(uint8_t value) {
 }
 
 bool battle_box_flush(void) {
+    if (!nes_execution_allows_persistence()) return true;
     if (!battle_box.dirty) return true;
     if (!battle_box.save_path || !atomic_save(battle_box.save_path, battle_box.data,
                                                sizeof(battle_box.data))) return false;

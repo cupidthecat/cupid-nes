@@ -47,6 +47,7 @@
 #include "../system/hardware.h"
 #include "../system/vs_system.h"
 #include "../util/file_io.h"
+#include "../system/execution_policy.h"
 
 extern uint64_t cpu_total_cycles;
 extern uint64_t cpu_get_bus_cycle(void);
@@ -439,6 +440,7 @@ static bool flush_flash_battery(void) {
 }
 
 bool cart_battery_flush(void) {
+    if (!nes_execution_allows_persistence()) return true;
     if (active_board) {
         return board_battery_flush(active_board);
     }

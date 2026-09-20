@@ -74,8 +74,13 @@ void execution_control_toggle_fast_forward(ExecutionControl *control) {
     if (control) control->fast_forward_toggled = !control->fast_forward_toggled;
 }
 
+void execution_control_set_loading_fast_forward(ExecutionControl *control, bool active) {
+    if (control) control->loading_fast_forward = active;
+}
+
 bool execution_control_fast_forward_active(const ExecutionControl *control) {
-    return control && (control->fast_forward_held || control->fast_forward_toggled);
+    return control && (control->fast_forward_held || control->fast_forward_toggled
+                       || control->loading_fast_forward);
 }
 
 double execution_control_effective_speed(const ExecutionControl *control) {

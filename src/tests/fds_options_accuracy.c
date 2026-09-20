@@ -14,6 +14,7 @@
 #include "../rom/game_db.h"
 #include "../third_party/miniz/miniz.h"
 #include "../util/file_io.h"
+#include "../system/execution_policy.h"
 #include <sys/stat.h>
 #ifdef _WIN32
 #include <direct.h>
@@ -280,7 +281,23 @@ static int test_archived_disk_overlay(const char *directory) {
     NesImageSource source = {0};
     BOARD_CHECK(nes_image_prepare(&request, &source, error, sizeof(error)) == NES_MEDIA_OK);
     BOARD_CHECK(source.archived && !source.patched);
+    BoardImage baseline;
+    BOARD_CHECK(board_image_create(&baseline, 0, 0x4000, 0x2000, true));
+    BOARD_CHECK(load_rom_memory(baseline.data, baseline.size) == 0);
+    uint8_t *previous_rom = prg_rom;
+    uint32_t previous_crc = rom_file_crc32();
+    NesImageLoadOptions options = {bios_path, NULL, false, FDS_SAVE_IN_PLACE, NULL};
+    BOARD_CHECK(nes_image_load_with_options(&source, &options, error, sizeof(error)) == NES_MEDIA_INVALID);
+    BOARD_CHECK(error[0] && prg_rom == previous_rom && rom_file_crc32() == previous_crc);
+    options.disk_save_mode = FDS_SAVE_OVERLAY;
+    options.disk_overlay_path = archive_path;
+    BOARD_CHECK(nes_image_load_with_options(&source, &options, error, sizeof(error)) == NES_MEDIA_INVALID);
+    BOARD_CHECK(prg_rom == previous_rom && rom_file_crc32() == previous_crc);
+    options.disk_overlay_path = bios_path;
+    BOARD_CHECK(nes_image_load_with_options(&source, &options, error, sizeof(error)) == NES_MEDIA_INVALID);
+    BOARD_CHECK(prg_rom == previous_rom && rom_file_crc32() == previous_crc);
     BOARD_CHECK(nes_image_load(&source, bios_path, NULL, false, error, sizeof(error)) == NES_MEDIA_OK);
+    board_image_free(&baseline);
     BOARD_CHECK(rom_is_fds() && fds_save_mode() == FDS_SAVE_OVERLAY);
     BOARD_CHECK(fds_save_path() && strlen(fds_save_path()) < sizeof(overlay_path));
     strcpy(overlay_path, fds_save_path());
@@ -299,6 +316,61 @@ static int test_archived_disk_overlay(const char *directory) {
     return 0;
 }
 
+static int test_explicit_overlay_and_policy(const char *directory) {
+    char disk_path[256], bios_path[256], patch_path[256], overlay_path[256], error[256];
+    snprintf(disk_path, sizeof(disk_path), "%s/patched.fds", directory);
+    snprintf(bios_path, sizeof(bios_path), "%s/patched-bios.bin", directory);
+    snprintf(patch_path, sizeof(patch_path), "%s/input.ips", directory);
+    snprintf(overlay_path, sizeof(overlay_path), "%s/custom-save.ips", directory);
+    size_t disk_size;
+    uint8_t *disk = disk_image(true, false, &disk_size);
+    uint8_t bios[0x2000];
+    firmware(bios);
+    const uint8_t input_patch[] = {'P','A','T','C','H',0,0,17,0,1,0x63,'E','O','F'};
+    BOARD_CHECK(disk && nes_file_write_atomic(disk_path, disk, disk_size) == NES_FILE_OK);
+    BOARD_CHECK(nes_file_write_atomic(bios_path, bios, sizeof(bios)) == NES_FILE_OK);
+    BOARD_CHECK(nes_file_write_atomic(patch_path, input_patch, sizeof(input_patch)) == NES_FILE_OK);
+    NesImageRequest request = {disk_path, NULL, patch_path};
+    NesImageSource source = {0};
+    BOARD_CHECK(nes_image_prepare(&request, &source, error, sizeof(error)) == NES_MEDIA_OK);
+    BOARD_CHECK(source.patched && source.patch_path && !strcmp(source.patch_path, patch_path));
+    NesImageLoadOptions options = {bios_path, NULL, false, FDS_SAVE_OVERLAY, patch_path};
+    BOARD_CHECK(nes_image_load_with_options(&source, &options, error, sizeof(error)) == NES_MEDIA_INVALID);
+    BOARD_CHECK(file_matches(patch_path, input_patch, sizeof(input_patch)) == 0);
+    options.disk_overlay_path = overlay_path;
+    BOARD_CHECK(nes_image_load_with_options(&source, &options, error, sizeof(error)) == NES_MEDIA_OK);
+    BOARD_CHECK(!strcmp(fds_save_path(), overlay_path) && read_header_byte(0) == 0x63);
+    BOARD_CHECK(write_header_byte(0, 0x74) && fds_flush());
+    const uint32_t policies[] = {NES_EXECUTION_MOVIE_PLAYBACK, NES_EXECUTION_NETPLAY,
+                                 NES_EXECUTION_SPECULATIVE, NES_EXECUTION_REWIND};
+    for (size_t i = 0; i < sizeof(policies) / sizeof(policies[0]); i++) {
+        uint8_t *previous = NULL;
+        size_t previous_size = 0;
+        BOARD_CHECK(nes_file_read_all(overlay_path, 32u * 1024u * 1024u, &previous, &previous_size) == NES_FILE_OK);
+        BOARD_CHECK(write_header_byte(0, (uint8_t)(0x80 + i)) && fds_disk_dirty());
+        BOARD_CHECK(nes_execution_set_policy(policies[i]));
+        BOARD_CHECK(fds_flush() && fds_disk_dirty());
+        BOARD_CHECK(file_matches(overlay_path, previous, previous_size) == 0);
+        BOARD_CHECK(nes_execution_set_policy(NES_EXECUTION_LIVE));
+        BOARD_CHECK(fds_flush() && !fds_disk_dirty());
+        free(previous);
+    }
+
+    BOARD_CHECK(nes_image_load_with_options(&source, &options, error, sizeof(error)) == NES_MEDIA_OK);
+    BOARD_CHECK(read_header_byte(0) == 0x83);
+    BOARD_CHECK(file_matches(disk_path, disk, disk_size) == 0);
+    BOARD_CHECK(file_matches(patch_path, input_patch, sizeof(input_patch)) == 0);
+    BOARD_CHECK(unload_rom());
+    nes_image_source_free(&source);
+    BOARD_CHECK(!source.data && !source.path && !source.patch_path && !source.save_path);
+    BOARD_CHECK(nes_file_remove(overlay_path) == NES_FILE_OK);
+    BOARD_CHECK(nes_file_remove(patch_path) == NES_FILE_OK);
+    BOARD_CHECK(nes_file_remove(disk_path) == NES_FILE_OK);
+    BOARD_CHECK(nes_file_remove(bios_path) == NES_FILE_OK);
+    free(disk);
+    return 0;
+}
+
 int test_fds_options_accuracy(void) {
     char directory[128];
 #ifdef _WIN32
@@ -309,8 +381,9 @@ int test_fds_options_accuracy(void) {
     BOARD_CHECK(snprintf(directory, sizeof(directory), "build/fds-options-%u", process) > 0);
     BOARD_CHECK(directory_create(directory) == 0);
     int failures = test_overlay_geometry(directory) + test_overlay_failure_and_protection(directory)
-                 + test_rejected_overlays(directory) + test_archived_disk_overlay(directory);
+                 + test_rejected_overlays(directory) + test_archived_disk_overlay(directory)
+                 + test_explicit_overlay_and_policy(directory);
     if (directory_remove(directory) != 0) ++failures;
-    printf("FDS save options: 4 groups, %d failures\n", failures);
+    printf("FDS save options: 5 groups, %d failures\n", failures);
     return failures;
 }

@@ -13,6 +13,7 @@
 #include "runtime.hpp"
 #include "studybox.hpp"
 #include "../../util/file_io.h"
+#include "../../system/execution_policy.h"
 #include <cstdio>
 #include <limits>
 #include <stdexcept>
@@ -481,6 +482,7 @@ void Board::ReadBattery(const char *suffix, uint8_t *bytes, uint32_t size) {
 }
 
 bool Board::WriteBattery(const char *suffix, const uint8_t *bytes, uint32_t size) {
+    if (!nes_execution_allows_persistence()) return true;
     if (_saveStem.empty() || !bytes || !size) return true;
     auto previous = _savedBytes.find(suffix);
     if (previous != _savedBytes.end() && previous->second.size() == size

@@ -32,6 +32,11 @@
 
 typedef struct FdsImage FdsImage;
 
+typedef struct {
+    bool insert_automatically;
+    bool fast_forward_loading;
+} FdsAutomationOptions;
+
 FdsImage *fds_image_create(const uint8_t *disk, size_t disk_size,
                            const uint8_t *bios, size_t bios_size,
                            const char *disk_path, bool write_protected);
@@ -74,5 +79,13 @@ bool fds_insert_disk(size_t side);
 void fds_eject_disk(void);
 void fds_set_write_protected(bool protected_media);
 bool fds_write_protected(void);
+void fds_set_automation_options(FdsAutomationOptions options);
+FdsAutomationOptions fds_automation_options(void);
+bool fds_automatic_insert_active(void);
+bool fds_automatic_insert_ambiguous(void);
+bool fds_loading_fast_forward(void);
+// Called by the disk clock when the PPU reaches a new frame. Repeated calls
+// for the same frame are harmless; no CPU, PPU, or disk cycles are skipped.
+void fds_automation_frame(uint64_t frame);
 
 #endif

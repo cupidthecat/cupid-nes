@@ -92,6 +92,7 @@ FdsImage *fds_image_create_options(const uint8_t *disk, size_t disk_size,
     for (size_t side = 0; side < image->side_count; side++) {
         FdsSide *target = &image->sides[side];
         memcpy(target->raw, patched + prefix + side * image->side_capacity, image->side_capacity);
+        memcpy(target->identity_header, target->raw + 14, sizeof(target->identity_header));
         free(target->drive);
         target->drive = NULL;
         target->drive_size = 0;

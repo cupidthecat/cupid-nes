@@ -12,6 +12,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "../rom/rom.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -54,12 +55,21 @@ typedef struct {
     size_t size;
     char *path;
     char *member;
+    char *patch_path;
     char *save_path;
     uint32_t source_crc32;
     uint32_t patch_crc32;
     bool archived;
     bool patched;
 } NesImageSource;
+
+typedef struct {
+    const char *fds_bios;
+    const char *studybox_bios;
+    bool disk_write_protected;
+    FdsSaveMode disk_save_mode;
+    const char *disk_overlay_path;
+} NesImageLoadOptions;
 
 /* Listing and preparation do not touch the running machine or persistent
  * saves. Every returned allocation belongs to the matching free function. */
@@ -76,6 +86,9 @@ void nes_image_source_free(NesImageSource *source);
 NesMediaResult nes_image_load(const NesImageSource *source, const char *fds_bios,
                               const char *studybox_bios, bool disk_write_protected,
                               char *error, size_t error_size);
+NesMediaResult nes_image_load_with_options(const NesImageSource *source,
+                                           const NesImageLoadOptions *options,
+                                           char *error, size_t error_size);
 const char *nes_media_result_message(NesMediaResult result);
 
 #ifdef __cplusplus

@@ -7,6 +7,8 @@
  * GNU General Public License, version 3 or any later version.
  */
 #include "family_basic.h"
+#include "../system/execution_policy.h"
+#include "../util/file_io.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -145,49 +147,18 @@ bool family_basic_tape_load(const uint8_t *data, size_t size) {
 
 bool family_basic_tape_load_file(const char *path) {
     if (!path || !*path) return false;
-    FILE *file = fopen(path, "rb");
-    if (!file) return false;
-    if (fseek(file, 0, SEEK_END) != 0) { fclose(file); return false; }
-    long length = ftell(file);
-    if (length < 0 || (uint64_t)length > SIZE_MAX / 8 || fseek(file, 0, SEEK_SET) != 0) {
-        fclose(file);
-        return false;
-    }
-    size_t size = (size_t)length;
-    uint8_t *data = size ? malloc(size) : NULL;
-    if (size && !data) { fclose(file); return false; }
-    bool read_ok = !size || fread(data, 1, size, file) == size;
-    bool close_ok = fclose(file) == 0;
-    if (!read_ok || !close_ok) { free(data); return false; }
+    size_t size = 0;
+    uint8_t *data = NULL;
+    if (nes_file_read_all(path, 256u * 1024u * 1024u, &data, &size) != NES_FILE_OK) return false;
     replace_tape(data, size);
     return true;
 }
 
 bool family_basic_tape_save_file(const char *path) {
-    if (!path || !*path || tape.mode != FB_TAPE_STOPPED) return false;
-    static const char suffix[] = ".cupid-tape.tmp";
-    size_t length = strlen(path);
-    if (length > SIZE_MAX - sizeof(suffix)) return false;
-    char *temporary = malloc(length + sizeof(suffix));
-    if (!temporary) return false;
-    memcpy(temporary, path, length);
-    memcpy(temporary + length, suffix, sizeof(suffix));
-    FILE *file = fopen(temporary, "wbx");
-    if (!file) { free(temporary); return false; }
+    if (!path || !*path || tape.mode != FB_TAPE_STOPPED || !nes_execution_allows_persistence()) return false;
     // The raw tape format contains complete bytes; an incomplete final byte is omitted.
     size_t size = tape.samples / 8;
-    bool written = !size || fwrite(tape.data, 1, size, file) == size;
-    if (fclose(file) != 0) written = false;
-    if (written) {
-#ifdef _WIN32
-        written = MoveFileExA(temporary, path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
-#else
-        written = rename(temporary, path) == 0;
-#endif
-    }
-    if (!written) remove(temporary);
-    free(temporary);
-    return written;
+    return nes_file_write_atomic(path, tape.data, size) == NES_FILE_OK;
 }
 
 bool family_basic_tape_play(uint64_t cpu_cycles) {
