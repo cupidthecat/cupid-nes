@@ -436,6 +436,13 @@ static int setting_rows(const FrontendDesktopUi *ui) {
     }
 }
 
+static void key_binding_text(const FrontendHostBinding *binding, char *text, size_t size) {
+    if(!binding || binding->key==SDL_SCANCODE_UNKNOWN){snprintf(text,size,"Unbound");return;}
+    SDL_Keymod mod=binding->modifiers;
+    snprintf(text,size,"%s%s%s%s%s",mod&KMOD_CTRL?"Ctrl+":"",mod&KMOD_SHIFT?"Shift+":"",
+        mod&KMOD_ALT?"Alt+":"",mod&KMOD_GUI?"GUI+":"",SDL_GetScancodeName(binding->key));
+}
+
 static void setting_text(FrontendDesktopUi *ui, int row, char *label, size_t lc,
                          char *value, size_t vc) {
     FrontendSettings *s = &ui->staged;
@@ -508,7 +515,7 @@ static void setting_text(FrontendDesktopUi *ui, int row, char *label, size_t lc,
             unsigned button = (unsigned)(row - 8);
             const FrontendHostBinding *b = profile ? &profile->players[ui->settings_player][button] : NULL;
             snprintf(label, lc, "Player key: %s", frontend_player_button_name(button));
-            snprintf(value, vc, "%s", b && b->key != SDL_SCANCODE_UNKNOWN ? SDL_GetScancodeName(b->key) : "Unbound");
+            key_binding_text(b,value,vc);
         } else if (row < 24) {
             unsigned button = (unsigned)(row - 16);
             const FrontendHostBinding *b = profile ? &profile->players[ui->settings_player][button] : NULL;
@@ -518,7 +525,7 @@ static void setting_text(FrontendDesktopUi *ui, int row, char *label, size_t lc,
             unsigned shortcut = (unsigned)(row - 24);
             const FrontendHostBinding *b = profile ? &profile->shortcuts[shortcut] : NULL;
             snprintf(label, lc, "Shortcut key: %s", frontend_shortcut_name((FrontendShortcut)shortcut));
-            snprintf(value, vc, "%s", b && b->key != SDL_SCANCODE_UNKNOWN ? SDL_GetScancodeName(b->key) : "Unbound");
+            key_binding_text(b,value,vc);
         } else {
             unsigned shortcut = (unsigned)(row - 24 - FRONTEND_SHORTCUT_COUNT);
             const FrontendHostBinding *b = profile ? &profile->shortcuts[shortcut] : NULL;
@@ -854,7 +861,7 @@ typedef struct {
     unsigned kind;
     bool enabled;
     char label[128];
-    const char *shortcut;
+    char shortcut[80];
 } DesktopMenuItem;
 
 static int menu_items(FrontendDesktopUi *ui, DesktopMenuItem items[128]) {
@@ -864,7 +871,14 @@ static int menu_items(FrontendDesktopUi *ui, DesktopMenuItem items[128]) {
     FrontendCommandInfo command;
     for (size_t i=0; i<frontend_command_count() && count<100; ++i) {
         if (!frontend_command_at(i,&command) || strcmp(command.menu,menu)) continue;
-        items[count]=(DesktopMenuItem){.id=command.id,.enabled=command.enabled,.shortcut=command.shortcut};
+        items[count]=(DesktopMenuItem){.id=command.id,.enabled=command.enabled};
+        snprintf(items[count].shortcut,sizeof(items[count].shortcut),"%s",command.shortcut?command.shortcut:"");
+        const FrontendBindingProfile *profile=frontend_settings_active_profile_const(ui->settings);
+        if(profile)for(unsigned shortcut=0;shortcut<FRONTEND_SHORTCUT_COUNT;++shortcut){
+            if(frontend_execution_shortcut_command((FrontendShortcut)shortcut)==command.id){
+                key_binding_text(&profile->shortcuts[shortcut],items[count].shortcut,sizeof(items[count].shortcut));break;
+            }
+        }
         snprintf(items[count++].label,128,"%s%s",command.checked?"[x] ":"",command.label);
     }
     if (ui->open_menu==5 || ui->open_menu==4) {
@@ -920,7 +934,7 @@ static void render_menu(FrontendDesktopUi *ui) {
         if(index==ui->menu_row)fill(ui->renderer,(SDL_Rect){x+3,MENU_H+4+row*24,414,23},60,70,90,255);
         char label[51];visible_text(label,sizeof(label),item->label);
         frontend_draw_text(ui->renderer,x+8,MENU_H+8+row*24,1,label,item->enabled?230:110,item->enabled?230:110,item->enabled?235:110,255);
-        if(item->shortcut)frontend_draw_text(ui->renderer,x+410-frontend_text_width(item->shortcut,1),MENU_H+8+row*24,1,item->shortcut,155,180,215,255);
+        if(item->shortcut[0])frontend_draw_text(ui->renderer,x+410-frontend_text_width(item->shortcut,1),MENU_H+8+row*24,1,item->shortcut,155,180,215,255);
     }
 }
 
@@ -1133,7 +1147,13 @@ static void panel_key(FrontendDesktopUi *ui, SDL_Scancode sc) {
     FrontendPanelControl controls[64];
     FrontendPanelModel model = {.controls=controls,.capacity=64};
     if (!frontend_panel_snapshot(ui->panel_id, &model, NULL, 0) || !model.count) return;
+    if(ui->panel_row<0 || (size_t)ui->panel_row>=model.count)ui->panel_row=0;
     if (sc == SDL_SCANCODE_DOWN || sc == SDL_SCANCODE_TAB) ui->panel_row = (ui->panel_row+1) % (int)model.count;
+    else if(sc == SDL_SCANCODE_LEFT){
+        FrontendPanelControl *control=&controls[ui->panel_row];
+        if(control->enabled && control->item_count && (control->type==FRONTEND_PANEL_CHOICE || control->type==FRONTEND_PANEL_LIST))
+            (void)frontend_panel_action(ui->panel_id,control->id,NULL,(control->selected+(int)control->item_count-1)%(int)control->item_count,ui->status,sizeof(ui->status));
+    }
     else if (sc == SDL_SCANCODE_UP) ui->panel_row = (ui->panel_row+(int)model.count-1) % (int)model.count;
     else if (sc == SDL_SCANCODE_RETURN || sc == SDL_SCANCODE_SPACE || sc == SDL_SCANCODE_RIGHT) {
         if(ui->panel_row<ui->panel_scroll)ui->panel_scroll=ui->panel_row;

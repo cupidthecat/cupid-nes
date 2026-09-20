@@ -450,19 +450,7 @@ bool frontend_execution_handle_shortcut(FrontendExecutionRuntime *runtime,
                                                      event->repeat != 0);
 }
 
-bool frontend_execution_handle_shortcut_action(FrontendExecutionRuntime *runtime,
-                                               FrontendShortcut shortcut,
-                                               bool down, bool repeat) {
-    if (!runtime || shortcut >= FRONTEND_SHORTCUT_COUNT) return false;
-    if (shortcut == FRONTEND_SHORTCUT_FAST_FORWARD_HOLD) {
-        if (deterministic_session_owned()) return true;
-        if (!repeat) {
-            execution_control_set_fast_forward_held(&runtime->execution, down);
-            refresh_audio(runtime);
-        }
-        return true;
-    }
-    if (!down || (repeat && shortcut != FRONTEND_SHORTCUT_REWIND)) return true;
+unsigned frontend_execution_shortcut_command(FrontendShortcut shortcut) {
     static const unsigned commands[FRONTEND_SHORTCUT_COUNT] = {
         FRONTEND_COMMAND_PAUSE,
         FRONTEND_COMMAND_FRAME_ADVANCE,
@@ -479,8 +467,25 @@ bool frontend_execution_handle_shortcut_action(FrontendExecutionRuntime *runtime
         STATE_COMMAND_LOAD_FILE, REPLAY_COMMAND_REWIND_FRAME, REPLAY_COMMAND_RUNAHEAD_CYCLE,
         FRONTEND_COMMAND_MUTE
     };
+    return (unsigned)shortcut < FRONTEND_SHORTCUT_COUNT ? commands[shortcut] : 0;
+}
+
+bool frontend_execution_handle_shortcut_action(FrontendExecutionRuntime *runtime,
+                                               FrontendShortcut shortcut,
+                                               bool down, bool repeat) {
+    if (!runtime || (unsigned)shortcut >= FRONTEND_SHORTCUT_COUNT) return false;
+    if (shortcut == FRONTEND_SHORTCUT_FAST_FORWARD_HOLD) {
+        if (deterministic_session_owned()) return true;
+        if (!repeat) {
+            execution_control_set_fast_forward_held(&runtime->execution, down);
+            refresh_audio(runtime);
+        }
+        return true;
+    }
+    if (!down || (repeat && shortcut != FRONTEND_SHORTCUT_REWIND)) return true;
+
     char error[160] = {0};
-    if (!frontend_command_invoke(commands[shortcut], error, sizeof(error)) && error[0])
+    if (!frontend_command_invoke(frontend_execution_shortcut_command(shortcut), error, sizeof(error)) && error[0])
         fprintf(stderr, "%s\n", error);
     return true;
 }

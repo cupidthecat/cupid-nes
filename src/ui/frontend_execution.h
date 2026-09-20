@@ -80,6 +80,7 @@ void frontend_execution_end_machine_change(FrontendExecutionRuntime *runtime);
 void frontend_execution_end_machine_change_preserving_audio(FrontendExecutionRuntime *runtime);
 bool frontend_execution_handle_shortcut(FrontendExecutionRuntime *runtime,
                                         const SDL_KeyboardEvent *event);
+unsigned frontend_execution_shortcut_command(FrontendShortcut shortcut);
 bool frontend_execution_handle_shortcut_action(FrontendExecutionRuntime *runtime,
                                                FrontendShortcut shortcut,
                                                bool down, bool repeat);
