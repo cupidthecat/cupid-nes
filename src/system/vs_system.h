@@ -19,6 +19,7 @@
 #include "../apu/apu.h"
 #include "../ppu/ppu.h"
 #include "../rom/rom.h"
+#include "timing.h"
 
 typedef enum {
     VS_TYPE_DEFAULT = 0,
@@ -59,7 +60,7 @@ typedef struct {
 } VsRomConfig;
 
 bool vs_decode_header(const iNESHeader *header, int mapper, size_t prg_bytes,
-                      size_t chr_bytes, VsRomConfig *config,
+                      size_t chr_bytes, NesRegion region, VsRomConfig *config,
                       char *reason, size_t reason_size);
 void vs_commit_config(const VsRomConfig *config);
 void vs_clear_config(void);

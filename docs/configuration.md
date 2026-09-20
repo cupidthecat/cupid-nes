@@ -14,6 +14,7 @@ On Windows, replace `./cupid-nes` with `.\build\windows\cupid-nes.exe`. Supply o
 
 | Option | Accepted value | Default | What it changes |
 | --- | --- | --- | --- |
+| `--region MODE` | `auto`, `ntsc`, `pal`, `dendy` | `auto` | CPU/PPU clocks, frame timing, APU periods, audio rates, and pacing |
 | `--console MODEL` | `nes-001`, `nes-101`, `famicom`, `av-famicom` | `nes-001` | Console controller-port wiring |
 | `--cpu-revision REVISION` | `early-2a03`, `late-2a03` | `early-2a03` | CPU/APU revision behavior used by the DMC model |
 | `--cpu-test-mode` | No value | Off | Enables the 2A03 channel-output diagnostic reads at `$4018-$401A` |
@@ -36,7 +37,14 @@ On Windows, replace `./cupid-nes` with `.\build\windows\cupid-nes.exe`. Supply o
 | `--mmc3-revision REVISION` | `standard`, `a` | `standard` | Selects the MMC3 IRQ counter revision for compatible MMC3-family cartridges |
 | `--cart-dip VALUE` | Integer from 0 through 255 | `0` | Sets cartridge-board DIP inputs, including mapper 105 competition timing |
 
-The ROM header selects the timing region. `--console famicom` changes console wiring and does not force NTSC, PAL, or Dendy timing. There is no application `--region` option.
+`--region auto` follows image metadata and applicable database corrections. Explicit `ntsc`, `pal`, and `dendy` choices take precedence over the detected timing without changing the stored header or database record. `--console famicom` selects controller wiring independently of the timing region and PPU revision.
+
+Startup output reports the effective timing, for example `Timing region: PAL (selection: pal)`. The R-key reset keeps that timing. Relaunch the application with a different `--region` value to change it. VS, FDS, and StudyBox require effective NTSC timing; PAL and Dendy selections are rejected before replacing an active machine. Failed image loads retain the previous cartridge and active timing.
+
+```sh
+./cupid-nes --region pal "game.nes"
+./cupid-nes --region dendy --console famicom "game.nes"
+```
 
 The optional PPU controls are independent. Selecting `--ppu-revision 2c02-pre-e` does not enable disabled register readback or the sprite-evaluation wrap behavior. Their timing and limits are in [accuracy](accuracy.md).
 

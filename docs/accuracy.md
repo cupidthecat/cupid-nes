@@ -24,6 +24,10 @@ The default retains open bus at these addresses. The profile survives reset and 
 
 The final scanline is pre-render. The NTSC 2C02 skips a clock on rendered odd frames; VS RGB PPUs keep all 89,342 clocks on both frame parities. PAL selects its own APU periods and frame-counter events; Dendy keeps the NTSC APU periods at its clock rate. The application paces output from elapsed emulated CPU clocks and carries fractional host delays between frames.
 
+The application accepts `--region auto|ntsc|pal|dendy`. Auto retains image and database timing rules; explicit choices use the same production clock tables. The loader validates the effective region before activating a replacement, including startup-divider limits and the NTSC requirement for VS, FDS, and StudyBox. Power-on and soft reset retain the loaded timing. In core integrations, changing `nes_set_region_mode()` affects the next successful image load; the caller then powers on the new machine.
+
+NSF and NSFe INIT receive `X=1` in PAL mode and `X=0` in NTSC and Dendy modes. PLAY uses the file's NTSC speed in NTSC mode and its PAL speed in PAL or Dendy mode, converted through the selected CPU clock. Track changes and soft reset preserve the effective region. Production music tests execute INIT and successive PLAY calls in all three regions for both formats.
+
 `cpu_step()` includes device clocks and any DMA cycles it encounters. Its return value is elapsed CPU time, not an instruction-table estimate. The application and diagnostic runner must not clock the PPU again with that value.
 
 OAM DMA begins when a CPU read can be halted. PAL DMA starts are restricted to opcode-fetch cycles, including the initial interrupt-sequence fetch. DMC requests go through the same bus scheduler. The scheduler handles alignment, DMC priority, OAM data puts, and canceled requests. Initial DMC divider phase keeps its output clocks aligned with CPU get cycles.

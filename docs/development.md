@@ -36,6 +36,8 @@ Normal Windows output is under `build/windows`; sanitized output is under `build
 
 Tests use the device code listed in [Makefile](../Makefile) and [test-windows.ps1](../scripts/test-windows.ps1). Add any new production or test source to both lists. The older `src/tests/cpu_test.c` harness is excluded because its writable-ROM assumptions do not match the cartridge bus.
 
+`python3 scripts/check-region-cli.py ./cupid-nes` checks the production launch parser and loader with a synthetic PAL cartridge. On Windows, use `python scripts/check-region-cli.py build/windows/cupid-nes.exe`. Its eleven cases cover Auto, explicit regions, independent console wiring, repeated selectors and invalid values. The fixture adds `--barcode` to an NROM image. The ROM loads, then the option is rejected because it requires a Datach cartridge, before SDL starts. CI runs the check with both compiler configurations and treats sanitizer diagnostics as failures.
+
 ## Prepare the pinned test collections
 
 The external ROM collections are separate from the internal hardware suite. Clone them once into an ignored build directory:

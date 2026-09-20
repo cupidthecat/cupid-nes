@@ -336,6 +336,7 @@ static int load_unif_data(const uint8_t *data, size_t size, const char *filename
         free(new_prg); free(new_chr);
         return -1;
     }
+    region = nes_resolve_region(region);
     if (!cpu_startup_alignment_valid(region)) {
         fprintf(stderr, "Startup alignment is outside this UNIF image's regional dividers\n");
         free(new_prg); free(new_chr);
@@ -371,7 +372,7 @@ static int load_unif_data(const uint8_t *data, size_t size, const char *filename
 
     VsRomConfig vs_config;
     char vs_reason[96];
-    if (!vs_decode_header(&header, mapper, prg_bytes, chr_bytes,
+    if (!vs_decode_header(&header, mapper, prg_bytes, chr_bytes, region,
                           &vs_config, vs_reason, sizeof(vs_reason))) {
         fprintf(stderr, "Unsupported VS System configuration: %s\n", vs_reason);
         free(new_prg); free(new_chr);
@@ -442,7 +443,8 @@ static int load_nsf_data(const uint8_t *data, size_t size, const char *filename)
         return -1;
     }
 
-    NesRegion region = image.metadata.region_flags == 1 ? NES_REGION_PAL : NES_REGION_NTSC;
+    NesRegion region = nes_resolve_region(image.metadata.region_flags == 1
+                                          ? NES_REGION_PAL : NES_REGION_NTSC);
     if (!cpu_startup_alignment_valid(region)) {
         fprintf(stderr, "Startup alignment is outside this music image's regional dividers\n");
         nsf_image_free(&image);
@@ -676,7 +678,8 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
         fprintf(stderr, "Unsupported NES console type\n");
         return -1;
     }
-    if (!cpu_startup_alignment_valid(rom_region(&header))) {
+    NesRegion region = nes_resolve_region(rom_region(&header));
+    if (!cpu_startup_alignment_valid(region)) {
         fprintf(stderr, "Startup alignment is outside this image's regional dividers\n");
         return -1;
     }
@@ -727,7 +730,7 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
     VsRomConfig vs_config;
     char vs_reason[96];
     int mapper_number = rom_mapper_number(&header);
-    if (!vs_decode_header(&header, mapper_number, prg_payload_size, rom_chr_size,
+    if (!vs_decode_header(&header, mapper_number, prg_payload_size, rom_chr_size, region,
                           &vs_config, vs_reason, sizeof(vs_reason))) {
         fprintf(stderr, "Unsupported VS System configuration: %s\n", vs_reason);
         return -1;
@@ -813,7 +816,7 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
     if (trainer) cart_apply_trainer(trainer);
     cart_battery_configure(filename, filename && (header.flags6 & 0x02));
     mirroring_mode = (int)cart_get_mirroring();
-    nes_set_region(rom_region(&header));
+    nes_set_region(region);
     fds_loaded = 0;
     studybox_loaded = 0;
     nsf_loaded = 0;
@@ -836,6 +839,11 @@ int load_rom_memory(const uint8_t *data, size_t size) {
 int load_fds_memory(const uint8_t *disk, size_t disk_size,
                     const uint8_t *bios, size_t bios_size,
                     const char *disk_path, bool write_protected) {
+    if (nes_resolve_region(NES_REGION_NTSC) != NES_REGION_NTSC) {
+        fprintf(stderr, "FDS requires NTSC timing; choose --region auto or ntsc\n");
+        return -1;
+    }
+
     if (!cpu_startup_alignment_valid(NES_REGION_NTSC)) {
         fprintf(stderr, "FDS startup alignment must fit the NTSC dividers\n");
         return -1;
@@ -1040,6 +1048,11 @@ const NsfMetadata *rom_nsf_metadata(void) { return nsf_loaded ? &loaded_nsf_meta
 
 int load_studybox_memory(const uint8_t *media, size_t media_size,
                          const uint8_t *bios, size_t bios_size) {
+    if (nes_resolve_region(NES_REGION_NTSC) != NES_REGION_NTSC) {
+        fprintf(stderr, "StudyBox requires NTSC timing; choose --region auto or ntsc\n");
+        return -1;
+    }
+
     if (!cpu_startup_alignment_valid(NES_REGION_NTSC)) {
         fprintf(stderr, "StudyBox startup alignment must fit the NTSC dividers\n");
         return -1;

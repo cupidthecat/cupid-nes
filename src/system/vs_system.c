@@ -94,7 +94,7 @@ static bool mapper_supported(int mapper) {
 }
 
 bool vs_decode_header(const iNESHeader *header, int mapper, size_t prg_bytes,
-                      size_t chr_bytes, VsRomConfig *config,
+                      size_t chr_bytes, NesRegion region, VsRomConfig *config,
                       char *reason, size_t reason_size) {
     if (!header || !config) return false;
     (void)chr_bytes;
@@ -173,9 +173,7 @@ bool vs_decode_header(const iNESHeader *header, int mapper, size_t prg_bytes,
         set_reason(reason, reason_size, "unsupported mapper for VS System");
         return false;
     }
-    bool non_ntsc = nes2 ? (header->zero[1] & 3u) == 1u || (header->zero[1] & 3u) == 3u
-                         : (header->flags9 & 1u) != 0;
-    if (non_ntsc) {
+    if (region != NES_REGION_NTSC) {
         set_reason(reason, reason_size, "VS System requires NTSC timing");
         return false;
     }

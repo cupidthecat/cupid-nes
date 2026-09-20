@@ -96,7 +96,7 @@ Music files use the same image argument and do not need a BIOS:
 ./cupid-nes "music/album.nsfe"
 ```
 
-Playback begins at the file's initial track and regional rate. Page Up selects the next track and Page Down selects the previous one, wrapping at the ends. A track change resets the music program and its sound chips. The playback window has no game rendering; track numbers and available names appear in the terminal.
+Playback begins at the file's initial track using the selected timing region. The default `--region auto` uses the file's regional rate. Page Up selects the next track and Page Down selects the previous one, wrapping at the ends. A track change resets the music program and its audio channels. The playback window has no game rendering; track numbers and available names appear in the terminal.
 
 StudyBox tape media uses a separate firmware option: `--studybox-bios "StudyBox.bin" "lesson.stbx"`. The BIOS must be exactly 256 KiB. See [StudyBox configuration](configuration.md#studybox-media) for the supported tape container and audio format.
 

@@ -492,7 +492,12 @@ int main(int argc, char *argv[]) {
     bool disable_game_db_overrides = false;
     bool ntsc_composite_requested = false;
     for (int i = 1; i < argc; ++i) {
-        if (strcmp(argv[i], "--console") == 0) {
+        if (strcmp(argv[i], "--region") == 0) {
+            if (++i == argc || !nes_set_region_mode_name(argv[i])) {
+                fprintf(stderr, "Region must be auto, ntsc, pal, or dendy\n");
+                return 1;
+            }
+        } else if (strcmp(argv[i], "--console") == 0) {
             if (++i == argc || !nes_set_console_model_name(argv[i])) {
                 fprintf(stderr, "Console must be nes-001, nes-101, famicom, or av-famicom\n");
                 return 1;
@@ -744,7 +749,7 @@ int main(int argc, char *argv[]) {
         }
     }
     if (!rom_path) {
-        printf("Usage: %s [--console MODEL] [--cpu-revision REVISION] "
+        printf("Usage: %s [--region auto|ntsc|pal|dendy] [--console MODEL] [--cpu-revision REVISION] "
                "[--cpu-test-mode] [--apu-disable-noise-mode] [--apu-swap-duty-cycles] "
                "[--epsm-adpcm FILE] "
                "[--fcns-kanji FILE] "
@@ -831,6 +836,8 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     printf("Metadata source: %s\n", rom_metadata_source_name());
+    printf("Timing region: %s (selection: %s)\n",
+           nes_region_name(nes_timing()->region), nes_region_mode_name());
     if (!rom_is_fds() && !rom_is_studybox()) {
         printf("File CRC32: %08X\n", (unsigned)rom_file_crc32());
         printf("PRG CRC32: %08X\n", (unsigned)rom_prg_crc32());

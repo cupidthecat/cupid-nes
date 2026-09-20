@@ -8,17 +8,17 @@ Cupid models the CPU, picture processing unit (PPU), audio processing unit (APU)
 
 | System profile | Timing selection | Notes |
 | --- | --- | --- |
-| NES and Famicom cartridges | iNES or NES 2.0 header | NTSC, PAL, and Dendy timing are implemented |
+| NES and Famicom cartridges | Image/database metadata or `--region` | NTSC, PAL, and Dendy timing are implemented |
 | Famicom Disk System | NTSC | Requires a supplied BIOS and a supported disk image |
 | VS System | NTSC | Requires supported console, PPU, input, and cartridge metadata |
-| PlayChoice cartridge payload | NTSC | iNES and NES 2.0 PlayChoice headers load the game cartridge; trailing cabinet data is ignored |
-| NES with EPSM | NES 2.0 header | Extended subtype 4 adds an 8 MHz YMF288 with stereo output |
-| Famicom Network System | NES 2.0 header | Extended subtype `0x0C`; optional 256 KiB character ROM supplied by the user |
+| PlayChoice cartridge payload | Image/database metadata or `--region` | iNES and NES 2.0 PlayChoice headers load the game cartridge; trailing cabinet data is ignored |
+| NES with EPSM | NES 2.0 header or `--region` | Extended subtype 4 adds an 8 MHz YMF288 with stereo output |
+| Famicom Network System | NES 2.0 header or `--region` | Extended subtype `0x0C`; optional 256 KiB character ROM supplied by the user |
 | StudyBox | STBX media | NTSC hardware with a user-supplied 256 KiB BIOS and tape PAGE/AUDI data |
 
 NTSC uses 262 scanlines with vblank beginning at line 241. PAL uses 312 scanlines with vblank beginning at line 241, and Dendy uses 312 with vblank beginning at line 291. PAL advances the PPU at 3.2 clocks per CPU clock; NTSC and Dendy use 3. The NTSC 2C02 skips one clock on rendered odd frames. VS RGB PPUs retain all 89,342 clocks on both frame parities, including both sides of a dual cabinet.
 
-The [timing table](../src/system/timing.c) supplies device rates and frame pacing. The [loader](../src/rom/rom.c) selects timing from the header. NES 2.0 dual-region images default to NTSC. Console wiring selected with `--console` is independent of this timing choice. The application has no region override; the legacy PAL diagnostic runner has an explicit test-only mode.
+The [timing table](../src/system/timing.c) supplies device rates and frame pacing. With the default `--region auto`, the [loader](../src/rom/rom.c) selects timing from image metadata and applicable database corrections. NES 2.0 dual-region images default to NTSC. An explicit `--region ntsc`, `pal`, or `dendy` overrides that choice before startup-alignment and hardware checks. VS, FDS, and StudyBox require effective NTSC timing. Console wiring selected with `--console` and the PPU revision remain independent. Successful loads commit the selected timing; a rejected replacement leaves the active machine unchanged.
 
 ## CPU, graphics, and audio
 
@@ -335,6 +335,8 @@ NES 2.0 RAM declarations are normally explicit, including zero RAM. Taito X1-005
 Native families whose RAM mapping follows the battery-selected work/save path keep both declared PRG chips independent; boards with explicit selectors, such as MMC1 and MMC5, can expose both chips according to their register wiring. In the 8 KiB plus 8 KiB MMC5 layout, bank-select bit 2 chooses the work socket when set and the save socket when clear. A single 16 KiB chip mirrors through the eight low bank selectors. Declared CHR RAM and CHR NVRAM may remain allocated beside CHR ROM without replacing the mapped ROM. Separate CHR ROM/RAM selection still requires a board that implements it; accepted storage does not imply that every allocated chip is CPU- or PPU-addressable.
 
 Without CHR ROM, supported native mapper paths accept a mixed volatile and nonvolatile CHR allocation. Volatile bytes precede the NVRAM tail, and the existing bank registers address that combined allocation within each board's limits. A fixed window can leave part of the allocation unreachable. This layout does not add independent physical chip-select wiring. Only the declared NVRAM tail is loaded from or written to `.chr.sav`; the volatile prefix follows power-on initialization. CHR ROM with separately declared RAM keeps its existing storage rules and restrictions, including UNROM 512's rejection of ROM plus both CHR sidecars in eight-kilobyte nametable mode.
+
+Native CHR RAM mappings require bank boundaries aligned to 256 bytes. They repeat complete banks within the requested window and leave an incomplete final copy unmapped. For example, NROM with 2 KiB of volatile CHR followed by 4 KiB of NVRAM maps `$0000-$17FF`; `$1800-$1FFF` reads open bus and ignores writes. A 384-byte allocation cannot establish a native bank mapping. VRC6 nametable updates retain preceding mappings in chunks outside a short replacement; Sunsoft 4's CHR-backed nametables expose only complete 256-byte chunks from the selected source offset.
 
 Mappers 0, 2, 3, 7, 11, 13, 66, 79, 94, 113, 144, 146, and 180 accept independent work and save chips without treating their combined size as one power-of-two allocation. The selected chip supplies the fixed `$6000-$7FFF` window. A chip larger than 8 KiB keeps its remaining bytes allocated but unmapped; its complete save allocation is preserved on disk. Smaller chips repeat only complete pages within the window, with uncovered addresses on open bus. For example, a 3 KiB database-declared chip repeats twice through `$77FF`, while `$7800-$7FFF` remains unmapped. The mapping granularity is 256 bytes, so a 128-byte declaration stays unmapped. Banked boards retain their own supported-layout checks and chip-selection rules.
 

@@ -90,6 +90,8 @@ The loader validates sizes and supported combinations before replacing the activ
 
 The frontend configures expansion-device storage separately through `joypad_persistent_configure()` after image loading. The cartridge loader resolves supported ordinary NES 2.0 default-input metadata before activation and applies the resulting controller configuration only after the new cartridge succeeds. Explicit adapter, port, and expansion choices override their corresponding automatic fields. VS input metadata has its own decoder. EPSM console metadata prepares a new device, including a copy of the configured percussion ROM, before cartridge activation.
 
+`nes_set_region_mode()` stores the requested Auto, NTSC, PAL, or Dendy choice without changing a running machine. Each loader resolves the effective region before checking startup alignment and timing restrictions, then commits it with the replacement image. The override leaves the header or database timing declaration unchanged. The caller powers on the loaded CPU, PPU, and APU after a successful load; reset keeps the committed timing. A failed replacement preserves the previous timing and machine.
+
 `unload_rom()` returns a boolean. Dirty FDS media that cannot be saved leaves the device loaded and returns false. Callers must handle that result before destroying the only in-memory copy. [Saves and media](saves.md) distinguishes this from ordinary cartridge persistence.
 
 ## Power-on and reset

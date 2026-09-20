@@ -553,7 +553,7 @@ static void nsf_after_reset(void) {
         nsf_player.lower_program[1] = true;
     }
     cpu.a = nsf_player.song;
-    cpu.x = nes_timing()->region == NES_REGION_NTSC ? 0 : 1;
+    cpu.x = nes_timing()->region == NES_REGION_PAL ? 1 : 0;
     cpu.y = 0;
     cpu.sp = 0xFD;
     nsf_player.track_start_cycle = cpu_total_cycles;

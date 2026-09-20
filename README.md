@@ -49,13 +49,20 @@ record the tested memory and banking fixes.
 
 For NSF and NSFe files that use MMC5, multiplier operands survive soft reset
 and track changes. Loading a music image initializes both operands to zero.
+Music INIT receives the PAL flag only in PAL mode; Dendy keeps its own clock
+while using `X=0` for initialization.
+
 VRC7 cartridges reset their FM synthesizer on console reset and retain their
 bank and IRQ registers.
 CPU reset preserves NMI edges raised during its bus cycles, including vblank
 edges when PPU reset suppression keeps the raster running.
 
 Device selection and timing follow the ROM header and
-[command-line options](docs/configuration.md). Supported mapper families can still
+[command-line options](docs/configuration.md). `--region auto` uses image metadata
+and applicable database corrections;
+`--region ntsc`, `--region pal`, and `--region dendy` select an explicit timing
+profile for supported hardware. Console wiring remains a separate choice.
+Supported mapper families can still
 reject unsupported submappers or memory layouts. The
 [hardware guide](docs/hardware.md#reading-accuracy-results) records remaining
 limits, including optional Jaleco speech, a distinct RP2C03G palette, and MMC5

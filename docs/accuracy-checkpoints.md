@@ -179,6 +179,14 @@ Revision `ecbd355d3d1d4e0dd9217df4877260fe45950cbe` applies the RAM power-on pro
 
 The new regression failed on the preceding implementation and passed with the fix. The production hardware suite and AccuracyCoin passed in normal and AddressSanitizer/UndefinedBehaviorSanitizer builds. Both AccuracyCoin runs reported 144/144 passed, zero skipped, zero unfinished, and 4,182 frames, matching the cartridge's tally. The test image revision and SHA-256 above were unchanged.
 
+## Partial CHR window checkpoint
+
+Revision `dcdac463aac1d426c7c419b2b59e2b5214e11b03` corrects the remaining partial-window cases in #139. Native CHR mapping repeats complete banks and leaves an incomplete final window on open bus. Writes to uncovered addresses no longer modify an aliased byte or dirty a CHR save. VRC6 retains the preceding nametable mapping in chunks that a short replacement cannot cover; Sunsoft 4 exposes only complete 256-byte chunks from its selected CHR offset.
+
+Before the fix, the added regressions produced 19 failures across pattern reads, save persistence, VRC6 nametables, and Sunsoft 4 nametables. They check every pattern-table address for the selected layouts, verify that unmapped writes leave the backing allocation unchanged, compare complete save files, and exercise nametable writes, mirrors, bank changes and CPU reset. Aligned 768-byte RAM and unaligned 384-byte RAM have separate expected mappings; the latter cannot establish a native bank mapping.
+
+The committed revision passed strict Windows builds and the complete production hardware suite with normal and AddressSanitizer/UndefinedBehaviorSanitizer settings. The native mixed-CHR suite passed all nine groups. Both builds passed AccuracyCoin 144/144 with zero skipped or unfinished tests in 4,182 frames, matching the cartridge's tally. This revision includes the disk-adapter RAM initialization above. The ROM pins, SHA-256 and result requirements were unchanged.
+
 ## Reproducing a checkpoint
 
 Check out the listed commit in a separate worktree, prepare SDL2 and the pinned ROM as described in [development and testing](development.md), then run:

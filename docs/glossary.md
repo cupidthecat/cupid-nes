@@ -17,7 +17,7 @@ This guide explains the terms used in Cupid's source, startup logs, and accuracy
 | Frontend | The SDL application in [src/main.c](../src/main.c), which handles input, display, audio-device setup, and shutdown. |
 | Core | The emulation code shared by the application and the hardware test executable. |
 
-Timing region and controller wiring are separate properties. The ROM header selects the [timing profile](../src/system/timing.c); `--console famicom` selects [controller-port wiring](../src/system/hardware.c).
+Timing region and controller wiring are separate properties. `--region auto` selects the [timing profile](../src/system/timing.c) from image metadata and database corrections; `--region ntsc`, `pal`, or `dendy` selects an explicit profile. `--console famicom` selects [controller-port wiring](../src/system/hardware.c).
 
 ## Memory
 
