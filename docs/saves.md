@@ -2,7 +2,7 @@
 
 [Documentation index](README.md)
 
-Cupid persists cartridge nonvolatile memory, writable FDS/QD images, Family BASIC tape recordings, and supported expansion storage. These files preserve the emulated storage device involved; the application does not expose save-state or rewind commands.
+Cupid persists cartridge nonvolatile memory, writable FDS/QD images, Family BASIC tape recordings, and supported expansion storage. Save states capture the entire machine separately from those device files. The desktop exposes state slots, state files, rewind, run-ahead, and input movies; see [states and replay](replay.md) for their different ownership rules.
 
 ## Cartridge save files
 
@@ -65,11 +65,11 @@ Expansion saves are written to a sibling temporary file and replace the destinat
 
 The disk loader supports two save modes. In-place mode replaces the supplied FDS or QD image. Overlay mode writes an IPS patch beside the image, or to an explicitly selected overlay path, and leaves the original bytes unchanged. An automatically derived overlay name contains the source image's CRC. Archive members and patched disk images use their separate image identity for that destination.
 
-`load_fds_with_options()` and `load_fds_memory_options()` select the mode through `FdsLoadOptions`. The older `load_fds()` and `load_fds_memory()` calls keep in-place saving. `nes_image_load()` chooses overlays for archived or patched disks. The loader applies an existing overlay before activating the disk and rejects a corrupt patch, changed image length, changed FDS header, or a destination that aliases the original file.
+Select the save mode and optional overlay path in the desktop's media settings. The desktop defaults to overlays. Archived or patched disks always use overlays. The loader applies an existing overlay before activating the disk and rejects a corrupt patch, changed image length, changed FDS header, or a destination that aliases the original file.
 
 The adapter's 32 KiB work RAM and 8 KiB CHR RAM are volatile and are not part of the disk file. Loading a new image initializes them with the selected [power-on profile](configuration.md#console-and-cpuppu-profiles). Soft reset and side changes retain their contents.
 
-For an image you want to preserve unchanged, launch a copy or start it write-protected:
+For an image you want to prevent the game from writing at all, start it write-protected:
 
 ```sh
 ./cupid-nes --fds-bios "disksys.rom" --fds-write-protect "game.fds"
@@ -95,7 +95,7 @@ F10 starts a fresh recording after BASIC is ready to save. Before starting anoth
 
 The raw tape format stores one digital sample per 88 emulated CPU cycles. Samples are packed least-significant bit first. Only complete bytes are written, so an incomplete final byte is omitted. The file has no WAV header and is not a BASIC source-text file.
 
-Recording saves use a sibling `.cupid-tape.tmp` file and then replace the requested destination. If an F11 save fails, the completed capture remains in memory and another F11 can retry after the path problem is fixed. A tape save failure during application shutdown is reported and the process exits with failure, so use F11 to confirm an important recording before closing the window.
+Recording saves use a unique sibling temporary file and then replace the requested destination. If an F11 save fails, the completed capture remains in memory and another F11 can retry after the path problem is fixed. Normal window-close handling also retains the session when a tape recording cannot be saved. A forced process termination cannot preserve an in-memory recording.
 
 If the recording buffer cannot grow, recording stops and shutdown reports `Tape recording stopped because the capture buffer could not grow`.
 

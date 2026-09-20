@@ -223,3 +223,70 @@ Check out the listed commit in a separate worktree, prepare SDL2 and the pinned 
 ```
 
 The Linux equivalents, canonical CPU trace, 91-ROM collection, and sanitizer commands are in [the accuracy notes](accuracy.md). AccuracyCoin is a regression baseline for CPU/PPU/APU interactions; passing it does not substitute for the focused mapper, disk, audio, and input-device tests.
+
+## Feature integration checkpoints
+
+The hardware checkpoints above cover #125 through #130, #139, and #140. The
+following feature work is integrated into the production desktop application.
+The listed regression files are under `src/tests` unless a script path is given.
+
+| Issue | Integrated behavior | Focused coverage |
+| --- | --- | --- |
+| #131 | Transactional machine states, slots, files, and board/peripheral state | state_accuracy.c, board_state_accuracy.c, state_ui_accuracy.c |
+| #132 | Pause, stepping, reset, power, reload, and speed controls | frontend_accuracy.c |
+| #133 | Saved configuration, profiles, keyboard/gamepad bindings, and launch precedence | frontend_accuracy.c, desktop_accuracy.c |
+| #134 | Debugger, inspection panels, breakpoints, trace, and bounded Lua callbacks | debugger_accuracy.c |
+| #135 | Rewind history and run-ahead with isolated host output | rewind_accuracy.c |
+| #136 | Open, recent images, archive selection, and transactional switching | frontend_accuracy.c |
+| #137 | ZIP/7z loading and IPS/UPS/BPS patches | media_accuracy.c, patch_accuracy.c |
+| #138 | Cheat parsing, persistence, memory matching, and frontend controls | cheat_accuracy.c |
+| #141 | Database discovery, explicit paths, corrections, and desktop selection | game_database_discovery_accuracy.c, desktop_accuracy.c |
+| #142 | Disk save modes, overlays, write protection, and automatic loading | fds_options_accuracy.c, fds_automation_accuracy.c |
+| #143 | Versioned input movies and deterministic session ownership | movie_accuracy.c, movie_frontend_accuracy.c |
+| #144 | TCP sessions, compatibility handshake, slot ownership, frame hashes, and recovery | netplay_accuracy.c, scripts/check-netplay.py |
+| #145 | Music transport, repeat, shuffle, timing, fade, and silence progression | nsf_player_accuracy.c |
+| #146 | PNG screenshots, WAV audio, and AVI video recording | capture_container_accuracy.c, capture_session_accuracy.c |
+| #147 | Regional overscan, layers, channel mixing, and stereo preservation | video_presentation_accuracy.c, audio_mix_accuracy.c |
+| #148 | Format-109 replacement assets, audio, discovery, install, capture, and export | hd_pack_accuracy.cpp, hd_renderer_accuracy.cpp, hd_runtime_accuracy.cpp |
+| #149 | Desktop menus, settings, storage, device panels, navigation, and scaled layouts | desktop_accuracy.c; manual acceptance remains open |
+
+These clean source revisions passed AccuracyCoin **144/144**, with zero skipped
+or unfinished tests in 4,182 frames. Each used ROM revision
+`9bc42d1e3acbeeaea215b1011d58f4ce72a8a49e` and SHA-256
+`7e25ac08d2e7ed14c9b1f16bd853148fef09a824452164f8e0d69fd2bd96176c`.
+
+| Revision | Checkpoint | Windows configuration |
+| --- | --- | --- |
+| `0f22c06bacc00e80a1e436c829686cf9a98ec395` | Database and application baseline | Strict normal |
+| `8af8e5ddcae209ba242fff0a278239c3dc78fc3d` | Disk automation and execution policy | Strict normal and ASan/UBSan |
+| `f8186f2f92a5863166dc764dd46f0d83b5adc6f3` | Music player | Strict normal and ASan/UBSan |
+| `db4758089567f437353b1c8549014c73c5ff7473` | Complete machine states | Strict normal and ASan/UBSan |
+| `10cdfb64918b855e60d9c91c9b7532ddfeefa56a` | Capture and state integration | Strict normal |
+| `4455b2b2e54a644abe6c1b294e4c5dd412942630` | Debugger and trace integration | Strict normal |
+| `1eb1d1fcea02bb7bb68e34a9e604d27623423209` | Movies and combined state/session guards | Strict normal and ASan/UBSan |
+| `ee44f496c15f71fa2120706745d30a3490954ef7` | Desktop runtime and settings | Strict normal |
+| `d1929f3b8b67766fb42168416970608d15a618f5` | HD rendering and audio integration | Strict normal |
+| `b830ed9` | Network sessions | Strict normal |
+| `7f89580` | Desktop navigation and saved pack selection | Strict normal |
+| `cb722fe` | Live settings, storage controls, nested audio locks, and session guards | Strict normal and ASan/UBSan |
+
+The disk, music, state, capture, debugger, and combined movie checkpoints also
+passed the complete production hardware suite and region/database launch checks.
+The combined movie checkpoint passed the canonical 8,991-state CPU trace and all
+91 pinned diagnostic ROMs in both Windows configurations. The network and later
+Windows checkpoints include seven separate-process connection tests.
+
+Revision `f231786` fixes fractional-scale font rendering. Its strict Linux build
+passed AccuracyCoin 144/144 with the same zero-skip, zero-unfinished result.
+The desktop renderer produces the [documented screenshots](desktop.md) from
+synthetic fixtures. Manual native-window acceptance for #149 is still pending;
+these automated checks do not establish physical-controller or native-dialog
+behavior on both operating systems.
+
+Use the commands in the reproduction section for each listed revision. The
+final pull-request head must pass its own CI runs; earlier checkpoint results
+are not substituted for those runs.
+
+Revision `368e6a9` passed the strict Linux hardware suite and AccuracyCoin
+144/144 with zero skipped or unfinished tests after binding-label and panel
+navigation updates.

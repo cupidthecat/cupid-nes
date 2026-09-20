@@ -2,7 +2,9 @@
 
 [Documentation index](README.md)
 
-Cupid reads application settings from command-line arguments at startup. There is no persistent application configuration file or remapping UI.
+Cupid loads saved application settings and input profiles, then applies explicit command-line choices for the current launch. Use the desktop Settings window for the same supported options and **Controllers and shortcuts** for bindings.
+
+The application data directory contains `settings.ini`, `recent.ini`, and the optional `NesDB.txt`. By default, SDL chooses the current user's preference directory for `cupidthecat/cupid-nes`. `--data-dir DIR` selects another directory; make sure that directory exists and is writable. Settings and recent-file updates replace their destination only after a complete write succeeds. A missing settings file uses defaults. Malformed input is reported instead of partly applying a configuration.
 
 ```sh
 ./cupid-nes [options] "game.nes"
@@ -229,3 +231,11 @@ The default DIP value is zero. In a dual system, the low byte belongs to the mai
 ## Application options and test-runner options
 
 The application parser and `accuracy-tests` parser are separate. Options such as `--trace`, `--rom`, and `--accuracycoin` belong to the test runner and are not accepted by `cupid-nes`. See [development](development.md) for the diagnostic runner and [hardware](hardware.md) for supported cartridge hardware.
+
+## Desktop storage controls
+
+Tools > Storage locations shows effective paths and provides Browse and Open Folder
+actions. The database path and correction switch are saved as `game_database_path`
+and `disable_database_corrections`; explicit `--game-db` and correction options
+retain precedence. The selected movie path is saved as `movie_file_path`. See the
+[desktop guide](desktop.md) for settings categories and when changes take effect.

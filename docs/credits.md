@@ -73,3 +73,16 @@ When a fix depends on a particular register edge, board revision, or hardware
 measurement, cite the relevant source beside the regression or in the pull
 request. The [accuracy notes](accuracy.md) record test-specific assumptions and
 known gaps in Cupid's model.
+
+## Archive, scripting, and image codecs
+
+The ZIP and 7z readers use miniz and the C decoder from the 7-Zip SDK. Their
+[component notes](../src/third_party/archive-codecs.md) describe the included
+sources, local portability fixes, and retained license files.
+
+The debugger embeds Lua 5.4, with its [MIT license](../src/third_party/lua/LICENSE.txt).
+HD graphics use libspng for PNG decoding under its
+[BSD 2-Clause license](../src/third_party/spng/LICENSE). PNG compression uses the
+bundled miniz interface. Ogg Vorbis decoding uses
+[stb_vorbis](../src/third_party/stb/stb_vorbis.cpp), whose license choices and
+copyright notices remain in the source file.

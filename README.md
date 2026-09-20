@@ -3,8 +3,11 @@
 Cupid runs NES and Famicom cartridges, UNIF images, NSF and NSFe music, Famicom
 Disk System disks, StudyBox media, and supported VS System arcade images. Disk
 System and StudyBox images require their respective BIOS files. It uses SDL2 for
-video, audio, and controllers. The CPU and PPU core is C11; cartridge board modules
-and the EPSM YMF288 sound engine use C++17.
+video, audio, and controllers. Its desktop interface opens and switches games,
+remembers settings and input profiles, and provides access to save states,
+rewind, debugging, cheats, music playback, netplay, HD packs, and screenshots or recordings.
+The CPU and PPU core is C11; cartridge board modules and the EPSM YMF288 sound
+engine use C++17.
 
 The core implements NTSC, PAL, and Dendy timing. The
 [tested implementation](docs/accuracy-checkpoints.md#regional-timing-checkpoint) passes
@@ -110,9 +113,18 @@ the executables, and runs the hardware suite. See
 [getting started](docs/getting-started.md) for prerequisites, output paths, and
 sanitizer builds.
 
-Open games from the command line. File drops load palettes. Running the
-application without arguments prints its usage; it does not have a `--help`
-option. It accepts one image per launch and has no configuration-file loader.
+Run the application without an image to open the desktop, then use **Open** or
+**File > Open Game**. The recent list remembers successfully opened images,
+including the selected member of a ZIP or 7z archive and any applied patch.
+Open another image in the same window to switch games. A failed load or save
+keeps the current session available.
+
+An image argument still opens a game directly. Explicit command-line choices
+take precedence over saved settings for that launch. The application data
+folder contains `settings.ini`, `recent.ini`, and the optional `NesDB.txt`;
+`--data-dir` selects another folder. See [configuration](docs/configuration.md)
+for the options and [getting started](docs/getting-started.md) for file dialogs,
+archives, and platform details.
 
 For example, an Oeka Kids cartridge needs its tablet selected explicitly:
 
@@ -132,17 +144,26 @@ other peripheral combinations.
 | Z / X | A / B |
 | Right Shift / Enter | Select / Start |
 | Arrow keys | D-pad |
-| R | Soft reset |
-| F7 / F6 | Show palette editor / restore default palette |
+| Ctrl+O | Open a game |
+| Ctrl+P / Ctrl+. | Pause or resume / advance one frame while paused |
+| Ctrl+R / Ctrl+Shift+R | Soft reset / power cycle |
+| Ctrl+Alt+R | Reload the current image |
+| Ctrl+F / Ctrl+Shift+F | Hold fast-forward / toggle fast-forward |
+| Ctrl+1 / Ctrl+2 / Ctrl+3 | Half speed / normal speed / double speed |
+| F5 / F7 | Quick save / quick load the selected state slot |
+| Ctrl+F5 / Ctrl+F7 | Save / load a state file |
+| F6 | Restore the default palette |
 | Page Up / Page Down | Next / previous NSF or NSFe track |
 | Ctrl+Space / Ctrl+End / Ctrl+Home | Music play-pause / stop / restart |
 | Ctrl+V | Paste palette text |
 | F12 / Ctrl+F12 / Shift+F12 | Screenshot / audio recording / video recording |
 | Ctrl+Shift+F12 | Stop and finalize a recording |
 
-The keyboard and first SDL game controller both drive player 1. More controllers
-fill the remaining player slots; the selected multiplayer adapter or VS image
-determines which players a game can read. See
+These are the default bindings. Settings can select another input profile and
+change keyboard or gamepad assignments. The keyboard and first SDL game
+controller both drive player 1 by default. More controllers fill the remaining
+player slots; the selected multiplayer adapter or VS image determines which
+players a game can read. See
 [controls and peripherals](docs/controls.md) for controller assignment, light
 guns, paddles, floor mats, keyboards, mouse and tablet input, and the Famicom
 expansion devices. Peripheral key handlers can take precedence over the shortcuts
@@ -162,9 +183,9 @@ To open a disk image with its 8 KiB BIOS:
 ```
 
 F8 inserts or ejects the selected side, F9 changes sides, and F10 toggles write
-protection. Cupid writes modified disk data back to the loaded image when it
-flushes media on normal quit, unload, or replacement. Use a working copy to retain
-the original.
+protection. The desktop defaults to overlay saving: disk writes go into a
+separate IPS file and leave the original image unchanged. In-place saving is
+also available. Archived or patched disks use their own overlay identity.
 
 Cartridge save files live beside their ROM. The
 [saves and media guide](docs/saves.md) covers PRG/CHR save memory, EEPROM, flash,
@@ -172,10 +193,12 @@ disk images, BASIC tapes, and Turbo File/BattleBox storage. Cartridge RAM can
 remain readable at addresses where writes select banks. Its layout and
 persistence follow the selected board and header.
 
-Disk and expansion-storage save failures keep the window open during normal
-quit. Cartridge saves and tape recordings have different failure paths; the
-save guide explains which changes can be retried and which are lost when the
-process exits.
+Normal quit and image replacement finalize pending recordings and persistent
+data before discarding the running session. Failed writes keep the session
+available for retry. Save states restore the machine as well as its memory;
+input movies and network sessions use isolated timelines so their writes cannot
+silently replace ordinary progress. See [states and replay](docs/replay.md) and
+the save guide for those ownership rules.
 
 ## Documentation
 
@@ -187,8 +210,11 @@ process exits.
 | Check supported hardware and ROM formats | [Hardware](docs/hardware.md) |
 | Look up hardware and test terminology | [Hardware terminology](docs/glossary.md) |
 | Locate saves and use writable media | [Saves and media](docs/saves.md) |
+| Use states, rewind, run-ahead, or input movies | [States and replay](docs/replay.md) |
 | Play NSF and NSFe tracks | [Music player](docs/music.md) |
 | Save screenshots, audio, or video | [Screenshots and recordings](docs/capture.md) |
+| Inspect execution and hardware | [Debugger and Lua](docs/debugging.md) |
+| Manage per-game cheat codes | [Cheats](docs/cheats.md) |
 | Diagnose a build or runtime problem | [Troubleshooting](docs/troubleshooting.md) |
 | Understand the core and source layout | [Architecture](docs/architecture.md) |
 | Run tests or investigate an accuracy failure | [Development and testing](docs/development.md) |
@@ -223,3 +249,5 @@ retains its [MIT license](src/rom/emu2413.LICENSE), and ymfm retains its
 [BSD 3-Clause license](src/third_party/ymfm/LICENSE). See
 [credits and references](docs/credits.md) for component attribution, test
 sources, and hardware documentation.
+
+The [desktop guide](docs/desktop.md) covers menus, settings, feature panels, and storage locations.

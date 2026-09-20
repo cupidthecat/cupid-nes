@@ -2,7 +2,7 @@
 
 [Documentation index](README.md)
 
-Select emulated input hardware with the options in [configuration](configuration.md) before launching a game. The application has fixed host mappings; it does not expose an interactive controller-remapping screen.
+Select emulated input hardware in **Settings > Controllers and shortcuts**, or use the options in [configuration](configuration.md). Input profiles store keyboard and gamepad bindings separately from the selected console ports, expansion device, and multiplayer adapter. The tables below describe the default profile.
 
 ## Keyboard controls
 
@@ -13,22 +13,31 @@ Select emulated input hardware with the options in [configuration](configuration
 | Right Shift | Player 1 Select |
 | Enter | Player 1 Start |
 | Arrow keys | Player 1 D-pad |
-| R | Soft reset the emulated CPU, PPU, APU, and VS control state |
+| Ctrl+O | Open a game |
+| Ctrl+P | Pause or resume emulation |
+| Ctrl+. | Advance one frame while paused |
+| Ctrl+R | Soft reset the emulated CPU, PPU, APU, and VS control state |
+| Ctrl+Shift+R | Power cycle the current machine |
+| Ctrl+Alt+R | Flush saves and reload the current image |
+| Ctrl+F | Fast-forward while held |
+| Ctrl+Shift+F | Toggle fast-forward |
+| Ctrl+1 / Ctrl+2 / Ctrl+3 | Half / normal / double speed |
+| F5 / F7 | Quick save / quick load the selected state slot |
+| Ctrl+F5 / Ctrl+F7 | Save / load a state file |
 | M, held | Original Famicom controller 2 microphone signal; Bandai Karaoke microphone when mapper 188 is loaded |
 | F6 | Restore the built-in palette |
-| F7 | Toggle the palette editor |
 | Page Up / Page Down | Next / previous NSF or NSFe track |
 | Ctrl+Space | Play / pause NSF or NSFe music |
 | Ctrl+End / Ctrl+Home | Stop / restart the selected music track |
 | Ctrl+V | Paste palette text |
 
-Close the window for normal shutdown. The M key supplies the emulated microphone line only; Cupid does not capture a host microphone. Soft reset keeps the selected console, CPU/APU and PPU profiles, current CPU/PPU clock alignment, controller configuration, and persistent peripheral contents. It does not rerun command-line setup or reconnect host controllers.
+Close the window for normal shutdown. The M key supplies the emulated microphone line only; Cupid does not capture a host microphone. Soft reset keeps the selected console, CPU/APU and PPU profiles, current CPU/PPU clock alignment, controller configuration, and persistent peripheral contents. Power cycle reapplies power-on behavior. Reload reads the current image again after pending saves have been flushed. These actions share the same production controls used by the menus.
 
 For NSF and NSFe files, Page Up selects the next track. Page Down selects the previous track during the first two seconds and otherwise restarts the current track. Track selection wraps at either end. Manual changes clear music RAM and queued audio, then run the file's initialization routine for the selected song. The [music player](music.md) also provides direct track selection, duration and silence-based advancement, repeat, and shuffle.
 
 Mapper 188 Bandai Karaoke cartridges also use player-one A/B as their cartridge-owned A and B buttons. Z/X and the first SDL controller's A/B buttons update those inputs while mapper 188 is active. M drives the cartridge microphone as well as the original Famicom microphone line; mapper 188 reports the held microphone on alternating emulation frames.
 
-With `--ppu-reset-suppression`, R preserves PPU registers, scroll latches, raster position, and rendering state while the other reset paths still run. The setting also applies to the second PPU in a dual VS system. NSF and NSFe playback always reset their clock-only PPU state. The setting does not change hard power-on behavior.
+With `--ppu-reset-suppression`, soft reset preserves PPU registers, scroll latches, raster position, and rendering state while the other reset paths still run. The setting also applies to the second PPU in a dual VS system. NSF and NSFe playback always reset their clock-only PPU state. The setting does not change hard power-on behavior.
 
 Keyboard peripherals are handled before the normal application shortcuts. Family BASIC consumes every keyboard event while selected. Subor, Party Tap, Exciting Boxing, Jissen Mahjong, and mat handlers consume the keys they map, so an overlapping key acts on the selected peripheral instead of the later shortcut. For example, R is a mat key and a Subor letter key, and the number keys used by Party Tap or Boxing take priority over VS coin shortcuts.
 
@@ -215,10 +224,10 @@ Changing or ejecting a side does not flush the disk image. Follow the game's dis
 
 ## Palette controls
 
-F7 opens or closes the runtime palette overlay. Click one of the 64 swatches to open its color picker, then use the saturation/value area or hue strip to edit that color. F6 restores Cupid's built-in 64-color palette.
+Open the palette editor from the desktop controls. Click one of the 64 swatches to open its color picker, then use the saturation/value area or hue strip to edit that color. F6 restores Cupid's built-in 64-color palette. F7 is the default quick-load state shortcut.
 
 Ctrl+V accepts either 64 six-digit RGB tokens or raw hexadecimal bytes for a 192-byte or 1536-byte palette. Token prefixes may be `#`, `0x`, or `$`. Raw input ignores non-hex separators.
 
-Dropping a file on the application tries to load it as palette data. A 192-byte file contains 64 RGB triplets. A 1536-byte file contains eight 64-color emphasis tables. Other sizes display a palette-load error.
+Dropping a `.pal` file loads palette data. A 192-byte file contains 64 RGB triplets. A 1536-byte file contains eight 64-color emphasis tables. Other sizes display a palette-load error. Game images and archives use the image-loading path instead.
 
 Palette edits affect the normal PPU color lookup. VS rendering uses the palette mapping selected by its emulated VS PPU model.
