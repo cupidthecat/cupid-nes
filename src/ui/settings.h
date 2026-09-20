@@ -72,7 +72,22 @@ typedef enum {
     FRONTEND_OVERRIDE_PORT1 = 1u << 6,
     FRONTEND_OVERRIDE_PORT2 = 1u << 7,
     FRONTEND_OVERRIDE_EXPANSION = 1u << 8,
-    FRONTEND_OVERRIDE_ZAPPER_RADIUS = 1u << 9
+    FRONTEND_OVERRIDE_ZAPPER_RADIUS = 1u << 9,
+    FRONTEND_OVERRIDE_CPU_REVISION = 1u << 10,
+    FRONTEND_OVERRIDE_APU_NOISE_MODE = 1u << 11,
+    FRONTEND_OVERRIDE_APU_DUTY = 1u << 12,
+    FRONTEND_OVERRIDE_RAM_POWER = 1u << 13,
+    FRONTEND_OVERRIDE_RANDOM_VBLANK = 1u << 14,
+    FRONTEND_OVERRIDE_PPU_REVISION = 1u << 15,
+    FRONTEND_OVERRIDE_PPU_OAM_ROW = 1u << 16,
+    FRONTEND_OVERRIDE_PPU_STARTUP = 1u << 17,
+    FRONTEND_OVERRIDE_PPU_OAM_DECAY = 1u << 18,
+    FRONTEND_OVERRIDE_PPU_SPRITE_WRAP = 1u << 19,
+    FRONTEND_OVERRIDE_PPU_OAMDATA = 1u << 20,
+    FRONTEND_OVERRIDE_PPU_PALETTE = 1u << 21,
+    FRONTEND_OVERRIDE_PPU_RESET = 1u << 22,
+    FRONTEND_OVERRIDE_MMC3_REVISION = 1u << 23,
+    FRONTEND_OVERRIDE_CART_DIPS = 1u << 24
 } FrontendSettingOverride;
 
 typedef enum {
@@ -88,6 +103,8 @@ typedef struct {
     double speed;
     double fast_forward_speed;
     bool reopen_last_image;
+    bool remember_window_size;
+    unsigned recent_file_limit;
     bool pause_on_focus_loss;
     bool pause_on_ui;
     bool show_fps;
@@ -168,6 +185,8 @@ bool frontend_settings_load(const char *path, FrontendSettings *settings,
                             FrontendSettingsReport *report);
 bool frontend_settings_save(const char *path, const FrontendSettings *settings,
                             FrontendSettingsReport *report);
+bool frontend_settings_validate(const FrontendSettings *settings,
+                                char *error, size_t error_size);
 bool frontend_settings_apply_core(const FrontendSettings *settings,
                                   char *error, size_t error_size);
 

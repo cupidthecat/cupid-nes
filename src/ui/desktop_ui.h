@@ -14,8 +14,10 @@
 #include <stddef.h>
 #include "frontend_execution.h"
 #include "frontend_session.h"
+#include "audio_runtime.h"
 #include "session_actions.h"
 #include "settings.h"
+#include "video_runtime.h"
 
 typedef enum {
     FRONTEND_IDLE_ERROR = -1,
@@ -29,6 +31,8 @@ typedef struct {
     FrontendSettings *settings;
     FrontendExecutionRuntime *execution;
     FrontendSessionActions *sessions;
+    FrontendAudioRuntime *audio;
+    FrontendVideoRuntime *video;
     const char *settings_path;
     FrontendSettings staged;
     bool settings_open;
@@ -39,6 +43,7 @@ typedef struct {
     bool paused_for_focus;
     bool capture_binding;
     bool capture_shortcut;
+    bool capture_gamepad;
     bool confirm_restore_all;
     int open_menu;
     int menu_row;
@@ -69,6 +74,9 @@ void frontend_desktop_init(FrontendDesktopUi *ui, SDL_Window *window,
                            FrontendExecutionRuntime *execution,
                            FrontendSessionActions *sessions,
                            const char *settings_path);
+void frontend_desktop_set_runtime(FrontendDesktopUi *ui,
+                                  FrontendAudioRuntime *audio,
+                                  FrontendVideoRuntime *video);
 bool frontend_desktop_register_commands(FrontendDesktopUi *ui);
 bool frontend_desktop_handle_event(FrontendDesktopUi *ui, const SDL_Event *event);
 void frontend_desktop_render(FrontendDesktopUi *ui, int video_width, int video_height,

@@ -7,6 +7,8 @@
  * GNU General Public License, version 3 or any later version.
  */
 #include "settings.h"
+#include "frontend_session.h"
+#include "../rom/mapper.h"
 #include <ctype.h>
 #include <errno.h>
 #include <math.h>
@@ -269,6 +271,8 @@ void frontend_settings_defaults(FrontendSettings *settings) {
     settings->speed = 1.0;
     settings->fast_forward_speed = 4.0;
     settings->rewind_seconds = 10;
+    settings->remember_window_size = true;
+    settings->recent_file_limit = FRONTEND_RECENT_MAX;
     settings->pause_on_focus_loss = true;
     settings->pause_on_ui = true;
     settings->vsync = true;
@@ -609,6 +613,10 @@ static bool set_known_setting(FrontendSettings *settings, const char *key,
         if (!parse_unsigned_range(value, 4, &settings->run_ahead_frames)) return false;
     } else if (strcmp(key, "reopen_last_image") == 0) {
         if (!parse_boolean(value, &settings->reopen_last_image)) return false;
+    } else if (strcmp(key, "remember_window_size") == 0) {
+        if (!parse_boolean(value, &settings->remember_window_size)) return false;
+    } else if (strcmp(key, "recent_file_limit") == 0) {
+        if (!parse_unsigned_range(value, FRONTEND_RECENT_MAX, &settings->recent_file_limit)) return false;
     } else if (strcmp(key, "pause_on_focus_loss") == 0) {
         if (!parse_boolean(value, &settings->pause_on_focus_loss)) return false;
     } else if (strcmp(key, "pause_on_ui") == 0) {
@@ -1013,7 +1021,8 @@ bool frontend_settings_save(const char *path, const FrontendSettings *settings,
     bool ok = append_text(buffer, SETTINGS_SAVE_CAPACITY, &used,
                           "version=%u\nregion=%s\nconsole=%s\nvideo_filter=%s\n"
                           "speed=%.6g\nfast_forward_speed=%.6g\n"
-                          "reopen_last_image=%s\npause_on_focus_loss=%s\npause_on_ui=%s\n"
+                          "reopen_last_image=%s\nremember_window_size=%s\nrecent_file_limit=%u\n"
+                          "pause_on_focus_loss=%s\npause_on_ui=%s\n"
                           "show_fps=%s\nfullscreen=%s\ninteger_scaling=%s\nmuted=%s\n"
                           "window_width=%u\nwindow_height=%u\n"
                           "disk_save_mode=%s\ndisk_overlay_path=%s\n"
@@ -1035,6 +1044,8 @@ bool frontend_settings_save(const char *path, const FrontendSettings *settings,
                           settings->ntsc_composite ? "ntsc-composite" : "direct",
                           settings->speed, settings->fast_forward_speed,
                           settings->reopen_last_image ? "true" : "false",
+                          settings->remember_window_size ? "true" : "false",
+                          settings->recent_file_limit,
                           settings->pause_on_focus_loss ? "true" : "false",
                           settings->pause_on_ui ? "true" : "false",
                           settings->show_fps ? "true" : "false",
@@ -1191,6 +1202,73 @@ bool frontend_settings_save(const char *path, const FrontendSettings *settings,
     return true;
 }
 
+bool frontend_settings_validate(const FrontendSettings *settings,
+                                char *error, size_t error_size) {
+    if (!settings) return false;
+#define SETTINGS_FAIL(message) do { \
+    if (error && error_size) snprintf(error, error_size, "%s", (message)); \
+    return false; \
+} while (0)
+    if ((unsigned)settings->region_mode > NES_REGION_MODE_DENDY
+        || (unsigned)settings->console_model > NES_CONSOLE_HVC101)
+        SETTINGS_FAIL("Timing or console selection is invalid");
+    if (!isfinite(settings->speed) || settings->speed < 0.1 || settings->speed > 16.0
+        || !isfinite(settings->fast_forward_speed) || settings->fast_forward_speed < 0.1
+        || settings->fast_forward_speed > 16.0)
+        SETTINGS_FAIL("Emulation speed must be from 0.1x to 16x");
+    if (settings->rewind_seconds > 60 || settings->run_ahead_frames > 4)
+        SETTINGS_FAIL("Rewind must be at most 60 seconds and run-ahead at most 4 frames");
+    if (settings->window_width < 320 || settings->window_width > 16384
+        || settings->window_height < 240 || settings->window_height > 16384)
+        SETTINGS_FAIL("Window size is outside the supported range");
+    if (settings->recent_file_limit > FRONTEND_RECENT_MAX)
+        SETTINGS_FAIL("Recent-file history length is invalid");
+    if ((unsigned)settings->aspect_mode > FRONTEND_ASPECT_4_3)
+        SETTINGS_FAIL("Video aspect ratio is invalid");
+    for (unsigned i = 0; i < 3; ++i)
+        if (!nes_video_overscan_valid(settings->presentation.overscan[i]))
+            SETTINGS_FAIL("Video overscan must leave visible pixels on every side");
+    if (settings->audio_sample_rate < 8000 || settings->audio_sample_rate > 192000
+        || settings->audio_buffer_samples < 64 || settings->audio_buffer_samples > 8192
+        || settings->audio_mix.master_volume > 100)
+        SETTINGS_FAIL("Audio output settings are outside the supported range");
+    for (unsigned i = 0; i < NES_AUDIO_CHANNEL_COUNT; ++i)
+        if (settings->audio_mix.volume[i] > 200
+            || settings->audio_mix.pan[i] < -100 || settings->audio_mix.pan[i] > 100)
+            SETTINGS_FAIL("Audio channel volume or panning is outside the supported range");
+    if (settings->state_slot >= NES_STATE_SLOT_COUNT || settings->zapper_radius > NES_ZAPPER_MAX_RADIUS)
+        SETTINGS_FAIL("State slot or light-gun radius is invalid");
+    if ((unsigned)settings->input.adapter > NES_ADAPTER_FAMICOM_FOUR
+        || (unsigned)settings->input.ports[0] > NES_PORT_VIRTUAL_BOY
+        || (unsigned)settings->input.ports[1] > NES_PORT_VIRTUAL_BOY
+        || (unsigned)settings->input.expansion > NES_EXPANSION_FCNS_CONTROLLER)
+        SETTINGS_FAIL("Controller connector selection is invalid");
+    if (!settings->profile_count || settings->profile_count > FRONTEND_SETTINGS_MAX_PROFILES
+        || !find_profile_const(settings, settings->active_profile))
+        SETTINGS_FAIL("The active controller binding profile does not exist");
+    if ((settings->startup_phase_set && settings->startup_seed_set)
+        || (settings->tape_play_path[0] && settings->tape_record_path[0]))
+        SETTINGS_FAIL("Startup phase/seed and tape play/record modes are mutually exclusive");
+    if (settings->startup_cpu_offset > 15 || settings->startup_ppu_phase > 4
+        || settings->cart_dips > 255)
+        SETTINGS_FAIL("Advanced hardware value is outside the supported range");
+    if ((unsigned)settings->cpu_revision > APU_CPU_REVISION_LATE_2A03
+        || (unsigned)settings->ppu_revision > PPU_REVISION_2C02_E_PLUS
+        || (unsigned)settings->ram_power_state > NES_RAM_POWER_RANDOM)
+        SETTINGS_FAIL("Advanced hardware selection is invalid");
+    if (settings->nsf_player.silence_ms < 10 || settings->nsf_player.silence_ms > 600000
+        || !isfinite(settings->nsf_player.silence_threshold)
+        || settings->nsf_player.silence_threshold < 0.0f
+        || settings->nsf_player.silence_threshold > 1.0f)
+        SETTINGS_FAIL("Music silence detection settings are invalid");
+    if (settings->capture.sample_rate < 8000 || settings->capture.sample_rate > 192000
+        || settings->capture.byte_limit < 1024 || settings->capture.byte_limit > UINT32_MAX)
+        SETTINGS_FAIL("Capture settings are outside the supported range");
+    if (error && error_size) error[0] = '\0';
+    return true;
+#undef SETTINGS_FAIL
+}
+
 bool frontend_settings_apply_core(const FrontendSettings *settings,
                                   char *error, size_t error_size) {
     if (!settings) return false;
@@ -1203,6 +1281,21 @@ bool frontend_settings_apply_core(const FrontendSettings *settings,
     unsigned previous_radius = joypad_zapper_radius();
     NesRegionMode previous_region = nes_region_mode();
     NesConsoleModel previous_console = nes_console_model();
+    ApuCpuRevision previous_cpu_revision = apu_get_cpu_revision();
+    bool previous_noise_mode = apu_noise_mode_disabled();
+    bool previous_duty_swap = apu_swap_duty_cycles_enabled();
+    NesRamPowerOnState previous_ram_power = nes_ram_power_on_state();
+    bool previous_random_vblank = nes_randomize_vblank_enabled();
+    PpuRevision previous_ppu_revision = ppu_revision();
+    bool previous_oam_row = ppu_oam_row_corruption_worst_case();
+    bool previous_ppu_startup = ppu_startup_write_restriction_enabled();
+    bool previous_oam_decay = ppu_oam_decay_enabled();
+    bool previous_sprite_wrap = ppu_sprite_eval_wrap_bug_enabled();
+    bool previous_oamdata = ppu_oamdata_read_disabled();
+    bool previous_palette = ppu_palette_readback_disabled();
+    bool previous_ppu_reset = ppu_reset_suppression_enabled();
+    bool previous_mmc3_a = strcmp(cart_mmc3_revision_name(), "a") == 0;
+    unsigned previous_cart_dips = cart_dip_switches();
 
     NesInputConfiguration selected = settings->input;
     if (settings->cli_overrides & FRONTEND_OVERRIDE_ADAPTER)
@@ -1222,6 +1315,36 @@ bool frontend_settings_apply_core(const FrontendSettings *settings,
         && ((settings->cli_overrides & FRONTEND_OVERRIDE_ZAPPER_RADIUS)
             || joypad_set_zapper_radius(settings->zapper_radius))
         && joypad_configuration_valid();
+    valid = valid && ((settings->cli_overrides & FRONTEND_OVERRIDE_CPU_REVISION)
+        || apu_set_cpu_revision(settings->cpu_revision));
+    if (!(settings->cli_overrides & FRONTEND_OVERRIDE_APU_NOISE_MODE))
+        apu_set_disable_noise_mode(settings->apu_disable_noise_mode);
+    if (!(settings->cli_overrides & FRONTEND_OVERRIDE_APU_DUTY))
+        apu_set_swap_duty_cycles(settings->apu_swap_duty_cycles);
+    valid = valid && ((settings->cli_overrides & FRONTEND_OVERRIDE_RAM_POWER)
+        || nes_set_ram_power_on_state(settings->ram_power_state));
+    if (!(settings->cli_overrides & FRONTEND_OVERRIDE_RANDOM_VBLANK))
+        nes_set_randomize_vblank(settings->randomize_vblank);
+    valid = valid && ((settings->cli_overrides & FRONTEND_OVERRIDE_PPU_REVISION)
+        || ppu_set_revision(settings->ppu_revision));
+    if (!(settings->cli_overrides & FRONTEND_OVERRIDE_PPU_OAM_ROW))
+        ppu_set_oam_row_corruption_worst_case(settings->ppu_oam_row_corruption);
+    if (!(settings->cli_overrides & FRONTEND_OVERRIDE_PPU_STARTUP))
+        ppu_set_startup_write_restriction(settings->ppu_startup_restriction);
+    if (!(settings->cli_overrides & FRONTEND_OVERRIDE_PPU_OAM_DECAY))
+        ppu_set_oam_decay(settings->ppu_oam_decay);
+    if (!(settings->cli_overrides & FRONTEND_OVERRIDE_PPU_SPRITE_WRAP))
+        ppu_set_sprite_eval_wrap_bug(settings->ppu_sprite_eval_wrap_bug);
+    if (!(settings->cli_overrides & FRONTEND_OVERRIDE_PPU_OAMDATA))
+        ppu_set_oamdata_read_disabled(settings->ppu_oamdata_read_disabled);
+    if (!(settings->cli_overrides & FRONTEND_OVERRIDE_PPU_PALETTE))
+        ppu_set_palette_readback_disabled(settings->ppu_palette_readback_disabled);
+    if (!(settings->cli_overrides & FRONTEND_OVERRIDE_PPU_RESET))
+        ppu_set_reset_suppression(settings->ppu_reset_suppression);
+    valid = valid && ((settings->cli_overrides & FRONTEND_OVERRIDE_MMC3_REVISION)
+        || cart_set_mmc3_revision_name(settings->mmc3_revision_a ? "a" : "standard"));
+    valid = valid && ((settings->cli_overrides & FRONTEND_OVERRIDE_CART_DIPS)
+        || cart_set_dip_switches(settings->cart_dips));
     if (valid) {
         uint8_t overrides = settings->saved_input_overrides;
         if (settings->cli_overrides & FRONTEND_OVERRIDE_ADAPTER)
@@ -1240,7 +1363,22 @@ bool frontend_settings_apply_core(const FrontendSettings *settings,
     (void)joypad_apply_configuration(&previous);
     (void)joypad_set_zapper_radius(previous_radius);
     joypad_set_configuration_overrides(previous_overrides);
+    (void)apu_set_cpu_revision(previous_cpu_revision);
+    apu_set_disable_noise_mode(previous_noise_mode);
+    apu_set_swap_duty_cycles(previous_duty_swap);
+    (void)nes_set_ram_power_on_state(previous_ram_power);
+    nes_set_randomize_vblank(previous_random_vblank);
+    (void)ppu_set_revision(previous_ppu_revision);
+    ppu_set_oam_row_corruption_worst_case(previous_oam_row);
+    ppu_set_startup_write_restriction(previous_ppu_startup);
+    ppu_set_oam_decay(previous_oam_decay);
+    ppu_set_sprite_eval_wrap_bug(previous_sprite_wrap);
+    ppu_set_oamdata_read_disabled(previous_oamdata);
+    ppu_set_palette_readback_disabled(previous_palette);
+    ppu_set_reset_suppression(previous_ppu_reset);
+    (void)cart_set_mmc3_revision_name(previous_mmc3_a ? "a" : "standard");
+    (void)cart_set_dip_switches(previous_cart_dips);
     if (error && error_size)
-        snprintf(error, error_size, "Saved controller connector settings conflict");
+        snprintf(error, error_size, "Saved hardware or controller settings conflict");
     return false;
 }

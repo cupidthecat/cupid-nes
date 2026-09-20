@@ -255,6 +255,8 @@ static bool activate_request(FrontendSessionActions *actions,
     bool storage_ready = joypad_persistent_configure(storage_identity);
     bool powered = frontend_machine_power_cycle();
     char recent_error[160] = {0};
+    if (actions->settings)
+        frontend_session_trim_recent(actions->session, actions->settings->recent_file_limit);
     bool recent_saved = persist_recent(actions, recent_error, sizeof(recent_error));
     if (!powered || !storage_ready || !recent_saved) {
         char failure[256];

@@ -27,6 +27,17 @@ static bool get_frame(void *context, bool displayed, NesCaptureFrame *frame,
         if (error && error_size) snprintf(error, error_size, "No image is loaded");
         return false;
     }
+    if (capture->video) {
+        const uint32_t *pixels = NULL;
+        unsigned width = 0, height = 0, stride = 0;
+        if (!frontend_video_runtime_pixels(capture->video, displayed, &pixels,
+                                           &width, &height, &stride)) {
+            if (error && error_size) snprintf(error, error_size, "No completed video frame is available");
+            return false;
+        }
+        *frame = (NesCaptureFrame){pixels, width, height, stride};
+        return true;
+    }
     if (displayed && capture->composite_enabled && *capture->composite_enabled
         && capture->composite_pixels && ntsc_composite_supported(nes_timing()->region, vs_enabled())) {
         ntsc_composite_filter_frame(ppu.pixel_signal, ppu.completed_video_phase, capture->composite_pixels);
@@ -68,6 +79,10 @@ bool nes_capture_runtime_init(NesCaptureRuntime *capture, FrontendExecutionRunti
     execution->before_machine_change = before_machine_change;
     execution->machine_change_context = capture;
     return true;
+}
+
+void nes_capture_runtime_set_video(NesCaptureRuntime *capture, FrontendVideoRuntime *video) {
+    if (capture) capture->video = video;
 }
 
 NesFileResult nes_capture_runtime_shutdown(NesCaptureRuntime *capture) {

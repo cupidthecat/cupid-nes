@@ -11,12 +11,14 @@
 
 #include "capture_frontend.h"
 #include "frontend_execution.h"
+#include "video_runtime.h"
 
 typedef struct {
     NesCaptureFrontend frontend;
     FrontendExecutionRuntime *execution;
     const bool *composite_enabled;
     uint32_t *composite_pixels;
+    FrontendVideoRuntime *video;
     const char *const *protected_paths;
     size_t protected_path_count;
 } NesCaptureRuntime;
@@ -24,6 +26,7 @@ typedef struct {
 bool nes_capture_runtime_init(NesCaptureRuntime *capture, FrontendExecutionRuntime *execution,
                                const bool *composite_enabled, uint32_t *composite_pixels,
                                const char *const *protected_paths, size_t path_count);
+void nes_capture_runtime_set_video(NesCaptureRuntime *capture, FrontendVideoRuntime *video);
 NesFileResult nes_capture_runtime_shutdown(NesCaptureRuntime *capture);
 
 #endif

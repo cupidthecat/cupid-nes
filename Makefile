@@ -24,7 +24,8 @@ CORE_SRC = src/system/timing.c src/system/hardware.c src/system/vs_system.c src/
            src/ui/platform_frontend.c src/ui/settings.c src/ui/game_database.c \
            src/ui/idle_frontend.c src/ui/image_open.c src/ui/session_actions.c \
            src/ui/ui_font.c src/ui/desktop_ui.c src/ui/state_frontend.c src/ui/state_runtime.c \
-           src/ui/debug_frontend.c src/ui/host_input.c src/ui/output_guard.c src/ui/cheat_frontend.c
+           src/ui/debug_frontend.c src/ui/output_guard.c src/ui/host_input.c src/ui/peripheral_input.c src/ui/cheat_frontend.c \
+           src/ui/video_runtime.c src/ui/audio_runtime.c
 CORE_SRC += src/system/execution_policy.c src/replay/rewind.c src/video/frame_snapshot.c \
             src/replay/input_event.c src/replay/movie.c \
             src/audio/audio_observer.c src/audio/audio_mix.c src/video/presentation.c \

@@ -192,6 +192,12 @@ const FrontendImageRequest *frontend_session_recent(const FrontendSession *sessi
     return session && index < session->recent_count ? &session->recent[index] : NULL;
 }
 
+void frontend_session_trim_recent(FrontendSession *session, size_t limit) {
+    if (!session) return;
+    if (limit > FRONTEND_RECENT_MAX) limit = FRONTEND_RECENT_MAX;
+    if (session->recent_count > limit) session->recent_count = limit;
+}
+
 static bool encode_field(const char *source, char *dst, size_t capacity, size_t *used) {
     static const char hex[] = "0123456789ABCDEF";
     for (const unsigned char *p = (const unsigned char *)source; *p; ++p) {

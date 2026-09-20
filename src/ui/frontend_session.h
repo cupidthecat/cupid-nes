@@ -75,6 +75,7 @@ bool frontend_session_open_recent(FrontendSession *session, size_t index,
 size_t frontend_session_recent_count(const FrontendSession *session);
 const FrontendImageRequest *frontend_session_recent(const FrontendSession *session,
                                                     size_t index);
+void frontend_session_trim_recent(FrontendSession *session, size_t limit);
 bool frontend_session_load_recent(FrontendSession *session, const char *path,
                                   char *error, size_t error_size);
 bool frontend_session_save_recent(const FrontendSession *session, const char *path,
