@@ -1,0 +1,85 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mxfile host="drawio" version="26.0.0" type="device">
+  <diagram name="Frame and device flow" id="architecture-flow">
+    <mxGraphModel dx="1400" dy="560" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="560" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="frontend" value="SDL frontend&lt;br&gt;events, display, audio" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#1f2937;fontSize=14;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="35" y="190" width="180" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="scheduler" value="VS frame scheduler&lt;br&gt;frame and CPU stepping" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#e1d5e7;strokeColor=#9673a6;fontColor=#1f2937;fontSize=14;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="270" y="190" width="210" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="cpu" value="CPU bus scheduler&lt;br&gt;instruction, DMA, IRQ polling" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#dae8fc;strokeColor=#6c8ebf;fontColor=#1f2937;fontSize=14;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="550" y="190" width="220" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="ppu" value="PPU&lt;br&gt;clocks, rendering, memory" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#d5e8d4;strokeColor=#82b366;fontColor=#1f2937;fontSize=14;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="860" y="30" width="210" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="apu" value="APU&lt;br&gt;clocks, mixing, sample ring" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#d5e8d4;strokeColor=#82b366;fontColor=#1f2937;fontSize=14;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="860" y="150" width="210" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="cart" value="Cartridge / mapper&lt;br&gt;banking, RAM, expansion audio" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#fff2cc;strokeColor=#d6b656;fontColor=#1f2937;fontSize=14;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="860" y="270" width="210" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="input" value="Controllers&lt;br&gt;port protocol and device state" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#ffe6cc;strokeColor=#d79b00;fontColor=#1f2937;fontSize=14;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="550" y="350" width="220" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="epsm" value="EPSM&lt;br&gt;chip clocks, bus, timer IRQ" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#e1d5e7;strokeColor=#9673a6;fontColor=#1f2937;fontSize=14;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="550" y="455" width="220" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="video" value="Framebuffer to SDL texture" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#1f2937;fontSize=14;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="1140" y="35" width="215" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="audio" value="SDL audio callback&lt;br&gt;consumes APU ring samples" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#1f2937;fontSize=14;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="1140" y="160" width="215" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#64748b;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="frontend" target="scheduler">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#64748b;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="scheduler" target="cpu">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#64748b;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="cpu" target="ppu">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="810" y="225" />
+              <mxPoint x="810" y="65" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#64748b;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="cpu" target="apu">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="835" y="235" />
+              <mxPoint x="835" y="185" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e5" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#64748b;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="cpu" target="cart">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="835" y="245" />
+              <mxPoint x="835" y="310" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e6" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#64748b;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="cpu" target="input">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="530" y="230" />
+              <mxPoint x="530" y="385" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e7" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#64748b;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="ppu" target="video">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#64748b;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="apu" target="audio">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
