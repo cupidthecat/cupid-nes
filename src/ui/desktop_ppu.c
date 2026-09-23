@@ -431,7 +431,9 @@ void desktop_ppu_layout(FrontendDesktopUi *ui, float width, float height) {
         text(ui, titles[ui->panel_id - DEBUG_PPU_PATTERNS], 22, ink);
         CLAY_AUTO_ID({.layout = {.sizing = {.width = CLAY_SIZING_GROW()}}}) {
         }
-        button(ui, "Close", 99, false, true);
+        if (!ui->parent) {
+            button(ui, "Close", 99, false, true);
+        }
     }
     if (!v->valid) {
         text(ui, "Open a game to inspect its PPU memory.", 15, muted);

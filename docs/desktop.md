@@ -21,8 +21,8 @@ entry use Clay layouts with cached TrueType text. Controls follow the layout
 when the window or display scale changes. No separate font installation is
 needed.
 
-Settings, game information, the palette editor, and feature panels open in separate resizable windows.
-Drag their title bars to move them beside the game or onto another display.
+Settings, game information, the palette editor, and feature panels open in separate native windows.
+Use the operating system's window frame to close or resize them, or drag the title bar to move them beside the game or onto another display.
 Opening a debugger or inspection tool leaves emulation running. A breakpoint,
 Pause, or a stepping command can still stop it. Moving focus between Cupid
 windows does not trigger the pause-on-focus-loss preference. Each tool shows
