@@ -4,6 +4,7 @@
 #include "clay_backend.h"
 #include "desktop_ui.h"
 #include "desktop_ppu.h"
+#include "desktop_tas.h"
 
 typedef struct {
     unsigned id, kind;

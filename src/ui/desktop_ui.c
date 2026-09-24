@@ -787,6 +787,7 @@ void desktop_commit_edit(FrontendDesktopUi *ui) {
     } else if (ui->panel_open) {
         char error[256] = {0};
         if (!(desktop_ppu_panel(ui->panel_id) ? desktop_ppu_commit(ui, ui->edit_text, error, sizeof(error)) :
+              desktop_tas_panel(ui->panel_id) ? desktop_tas_commit(ui, ui->edit_text, error, sizeof(error)) :
               frontend_panel_action(ui->panel_id, ui->edit_control, ui->edit_text, -1, error, sizeof(error)))) {
             desktop_copy_status(ui, error); return;
         }
@@ -1000,7 +1001,7 @@ bool frontend_desktop_input_captured(const FrontendDesktopUi *ui) {
 }
 bool frontend_desktop_quit_requested(const FrontendDesktopUi *ui){return ui&&ui->quit_requested;}
 void frontend_desktop_update_window_settings(FrontendDesktopUi *ui){if(!ui||ui->parent||!ui->window||!ui->settings||!ui->settings->remember_window_size)return;int w,h;SDL_GetWindowSize(ui->window,&w,&h);if(w>0&&h>0){ui->settings->window_width=(unsigned)w;ui->settings->window_height=(unsigned)h;}}
-void frontend_desktop_shutdown(FrontendDesktopUi *ui){if(!ui)return;desktop_close_windows(ui);desktop_ppu_destroy(ui);desktop_settings_open(ui,false);SDL_StopTextInput();desktop_clay_destroy(ui->clay);ui->clay=NULL;}
+void frontend_desktop_shutdown(FrontendDesktopUi *ui){if(!ui)return;desktop_close_windows(ui);desktop_ppu_destroy(ui);desktop_tas_destroy(ui);desktop_settings_open(ui,false);SDL_StopTextInput();desktop_clay_destroy(ui->clay);ui->clay=NULL;}
 
 bool desktop_palette_visible(const FrontendDesktopUi *ui) {
     return ui && (ui->palette_window || (!ui->parent && palette_tool_is_visible()));

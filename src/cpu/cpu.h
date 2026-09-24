@@ -116,6 +116,8 @@ bool cpu_power_on(CPU* cpu);
 void cpu_soft_reset(CPU* cpu);
 void cpu_reset(CPU* cpu);
 void cpu_clear_internal_ram(void);
+/* Movie startup only; persistence must already be suppressed. */
+bool cpu_replay_set_ram(const uint8_t *bytes, size_t size);
 // Select an independent CPU bus/RAM context. NULL selects the ordinary console.
 void cpu_select_machine(CpuMachineContext *context);
 uint8_t read_mem(uint16_t addr);

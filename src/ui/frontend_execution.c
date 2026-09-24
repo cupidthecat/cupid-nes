@@ -15,6 +15,8 @@
 #include "machine_actions.h"
 #include "../debugger/debugger.h"
 #include "replay_frontend.h"
+#include "tas_frontend.h"
+#include "../replay/tas_session.h"
 #include "../joypad/joypad.h"
 #include "../ppu/ppu.h"
 #include "../rom/fds.h"
@@ -54,8 +56,18 @@ static bool deterministic_session_owned(void) {
                                     | NES_EXECUTION_NETPLAY)) != 0;
 }
 
+static bool tas_active(const FrontendExecutionRuntime *runtime) {
+    return runtime && nes_tas_session_active(nes_movie_tas_const(runtime->movie));
+}
+
+static void update_audio_pause(FrontendExecutionRuntime *runtime);
+
 void frontend_execution_refresh_audio(FrontendExecutionRuntime *runtime) {
     if (runtime) ++runtime->timing_revision;
+    if (runtime && deterministic_session_owned()) {
+        update_audio_pause(runtime);
+        return;
+    }
     if (!runtime || !runtime->audio_device || !*runtime->audio_device
         || runtime->audio_output_rate <= 0) return;
     SDL_AudioDeviceID device = *runtime->audio_device;
@@ -173,6 +185,12 @@ static bool command_frame_advance(void *userdata, char *error, size_t error_size
 
 static bool command_soft_reset(void *userdata, char *error, size_t error_size) {
     FrontendExecutionRuntime *runtime = (FrontendExecutionRuntime *)userdata;
+    if (tas_active(runtime)) {
+        NesTasSession *tas = nes_movie_tas(runtime->movie);
+        bool queued = nes_tas_session_queue_commands(tas, NES_FM2_COMMAND_RESET) == NES_MOVIE_OK;
+        set_error(error, error_size, queued ? "" : nes_tas_session_error(tas));
+        return queued;
+    }
     if (deterministic_playback_owned()) {
         set_error(error, error_size, "Reset is owned by movie playback or netplay");
         return false;
@@ -189,6 +207,12 @@ static bool command_soft_reset(void *userdata, char *error, size_t error_size) {
 
 static bool command_power_cycle(void *userdata, char *error, size_t error_size) {
     FrontendExecutionRuntime *runtime = (FrontendExecutionRuntime *)userdata;
+    if (tas_active(runtime)) {
+        NesTasSession *tas = nes_movie_tas(runtime->movie);
+        bool queued = nes_tas_session_queue_commands(tas, NES_FM2_COMMAND_POWER) == NES_MOVIE_OK;
+        set_error(error, error_size, queued ? "" : nes_tas_session_error(tas));
+        return queued;
+    }
     if (deterministic_playback_owned()) {
         set_error(error, error_size, "Power cycle is owned by movie playback or netplay");
         return false;
@@ -260,7 +284,7 @@ static bool command_reload(void *userdata, char *error, size_t error_size) {
 
 static bool set_speed(void *userdata, double speed) {
     FrontendExecutionRuntime *runtime = (FrontendExecutionRuntime *)userdata;
-    if (deterministic_session_owned()) return false;
+    if (deterministic_session_owned() && !tas_active(runtime)) return false;
     if (!execution_control_set_speed(&runtime->execution, speed)) return false;
     runtime->execution.fast_forward_held = false;
     runtime->execution.fast_forward_toggled = false;
@@ -288,7 +312,7 @@ static bool command_speed_double(void *userdata, char *error, size_t error_size)
 }
 
 static bool command_fast_forward_toggle(void *userdata, char *error, size_t error_size) {
-    if (deterministic_session_owned()) {
+    if (deterministic_session_owned() && !tas_active(userdata)) {
         set_error(error, error_size, "Stop the replay session before changing its speed");
         return false;
     }
@@ -301,7 +325,7 @@ static bool command_fast_forward_toggle(void *userdata, char *error, size_t erro
 }
 
 static bool command_fast_forward_hold(void *userdata, char *error, size_t error_size) {
-    if (deterministic_session_owned()) {
+    if (deterministic_session_owned() && !tas_active(userdata)) {
         set_error(error, error_size, "Stop the replay session before changing its speed");
         return false;
     }
@@ -333,6 +357,7 @@ void frontend_execution_init(FrontendExecutionRuntime *runtime,
     runtime->network = frontend_netplay_create(runtime);
     runtime->movie = nes_movie_create();
     runtime->movie_start_kind = NES_MOVIE_START_STATE;
+    runtime->tas_pause_frame = SIZE_MAX;
     nes_rewind_init(&runtime->rewind);
     (void)frontend_execution_set_rewind_seconds(runtime, 10);
     if (rom_path && *rom_path) {
@@ -431,7 +456,9 @@ bool frontend_execution_register_commands(FrontendExecutionRuntime *runtime) {
         if (!frontend_command_register(&spec)) return false;
     }
     replay_frontend_unregister();
-    return replay_frontend_register(runtime) && frontend_netplay_register(runtime->network);
+    tas_frontend_unregister();
+    return replay_frontend_register(runtime) && tas_frontend_register(runtime) &&
+           frontend_netplay_register(runtime->network);
 }
 
 bool frontend_execution_handle_shortcut(FrontendExecutionRuntime *runtime,
@@ -505,7 +532,7 @@ bool frontend_execution_handle_shortcut_action(FrontendExecutionRuntime *runtime
         return true;
     }
     if (shortcut == FRONTEND_SHORTCUT_FAST_FORWARD_HOLD) {
-        if (deterministic_session_owned()) return true;
+        if (deterministic_session_owned() && !tas_active(runtime)) return true;
         if (!repeat && runtime->execution.fast_forward_held != down) {
             execution_control_set_fast_forward_held(&runtime->execution, down);
             frontend_execution_refresh_audio(runtime);
@@ -535,7 +562,7 @@ void frontend_execution_release_host_input(FrontendExecutionRuntime *runtime) {
 bool frontend_execution_set_speeds(FrontendExecutionRuntime *runtime,
                                    double speed, double fast_forward_speed) {
     if (!runtime) return false;
-    if (deterministic_session_owned())
+    if (deterministic_session_owned() && !tas_active(runtime))
         return speed == runtime->execution.speed
             && fast_forward_speed == runtime->execution.fast_forward_speed;
     ExecutionControl next = runtime->execution;
@@ -560,7 +587,12 @@ bool frontend_execution_muted(const FrontendExecutionRuntime *runtime) {
 static bool run_emulation_frame(void *userdata) {
     (void)userdata;
     vs_start_frame();
-    while (!ppu.frame_complete && !debugger_is_paused()) vs_cpu_step();
+    while (!ppu.frame_complete && !debugger_is_paused()) {
+        if (vs_cpu_step() <= 0 || cpu.halted) {
+            debugger_pause();
+            return false;
+        }
+    }
     return ppu.frame_complete;
 }
 
@@ -578,7 +610,10 @@ bool frontend_execution_run_frame(FrontendExecutionRuntime *runtime) {
         (void)frontend_execution_rewind_step(runtime, NULL, 0);
         return false;
     }
-    if (runtime->suspend_reasons || !execution_control_should_run_frame(&runtime->execution)) return false;
+    NesTasSession *tas = nes_movie_tas(runtime->movie);
+    bool seeking = nes_tas_session_seeking(tas);
+    if (runtime->suspend_reasons || (!seeking && !execution_control_should_run_frame(&runtime->execution))) return false;
+    bool advanced = runtime->execution.frame_advance_pending;
 
     if (runtime->movie && nes_movie_mode(runtime->movie) != NES_MOVIE_IDLE) {
         lock_audio_for_machine_change(runtime);
@@ -586,7 +621,14 @@ bool frontend_execution_run_frame(FrontendExecutionRuntime *runtime) {
         unlock_audio_without_refresh(runtime);
         if (movie != NES_MOVIE_OK) {
             char error[192] = {0};
-            if (movie == NES_MOVIE_COMPLETE
+            if (movie == NES_MOVIE_COMPLETE && tas_active(runtime)) {
+                execution_control_set_paused(&runtime->execution, true);
+                runtime->execution.frame_advance_pending = false;
+                frontend_command_set_checked(FRONTEND_COMMAND_PAUSE, true);
+                snprintf(runtime->movie_status, sizeof(runtime->movie_status),
+                         "End of movie. Seek, edit, or record to continue; Stop restores the previous game.");
+                update_audio_pause(runtime);
+            } else if (movie == NES_MOVIE_COMPLETE
                 && frontend_execution_movie_stop(runtime, error, sizeof(error))) {
                 snprintf(runtime->movie_status, sizeof(runtime->movie_status),
                          "Playback completed. The previous session was restored.");
@@ -629,7 +671,9 @@ bool frontend_execution_run_frame(FrontendExecutionRuntime *runtime) {
     frontend_netplay_after_frame(runtime->network, ran);
     if (ran) execution_control_frame_complete(&runtime->execution);
     if (runtime->movie && nes_movie_mode(runtime->movie) != NES_MOVIE_IDLE) {
+        lock_audio_for_machine_change(runtime);
         NesMovieResult movie = nes_movie_frame_complete(runtime->movie, ran);
+        unlock_audio_without_refresh(runtime);
         if (movie != NES_MOVIE_OK) {
             (void)movie_result_ok(runtime, movie, "", NULL, 0);
             execution_control_set_paused(&runtime->execution, true);
@@ -637,7 +681,22 @@ bool frontend_execution_run_frame(FrontendExecutionRuntime *runtime) {
             frontend_command_set_checked(FRONTEND_COMMAND_PAUSE, true);
         }
     }
+    if (ran && tas_active(runtime)) {
+        NesTasProgress progress;
+        nes_tas_session_progress(tas, &progress);
+        if ((seeking && !progress.seeking) || progress.frame == runtime->tas_pause_frame) {
+            execution_control_set_paused(&runtime->execution, true);
+            runtime->execution.frame_advance_pending = false;
+            frontend_command_set_checked(FRONTEND_COMMAND_PAUSE, true);
+            if (progress.frame == runtime->tas_pause_frame) runtime->tas_pause_frame = SIZE_MAX;
+        } else if (advanced && runtime->tas_skip_lag && progress.frame < progress.total_frames &&
+                   nes_tas_lag(nes_tas_session_project_const(tas), progress.frame - 1) == NES_TAS_LAG_YES) {
+            (void)execution_control_request_frame(&runtime->execution);
+        }
+    }
     frontend_execution_sync_debugger(runtime);
+    if (!ran && cpu.halted && tas_active(runtime))
+        snprintf(runtime->movie_status, sizeof(runtime->movie_status), "The CPU stopped on a JAM instruction.");
     if (runtime->execution.paused) update_audio_pause(runtime);
     replay_frontend_refresh(runtime);
     return ran;
@@ -648,6 +707,7 @@ bool frontend_execution_paused(const FrontendExecutionRuntime *runtime) {
 }
 
 double frontend_execution_speed(const FrontendExecutionRuntime *runtime) {
+    if (runtime && nes_tas_session_seeking(nes_movie_tas_const(runtime->movie))) return 16.0;
     return runtime ? execution_control_effective_speed(&runtime->execution) : 1.0;
 }
 
@@ -720,6 +780,7 @@ void frontend_execution_clear_timeline(FrontendExecutionRuntime *runtime) {
 void frontend_execution_shutdown(FrontendExecutionRuntime *runtime) {
     if (!runtime) return;
     replay_frontend_unregister();
+    tas_frontend_unregister();
     lock_audio_for_machine_change(runtime);
     nes_netplay_destroy(runtime->netplay);
     runtime->netplay = NULL;
@@ -736,7 +797,8 @@ void frontend_execution_shutdown(FrontendExecutionRuntime *runtime) {
 
 static bool movie_result_ok(FrontendExecutionRuntime *runtime, NesMovieResult result,
                             const char *success, char *error, size_t error_size) {
-    const char *message = result == NES_MOVIE_OK ? success : nes_movie_result_string(result);
+    const char *message = result == NES_MOVIE_OK ? success :
+        runtime && runtime->movie ? nes_movie_error(runtime->movie) : nes_movie_result_string(result);
     if (runtime) {
         snprintf(runtime->movie_status, sizeof(runtime->movie_status), "%s", message);
         replay_frontend_refresh(runtime);
@@ -747,7 +809,7 @@ static bool movie_result_ok(FrontendExecutionRuntime *runtime, NesMovieResult re
 
 static bool movie_path_allowed(FrontendExecutionRuntime *runtime, const char *path,
                                 char *error, size_t error_size) {
-    return frontend_output_path_allowed(path, runtime, runtime->protected_paths,
+    return frontend_movie_output_path_allowed(path, runtime, runtime->protected_paths,
                                          runtime->protected_path_count, error, error_size);
 }
 
@@ -789,6 +851,10 @@ bool frontend_execution_movie_set_path(FrontendExecutionRuntime *runtime, const 
                             "Recording destination changed", error, error_size))
         return false;
     memcpy(runtime->movie_path, selected, strlen(selected) + 1);
+    const char *extension = strrchr(selected, '.');
+    if (nes_movie_mode(runtime->movie) == NES_MOVIE_IDLE && extension &&
+        (!SDL_strcasecmp(extension, ".fm2") || !SDL_strcasecmp(extension, ".fm3") ||
+         !SDL_strcasecmp(extension, ".ctas"))) runtime->movie_start_kind = NES_MOVIE_START_POWER_ON;
     return true;
 }
 

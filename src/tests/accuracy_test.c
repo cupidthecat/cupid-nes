@@ -112,6 +112,13 @@ int test_cheat_accuracy(void);
 int test_rewind_accuracy(void);
 int test_movie_accuracy(void);
 int test_movie_frontend_accuracy(void);
+int test_tas_session_accuracy(void);
+int test_fm2_accuracy(void);
+int test_tas_editor_input_accuracy(void);
+int test_tas_project_accuracy(void);
+int test_tas_script_accuracy(void);
+int run_movie_rom(const char *rom, const char *movie, unsigned frames, const char *output);
+int run_movie_trace(const char *rom, const char *movie, unsigned frames, const char *prefix);
 int test_hd_pack_accuracy(void);
 int test_hd_renderer_accuracy(void);
 int test_hd_runtime_accuracy(void);
@@ -126,6 +133,20 @@ int run_accuracycoin_rom(const char *path, unsigned frames, const char *output);
 int test_netplay_peer(const char *role, unsigned port, const char *scenario);
 int benchmark_frontend(unsigned frames, const char *path);
 int main(int argc, char **argv) {
+    if (argc == 2 && !strcmp(argv[1], "--tas-session")) return test_tas_session_accuracy() ? 1 : 0;
+    if (argc == 2 && !strcmp(argv[1], "--fm2")) return test_fm2_accuracy() ? 1 : 0;
+    if (argc == 2 && !strcmp(argv[1], "--tas-editor-input")) return test_tas_editor_input_accuracy() ? 1 : 0;
+    if (argc == 2 && !strcmp(argv[1], "--tas-project")) return test_tas_project_accuracy() ? 1 : 0;
+    if (argc == 2 && !strcmp(argv[1], "--tas-script")) return test_tas_script_accuracy() ? 1 : 0;
+    if (((argc == 5 || argc == 6) && !strcmp(argv[1], "--movie")) ||
+        (argc == 6 && !strcmp(argv[1], "--movie-trace"))) {
+        char *end;
+        unsigned long frames = strtoul(argv[2], &end, 10);
+        if (!*argv[2] || *argv[2] == '-' || *end || frames > 100000) return 2;
+        return !strcmp(argv[1], "--movie-trace")
+                   ? run_movie_trace(argv[3], argv[4], (unsigned)frames, argv[5])
+                   : run_movie_rom(argv[3], argv[4], (unsigned)frames, argc == 6 ? argv[5] : NULL);
+    }
     if(argc==2 && !strcmp(argv[1],"--ppu-tools"))return test_ppu_inspector_accuracy()?1:0;
     if(argc==2 && !strcmp(argv[1],"--desktop"))return test_desktop_accuracy()?1:0;
     if(argc==4 && !strcmp(argv[1],"--benchmark-frontend")){
@@ -173,7 +194,11 @@ int main(int argc, char **argv) {
             printf("Diagnostic ROMs: %d passed, %d failed or unfinished\n", argc - 3 - failed, failed);
             return failed ? 1 : 0;
         }
-        fprintf(stderr, "Usage: %s [--desktop | --benchmark-frontend FRAMES ROM | --trace ROM LOG | --rom FRAMES ROM... | --mmc3-rom FRAMES ROM... | --legacy-pal-rom FRAMES ROM... | --legacy-rom FRAMES ROM... | --render FRAMES ROM OUTPUT.ppm | --accuracycoin FRAMES ROM [OUTPUT.ppm]]\n", argv[0]);
+        fprintf(stderr, "Usage: %s [--desktop | --fm2 | --tas-session | --tas-editor-input | "
+                        "--movie FRAMES ROM MOVIE [OUTPUT.ppm] | --movie-trace FRAMES ROM MOVIE PREFIX | "
+                        "--benchmark-frontend FRAMES ROM | --trace ROM LOG | --rom FRAMES ROM... | "
+                        "--mmc3-rom FRAMES ROM... | --legacy-pal-rom FRAMES ROM... | --legacy-rom FRAMES ROM... | "
+                        "--render FRAMES ROM OUTPUT.ppm | --accuracycoin FRAMES ROM [OUTPUT.ppm]]\n", argv[0]);
         return 2;
     }
     int failures = 0;
@@ -244,6 +269,11 @@ int main(int argc, char **argv) {
     failures += test_rewind_accuracy();
     failures += test_movie_accuracy();
     failures += test_movie_frontend_accuracy();
+    failures += test_tas_session_accuracy();
+    failures += test_fm2_accuracy();
+    failures += test_tas_editor_input_accuracy();
+    failures += test_tas_project_accuracy();
+    failures += test_tas_script_accuracy();
     failures += test_region_accuracy();
     failures += test_file_io_accuracy();
     failures += test_persistence_accuracy();

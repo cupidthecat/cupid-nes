@@ -131,6 +131,7 @@ static void destroy_tool(FrontendDesktopUi *tool) {
         SDL_StopTextInput();
     }
     desktop_ppu_destroy(tool);
+    desktop_tas_destroy(tool);
     desktop_clay_destroy(tool->clay);
     SDL_DestroyRenderer(tool->renderer);
     SDL_DestroyWindow(tool->window);
@@ -169,7 +170,7 @@ void frontend_desktop_update_activity(FrontendDesktopUi *ui) {
         return;
     }
     bool focused = ui->focused;
-    bool modal = ui->settings_open || ui->panel_open || ui->info_open || ui->edit_text_active || ui->capture_binding ||
+    bool modal = ui->settings_open || (ui->panel_open && !desktop_tas_panel(ui->panel_id)) || ui->info_open || ui->edit_text_active || ui->capture_binding ||
                  ui->open_menu >= 0 || palette_tool_is_visible();
     for (FrontendDesktopUi *tool = ui->tools; tool; tool = tool->next) {
         focused |= tool->focused;

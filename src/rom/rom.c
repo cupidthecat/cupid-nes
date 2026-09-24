@@ -601,6 +601,18 @@ int rom_ram_sizes_with_metadata(const iNESHeader *header, const RomDatabaseInfo 
     return 0;
 }
 
+static uint8_t replay_trainer[512];
+static uint32_t replay_trainer_crc;
+static const uint8_t *replay_trainer_prg;
+static bool replay_trainer_present;
+
+void rom_reapply_trainer(void) {
+    if (replay_trainer_present && replay_trainer_prg == prg_rom
+        && replay_trainer_crc == rom_file_crc32() && !nes_execution_allows_persistence()) {
+        cart_apply_trainer(replay_trainer);
+    }
+}
+
 static int load_rom_data(const uint8_t *data, size_t size, const char *filename) {
     if (!data || !size) {
         fprintf(stderr, "Empty cartridge image\n");
@@ -816,6 +828,10 @@ static int load_rom_data(const uint8_t *data, size_t size, const char *filename)
     loaded_prg_crc32 = prg_crc;
     loaded_prg_chr_crc32 = prg_chr_crc;
     cheats_set_game_identity(loaded_file_crc32);
+    replay_trainer_present = trainer != NULL;
+    replay_trainer_prg = prg_rom;
+    replay_trainer_crc = file_crc;
+    if (trainer) memcpy(replay_trainer, trainer, sizeof(replay_trainer));
     if (apply_input_config) (void)joypad_apply_configuration(&input_config);
 
     printf("Mapper: %d  (CHR %s%s)\n", mapper_no, rom_chr_size ? "ROM" : "RAM",

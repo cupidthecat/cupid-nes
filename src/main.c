@@ -48,6 +48,7 @@
 #include "ui/capture_runtime.h"
 #include "ui/audio_runtime.h"
 #include "ui/frontend_execution.h"
+#include "ui/tas_frontend.h"
 #include "ui/netplay_frontend.h"
 #include "ui/app_paths.h"
 #include "ui/game_database.h"
@@ -116,6 +117,9 @@ static int application_main(int argc, char *argv[]) {
     SDL_AudioDeviceID audio_dev = 0; SDL_Window *window = NULL;
     SDL_Renderer *renderer = NULL;
     const char *rom_path = NULL;
+    const char *movie_path = NULL;
+    bool open_tas_editor = false;
+    bool movie_launch_failed = false;
     const char *barcode = NULL;
     const char *barcode_battler = NULL;
     const char *tape_play_path = NULL;
@@ -144,7 +148,14 @@ static int application_main(int argc, char *argv[]) {
     bool ntsc_composite_requested = false;
     uint32_t frontend_cli_overrides = 0;
     for (int i = 1; i < argc; ++i) {
-        if (strcmp(argv[i], "--region") == 0) {
+        if (strcmp(argv[i], "--movie") == 0 || strcmp(argv[i], "--tas") == 0) {
+            open_tas_editor = strcmp(argv[i], "--tas") == 0;
+            if (++i == argc || movie_path || !*argv[i]) {
+                fprintf(stderr, "Choose one movie file with --movie or --tas\n");
+                return 1;
+            }
+            movie_path = argv[i];
+        } else if (strcmp(argv[i], "--region") == 0) {
             if (++i == argc || !nes_set_region_mode_name(argv[i])) {
                 fprintf(stderr, "Region must be auto, ntsc, pal, or dendy\n");
                 return 1;
@@ -436,6 +447,10 @@ static int application_main(int argc, char *argv[]) {
         }
     }
     joypad_set_configuration_overrides(input_overrides);
+    if (movie_path && !rom_path) {
+        fprintf(stderr, "A movie launch also requires a game image path\n");
+        return 1;
+    }
 
     char path_error[160];
     if (!frontend_paths_init(data_dir_override, path_error, sizeof(path_error))) {
@@ -934,6 +949,20 @@ static int application_main(int argc, char *argv[]) {
     frontend_execution_set_restore_handler(&execution_runtime, live_state_restored, &live);
     frontend_command_set_session_active(frontend_session.active);
     frontend_panel_set_session_active(frontend_session.active);
+    if (running && movie_path) {
+        bool opened = open_tas_editor
+            ? tas_frontend_open(&execution_runtime, movie_path, false, path_error, sizeof(path_error))
+            : frontend_execution_movie_set_path(&execution_runtime, movie_path, path_error, sizeof(path_error)) &&
+              frontend_execution_movie_play(&execution_runtime, path_error, sizeof(path_error));
+        if (!opened) {
+            fprintf(stderr, "Movie: %s\n", path_error);
+            movie_launch_failed = true;
+            running = false;
+        } else if (open_tas_editor) {
+            desktop_ui.panel_id = TAS_PANEL;
+            desktop_ui.panel_open = true;
+        }
+    }
     char last_capture_error[256] = {0};
     palette_tool_init();
     const double performance_frequency = (double)SDL_GetPerformanceFrequency();
@@ -955,7 +984,7 @@ static int application_main(int argc, char *argv[]) {
                 frontend_execution_release_host_input(&execution_runtime);
             }
             bool was_captured = frontend_desktop_input_captured(&desktop_ui);
-            if (frontend_desktop_handle_event(&desktop_ui, &e)) {
+            if (e.type != SDL_QUIT && frontend_desktop_handle_event(&desktop_ui, &e)) {
                 if (!was_captured && frontend_desktop_input_captured(&desktop_ui)) {
                     frontend_host_input_release_all();
                     frontend_execution_release_host_input(&execution_runtime);
@@ -1025,6 +1054,9 @@ static int application_main(int argc, char *argv[]) {
                 if (capture_result != NES_FILE_OK) {
                     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Capture Save Error",
                         capture_runtime.frontend.session.error, window);
+                } else if (nes_movie_mode(execution_runtime.movie) != NES_MOVIE_IDLE &&
+                           !frontend_execution_movie_stop(&execution_runtime, path_error, sizeof(path_error))) {
+                    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Movie Save Error", path_error, window);
                 } else if (!frontend_devices_finish(&device_runtime, path_error, sizeof(path_error))) {
                     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Tape Save Error",
                         "The tape recording could not be saved. The emulator will remain open.", window);
@@ -1157,6 +1189,16 @@ static int application_main(int argc, char *argv[]) {
                         if (rc != 0)
                             SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Palette Load Error",
                                 "Failed to load .pal file. Expected 192 or 1536 bytes.", window);
+                    } else if (dot && (!SDL_strcasecmp(dot, ".fm2") || !SDL_strcasecmp(dot, ".fm3") ||
+                                       !SDL_strcasecmp(dot, ".ctas") || !SDL_strcasecmp(dot, ".cmv") ||
+                                       !SDL_strcasecmp(dot, ".movie"))) {
+                        char movie_error[256] = {0};
+                        if (!tas_frontend_open(&execution_runtime, dropped_f, false, movie_error, sizeof(movie_error)))
+                            frontend_desktop_set_status(&desktop_ui, movie_error);
+                        else {
+                            desktop_ui.panel_id = TAS_PANEL;
+                            desktop_ui.panel_open = true;
+                        }
                     } else {
                         char drop_error[256] = {0};
                         if (!frontend_session_action_open_path(
@@ -1341,7 +1383,7 @@ static int application_main(int argc, char *argv[]) {
                                                  &settings_report);
     if (!settings_saved) fprintf(stderr, "%s\n", settings_report.message);
     frontend_paths_shutdown();
-    return tape_saved && !tape_failed && peripheral_saved && capture_saved && settings_saved ? 0 : 1;
+    return !movie_launch_failed && tape_saved && !tape_failed && peripheral_saved && capture_saved && settings_saved ? 0 : 1;
 }
 
 int main(int argc, char *argv[]) {

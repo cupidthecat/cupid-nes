@@ -9,6 +9,7 @@
 #include "movie.h"
 #include "input_event.h"
 #include "rewind.h"
+#include "tas_session.h"
 #include "../apu/apu.h"
 #include "../cheats/cheats.h"
 #include "../cpu/cpu.h"
@@ -29,6 +30,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 
 enum {
     MOVIE_VERSION = 2,
@@ -89,9 +91,11 @@ typedef struct {
 } MovieEvent;
 
 struct NesMovieSession {
+    NesTasSession *tas;
     NesMovieMode mode;
     NesMovieStartKind start_kind;
     NesMovieResult last_result;
+    char error[192];
     char *path;
     uint64_t frame;
     uint64_t total_frames;
@@ -138,7 +142,18 @@ static void movie_clear_recording_data(NesMovieSession *movie) {
 }
 
 static NesMovieResult movie_set_result(NesMovieSession *movie, NesMovieResult result) {
-    if (movie) movie->last_result = result;
+    if (movie) {
+        movie->last_result = result;
+        snprintf(movie->error, sizeof(movie->error), "%s",
+                 result == NES_MOVIE_OK || result == NES_MOVIE_COMPLETE ? "" : nes_movie_result_string(result));
+    }
+    return result;
+}
+
+static NesMovieResult movie_tas_result(NesMovieSession *movie, NesMovieResult result) {
+    movie_set_result(movie, result);
+    if (movie && result != NES_MOVIE_OK && result != NES_MOVIE_COMPLETE && nes_tas_session_error(movie->tas)[0])
+        snprintf(movie->error, sizeof(movie->error), "%s", nes_tas_session_error(movie->tas));
     return result;
 }
 
@@ -683,12 +698,21 @@ static NesMovieResult movie_parse_file(const char *path, ParsedMovie *parsed) {
 
 NesMovieSession *nes_movie_create(void) {
     NesMovieSession *movie = (NesMovieSession *)calloc(1, sizeof(*movie));
-    if (movie) movie->last_result = NES_MOVIE_OK;
+    if (movie) {
+        movie->last_result = NES_MOVIE_OK;
+        movie->tas = nes_tas_session_create();
+        if (!movie->tas) {
+            free(movie);
+            return NULL;
+        }
+    }
     return movie;
 }
 
 void nes_movie_destroy(NesMovieSession *movie) {
     if (!movie) return;
+    nes_tas_session_destroy(movie->tas);
+    movie->tas = NULL;
     if (movie->mode != NES_MOVIE_IDLE) {
         nes_input_event_clear_observer();
         (void)movie_restore_live(movie);
@@ -696,6 +720,31 @@ void nes_movie_destroy(NesMovieSession *movie) {
     }
     movie_clear_recording_data(movie);
     free(movie);
+}
+
+static bool frame_movie_extension(const char *path) {
+    size_t length = path ? strlen(path) : 0;
+    const char *extensions[] = {".fm2", ".fm3", ".ctas"};
+    for (size_t i = 0; i < sizeof(extensions) / sizeof(extensions[0]); ++i) {
+        size_t suffix = strlen(extensions[i]);
+        if (length < suffix) continue;
+        bool match = true;
+        for (size_t j = 0; j < suffix; ++j)
+            match = match && tolower((unsigned char)path[length - suffix + j]) == extensions[i][j];
+        if (match) return true;
+    }
+    return false;
+}
+
+static bool frame_movie_file(const char *path) {
+    FILE *file = nes_file_open(path, "rb");
+    if (!file) return frame_movie_extension(path);
+    uint8_t header[9] = {0};
+    size_t size = fread(header, 1, sizeof(header), file);
+    fclose(file);
+    if (size >= sizeof(movie_magic) && !memcmp(header, movie_magic, sizeof(movie_magic))) return false;
+    return (size == sizeof(header) && !memcmp(header, "version 3", sizeof(header))) ||
+           (size >= 8 && !memcmp(header, "CUPIDTAS", 8)) || frame_movie_extension(path);
 }
 
 static NesMovieResult movie_record_start_kind(NesMovieSession *movie, const char *path,
@@ -709,6 +758,16 @@ static NesMovieResult movie_record_start_kind(NesMovieSession *movie, const char
         return movie_set_result(movie, NES_MOVIE_UNSUPPORTED_HOST_STATE);
     if (rom_metadata_source() == ROM_METADATA_NONE)
         return movie_set_result(movie, NES_MOVIE_NO_IMAGE);
+
+    if (frame_movie_extension(path)) {
+        if (start_kind != NES_MOVIE_START_POWER_ON) {
+            movie_set_result(movie, NES_MOVIE_INCOMPATIBLE);
+            snprintf(movie->error, sizeof(movie->error),
+                     "Choose Power-on for FM2/FM3 recording. Current-state recordings use Cupid's .cmv format.");
+            return NES_MOVIE_INCOMPATIBLE;
+        }
+        return movie_tas_result(movie, nes_tas_session_new(movie->tas, path, true));
+    }
 
     char *path_copy = movie_strdup(path);
     if (!path_copy) return movie_set_result(movie, NES_MOVIE_OUT_OF_MEMORY);
@@ -783,6 +842,9 @@ NesMovieResult nes_movie_play_start(NesMovieSession *movie, const char *path) {
     if (rom_metadata_source() == ROM_METADATA_NONE)
         return movie_set_result(movie, NES_MOVIE_NO_IMAGE);
 
+    if (frame_movie_file(path))
+        return movie_tas_result(movie, nes_tas_session_open(movie->tas, path));
+
     ParsedMovie parsed;
     memset(&parsed, 0, sizeof(parsed));
     NesMovieResult result = movie_parse_file(path, &parsed);
@@ -849,6 +911,8 @@ NesMovieResult nes_movie_play_start(NesMovieSession *movie, const char *path) {
 
 NesMovieResult nes_movie_frame_boundary(NesMovieSession *movie) {
     if (!movie) return NES_MOVIE_INVALID_ARGUMENT;
+    if (nes_tas_session_active(movie->tas))
+        return movie_tas_result(movie, nes_tas_session_frame_boundary(movie->tas));
     if (movie->mode == NES_MOVIE_IDLE)
         return movie_set_result(movie, NES_MOVIE_CONFLICT);
     if (movie->frame_in_progress) return movie_set_result(movie, NES_MOVIE_OK);
@@ -885,6 +949,8 @@ NesMovieResult nes_movie_frame_boundary(NesMovieSession *movie) {
 
 NesMovieResult nes_movie_frame_complete(NesMovieSession *movie, bool completed) {
     if (!movie) return NES_MOVIE_INVALID_ARGUMENT;
+    if (nes_tas_session_active(movie->tas))
+        return movie_tas_result(movie, nes_tas_session_frame_complete(movie->tas, completed));
     if (movie->mode == NES_MOVIE_IDLE) return movie_set_result(movie, NES_MOVIE_CONFLICT);
     if (!movie->frame_in_progress) return movie_set_result(movie, NES_MOVIE_OK);
     if (!completed) return movie_set_result(movie, NES_MOVIE_OK);
@@ -896,6 +962,8 @@ NesMovieResult nes_movie_frame_complete(NesMovieSession *movie, bool completed) 
 
 NesMovieResult nes_movie_set_path(NesMovieSession *movie, const char *path) {
     if (!movie || !path || !*path) return movie_set_result(movie, NES_MOVIE_INVALID_ARGUMENT);
+    if (nes_tas_session_active(movie->tas))
+        return movie_tas_result(movie, nes_tas_session_set_path(movie->tas, path));
     if (movie->mode == NES_MOVIE_PLAYBACK) return movie_set_result(movie, NES_MOVIE_CONFLICT);
     char *replacement = movie_strdup(path);
     if (!replacement) return movie_set_result(movie, NES_MOVIE_OUT_OF_MEMORY);
@@ -906,6 +974,8 @@ NesMovieResult nes_movie_set_path(NesMovieSession *movie, const char *path) {
 
 NesMovieResult nes_movie_stop(NesMovieSession *movie) {
     if (!movie) return NES_MOVIE_INVALID_ARGUMENT;
+    if (nes_tas_session_active(movie->tas))
+        return movie_tas_result(movie, nes_tas_session_stop(movie->tas));
     if (movie->mode == NES_MOVIE_IDLE) return movie_set_result(movie, NES_MOVIE_CONFLICT);
     if (movie->mode == NES_MOVIE_RECORDING) {
         /* A breakpoint or an input limit may leave the last frame incomplete.
@@ -931,7 +1001,15 @@ NesMovieResult nes_movie_stop(NesMovieSession *movie) {
 }
 
 NesMovieMode nes_movie_mode(const NesMovieSession *movie) {
-    return movie ? movie->mode : NES_MOVIE_IDLE;
+    return movie && nes_tas_session_active(movie->tas) ? nes_tas_session_mode(movie->tas) :
+           movie ? movie->mode : NES_MOVIE_IDLE;
+}
+
+NesTasSession *nes_movie_tas(NesMovieSession *movie) { return movie ? movie->tas : NULL; }
+const NesTasSession *nes_movie_tas_const(const NesMovieSession *movie) { return movie ? movie->tas : NULL; }
+const char *nes_movie_error(const NesMovieSession *movie) {
+    if (movie && movie->error[0]) return movie->error;
+    return nes_movie_result_string(movie ? movie->last_result : NES_MOVIE_INVALID_ARGUMENT);
 }
 
 void nes_movie_progress(const NesMovieSession *movie, NesMovieProgress *progress) {
@@ -939,6 +1017,17 @@ void nes_movie_progress(const NesMovieSession *movie, NesMovieProgress *progress
     memset(progress, 0, sizeof(*progress));
     if (!movie) {
         progress->last_result = NES_MOVIE_INVALID_ARGUMENT;
+        return;
+    }
+    if (nes_tas_session_active(movie->tas)) {
+        NesTasProgress tas;
+        nes_tas_session_progress(movie->tas, &tas);
+        progress->mode = nes_tas_session_mode(movie->tas);
+        progress->start_kind = NES_MOVIE_START_POWER_ON;
+        progress->frame = tas.frame;
+        progress->total_frames = tas.total_frames;
+        progress->path = tas.path;
+        progress->last_result = movie->last_result;
         return;
     }
     progress->mode = movie->mode;

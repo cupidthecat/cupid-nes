@@ -170,6 +170,17 @@ uint8_t cpu_peek_internal_ram(uint16_t addr) {
     return expanded ? expanded[addr & 0x1FFF] : cpu_ram[addr & 0x07FF];
 }
 
+bool cpu_replay_set_ram(const uint8_t *bytes, size_t size) {
+    uint8_t *expanded = cart_cpu_ram_8k();
+    size_t expected = expanded ? 0x2000u : 0x0800u;
+    if (!bytes || size != expected || nes_execution_allows_persistence()) {
+        return false;
+    }
+
+    memcpy(expanded ? expanded : cpu_ram, bytes, size);
+    return true;
+}
+
 uint8_t cpu_debug_peek(uint16_t addr) {
     if (addr <= 0x1FFF) return cpu_peek_internal_ram(addr);
     if (addr <= 0x3FFF) return ppu_debug_peek_register((uint16_t)(0x2000 | (addr & 7u)));

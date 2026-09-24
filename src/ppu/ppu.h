@@ -135,6 +135,10 @@ typedef struct {
     unsigned cpu_clock_phase; // Remainder for standalone CPU-clock stepping
     uint8_t  frame_video_phase; // NTSC carrier phase at the start of the active frame.
     uint8_t  completed_video_phase; // Carrier phase belonging to the last completed frame.
+    /* Imported TAS timing is isolated from ordinary hardware startup. */
+    bool tas_postrender_boundary;
+    uint8_t tas_startup_frames;
+    uint64_t tas_startup_cpu_origin;
     
     // Background tile fetch pipeline (for per-dot rendering)
     uint8_t  nt_byte;        // Nametable byte latch
@@ -194,6 +198,9 @@ void ppu_select_machine(PpuMachineContext *context, uint32_t *framebuffer_target
 uint32_t get_color(uint8_t pixel);
 uint16_t ppu_pixel_brightness(unsigned x, unsigned y);
 void start_frame();
+/* FCEUX movie rows start at post-render and retain two blank startup frames.
+ * The profile is only enabled by TAS playback and is included in save states. */
+bool ppu_begin_tas_timing(void);
 // Cycle-stepped rendering API
 void ppu_begin_frame_render(uint32_t *framebuffer);
 uint8_t ppu_reg_read(uint16_t reg);

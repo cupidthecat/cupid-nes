@@ -4,6 +4,9 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+
+enum { DESKTOP_HIT_CAPACITY = 2048 };
+
 struct DesktopClay {
     Clay_Context *context;
     void *arena;
@@ -11,8 +14,9 @@ struct DesktopClay {
     SDL_Renderer *renderer;
     char strings[131072];
     size_t used;
-    DesktopHit hits[512];
+    DesktopHit hits[DESKTOP_HIT_CAPACITY];
     int count, first;
+    uint32_t hit_serial;
     float old_x, old_y;
 };
 static Clay_Dimensions measure(Clay_StringSlice text, Clay_TextElementConfig *config, void *data) {
@@ -59,6 +63,7 @@ void desktop_clay_begin(DesktopClay *clay, float width, float height, float scal
     Clay_SetPointerState((Clay_Vector2){x / scale, y / scale}, (buttons & SDL_BUTTON_LMASK) != 0);
     clay->used = 0;
     clay->count = clay->first = 0;
+    clay->hit_serial = 0;
     SDL_RenderGetScale(clay->renderer, &clay->old_x, &clay->old_y);
     SDL_RenderSetScale(clay->renderer, clay->old_x * scale, clay->old_y * scale);
     Clay_BeginLayout();
@@ -75,8 +80,8 @@ Clay_String desktop_clay_string(DesktopClay *clay, const char *text) {
     return (Clay_String){.length = (int32_t)length, .chars = copy};
 }
 Clay_ElementId desktop_clay_hit(DesktopClay *clay, int kind, int index, int direction) {
-    Clay_ElementId id = Clay_GetElementIdWithIndex(CLAY_STRING("control"), (uint32_t)clay->count);
-    if (clay->count < 512)
+    Clay_ElementId id = Clay_GetElementIdWithIndex(CLAY_STRING("control"), clay->hit_serial++);
+    if (clay->count < DESKTOP_HIT_CAPACITY)
         clay->hits[clay->count++] =
             (DesktopHit){.id = id, .kind = kind, .index = index, .direction = direction};
     return id;

@@ -144,6 +144,8 @@ const char *rom_metadata_source_name(void);
 uint32_t rom_file_crc32(void);
 uint32_t rom_prg_crc32(void);
 uint32_t rom_prg_chr_crc32(void);
+/* Reapply the immutable trainer belonging to the loaded iNES image. */
+void rom_reapply_trainer(void);
 
 typedef struct {
     size_t prg_ram, prg_nvram;

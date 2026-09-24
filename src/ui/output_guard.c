@@ -39,12 +39,18 @@ bool frontend_output_path_excludes(const char *path,
     return true;
 }
 
-bool frontend_output_path_allowed(const char *path,
+static bool output_path_allowed(const char *path,
                                    const FrontendExecutionRuntime *execution,
                                    const char *const *protected_paths, size_t count,
-                                   char *error, size_t error_size) {
+                                   char *error, size_t error_size, bool movie_save) {
     if (!frontend_output_path_excludes(path, protected_paths, count, error, error_size)) return false;
     if (!execution) return true;
+    if (!movie_save && nes_movie_mode(execution->movie) != NES_MOVIE_IDLE) {
+        NesMovieProgress progress;
+        nes_movie_progress(execution->movie, &progress);
+        const char *movie_path = progress.path;
+        if (!frontend_output_path_excludes(path, &movie_path, 1, error, error_size)) return false;
+    }
     const char *active[] = {
         execution->rom_path, execution->save_identity,
         execution->fds_bios_path, execution->studybox_bios_path, fds_save_path(),
@@ -77,4 +83,16 @@ bool frontend_output_path_allowed(const char *path,
     }
     free(candidate);
     return allowed;
+}
+
+bool frontend_output_path_allowed(const char *path, const FrontendExecutionRuntime *execution,
+                                   const char *const *protected_paths, size_t count,
+                                   char *error, size_t error_size) {
+    return output_path_allowed(path, execution, protected_paths, count, error, error_size, false);
+}
+
+bool frontend_movie_output_path_allowed(const char *path, const FrontendExecutionRuntime *execution,
+                                         const char *const *protected_paths, size_t count,
+                                         char *error, size_t error_size) {
+    return output_path_allowed(path, execution, protected_paths, count, error, error_size, true);
 }

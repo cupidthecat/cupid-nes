@@ -33,6 +33,7 @@ typedef struct FrontendDesktopUi {
     uint32_t tool_rendered;
     struct DesktopClay *clay;
     struct DesktopPpuViewer *ppu_viewer;
+    struct DesktopTasEditor *tas_editor;
     const FrontendSession *idle_session;
     int idle_recent_index;
     int visible_rows;
