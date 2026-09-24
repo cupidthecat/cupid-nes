@@ -17,6 +17,14 @@ The application data directory contains `settings.ini`, `recent.ini`, and the op
 
 On Windows, replace `./cupid-nes` with `.\build\windows\cupid-nes.exe`. Supply one image path. Option values are separate arguments, so use `--port2 zapper`, not `--port2=zapper`. Names are case sensitive. Unknown options and a second image path are errors. Options are processed from left to right. Repeating a normal selector such as `--console`, `--port2`, or `--vs-dip` leaves the last value in effect. `--startup-phase` and `--startup-seed` are mutually exclusive and cannot be repeated; the tape options follow the same one-choice rule.
 
+## Movie launch options
+
+For movie playback, `--movie PATH` loads an input movie alongside the image.
+`--tas PATH` opens the TAS editor paused. These options are mutually exclusive
+and require an image argument. FM2/FM3/CTAS sessions apply their own recorded
+startup profile and restore the preceding live configuration on Stop. See
+[TAS movies and editing](tas.md).
+
 ## Console and CPU/PPU profiles
 
 | Option | Accepted value | Default | What it changes |

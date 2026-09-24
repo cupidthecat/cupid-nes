@@ -11,13 +11,15 @@
 #include "frontend_commands.h"
 #include "../debugger/debugger.h"
 #include "../system/execution_policy.h"
+#include "../replay/tas_session.h"
 #include <stdio.h>
 #include <string.h>
 
 static bool before_load(void *context, char *error, size_t error_size) {
     StateRuntime *runtime = context;
     if (!runtime || !runtime->execution) return false;
-    if (nes_execution_policy() != NES_EXECUTION_LIVE) {
+    if (nes_execution_policy() != NES_EXECUTION_LIVE &&
+        !nes_tas_session_active(nes_movie_tas(runtime->execution->movie))) {
         if (error && error_size)
             snprintf(error, error_size, "Stop the replay session before loading a state");
         return false;
@@ -36,6 +38,7 @@ static void after_load(void *context, bool loaded) {
     StateRuntime *runtime = context;
     if (!runtime) return;
     if (loaded) {
+        ++runtime->execution->timing_revision;
         frontend_execution_clear_timeline(runtime->execution);
         debugger_reset_session();
         runtime->execution->debugger_pause_revision = debugger_pause_revision();
@@ -77,6 +80,7 @@ void state_runtime_init(StateRuntime *runtime, FrontendSettings *settings,
     memset(runtime, 0, sizeof(*runtime));
     runtime->execution = execution;
     frontend_state_init(&runtime->frontend, settings, slot_directory);
+    runtime->frontend.movie = execution ? execution->movie : NULL;
     frontend_state_set_hooks(&runtime->frontend, before_load, after_load, runtime);
     frontend_state_set_save_hooks(&runtime->frontend, before_save, after_capture);
 }

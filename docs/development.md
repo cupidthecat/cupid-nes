@@ -137,6 +137,68 @@ build/accuracy-tests --render 240 build/diagnostic-roms/oam_read/oam_read.nes bu
 
 The read-buffer test needs more than 1,200 frames; the diagnostic collection grants 7,200. Older ROMs can assume result RAM is already enabled or report only on screen. Preserve the explicit setup conditions when reporting results. The [accuracy notes](accuracy.md#interpreting-other-roms) explain these conventions; [troubleshooting](troubleshooting.md#diagnostic-test-failures) covers missing data, timeouts, and CI failures.
 
+## TAS regressions
+
+The production runner includes FM2/FM3 codec, editable project, Lua script,
+session/state, and desktop gesture tests in its ordinary hardware run. They
+can also be run separately:
+
+```sh
+build/accuracy-tests --fm2
+build/accuracy-tests --tas-project
+build/accuracy-tests --tas-script
+build/accuracy-tests --tas-session
+build/accuracy-tests --tas-editor-input
+```
+
+The fixtures are synthetic and do not require a commercial game. Codec tests
+cover text/binary input, Four Score and Zapper records, metadata, bounded
+decoding, malformed offsets, and transactional failures. Project tests cover
+grouping, undo/redo, branches, selections, persistence, and damaged files. A
+synthetic CTAS version 1 fixture checks migration of populated undo and redo
+stacks; FM3 tests check branch-change status after editing and round trips. Lua
+tests include rollback, memory limits, and endless loops. Session tests cover
+input ownership, checkpoint equality, recording, commands, startup-frame state
+restoration, and restoration of live hardware options. Desktop tests use SDL's
+dummy driver and exercise actual layout hit targets at several display scales.
+They also check the shared native-window opening path, window reuse, movement
+and resizing, keyboard routing, and project retention after closing the editor.
+Editor regressions cover navigation between markers, playback following without
+changing the selection, insertion of several frames as one undo item, and
+column edits over selections with gaps. Sidebar controls are checked against
+the rendered hit targets at multiple display scales.
+
+For a supplied game and movie, use `--movie` to run a bounded prefix or all
+recorded input. A frame limit of zero means the full movie; positive limits
+must be at most 100,000.
+
+```sh
+build/accuracy-tests --movie 0 game.nes run.fm2 build/movie-final.ppm
+build/accuracy-tests --movie-trace 0 game.nes project.fm3 build/project-trace
+```
+
+The trace command writes `.ram` (2,048 bytes per completed frame), `.csv`
+(frame, cumulative lag, lag flag, and PC), `.pixels` (final 256 by 240 palette
+indices), and `.ppm` (final RGB image). It also checks that Stop restores the
+preceding machine state exactly. Output paths must differ from the input
+game and movie. A successful run means playback and restoration completed;
+compare the trace with an independent reference before claiming synchronization.
+
+With a local FCEUX executable, the automated comparison runs both emulators and
+binds their results to the source movie, ROM, and executable hashes:
+
+```sh
+python3 scripts/check-tas-movies.py --runner build/accuracy-tests \
+  --reference /path/to/fceux --rom game.nes --movie run.fm2 \
+  --output build/tas-reference-check
+```
+
+The output directory must be new. The check requires every frame's RAM and lag
+to match and compares the final palette image. It reports CPU endpoint
+differences separately; it does not claim cycle-by-cycle CPU equality. The
+reference executable must support `--loadlua` and the standard FCEUX Lua movie,
+memory, and screen APIs. Its emulation code does not need instrumentation.
+
 ## Sanitizers
 
 Build a fresh Linux binary with Clang AddressSanitizer and UndefinedBehaviorSanitizer:

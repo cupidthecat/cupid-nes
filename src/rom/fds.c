@@ -32,6 +32,7 @@
 #include "../ppu/ppu.h"
 #include "../media/patch.h"
 #include "../util/file_io.h"
+#include "../util/md5.h"
 #include "game_db.h"
 #include <inttypes.h>
 #include <limits.h>
@@ -642,6 +643,21 @@ void fds_shutdown(void) {
 }
 
 bool fds_disk_dirty(void) { return fds.dirty; }
+bool fds_movie_md5(uint8_t digest[16]) {
+    if (!fds.image || fds.image->qd_format || !digest) return false;
+    NesMd5 hash;
+    nes_md5_init(&hash);
+    for (size_t side = 0; side < fds.image->side_count; ++side) {
+        if (!nes_md5_update(&hash, fds.image->sides[side].raw, FDS_SIDE_SIZE)) return false;
+    }
+    return nes_md5_final(&hash, digest);
+}
+
+void fds_replay_initialize_memory(CartReplayMemoryInitializer initialize, void *context) {
+    if (!fds.image || !initialize || nes_execution_allows_persistence()) return;
+    initialize(fds.work_ram, sizeof(fds.work_ram), true, context);
+    initialize(fds.chr_ram, sizeof(fds.chr_ram), false, context);
+}
 FdsSaveMode fds_save_mode(void) { return fds.image ? fds.image->save_mode : FDS_SAVE_IN_PLACE; }
 const char *fds_save_path(void) { return fds.image ? fds.image->disk_path : NULL; }
 size_t fds_side_count(void) { return fds.image ? fds.image->side_count : 0; }

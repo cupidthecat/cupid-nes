@@ -45,6 +45,10 @@ CORE_SRC += src/system/execution_policy.c src/replay/rewind.c src/video/frame_sn
             src/third_party/lzma/CpuArch.c src/third_party/lzma/Delta.c \
             src/third_party/lzma/Lzma2Dec.c src/third_party/lzma/LzmaDec.c \
             src/third_party/lzma/Ppmd7.c src/third_party/lzma/Ppmd7Dec.c
+CORE_SRC += src/util/md5.c src/replay/tas_startup.c src/replay/tas_session.c \
+            src/replay/tas_timeline.c src/replay/tas_input.c src/replay/tas_state.c src/ui/tas_frontend.c
+CORE_SRC += src/replay/fm2.c src/replay/fm2_parse.c src/replay/fm2_write.c src/replay/tas_project.c \
+            src/replay/tas_project_edit.c src/replay/tas_project_meta.c src/ui/desktop_tas.c
 CORE_SRC += src/third_party/lua/lapi.c src/third_party/lua/lauxlib.c src/third_party/lua/lbaselib.c \
             src/third_party/lua/lcode.c src/third_party/lua/lcorolib.c src/third_party/lua/lctype.c \
             src/third_party/lua/ldebug.c src/third_party/lua/ldo.c src/third_party/lua/ldump.c \
@@ -97,6 +101,13 @@ TEST_SRC += src/tests/patch_accuracy.c src/tests/media_accuracy.c src/tests/fds_
             src/tests/capture_session_accuracy.c src/tests/video_trace_accuracy.c \
             src/tests/video_presentation_accuracy.c src/tests/audio_mix_accuracy.c
 TEST_CXX_SRC = src/tests/hd_pack_accuracy.cpp src/tests/hd_renderer_accuracy.cpp src/tests/hd_runtime_accuracy.cpp
+TEST_SRC += src/tests/tas_session_accuracy.c src/tests/movie_runner.c
+CORE_SRC += src/ui/desktop_tas_edit.c src/ui/desktop_tas_layout.c
+CORE_SRC += src/replay/tas_project_io.c src/replay/tas_script.c
+CORE_SRC += src/replay/tas_project_fm3.c src/replay/tas_project_fm3_read.c
+TEST_SRC += src/tests/tas_editor_input_accuracy.c
+TEST_SRC += src/tests/fm2_accuracy.c
+TEST_SRC += src/tests/tas_project_accuracy.c src/tests/tas_script_accuracy.c
 CORE_OBJ = $(CORE_SRC:.c=.o) $(CORE_CXX_SRC:.cpp=.o)
 TEST_OBJ = $(TEST_SRC:.c=.o) $(TEST_CXX_SRC:.cpp=.o)
 OBJ = $(CORE_OBJ) $(TEST_OBJ) src/main.o

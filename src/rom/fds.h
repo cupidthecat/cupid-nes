@@ -30,6 +30,7 @@
 #include <stdint.h>
 #include "rom.h"
 #include "../state/state_io.h"
+#include "replay_memory.h"
 
 typedef struct FdsImage FdsImage;
 
@@ -71,6 +72,8 @@ float fds_nsf_audio_output(void);
 // Disk persistence leaves the in-memory image dirty if writing or replacement fails.
 bool fds_flush(void);
 bool fds_disk_dirty(void);
+bool fds_movie_md5(uint8_t digest[16]);
+void fds_replay_initialize_memory(CartReplayMemoryInitializer initialize, void *context);
 FdsSaveMode fds_save_mode(void);
 const char *fds_save_path(void);
 

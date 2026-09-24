@@ -18,6 +18,7 @@ extern "C" {
 #endif
 
 typedef struct NesMovieSession NesMovieSession;
+typedef struct NesTasSession NesTasSession;
 
 typedef enum {
     NES_MOVIE_IDLE = 0,
@@ -85,6 +86,10 @@ NesMovieResult nes_movie_frame_complete(NesMovieSession *movie, bool completed);
 
 NesMovieMode nes_movie_mode(const NesMovieSession *movie);
 void nes_movie_progress(const NesMovieSession *movie, NesMovieProgress *progress);
+/* The editable frame session shares the movie's deterministic ownership. */
+NesTasSession *nes_movie_tas(NesMovieSession *movie);
+const NesTasSession *nes_movie_tas_const(const NesMovieSession *movie);
+const char *nes_movie_error(const NesMovieSession *movie);
 const char *nes_movie_result_string(NesMovieResult result);
 
 #ifdef __cplusplus

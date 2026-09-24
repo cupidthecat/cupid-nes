@@ -36,6 +36,11 @@ controls, and HD rendering.
 
 ## Input movies
 
+The [TAS editor](tas.md) plays FCEUX FM2 and FM3 movies, edits their input
+timelines, and saves CTAS projects. It adds seeking, frame back, rerecording,
+branches, and movie-bound save states. Its playback stays open and pauses at
+the end. The controls below describe Cupid's existing event movie format.
+
 Tools > Rewind, Run-Ahead and Movies provides a movie path, file pickers, current-state or power-on
 starting mode, Record, Play, and Stop. A movie records emulator input events and
 the initial machine state; it is separate from video recording. Controller and
@@ -48,7 +53,7 @@ returns to the session that existed before playback. Movie recording and
 playback isolate persistent storage from the live game's saves. A recording
 write failure retains the buffered recording for another save attempt.
 
-Movies use Cupid's versioned format. Other emulators' movie formats are not
-accepted. [Netplay](netplay.md) uses the same deterministic session ownership
+Event movies use Cupid's versioned format. FM2/FM3 files use the separate
+[TAS session](tas.md) and its editing controls. [Netplay](netplay.md) uses the same deterministic session ownership
 rules. Neither a movie nor a save state is a substitute for backing up ordinary
 battery-save files.

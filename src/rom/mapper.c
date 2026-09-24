@@ -272,6 +272,62 @@ static struct {
     Mirroring mirr;
 } namco108;
 
+void cart_replay_initialize_memory(CartReplayMemoryInitializer initialize, void *context) {
+    if (!initialize || nes_execution_allows_persistence()) {
+        return;
+    }
+
+    if (active_board) {
+        board_replay_initialize_memory(active_board, initialize, context);
+        return;
+    }
+
+    initialize(prg_work_ram.data, prg_work_ram.size, true, context);
+    initialize(prg_save_ram.data, prg_save_ram.size, true, context);
+    initialize(chr_work_ram.data, chr_work_ram.size, false, context);
+    initialize(chr_save_ram.data, chr_save_ram.size, false, context);
+    if (C.chr_is_ram) {
+        initialize(C.chr, C.chr_sz, false, context);
+    }
+
+    initialize(mmc5_exram, sizeof(mmc5_exram), true, context);
+    initialize(m111_nt_ram, sizeof(m111_nt_ram), true, context);
+    for (unsigned i = 0; i < 2; ++i) {
+        if (bandai_eeprom[i].capacity) {
+            memset(bandai_eeprom[i].bytes, 0xFF, bandai_eeprom[i].capacity);
+        }
+    }
+}
+
+size_t cart_replay_save_ram_size(void) {
+    if (active_board) {
+        return board_replay_save_ram_size(active_board);
+    }
+
+    return prg_save_ram.size ? prg_save_ram.size : prg_work_ram.size;
+}
+
+bool cart_replay_set_save_ram(const uint8_t *bytes, size_t size) {
+    if (nes_execution_allows_persistence()) {
+        return false;
+    }
+
+    if (active_board) {
+        return board_replay_set_save_ram(active_board, bytes, size);
+    }
+
+    RamBlock *memory = prg_save_ram.size ? &prg_save_ram : &prg_work_ram;
+    if ((!bytes && size) || size != memory->size) {
+        return false;
+    }
+
+    if (size) {
+        memcpy(memory->data, bytes, size);
+    }
+
+    return true;
+}
+
 void cart_apply_trainer(const uint8_t trainer[512]) {
     if (active_board) {
         board_apply_trainer(active_board, trainer);

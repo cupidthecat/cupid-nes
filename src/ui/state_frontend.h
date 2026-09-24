@@ -12,6 +12,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include "settings.h"
+#include "../replay/movie.h"
 
 enum {
     STATE_COMMAND_SAVE_SLOT = 0x1310,
@@ -30,6 +31,7 @@ typedef void (*FrontendAfterStateCapture)(void *context, bool captured);
 
 typedef struct {
     FrontendSettings *settings;
+    NesMovieSession *movie;
     const char *slot_directory;
     FrontendBeforeStateLoad before_load;
     FrontendAfterStateLoad after_load;

@@ -13,6 +13,14 @@ resizable windows, so you can keep the debugger open while a game runs.
 nametables, sprites, palettes, registers, and VRAM. You can paint writable tiles
 and edit RAM while the game is paused.
 
+The [TAS editor](docs/tas.md) opens FCEUX FM2 movies and FM3 projects in a
+separate, resizable window. Its input grid sits beside branch, marker, and
+recording controls. Follow playback, jump between markers, insert several
+frames at once, or edit a button across selected rows from its column heading.
+The editor also has frame advance and back, recording and rerecording, ten
+branch slots, undo/redo, and Lua input editing. Save the complete editing
+session as CTAS or export an FM2/FM3 movie.
+
 The menu bar and toolbar give you access to the main actions, with submenus
 keeping longer lists on screen. Settings use checkboxes, dropdowns, editable
 numbers, and native file pickers. The audio output dropdown lists detected
@@ -159,8 +167,8 @@ other peripheral combinations.
 | Ctrl+Alt+R | Reload the current image |
 | Ctrl+F / Ctrl+Shift+F | Hold fast-forward / toggle fast-forward |
 | Ctrl+1 / Ctrl+2 / Ctrl+3 | Half speed / normal speed / double speed |
-| F5 / F7 | Quick save / quick load the selected state slot |
-| Ctrl+F5 / Ctrl+F7 | Save / load a state file |
+| F5 / F6 | Quick save / quick load the selected state slot |
+| Ctrl+F5 / Ctrl+F6 | Save / load a state file |
 | F6 | Restore the default palette |
 | Page Up / Page Down | Next / previous NSF or NSFe track |
 | Ctrl+Space / Ctrl+End / Ctrl+Home | Music play-pause / stop / restart |
@@ -220,6 +228,7 @@ the save guide for those ownership rules.
 | Look up hardware and test terminology | [Hardware terminology](docs/glossary.md) |
 | Locate saves and use writable media | [Saves and media](docs/saves.md) |
 | Use states, rewind, run-ahead, or input movies | [States and replay](docs/replay.md) |
+| Play FCEUX movies and edit tool-assisted runs | [TAS movies and editing](docs/tas.md) |
 | Play NSF and NSFe tracks | [Music player](docs/music.md) |
 | Save screenshots, audio, or video | [Screenshots and recordings](docs/capture.md) |
 | Inspect execution and hardware | [Debugger and Lua](docs/debugging.md) |

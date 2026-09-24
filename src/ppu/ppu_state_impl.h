@@ -254,6 +254,28 @@ typedef struct {
     bool palette_disabled;
 } PpuSavedState;
 
+static bool ppu_write_tas_timing(NesStateWriter *writer, const PPU *state) {
+    /* Ordinary states keep their existing representation. The optional tagged
+     * extension belongs only to movie states and includes startup progress. */
+    if (!state->tas_postrender_boundary) return true;
+    return nes_state_write_bytes(writer, "TASP", 4)
+        && nes_state_write_bool(writer, state->tas_postrender_boundary)
+        && nes_state_write_u8(writer, state->tas_startup_frames)
+        && nes_state_write_u64(writer, state->tas_startup_cpu_origin);
+}
+
+static bool ppu_read_tas_timing(NesStateReader *reader, PPU *state) {
+    if (!nes_state_reader_remaining(reader)) return true;
+    uint8_t tag[4];
+    return nes_state_read_bytes(reader, tag, sizeof(tag)) && !memcmp(tag, "TASP", sizeof(tag))
+        && nes_state_read_bool(reader, &state->tas_postrender_boundary)
+        && state->tas_postrender_boundary
+        && nes_state_read_u8(reader, &state->tas_startup_frames)
+        && state->tas_startup_frames <= 2
+        && nes_state_read_u64(reader, &state->tas_startup_cpu_origin)
+        && (!state->tas_startup_frames || (state->scanline == 240 && state->dot == 0));
+}
+
 static bool ppu_state_decode(NesStateReader *reader, PpuSavedState *saved) {
     uint8_t revision;
     if (!ppu_machine_state_decode(reader, &saved->context, saved->framebuffer)
@@ -266,6 +288,7 @@ static bool ppu_state_decode(NesStateReader *reader, PpuSavedState *saved) {
         || !nes_state_read_bool(reader, &saved->oamdata_disabled)
         || !nes_state_read_bool(reader, &saved->palette_disabled)
         || revision > PPU_REVISION_2C02_E_PLUS
+        || !ppu_read_tas_timing(reader, &saved->context.state)
         || nes_state_reader_remaining(reader) != 0) return false;
     saved->revision = (PpuRevision)revision;
     return true;
@@ -287,7 +310,8 @@ bool ppu_state_capture(NesStateWriter *writer) {
         && nes_state_write_bool(writer, reset_suppression)
         && nes_state_write_bool(writer, sprite_eval_wrap_bug)
         && nes_state_write_bool(writer, oamdata_read_disabled)
-        && nes_state_write_bool(writer, palette_readback_disabled);
+        && nes_state_write_bool(writer, palette_readback_disabled)
+        && ppu_write_tas_timing(writer, main_ppu);
 }
 
 bool ppu_hardware_state_capture(NesStateWriter *writer) {
@@ -305,7 +329,8 @@ bool ppu_hardware_state_capture(NesStateWriter *writer) {
         && nes_state_write_bool(writer, reset_suppression)
         && nes_state_write_bool(writer, sprite_eval_wrap_bug)
         && nes_state_write_bool(writer, oamdata_read_disabled)
-        && nes_state_write_bool(writer, palette_readback_disabled);
+        && nes_state_write_bool(writer, palette_readback_disabled)
+        && ppu_write_tas_timing(writer, main_ppu);
 }
 
 bool ppu_state_validate(NesStateReader *reader) {

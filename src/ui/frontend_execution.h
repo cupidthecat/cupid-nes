@@ -53,6 +53,8 @@ typedef struct FrontendExecutionRuntime {
     char movie_path[FRONTEND_MOVIE_PATH_CAPACITY];
     NesMovieStartKind movie_start_kind;
     char movie_status[192];
+    bool tas_skip_lag;
+    size_t tas_pause_frame;
     const char *const *protected_paths;
     size_t protected_path_count;
     FrontendRestoreHandler restore_handler;

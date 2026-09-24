@@ -102,6 +102,10 @@ $cppSources = @('src/apu/epsm.cpp', 'src/third_party/ymfm/ymfm_opn.cpp',
                 'src/rom/boards/state.cpp', 'src/hd/hd_assets.cpp', 'src/hd/hd_pack_loader.cpp',
                 'src/hd/hd_conditions.cpp', 'src/hd/hd_renderer.cpp', 'src/hd/hd_runtime.cpp',
                 'src/third_party/stb/stb_vorbis.cpp')
+$coreSources += @('src/util/md5.c', 'src/replay/tas_startup.c', 'src/replay/tas_session.c',
+                  'src/replay/tas_timeline.c', 'src/replay/tas_input.c', 'src/replay/tas_state.c', 'src/ui/tas_frontend.c')
+$coreSources += @('src/replay/fm2.c', 'src/replay/fm2_parse.c', 'src/replay/fm2_write.c', 'src/replay/tas_project.c',
+                  'src/replay/tas_project_edit.c', 'src/replay/tas_project_meta.c', 'src/ui/desktop_tas.c')
 $testSources = @('src/tests/frontend_benchmark.c', 'src/tests/netplay_accuracy.c', 'src/tests/accuracy_test.c', 'src/tests/cpu_accuracy.c', 'src/tests/cpu_trace.c',
                  'src/tests/apu_accuracy.c', 'src/tests/ppu_accuracy.c', 'src/tests/mapper_accuracy.c',
                  'src/tests/region_accuracy.c', 'src/tests/file_io_accuracy.c', 'src/tests/persistence_accuracy.c',
@@ -142,6 +146,13 @@ $testSources = @('src/tests/frontend_benchmark.c', 'src/tests/netplay_accuracy.c
                  'src/tests/movie_frontend_accuracy.c',
                  'src/tests/frontend_accuracy.c', 'src/tests/desktop_accuracy.c')
 $cppTestSources = @('src/tests/hd_pack_accuracy.cpp', 'src/tests/hd_renderer_accuracy.cpp', 'src/tests/hd_runtime_accuracy.cpp')
+$testSources += @('src/tests/tas_session_accuracy.c', 'src/tests/movie_runner.c')
+$coreSources += @('src/ui/desktop_tas_edit.c', 'src/ui/desktop_tas_layout.c')
+$coreSources += @('src/replay/tas_project_io.c', 'src/replay/tas_script.c')
+$coreSources += @('src/replay/tas_project_fm3.c', 'src/replay/tas_project_fm3_read.c')
+$testSources += @('src/tests/tas_editor_input_accuracy.c')
+$testSources += @('src/tests/fm2_accuracy.c')
+$testSources += @('src/tests/tas_project_accuracy.c', 'src/tests/tas_script_accuracy.c')
 $application = Join-Path $outputDirectory 'cupid-nes.exe'
 $testProgram = Join-Path $outputDirectory 'accuracy-tests.exe'
 $objectDirectory = Join-Path $outputDirectory 'objects'

@@ -20,6 +20,7 @@
 extern "C" {
 #endif
 #include "rom.h"
+#include "replay_memory.h"
 
 typedef struct CartridgeBoard CartridgeBoard;
 
@@ -62,6 +63,10 @@ void board_set_mirroring(CartridgeBoard *board, Mirroring mirroring);
 void board_apply_trainer(CartridgeBoard *board, const uint8_t trainer[512]);
 void board_battery_configure(CartridgeBoard *board, const char *rom_path);
 bool board_battery_flush(CartridgeBoard *board);
+void board_replay_initialize_memory(CartridgeBoard *board, CartReplayMemoryInitializer initialize,
+                                     void *context);
+size_t board_replay_save_ram_size(const CartridgeBoard *board);
+bool board_replay_set_save_ram(CartridgeBoard *board, const uint8_t *bytes, size_t size);
 
 #ifdef __cplusplus
 }

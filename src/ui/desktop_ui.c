@@ -66,9 +66,12 @@ void desktop_sync_scale(FrontendDesktopUi *ui) {
     float ddpi = 96.0f;
     int display = SDL_GetWindowDisplayIndex(ui->window);
     if (display >= 0) (void)SDL_GetDisplayDPI(display, &ddpi, NULL, NULL);
-    ui->ui_scale = ddpi >= 180.0f && w >= 1280 && h >= 960 ? 2.0f
-        : ddpi >= 132.0f && w >= 960 && h >= 720 ? 1.5f : 1.0f;
-    SDL_SetWindowMinimumSize(ui->window, 640, 480);
+    bool tas = ui->parent && ui->panel_open && desktop_tas_panel(ui->panel_id);
+    int minimum_width = tas ? 900 : 640;
+    int minimum_height = tas ? 640 : 480;
+    ui->ui_scale = ddpi >= 180.0f && w >= minimum_width * 2 && h >= minimum_height * 2 ? 2.0f
+        : ddpi >= 132.0f && w >= minimum_width * 1.5f && h >= minimum_height * 1.5f ? 1.5f : 1.0f;
+    SDL_SetWindowMinimumSize(ui->window, minimum_width, minimum_height);
 }
 
 void frontend_desktop_compute_game_rect(int ww, int wh, int vw, int vh,
@@ -787,6 +790,7 @@ void desktop_commit_edit(FrontendDesktopUi *ui) {
     } else if (ui->panel_open) {
         char error[256] = {0};
         if (!(desktop_ppu_panel(ui->panel_id) ? desktop_ppu_commit(ui, ui->edit_text, error, sizeof(error)) :
+              desktop_tas_panel(ui->panel_id) ? desktop_tas_commit(ui, ui->edit_text, error, sizeof(error)) :
               frontend_panel_action(ui->panel_id, ui->edit_control, ui->edit_text, -1, error, sizeof(error)))) {
             desktop_copy_status(ui, error); return;
         }
@@ -1000,7 +1004,7 @@ bool frontend_desktop_input_captured(const FrontendDesktopUi *ui) {
 }
 bool frontend_desktop_quit_requested(const FrontendDesktopUi *ui){return ui&&ui->quit_requested;}
 void frontend_desktop_update_window_settings(FrontendDesktopUi *ui){if(!ui||ui->parent||!ui->window||!ui->settings||!ui->settings->remember_window_size)return;int w,h;SDL_GetWindowSize(ui->window,&w,&h);if(w>0&&h>0){ui->settings->window_width=(unsigned)w;ui->settings->window_height=(unsigned)h;}}
-void frontend_desktop_shutdown(FrontendDesktopUi *ui){if(!ui)return;desktop_close_windows(ui);desktop_ppu_destroy(ui);desktop_settings_open(ui,false);SDL_StopTextInput();desktop_clay_destroy(ui->clay);ui->clay=NULL;}
+void frontend_desktop_shutdown(FrontendDesktopUi *ui){if(!ui)return;desktop_close_windows(ui);desktop_ppu_destroy(ui);desktop_tas_destroy(ui);desktop_settings_open(ui,false);SDL_StopTextInput();desktop_clay_destroy(ui->clay);ui->clay=NULL;}
 
 bool desktop_palette_visible(const FrontendDesktopUi *ui) {
     return ui && (ui->palette_window || (!ui->parent && palette_tool_is_visible()));

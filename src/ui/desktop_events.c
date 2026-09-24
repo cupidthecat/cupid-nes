@@ -52,12 +52,8 @@ static void activate_menu_row(FrontendDesktopUi *ui, int row) {
             item->id <= DEVICE_COMMAND_BARCODE_SCAN) {
             desktop_copy_status(ui, ui->devices->status);
         }
-    } else if (item->kind == 1 && ui->native_windows) {
-        (void)desktop_open_window(ui, 1, item->id);
     } else if (item->kind == 1) {
-        ui->panel_id = item->id;
-        ui->panel_row = ui->panel_scroll = 0;
-        ui->panel_open = true;
+        (void)frontend_desktop_open_panel(ui, item->id);
     } else if (item->kind == 2) {
         if (!frontend_session_action_open_recent(ui->sessions, item->id, error, sizeof(error))) {
             desktop_copy_status(ui, error);
@@ -431,6 +427,9 @@ static bool handle_event(FrontendDesktopUi *ui, const SDL_Event *event) {
     if (event->type == SDL_QUIT) {
         return false;
     }
+    if (ui->panel_open && desktop_tas_panel(ui->panel_id) && event->type == SDL_KEYDOWN) {
+        desktop_tas_finish_paint(ui);
+    }
     if (ui->choice_open && event->type == SDL_KEYDOWN) {
         int count = desktop_choice_count(ui);
         SDL_Scancode sc = event->key.keysym.scancode;
@@ -462,6 +461,9 @@ static bool handle_event(FrontendDesktopUi *ui, const SDL_Event *event) {
         }
         return true;
     }
+    if (ui->panel_open && desktop_tas_panel(ui->panel_id) && !ui->edit_text_active &&
+        !ui->settings_open && !ui->choice_open && !desktop_palette_visible(ui) &&
+        event->type == SDL_KEYDOWN && desktop_tas_event(ui, event)) return true;
     if (ui->execution && ui->settings && (event->type == SDL_KEYDOWN || event->type == SDL_KEYUP)) {
         const FrontendBindingProfile *profile = frontend_settings_active_profile_const(ui->settings);
         FrontendShortcut shortcut;
@@ -565,6 +567,8 @@ static bool handle_event(FrontendDesktopUi *ui, const SDL_Event *event) {
     }
     if (ui->panel_open && desktop_ppu_panel(ui->panel_id) && !ui->edit_text_active &&
         desktop_ppu_event(ui, event)) return true;
+    if (ui->panel_open && desktop_tas_panel(ui->panel_id) && !ui->edit_text_active &&
+        desktop_tas_event(ui, event)) return true;
     if (ui->info_open && ui->log_open && ui->log_count &&
         (event->type == SDL_MOUSEWHEEL ||
          (event->type == SDL_KEYDOWN &&

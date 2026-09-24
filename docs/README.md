@@ -13,6 +13,7 @@ Cupid has an SDL application for running games and music and a separate executab
 | [Hardware and compatibility](hardware.md) | Supported systems and mappers, RAM/register behavior, expansion sound, ROM metadata, and implementation limits |
 | [Saves and media](saves.md) | Cartridge saves, EEPROM and flash, Turbo File/BattleBox storage, disk images, tapes, and save failures |
 | [States and replay](replay.md) | State slots and files, rewind, run-ahead, deterministic input movies, and isolated save ownership |
+| [TAS movies and editing](tas.md) | FM2/FM3 playback, CTAS projects, input editing, branches, recording, seeking, and Lua editing |
 | [Netplay](netplay.md) | Host and guest setup, slot assignment, synchronization, and disconnect behavior |
 | [HD packs](hd-packs.md) | Replacement graphics and audio, installation, selection, export, and capture |
 | [Music player](music.md) | NSF/NSFe track selection, pause and stop, metadata, fades, silence detection, repeat, and shuffle |

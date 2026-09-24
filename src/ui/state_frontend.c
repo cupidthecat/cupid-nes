@@ -11,6 +11,7 @@
 #include "frontend_panels.h"
 #include "platform_frontend.h"
 #include "../state/state.h"
+#include "../replay/tas_session.h"
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,6 +36,9 @@ static const char *const slot_names[NES_STATE_SLOT_COUNT] = {
 static void report_result(FrontendStateRuntime *runtime, NesStateResult result,
                           const char *success, char *error, size_t error_size) {
     const char *message = result == NES_STATE_OK ? success : nes_state_result_string(result);
+    if (result == NES_STATE_ERROR_INCOMPATIBLE && runtime &&
+        nes_tas_session_active(nes_movie_tas(runtime->movie)))
+        message = "Movie state does not match this movie's startup, cheats, or input prefix";
     if (runtime) snprintf(runtime->status, sizeof(runtime->status), "%s", message);
     if (error && error_size)
         snprintf(error, error_size, "%s", result == NES_STATE_OK ? "" : message);
@@ -50,7 +54,9 @@ static void after_load(FrontendStateRuntime *runtime, bool loaded) {
 
 static NesStateResult capture_and_write(FrontendStateRuntime *runtime, const char *path) {
     NesStateBlob blob = {0};
-    NesStateResult result = nes_state_capture(&blob);
+    NesTasSession *tas = nes_movie_tas(runtime->movie);
+    NesStateResult result = nes_tas_session_active(tas) ? nes_tas_session_capture_state(tas, &blob) :
+                                                        nes_state_capture(&blob);
     if (runtime->after_capture) runtime->after_capture(runtime->context, result == NES_STATE_OK);
     if (result != NES_STATE_OK) return result;
     NesFileResult written = nes_file_write_atomic(path, blob.data, blob.size);
@@ -81,7 +87,13 @@ static bool save_slot(void *context, char *error, size_t error_size) {
 static bool load_slot(void *context, char *error, size_t error_size) {
     FrontendStateRuntime *runtime = context;
     if (!before_load(runtime, error, error_size)) return false;
-    NesStateResult result = nes_state_load_slot(runtime->slot_directory, runtime->settings->state_slot);
+    NesTasSession *tas = nes_movie_tas(runtime->movie);
+    NesStateResult result;
+    if (nes_tas_session_active(tas)) {
+        char path[NES_FILE_PATH_LIMIT];
+        result = nes_state_slot_path(runtime->slot_directory, runtime->settings->state_slot, path, sizeof(path));
+        if (result == NES_STATE_OK) result = nes_tas_session_load_state(tas, path);
+    } else result = nes_state_load_slot(runtime->slot_directory, runtime->settings->state_slot);
     report_result(runtime, result, "State slot loaded", error, error_size);
     after_load(runtime, result == NES_STATE_OK);
     return result == NES_STATE_OK;
@@ -107,7 +119,9 @@ static bool load_file(void *context, char *error, size_t error_size) {
         return false;
     }
     if (!before_load(runtime, error, error_size)) return false;
-    NesStateResult result = nes_state_load_file(runtime->settings->state_file_path);
+    NesTasSession *tas = nes_movie_tas(runtime->movie);
+    NesStateResult result = nes_tas_session_active(tas) ? nes_tas_session_load_state(tas, runtime->settings->state_file_path) :
+                                                        nes_state_load_file(runtime->settings->state_file_path);
     report_result(runtime, result, "State file loaded", error, error_size);
     after_load(runtime, result == NES_STATE_OK);
     return result == NES_STATE_OK;

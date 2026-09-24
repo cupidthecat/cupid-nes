@@ -630,6 +630,35 @@ void Board::Initialize(const iNESHeader &header, uint8_t *prg, size_t prgBytes,
     InitMapper();
 }
 
+void Board::InitializeReplayMemory(CartReplayMemoryInitializer initialize, void *context) {
+    if (!initialize) {
+        return;
+    }
+
+    initialize(_workStorage.data(), _workStorage.size(), true, context);
+    initialize(_saveStorage.data(), _saveStorage.size(), true, context);
+    initialize(_chrStorage.data(), _chrStorage.size(), false, context);
+    initialize(_mapperStorage.data(), _mapperStorage.size(), true, context);
+    initialize(_nametableStorage.data(), _nametableStorage.size(), true, context);
+}
+
+size_t Board::ReplaySaveRamSize() const {
+    return _saveStorage.empty() ? _workStorage.size() : _saveStorage.size();
+}
+
+bool Board::SetReplaySaveRam(const uint8_t *bytes, size_t size) {
+    auto &storage = _saveStorage.empty() ? _workStorage : _saveStorage;
+    if ((!bytes && size) || size != storage.size()) {
+        return false;
+    }
+
+    if (size) {
+        std::memcpy(storage.data(), bytes, size);
+    }
+
+    return true;
+}
+
 void Board::ApplyTrainer(const uint8_t trainer[512]) {
     if (!trainer) return;
     uint8_t *bytes = _workRamSize >= 0x2000 ? _workRam : _saveRamSize >= 0x2000 ? _saveRam : nullptr;
@@ -835,6 +864,21 @@ void board_set_mirroring(CartridgeBoard *board, Mirroring mirroring) {
 }
 void board_apply_trainer(CartridgeBoard *board, const uint8_t trainer[512]) {
     if (board) board->instance->ApplyTrainer(trainer);
+}
+
+void board_replay_initialize_memory(CartridgeBoard *board, CartReplayMemoryInitializer initialize,
+                                     void *context) {
+    if (board) {
+        board->instance->InitializeReplayMemory(initialize, context);
+    }
+}
+
+size_t board_replay_save_ram_size(const CartridgeBoard *board) {
+    return board ? board->instance->ReplaySaveRamSize() : 0;
+}
+
+bool board_replay_set_save_ram(CartridgeBoard *board, const uint8_t *bytes, size_t size) {
+    return board && board->instance->SetReplaySaveRam(bytes, size);
 }
 void board_battery_configure(CartridgeBoard *board, const char *romPath) {
     if (!board) return;

@@ -193,6 +193,8 @@ uint8_t joypad_read(Joypad* jp);
 // Port zero is $4016; port one is $4017.
 uint8_t joypad_read_port(Joypad *jp, unsigned port);
 uint8_t joypad_debug_peek_port(const Joypad *jp, unsigned port);
+/* Host observation of real port reads; debugger peeks do not count. */
+uint64_t joypad_poll_count(void);
 uint8_t joypad_open_bus_mask(unsigned port);
 bool    joypad_clocks_adjacent_reads(void);
 void    joypad_set_microphone(bool active);

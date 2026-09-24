@@ -218,6 +218,9 @@ public:
     void ApplyTrainer(const uint8_t trainer[512]);
     void ConfigureBattery(const char *romPath);
     bool FlushBattery();
+    void InitializeReplayMemory(CartReplayMemoryInitializer initialize, void *context);
+    size_t ReplaySaveRamSize() const;
+    bool SetReplaySaveRam(const uint8_t *bytes, size_t size);
 };
 
 std::unique_ptr<Board> CreateBoard(unsigned mapper);

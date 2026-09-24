@@ -429,7 +429,14 @@ uint8_t joypad_read(Joypad* jp){
     return ret;
 }
 
+static uint64_t input_poll_count;
+
+uint64_t joypad_poll_count(void) {
+    return input_poll_count;
+}
+
 uint8_t joypad_read_port(Joypad *jp, unsigned port) {
+    ++input_poll_count;
     uint8_t value;
     if (input_adapter == NES_ADAPTER_FOUR_SCORE) {
         value = read_adapter(port);

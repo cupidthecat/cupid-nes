@@ -688,7 +688,30 @@ void ppu_begin_frame_render(uint32_t *fb) {
 }
 
 void start_frame(void) {
+    if (ppu.tas_postrender_boundary && ppu.tas_startup_frames && ppu.frame_complete) {
+        --ppu.tas_startup_frames;
+    }
     ppu.frame_complete = false;
+}
+
+bool ppu_begin_tas_timing(void) {
+    if (!(nes_execution_policy() & NES_EXECUTION_MOVIE_PLAYBACK) || vs_dual_system()) return false;
+    ppu.tas_postrender_boundary = true;
+    ppu.tas_startup_frames = 2;
+    ppu.tas_startup_cpu_origin = cpu_total_cycles;
+    ppu.scanline = 240;
+    ppu.dot = 0;
+    ppu.frame_complete = false;
+    ppu.status &= (uint8_t)~0x80u;
+    ppu.nmi_out = false;
+    cpu_set_nmi_line(false);
+    uint32_t blank = get_color(0x0F);
+    memset(ppu.pixel_indices, 0x0F, sizeof(ppu.pixel_indices));
+    for (unsigned i = 0; i < SCREEN_WIDTH * SCREEN_HEIGHT; ++i) {
+        ppu.pixel_signal[i] = 0x0F;
+        active_framebuffer[i] = blank;
+    }
+    return true;
 }
 
 void ppu_power_on(PPU *state) {
@@ -1080,7 +1103,37 @@ static void ppu_render_dot(int x, int y) {
     }
 }
 
+static void ppu_complete_frame(void) {
+    ppu.frame_complete = true;
+    ++ppu.frame_count;
+    nes_video_snapshot_complete(vs_active_side(), active_framebuffer, ppu.pixel_signal,
+                                ppu.completed_video_phase, ppu.frame_count);
+    if (nes_video_trace_active) nes_video_trace_complete(vs_active_side(), ppu.frame_count);
+}
+
+static void ppu_step_tas_startup(int ppu_cycles) {
+    /* The movie format's startup runs CPU/APU clocks without a PPU vblank.
+     * Keep this state until start_frame, so an instruction that crosses the
+     * deadline finishes entirely inside the same blank frame. */
+    const NesTiming *timing = nes_timing();
+    for (int i = 0; i < ppu_cycles; ++i) {
+        ppu.bus_ale_this_dot = ppu.bus_read_this_dot = false;
+        ppu_complete_register_accesses(0);
+        ++ppu.total_cycles;
+    }
+    uint64_t clocks = (uint64_t)(3u - ppu.tas_startup_frames) * timing->scanlines * 341u * timing->ppu_divider;
+    uint64_t duration = (clocks + timing->cpu_divider - 1u) / timing->cpu_divider;
+    if (!ppu.frame_complete && cpu_total_cycles >= ppu.tas_startup_cpu_origin &&
+        cpu_total_cycles - ppu.tas_startup_cpu_origin >= duration) {
+        ppu_complete_frame();
+    }
+}
+
 void ppu_step_dots(int ppu_cycles) {
+    if (ppu.tas_postrender_boundary && ppu.tas_startup_frames) {
+        ppu_step_tas_startup(ppu_cycles);
+        return;
+    }
     if (cart_nsf_active()) {
         ppu_step_nsf_dots(ppu_cycles);
         return;
@@ -1235,13 +1288,9 @@ void ppu_step_dots(int ppu_cycles) {
                 ppu.completed_video_phase = ppu.frame_video_phase;
                 ppu.frame_video_phase = (uint8_t)(ppu.total_cycles % 3u);
                 ppu.odd_frame = !ppu.odd_frame;
-                ppu.frame_complete = true;
-                ppu.frame_count++;
-                nes_video_snapshot_complete(vs_active_side(), active_framebuffer,
-                                             ppu.pixel_signal, ppu.completed_video_phase,
-                                             ppu.frame_count);
-                if (nes_video_trace_active) nes_video_trace_complete(vs_active_side(), ppu.frame_count);
+                if (!ppu.tas_postrender_boundary) ppu_complete_frame();
             }
+            if (ppu.tas_postrender_boundary && ppu.scanline == 240) ppu_complete_frame();
             if (ppu.startup_writes_restricted
                 && ppu.scanline == (int)nes_timing()->scanlines - 1)
                 ppu.startup_writes_restricted = false;
