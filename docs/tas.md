@@ -36,6 +36,11 @@ Exporting a movie keeps the open project's branches and history; it does not
 mark an unsaved CTAS project as saved. FM2 has no editor history or branch
 container, so keep a CTAS copy of editing work.
 
+CTAS version 2 retains whether the current timeline has changed since its stored
+branch, including that status in undo/redo history. Version 1 projects still
+open; Cupid compares their input and markers with the stored branch to recover
+the status. Saving writes version 2, which older Cupid builds cannot open.
+
 FM3 imports markers, the current selection, known lag results, and branch
 timelines with their names and parent relationships. Cupid rebuilds executable
 checkpoints from the movie input. It never loads another emulator's machine
@@ -114,6 +119,11 @@ alternate timelines with a name, markers, lag information, and a key frame.
 **Store** captures the current timeline at the playback position; **Load**
 deploys it and seeks to its key frame. A branch deployment and its rerecord
 increment form one undo item. **Clear** removes a slot.
+
+Editing input or marker notes marks the current branch as changed. Storing or
+loading a branch clears that status; undo and redo restore it with the timeline.
+FM3 export carries the status into FCEUX's branch view. Measuring lag or updating
+the rerecord counter does not mark a branch as changed.
 
 In the editor, F5 stores the selected branch and F6 loads it. Ctrl+F5 and
 Ctrl+F6 keep the shared save-state file shortcuts. Ctrl+S saves the project,

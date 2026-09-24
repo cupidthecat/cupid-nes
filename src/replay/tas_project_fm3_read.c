@@ -40,6 +40,7 @@ typedef struct {
 typedef struct {
     TasBookmark bookmarks[NES_TAS_BOOKMARK_COUNT];
     int current_branch;
+    bool current_branch_changed;
 } Fm3BookmarksImport;
 
 static bool fm3_reader_bytes(Fm3Reader *reader, size_t size, const uint8_t **out) {
@@ -703,6 +704,7 @@ static void fm3_bookmarks_import_free(Fm3BookmarksImport *imported) {
         tas_bookmark_free(&imported->bookmarks[slot]);
     }
     imported->current_branch = -1;
+    imported->current_branch_changed = false;
 }
 
 static NesTasResult fm3_parse_snapshot(Fm3Reader *reader, const NesFm2Movie *source, TasBookmark *bookmark,
@@ -872,6 +874,7 @@ static NesTasResult fm3_parse_bookmarks(const NesFm3ProjectModule *module, const
         goto format_error;
     }
     out->current_branch = branch;
+    out->current_branch_changed = changes != 0;
 
     for (unsigned slot = 0; slot < NES_TAS_BOOKMARK_COUNT; ++slot) {
         uint32_t encoded_parent = 0;
@@ -910,6 +913,25 @@ static NesTasResult fm3_parse_bookmarks(const NesFm3ProjectModule *module, const
 format_error:
     fm3_bookmarks_import_free(out);
     return NES_TAS_FORMAT_ERROR;
+}
+
+NesTasResult tas_fm3_read_branch_status(const NesFm3ProjectModule *module, const NesFm2Movie *source,
+                                        size_t *allocation_budget, int *branch, bool *changed) {
+    if (!allocation_budget || !branch || !changed) {
+        return NES_TAS_INVALID_ARGUMENT;
+    }
+    size_t allowed = *allocation_budget < FM3_DECODE_BUDGET_BYTES ? *allocation_budget : FM3_DECODE_BUDGET_BYTES;
+    Fm3DecodeBudget budget = {allowed};
+    Fm3BookmarksImport imported;
+    fm3_bookmarks_import_init(&imported);
+    NesTasResult result = fm3_parse_bookmarks(module, source, &imported, &budget);
+    *allocation_budget -= allowed - budget.remaining;
+    if (result == NES_TAS_OK) {
+        *branch = imported.current_branch;
+        *changed = imported.current_branch_changed;
+    }
+    fm3_bookmarks_import_free(&imported);
+    return result;
 }
 
 NesTasResult tas_import_fm3_metadata(NesTasProject *project, const NesFm2Movie *source) {
@@ -984,6 +1006,7 @@ NesTasResult tas_import_fm3_metadata(NesTasProject *project, const NesFm2Movie *
         tas_bookmark_init(&bookmarks.bookmarks[slot]);
     }
     project->state.current_branch = bookmarks.current_branch;
+    project->state.current_branch_changed = bookmarks.current_branch_changed;
 
 done:
     fm3_markers_import_free(&markers);

@@ -104,6 +104,7 @@ NesTasResult nes_tas_marker_set(NesTasProject *project, size_t frame, const char
         timeline->markers[index].note = copy;
         timeline->marker_count++;
     }
+    tas_project_set_branch_changed(project, true);
     tas_project_mark_change(project, SIZE_MAX, TAS_FM3_MODULE_BIT(NES_FM3_MODULE_MARKERS));
     return tas_project_auto_finish(project, owned, NES_TAS_OK);
 }
@@ -129,6 +130,7 @@ NesTasResult nes_tas_marker_remove(NesTasProject *project, size_t frame) {
     timeline->marker_count--;
     memmove(timeline->markers + index, timeline->markers + index + 1,
             (timeline->marker_count - index) * sizeof(*timeline->markers));
+    tas_project_set_branch_changed(project, true);
     tas_project_mark_change(project, SIZE_MAX, TAS_FM3_MODULE_BIT(NES_FM3_MODULE_MARKERS));
     return tas_project_auto_finish(project, owned, NES_TAS_OK);
 }
@@ -168,6 +170,7 @@ NesTasResult nes_tas_marker_move(NesTasProject *project, size_t from_frame, size
     moving.frame = to_frame;
     timeline->markers[to] = moving;
     timeline->marker_count++;
+    tas_project_set_branch_changed(project, true);
     tas_project_mark_change(project, SIZE_MAX, TAS_FM3_MODULE_BIT(NES_FM3_MODULE_MARKERS));
     return tas_project_auto_finish(project, owned, NES_TAS_OK);
 }
@@ -197,6 +200,7 @@ NesTasResult nes_tas_set_intro_note(NesTasProject *project, const char *note) {
     }
     free(project->state.timeline.intro_note);
     project->state.timeline.intro_note = copy;
+    tas_project_set_branch_changed(project, true);
     tas_project_mark_change(project, SIZE_MAX, TAS_FM3_MODULE_BIT(NES_FM3_MODULE_MARKERS));
     return tas_project_auto_finish(project, owned, NES_TAS_OK);
 }
@@ -289,6 +293,7 @@ NesTasResult nes_tas_bookmark_set(NesTasProject *project, unsigned slot, size_t 
     project->state.bookmarks[slot] = replacement;
     tas_bookmark_init(&replacement);
     project->state.current_branch = (int)slot;
+    tas_project_set_branch_changed(project, false);
     tas_project_mark_change(project, SIZE_MAX, TAS_FM3_MODULE_BIT(NES_FM3_MODULE_BOOKMARKS));
     return tas_project_auto_finish(project, owned, NES_TAS_OK);
 }
@@ -314,6 +319,7 @@ NesTasResult nes_tas_bookmark_clear(NesTasProject *project, unsigned slot) {
     tas_bookmark_free(&project->state.bookmarks[slot]);
     if (project->state.current_branch == (int)slot) {
         project->state.current_branch = parent;
+        tas_project_set_branch_changed(project, true);
     }
     tas_project_mark_change(project, SIZE_MAX, TAS_FM3_MODULE_BIT(NES_FM3_MODULE_BOOKMARKS));
     return tas_project_auto_finish(project, owned, NES_TAS_OK);
@@ -368,6 +374,7 @@ NesTasResult nes_tas_bookmark_deploy(NesTasProject *project, unsigned slot) {
     project->state.selection = selection;
     project->state.current_branch = (int)slot;
     tas_project_mark_change(project, first_changed, TAS_FM3_ALL_MODULES);
+    tas_project_set_branch_changed(project, false);
     return tas_project_auto_finish(project, owned, NES_TAS_OK);
 }
 

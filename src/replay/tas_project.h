@@ -23,7 +23,7 @@ enum {
     NES_TAS_MARKER_NOTE_MAX = 99,
     NES_TAS_BOOKMARK_NAME_MAX = 63,
     NES_CTAS_MAGIC_SIZE = 8,
-    NES_CTAS_VERSION = 1
+    NES_CTAS_VERSION = 2
 };
 
 #define NES_CTAS_MAGIC "CUPIDTAS"
@@ -167,7 +167,7 @@ NesTasResult nes_tas_project_save(const NesTasProject *project, const char *path
 NesTasResult nes_tas_project_load(const char *path, NesTasProject **out);
 
 /* CTAS files start with exactly eight ASCII bytes "CUPIDTAS", followed by a
- * little-endian uint32 version (currently 1). CTAS retains editable project
+ * little-endian uint32 version (currently 2). CTAS retains editable project
  * history. FM3 export rebuilds safe editable modules and preserves untouched
  * source modules byte-for-byte; stale machine-state modules are emitted using
  * their standard skip records instead of foreign executable state. */

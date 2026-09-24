@@ -38,6 +38,7 @@ typedef struct {
     TasTimeline timeline;
     TasBookmark bookmarks[NES_TAS_BOOKMARK_COUNT];
     int current_branch;
+    bool current_branch_changed;
     uint8_t *selection;
 } TasProjectState;
 
@@ -113,6 +114,7 @@ NesTasResult tas_clipboard_clone(const TasClipboard *source, TasClipboard *out);
 void tas_project_mark_change(NesTasProject *project, size_t first_changed,
                              uint32_t dirty_modules);
 void tas_project_mark_dirty(NesTasProject *project, uint32_t dirty_modules);
+void tas_project_set_branch_changed(NesTasProject *project, bool changed);
 NesTasResult tas_project_auto_begin(NesTasProject *project, bool *owned);
 NesTasResult tas_project_auto_finish(NesTasProject *project, bool owned,
                                      NesTasResult result);
@@ -126,6 +128,8 @@ void tas_project_test_reset_alloc_fail(void);
 
 NesTasResult tas_import_fm3_metadata(NesTasProject *project,
                                      const NesFm2Movie *source);
+NesTasResult tas_fm3_read_branch_status(const NesFm3ProjectModule *module, const NesFm2Movie *source,
+                                        size_t *allocation_budget, int *branch, bool *changed);
 NesTasResult tas_project_write_fm3(const NesTasProject *project, uint8_t *destination,
                                    size_t capacity, size_t *written,
                                    NesFm2Diagnostic *diagnostic, bool measure_only,

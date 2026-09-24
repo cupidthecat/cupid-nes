@@ -391,11 +391,36 @@ static void ctas_write_state(CtasWriter *writer, const TasProjectState *state) {
     ctas_write_u64(writer, state->timeline.movie.frame_count);
     ctas_write_bytes(writer, state->selection, state->timeline.movie.frame_count);
     ctas_write_i32(writer, state->current_branch);
+    ctas_write_u8(writer, state->current_branch_changed ? 1 : 0);
     for (unsigned slot = 0; slot < NES_TAS_BOOKMARK_COUNT; ++slot)
         ctas_write_bookmark(writer, &state->bookmarks[slot]);
 }
 
-static void ctas_read_state(CtasReader *reader, TasProjectState *state) {
+static bool ctas_legacy_branch_changed(const TasProjectState *state) {
+    if (state->current_branch < 0) {
+        return false;
+    }
+    const TasTimeline *timeline = &state->timeline;
+    const TasTimeline *branch = &state->bookmarks[state->current_branch].timeline;
+    if (timeline->movie.frame_count != branch->movie.frame_count || timeline->marker_count != branch->marker_count ||
+        strcmp(timeline->intro_note, branch->intro_note) != 0) {
+        return true;
+    }
+    for (size_t i = 0; i < timeline->movie.frame_count; ++i) {
+        if (!tas_frame_equal(&timeline->movie.frames[i], &branch->movie.frames[i])) {
+            return true;
+        }
+    }
+    for (size_t i = 0; i < timeline->marker_count; ++i) {
+        if (timeline->markers[i].frame != branch->markers[i].frame ||
+            strcmp(timeline->markers[i].note, branch->markers[i].note) != 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void ctas_read_state(CtasReader *reader, TasProjectState *state, uint32_t version) {
     ctas_read_timeline(reader, &state->timeline);
     if (reader->result != NES_TAS_OK) return;
     size_t frames = state->timeline.movie.frame_count;
@@ -430,12 +455,25 @@ static void ctas_read_state(CtasReader *reader, TasProjectState *state) {
         reader->result = NES_TAS_FORMAT_ERROR;
         return;
     }
+    if (version >= 2) {
+        uint8_t changed = ctas_read_u8(reader);
+        if (reader->result != NES_TAS_OK || changed > 1) {
+            reader->result = NES_TAS_FORMAT_ERROR;
+            return;
+        }
+        state->current_branch_changed = changed != 0;
+    }
     for (unsigned slot = 0; slot < NES_TAS_BOOKMARK_COUNT; ++slot) {
         ctas_read_bookmark(reader, &state->bookmarks[slot]);
         if (reader->result != NES_TAS_OK) return;
     }
-    if (state->current_branch >= 0 && !state->bookmarks[state->current_branch].occupied)
+    if (state->current_branch >= 0 && !state->bookmarks[state->current_branch].occupied) {
         reader->result = NES_TAS_FORMAT_ERROR;
+        return;
+    }
+    if (version == 1) {
+        state->current_branch_changed = ctas_legacy_branch_changed(state);
+    }
 }
 
 static void ctas_write_clipboard(CtasWriter *writer, const TasClipboard *clipboard) {
@@ -497,8 +535,8 @@ static void ctas_write_history(CtasWriter *writer, const TasHistoryEntry *entry,
     }
 }
 
-static void ctas_read_history(CtasReader *reader, TasHistoryEntry **head, size_t *count,
-                              size_t *history_bytes) {
+static void ctas_read_history(CtasReader *reader, TasHistoryEntry **head, size_t *count, size_t *history_bytes,
+                              uint32_t version) {
     uint64_t count64 = ctas_read_u64(reader);
     if (reader->result != NES_TAS_OK) return;
     if (count64 > SIZE_MAX || count64 > CTAS_MAX_FILE_BYTES / sizeof(TasHistoryEntry)) {
@@ -522,7 +560,7 @@ static void ctas_read_history(CtasReader *reader, TasHistoryEntry **head, size_t
         uint64_t first = ctas_read_u64(reader);
         if (first != UINT64_MAX && first > SIZE_MAX) reader->result = NES_TAS_FORMAT_ERROR;
         entry->first_changed = first == UINT64_MAX ? SIZE_MAX : (size_t)first;
-        ctas_read_state(reader, &entry->state);
+        ctas_read_state(reader, &entry->state, version);
         if (reader->result != NES_TAS_OK) {
             tas_state_free(&entry->state);
             free(entry);
@@ -657,8 +695,10 @@ NesTasResult nes_tas_project_load(const char *path, NesTasProject **out) {
     CtasReader reader = {data, size - 4, 0, CTAS_MAX_DECODED_BYTES, NES_TAS_OK};
     const uint8_t *magic = ctas_read_bytes(&reader, NES_CTAS_MAGIC_SIZE);
     uint32_t version = ctas_read_u32(&reader);
-    if (!magic || memcmp(magic, NES_CTAS_MAGIC, NES_CTAS_MAGIC_SIZE) != 0
-        || version != NES_CTAS_VERSION) reader.result = NES_TAS_FORMAT_ERROR;
+    if (!magic || memcmp(magic, NES_CTAS_MAGIC, NES_CTAS_MAGIC_SIZE) != 0 || version < 1 ||
+        version > NES_CTAS_VERSION) {
+        reader.result = NES_TAS_FORMAT_ERROR;
+    }
 
     NesTasProject *project = NULL;
     if (reader.result == NES_TAS_OK) {
@@ -676,12 +716,28 @@ NesTasResult nes_tas_project_load(const char *path, NesTasProject **out) {
         project->max_history_entries = (size_t)max_entries;
         project->max_history_bytes = (size_t)max_bytes;
         ctas_read_source_modules(&reader, project);
-        ctas_read_state(&reader, &project->state);
+        ctas_read_state(&reader, &project->state, version);
         ctas_read_clipboard(&reader, &project->clipboard);
-        ctas_read_history(&reader, &project->undo, &project->undo_count,
-                          &project->history_bytes);
-        ctas_read_history(&reader, &project->redo, &project->redo_count,
-                          &project->history_bytes);
+        ctas_read_history(&reader, &project->undo, &project->undo_count, &project->history_bytes, version);
+        ctas_read_history(&reader, &project->redo, &project->redo_count, &project->history_bytes, version);
+        if (reader.result == NES_TAS_OK && version == 1) {
+            uint32_t bookmarks = TAS_FM3_MODULE_BIT(NES_FM3_MODULE_BOOKMARKS);
+            bool inferred_change = project->state.current_branch_changed;
+            if (project->source_project_present && (project->source_saved_modules & bookmarks) &&
+                !(project->fm3_dirty_modules & bookmarks)) {
+                int source_branch = -1;
+                bool source_changed = false;
+                reader.result = tas_fm3_read_branch_status(&project->source_modules[NES_FM3_MODULE_BOOKMARKS],
+                                                           &project->state.timeline.movie, &reader.allocation_budget,
+                                                           &source_branch, &source_changed);
+                if (reader.result == NES_TAS_OK && source_branch == project->state.current_branch && source_changed) {
+                    project->state.current_branch_changed = true;
+                }
+            }
+            if (inferred_change) {
+                project->fm3_dirty_modules |= bookmarks;
+            }
+        }
         if (reader.result == NES_TAS_OK && reader.offset != reader.size)
             reader.result = NES_TAS_FORMAT_ERROR;
         if (reader.result == NES_TAS_OK

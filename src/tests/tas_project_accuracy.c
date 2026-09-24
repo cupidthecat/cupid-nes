@@ -3,6 +3,7 @@
 #include "../replay/tas_project_internal.h"
 #include "../third_party/miniz/miniz.h"
 #include "../util/file_io.h"
+#include "tas_project_v1_fixture.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -84,6 +85,129 @@ static bool module_is(const NesFm2Movie *movie, unsigned kind, const char *id, s
         return true;
     }
     return movie->project_modules[kind].data != NULL && memcmp(movie->project_modules[kind].data, id, size) == 0;
+}
+
+static uint32_t test_read_u32le(const uint8_t *data) {
+    return (uint32_t)data[0] | (uint32_t)data[1] << 8 | (uint32_t)data[2] << 16 | (uint32_t)data[3] << 24;
+}
+
+static uint64_t test_read_u64le(const uint8_t *data) {
+    uint64_t value = 0;
+    for (unsigned i = 0; i < 8; ++i) {
+        value |= (uint64_t)data[i] << (i * 8);
+    }
+    return value;
+}
+
+static void test_write_u32le(uint8_t *data, uint32_t value) {
+    data[0] = (uint8_t)value;
+    data[1] = (uint8_t)(value >> 8);
+    data[2] = (uint8_t)(value >> 16);
+    data[3] = (uint8_t)(value >> 24);
+}
+
+static uint8_t *fm3_bookmark_changes_byte(NesFm2Movie *movie) {
+    enum {
+        FM3_BOOKMARKS_BYTES_AFTER_CHANGES = 9 + NES_TAS_BOOKMARK_COUNT * 4 + NES_TAS_BOOKMARK_COUNT +
+                                            NES_TAS_BOOKMARK_COUNT * NES_TAS_BOOKMARK_COUNT * 4
+    };
+
+    if (!movie || !(movie->project_saved_modules & (1u << NES_FM3_MODULE_BOOKMARKS))) {
+        return NULL;
+    }
+    NesFm3ProjectModule *module = &movie->project_modules[NES_FM3_MODULE_BOOKMARKS];
+    size_t required = FM3_BOOKMARKS_BYTES_AFTER_CHANGES + 1;
+    if (!module->data || module->size < required) {
+        return NULL;
+    }
+    uint8_t *changes = module->data + module->size - required;
+    return *changes <= 1 ? changes : NULL;
+}
+
+/* Version 1 encoded the same state but had no branch-divergence byte. This
+ * helper downgrades a history-free v2 fixture so the compatibility decoder is
+ * exercised without carrying a binary fixture in the repository. */
+static bool downgrade_history_free_ctas_to_v1(uint8_t *data, size_t *size) {
+    if (!data || !size || *size < NES_CTAS_MAGIC_SIZE + 4 + 4 ||
+        memcmp(data, NES_CTAS_MAGIC, NES_CTAS_MAGIC_SIZE) != 0 || test_read_u32le(data + NES_CTAS_MAGIC_SIZE) != 2) {
+        return false;
+    }
+    size_t payload_size = *size - 4;
+    size_t offset = NES_CTAS_MAGIC_SIZE + 4 + 8 + 8;
+    if (offset > payload_size || payload_size - offset < 13) {
+        return false;
+    }
+    offset += 13; /* source project present/version/saved/dirty */
+    for (unsigned i = 0; i < NES_FM3_PROJECT_MODULE_COUNT; ++i) {
+        if (offset > payload_size || payload_size - offset < 8) {
+            return false;
+        }
+        uint64_t module_size = test_read_u64le(data + offset);
+        offset += 8;
+        if (module_size > SIZE_MAX || offset > payload_size || (size_t)module_size > payload_size - offset) {
+            return false;
+        }
+        offset += (size_t)module_size;
+    }
+
+    if (offset > payload_size || payload_size - offset < 8) {
+        return false;
+    }
+    uint64_t movie_size = test_read_u64le(data + offset);
+    offset += 8;
+    if (movie_size > SIZE_MAX || offset > payload_size || (size_t)movie_size > payload_size - offset) {
+        return false;
+    }
+    offset += (size_t)movie_size;
+    if (offset > payload_size || payload_size - offset < 8) {
+        return false;
+    }
+    uint64_t lag_count = test_read_u64le(data + offset);
+    offset += 8;
+    if (lag_count > SIZE_MAX || offset > payload_size || (size_t)lag_count > payload_size - offset) {
+        return false;
+    }
+    offset += (size_t)lag_count;
+    if (offset > payload_size || payload_size - offset < 4) {
+        return false;
+    }
+    uint32_t intro_size = test_read_u32le(data + offset);
+    offset += 4;
+    if (offset > payload_size || intro_size > payload_size - offset) {
+        return false;
+    }
+    offset += intro_size;
+    if (offset > payload_size || payload_size - offset < 8) {
+        return false;
+    }
+    uint64_t marker_count = test_read_u64le(data + offset);
+    offset += 8;
+    if (marker_count != 0) {
+        return false;
+    }
+    if (offset > payload_size || payload_size - offset < 8) {
+        return false;
+    }
+    uint64_t selection_count = test_read_u64le(data + offset);
+    offset += 8;
+    if (selection_count > SIZE_MAX || offset > payload_size || (size_t)selection_count > payload_size - offset) {
+        return false;
+    }
+    offset += (size_t)selection_count;
+    if (offset > payload_size || payload_size - offset < 5) {
+        return false;
+    }
+    offset += 4; /* current branch */
+    if (data[offset] > 1) {
+        return false;
+    }
+
+    memmove(data + offset, data + offset + 1, *size - offset - 1);
+    --*size;
+    test_write_u32le(data + NES_CTAS_MAGIC_SIZE, 1);
+    uint32_t crc = (uint32_t)mz_crc32(MZ_CRC32_INIT, data, *size - 4);
+    test_write_u32le(data + *size - 4, crc);
+    return true;
 }
 
 static bool test_input_history_branches_and_rollback(void) {
@@ -208,6 +332,149 @@ cleanup:
     nes_tas_project_destroy(loaded);
     nes_tas_project_destroy(project);
     nes_fm2_movie_free(&movie);
+    (void)nes_file_remove(path);
+    return ok;
+}
+
+static bool test_ctas_v1_compatibility(void) {
+    static const char path[] = "build/tas-project-v1-compat.ctas";
+    bool ok = true;
+    NesFm2Movie movie;
+    NesTasProject *project = NULL;
+    NesTasProject *loaded = NULL;
+    NesTasBookmarkView bookmark;
+    uint8_t *data = NULL;
+    size_t size = 0;
+
+    CHECK(make_movie(&movie, 4));
+    project = nes_tas_project_create(&movie);
+    CHECK(project != NULL);
+    nes_tas_project_set_history_limit(project, 0, 0);
+    CHECK(nes_tas_bookmark_set(project, 0, 2, "Legacy branch") == NES_TAS_OK);
+    CHECK(project->state.current_branch == 0 && !project->state.current_branch_changed);
+    CHECK(!nes_tas_project_can_undo(project) && !nes_tas_project_can_redo(project));
+    CHECK(nes_tas_project_save(project, path) == NES_TAS_OK);
+    CHECK(nes_file_read_all(path, 16u * 1024u * 1024u, &data, &size) == NES_FILE_OK);
+    CHECK(downgrade_history_free_ctas_to_v1(data, &size));
+    CHECK(nes_file_write_atomic(path, data, size) == NES_FILE_OK);
+    CHECK(nes_tas_project_load(path, &loaded) == NES_TAS_OK && loaded != NULL);
+    CHECK(loaded->state.current_branch == 0 && !loaded->state.current_branch_changed);
+    CHECK(nes_tas_bookmark(loaded, 0, &bookmark) && bookmark.occupied && bookmark.key_frame == 2 &&
+          strcmp(bookmark.name, "Legacy branch") == 0);
+
+cleanup:
+    free(data);
+    nes_tas_project_destroy(loaded);
+    nes_tas_project_destroy(project);
+    nes_fm2_movie_free(&movie);
+    (void)nes_file_remove(path);
+    return ok;
+}
+
+static bool test_ctas_v1_preserved_branch_status(void) {
+    static const char path[] = "build/tas-project-v1-source-status.ctas";
+    bool ok = true;
+    NesFm2Movie movie;
+    NesFm2Movie exported;
+    NesTasProject *project = NULL;
+    NesTasProject *imported = NULL;
+    NesTasProject *loaded = NULL;
+    uint8_t *data = NULL;
+    size_t size = 0;
+    nes_fm2_movie_init(&exported);
+
+    CHECK(make_movie(&movie, 4));
+    project = nes_tas_project_create(&movie);
+    CHECK(project != NULL);
+    CHECK(nes_tas_bookmark_set(project, 0, 1, "Source branch") == NES_TAS_OK);
+    CHECK(export_project(project, &data, &size));
+    CHECK(parse_movie(data, size, &exported));
+    free(data);
+    data = NULL;
+    uint8_t *changes = fm3_bookmark_changes_byte(&exported);
+    CHECK(changes != NULL);
+    /* FCEUX keeps this flag after input is manually changed and restored. */
+    *changes = 1;
+    imported = nes_tas_project_create(&exported);
+    CHECK(imported != NULL && imported->fm3_dirty_modules == 0);
+    nes_tas_project_set_history_limit(imported, 0, 0);
+    CHECK(nes_tas_project_save(imported, path) == NES_TAS_OK);
+    CHECK(nes_file_read_all(path, 16u * 1024u * 1024u, &data, &size) == NES_FILE_OK);
+    CHECK(downgrade_history_free_ctas_to_v1(data, &size));
+    CHECK(nes_file_write_atomic(path, data, size) == NES_FILE_OK);
+    free(data);
+    data = NULL;
+    CHECK(nes_tas_project_load(path, &loaded) == NES_TAS_OK && loaded != NULL);
+    CHECK(loaded->state.current_branch == 0 && loaded->state.current_branch_changed);
+    CHECK(loaded->fm3_dirty_modules == 0);
+    nes_tas_project_set_history_limit(loaded, 64, 8u * 1024u * 1024u);
+    NesFm2Frame edited = *nes_tas_project_frame(loaded, 2);
+    edited.pads[0] ^= 1;
+    CHECK(nes_tas_set_frame(loaded, 2, &edited) == NES_TAS_OK);
+    CHECK(nes_tas_project_undo(loaded) == NES_TAS_OK);
+    CHECK(loaded->state.current_branch_changed);
+    CHECK(export_project(loaded, &data, &size));
+    nes_fm2_movie_free(&exported);
+    CHECK(parse_movie(data, size, &exported));
+    changes = fm3_bookmark_changes_byte(&exported);
+    CHECK(changes != NULL && *changes == 1);
+
+cleanup:
+    free(data);
+    nes_tas_project_destroy(loaded);
+    nes_tas_project_destroy(imported);
+    nes_tas_project_destroy(project);
+    nes_fm2_movie_free(&exported);
+    nes_fm2_movie_free(&movie);
+    (void)nes_file_remove(path);
+    return ok;
+}
+
+static bool test_ctas_v1_history_migration(void) {
+    static const char path[] = "build/tas-project-v1-history.ctas";
+    bool ok = true;
+    NesTasProject *project = NULL;
+    NesTasProject *reloaded = NULL;
+    NesFm2Movie exported;
+    uint8_t *encoded = NULL;
+    size_t encoded_size = 0;
+    nes_fm2_movie_init(&exported);
+
+    CHECK(nes_file_write_atomic(path, tas_project_v1_history, sizeof(tas_project_v1_history)) == NES_FILE_OK);
+    CHECK(nes_tas_project_load(path, &project) == NES_TAS_OK && project != NULL);
+    CHECK(nes_tas_project_frame_count(project) == 4);
+    CHECK(project->state.current_branch == 0 && project->state.current_branch_changed);
+    CHECK(nes_tas_project_frame(project, 1)->pads[0] == 1);
+    CHECK(nes_tas_project_frame(project, 2)->pads[0] == 0);
+    CHECK(nes_tas_marker_count(project) == 1);
+    CHECK(nes_tas_project_can_undo(project) && nes_tas_project_can_redo(project));
+    CHECK(export_project(project, &encoded, &encoded_size));
+    CHECK(parse_movie(encoded, encoded_size, &exported));
+    uint8_t *changes = fm3_bookmark_changes_byte(&exported);
+    CHECK(changes != NULL && *changes == 1);
+
+    CHECK(nes_tas_project_save(project, path) == NES_TAS_OK);
+    CHECK(nes_tas_project_load(path, &reloaded) == NES_TAS_OK && reloaded != NULL);
+    CHECK(reloaded->state.current_branch_changed);
+    CHECK(nes_tas_project_can_undo(reloaded) && nes_tas_project_can_redo(reloaded));
+    CHECK(nes_tas_project_redo(reloaded) == NES_TAS_OK);
+    CHECK(nes_tas_project_frame(reloaded, 2)->pads[0] == 2 && reloaded->state.current_branch_changed);
+    CHECK(nes_tas_project_undo(reloaded) == NES_TAS_OK);
+    CHECK(nes_tas_project_frame(reloaded, 2)->pads[0] == 0 && reloaded->state.current_branch_changed);
+    CHECK(nes_tas_project_undo(reloaded) == NES_TAS_OK);
+    CHECK(nes_tas_marker_count(reloaded) == 0 && reloaded->state.current_branch_changed);
+    CHECK(nes_tas_project_undo(reloaded) == NES_TAS_OK);
+    CHECK(nes_tas_project_frame(reloaded, 1)->pads[0] == 0);
+    CHECK(reloaded->state.current_branch == 0 && !reloaded->state.current_branch_changed);
+    CHECK(nes_tas_project_undo(reloaded) == NES_TAS_OK);
+    CHECK(reloaded->state.current_branch == -1 && !reloaded->state.current_branch_changed);
+    CHECK(!nes_tas_project_can_undo(reloaded));
+
+cleanup:
+    free(encoded);
+    nes_fm2_movie_free(&exported);
+    nes_tas_project_destroy(reloaded);
+    nes_tas_project_destroy(project);
     (void)nes_file_remove(path);
     return ok;
 }
@@ -413,6 +680,104 @@ cleanup:
     return ok;
 }
 
+static bool test_branch_divergence_round_trip(void) {
+    static const char path[] = "build/tas-project-branch-divergence.ctas";
+    bool ok = true;
+    NesFm2Movie movie;
+    NesFm2Movie baseline;
+    NesFm2Movie edited_movie;
+    NesTasProject *project = NULL;
+    NesTasProject *imported = NULL;
+    NesTasProject *loaded = NULL;
+    uint8_t *encoded = NULL;
+    size_t encoded_size = 0;
+    uint8_t *edited_encoded = NULL;
+    size_t edited_size = 0;
+
+    nes_fm2_movie_init(&baseline);
+    nes_fm2_movie_init(&edited_movie);
+    CHECK(make_movie(&movie, 16));
+    project = nes_tas_project_create(&movie);
+    CHECK(project != NULL);
+    CHECK(nes_tas_bookmark_set(project, 0, 4, "Root") == NES_TAS_OK);
+    CHECK(project->state.current_branch == 0 && !project->state.current_branch_changed);
+
+    CHECK(export_project(project, &encoded, &encoded_size));
+    CHECK(parse_movie(encoded, encoded_size, &baseline));
+    uint8_t *baseline_changes = fm3_bookmark_changes_byte(&baseline);
+    CHECK(baseline_changes != NULL && *baseline_changes == 0);
+
+    /* Import the FCEUX BOOKMARKS byte independently from Cupid's exporter. */
+    *baseline_changes = 1;
+    imported = nes_tas_project_create(&baseline);
+    CHECK(imported != NULL && imported->state.current_branch == 0 && imported->state.current_branch_changed);
+    nes_tas_project_destroy(imported);
+    imported = NULL;
+    *baseline_changes = 0;
+
+    /* Derived lag and rerecord metadata do not make the current input branch
+     * diverge in FCEUX. */
+    CHECK(nes_tas_set_lag(project, 2, NES_TAS_LAG_YES) == NES_TAS_OK);
+    CHECK(!project->state.current_branch_changed);
+    CHECK(nes_tas_increment_rerecord(project) == NES_TAS_OK);
+    CHECK(!project->state.current_branch_changed);
+
+    NesFm2Frame changed = *nes_tas_project_frame(project, 10);
+    changed.pads[0] ^= 0x20;
+    CHECK(nes_tas_set_frame(project, 10, &changed) == NES_TAS_OK);
+    CHECK(project->state.current_branch_changed);
+    CHECK(export_project(project, &edited_encoded, &edited_size));
+    CHECK(parse_movie(edited_encoded, edited_size, &edited_movie));
+    uint8_t *edited_changes = fm3_bookmark_changes_byte(&edited_movie);
+    CHECK(edited_changes != NULL && *edited_changes == 1);
+    imported = nes_tas_project_create(&edited_movie);
+    CHECK(imported != NULL && imported->state.current_branch == 0 && imported->state.current_branch_changed);
+    nes_tas_project_destroy(imported);
+    imported = NULL;
+
+    CHECK(nes_tas_project_undo(project) == NES_TAS_OK);
+    CHECK(!project->state.current_branch_changed);
+    CHECK(nes_tas_project_redo(project) == NES_TAS_OK);
+    CHECK(project->state.current_branch_changed);
+
+    CHECK(nes_tas_project_save(project, path) == NES_TAS_OK);
+    CHECK(nes_tas_project_load(path, &loaded) == NES_TAS_OK && loaded != NULL);
+    CHECK(loaded->state.current_branch == 0 && loaded->state.current_branch_changed);
+    CHECK(nes_tas_project_undo(loaded) == NES_TAS_OK);
+    CHECK(!loaded->state.current_branch_changed);
+    CHECK(nes_tas_project_redo(loaded) == NES_TAS_OK);
+    CHECK(loaded->state.current_branch_changed);
+
+    CHECK(nes_tas_bookmark_deploy(loaded, 0) == NES_TAS_OK);
+    CHECK(loaded->state.current_branch == 0 && !loaded->state.current_branch_changed);
+    CHECK(nes_tas_marker_set(loaded, 5, "marker divergence") == NES_TAS_OK);
+    CHECK(loaded->state.current_branch_changed);
+    CHECK(loaded->fm3_dirty_modules & TAS_FM3_MODULE_BIT(NES_FM3_MODULE_BOOKMARKS));
+    CHECK(nes_tas_project_undo(loaded) == NES_TAS_OK);
+    CHECK(!loaded->state.current_branch_changed);
+    CHECK(nes_tas_project_redo(loaded) == NES_TAS_OK);
+    CHECK(loaded->state.current_branch_changed);
+
+    CHECK(nes_tas_bookmark_set(loaded, 1, 6, "Stored after edit") == NES_TAS_OK);
+    CHECK(loaded->state.current_branch == 1 && !loaded->state.current_branch_changed);
+    changed = *nes_tas_project_frame(loaded, 12);
+    changed.pads[1] ^= 0x08;
+    CHECK(nes_tas_set_frame(loaded, 12, &changed) == NES_TAS_OK);
+    CHECK(loaded->state.current_branch_changed);
+
+cleanup:
+    free(edited_encoded);
+    free(encoded);
+    nes_tas_project_destroy(loaded);
+    nes_tas_project_destroy(imported);
+    nes_tas_project_destroy(project);
+    nes_fm2_movie_free(&edited_movie);
+    nes_fm2_movie_free(&baseline);
+    nes_fm2_movie_free(&movie);
+    (void)nes_file_remove(path);
+    return ok;
+}
+
 static bool test_lag_transactions_and_branch_relations(void) {
     bool ok = true;
     NesFm2Movie movie;
@@ -494,10 +859,22 @@ int test_tas_project_accuracy(void) {
     if (!test_ctas_round_trip()) {
         failures++;
     }
+    if (!test_ctas_v1_compatibility()) {
+        failures++;
+    }
+    if (!test_ctas_v1_history_migration()) {
+        failures++;
+    }
+    if (!test_ctas_v1_preserved_branch_status()) {
+        failures++;
+    }
     if (!test_ctas_malformed_strings_and_counts()) {
         failures++;
     }
     if (!test_fm3_metadata_and_stale_modules()) {
+        failures++;
+    }
+    if (!test_branch_divergence_round_trip()) {
         failures++;
     }
     if (!test_lag_transactions_and_branch_relations()) {

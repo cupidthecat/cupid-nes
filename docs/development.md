@@ -154,7 +154,9 @@ build/accuracy-tests --tas-editor-input
 The fixtures are synthetic and do not require a commercial game. Codec tests
 cover text/binary input, Four Score and Zapper records, metadata, bounded
 decoding, malformed offsets, and transactional failures. Project tests cover
-grouping, undo/redo, branches, selections, persistence, and damaged files. Lua
+grouping, undo/redo, branches, selections, persistence, and damaged files. A
+synthetic CTAS version 1 fixture checks migration of populated undo and redo
+stacks; FM3 tests check branch-change status after editing and round trips. Lua
 tests include rollback, memory limits, and endless loops. Session tests cover
 input ownership, checkpoint equality, recording, commands, startup-frame state
 restoration, and restoration of live hardware options. Desktop tests use SDL's

@@ -341,7 +341,7 @@ static NesTasResult fm3_build_bookmarks(const NesTasProject *project, Fm3BuiltMo
     }
     fm3_buffer_bytes(&buffer, timestamp, sizeof(timestamp));
     fm3_buffer_u32(&buffer, (uint32_t)(int32_t)current);
-    fm3_buffer_u8(&buffer, 0);
+    fm3_buffer_u8(&buffer, project->state.current_branch_changed ? 1 : 0);
     fm3_buffer_bytes(&buffer, timestamp, sizeof(timestamp));
     for (unsigned slot = 0; slot < NES_TAS_BOOKMARK_COUNT; ++slot) {
         int parent = project->state.bookmarks[slot].parent_slot;

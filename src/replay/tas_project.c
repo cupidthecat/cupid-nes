@@ -101,7 +101,8 @@ static bool tas_bookmark_equal(const TasBookmark *left, const TasBookmark *right
 }
 
 static bool tas_state_equal(const TasProjectState *left, const TasProjectState *right) {
-    if (!tas_timeline_equal(&left->timeline, &right->timeline) || left->current_branch != right->current_branch) {
+    if (!tas_timeline_equal(&left->timeline, &right->timeline) || left->current_branch != right->current_branch ||
+        left->current_branch_changed != right->current_branch_changed) {
         return false;
     }
     if (left->timeline.movie.frame_count &&
@@ -307,6 +308,7 @@ NesTasResult tas_state_clone(const TasProjectState *source, TasProjectState *out
         memcpy(replacement.selection, source->selection, frames);
     }
     replacement.current_branch = source->current_branch;
+    replacement.current_branch_changed = source->current_branch_changed;
     for (unsigned i = 0; i < NES_TAS_BOOKMARK_COUNT; ++i) {
         result = tas_bookmark_clone(&source->bookmarks[i], &replacement.bookmarks[i]);
         if (result != NES_TAS_OK) {
@@ -545,9 +547,20 @@ void tas_project_mark_dirty(NesTasProject *project, uint32_t dirty_modules) {
     }
 }
 
+void tas_project_set_branch_changed(NesTasProject *project, bool changed) {
+    if (!project || project->state.current_branch_changed == changed) {
+        return;
+    }
+    project->state.current_branch_changed = changed;
+    tas_project_mark_dirty(project, TAS_FM3_MODULE_BIT(NES_FM3_MODULE_BOOKMARKS));
+}
+
 void tas_project_mark_change(NesTasProject *project, size_t first_changed, uint32_t dirty_modules) {
     if (!project) {
         return;
+    }
+    if (first_changed != SIZE_MAX) {
+        tas_project_set_branch_changed(project, true);
     }
     tas_project_mark_dirty(project, dirty_modules);
     if (first_changed != SIZE_MAX) {
