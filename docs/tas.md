@@ -8,6 +8,11 @@ An imported movie opens paused and read-only. **Play** runs it; **Frame** and
 **Back** move one frame at a time. Playback pauses at the end and keeps the
 project open.
 
+The editor has its own desktop window. Drag its title bar to move it and its
+edges to resize it alongside the game. Opening the editor again raises the
+existing window. The Tools menu, `--tas`, and dropping a movie onto the game
+window all open this editor; closing it keeps the project and its edits available.
+
 The same paths are available from the command line:
 
 ```sh

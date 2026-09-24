@@ -107,6 +107,7 @@ void frontend_desktop_set_runtime(FrontendDesktopUi *ui,
                                   FrontendAudioRuntime *audio,
                                   FrontendVideoRuntime *video);
 bool frontend_desktop_register_commands(FrontendDesktopUi *ui);
+bool frontend_desktop_open_panel(FrontendDesktopUi *ui, unsigned id);
 bool frontend_desktop_handle_event(FrontendDesktopUi *ui, const SDL_Event *event);
 void frontend_desktop_render(FrontendDesktopUi *ui, int video_width, int video_height,
                              const char *title, const char *region, const char *run_state);

@@ -81,6 +81,10 @@ static unsigned group(const DesktopMenuItem *item, int menu, unsigned parent) {
         }
     }
     if (menu == 5) {
+        if (desktop_tas_panel(id)) {
+            return 0;
+        }
+
         if (id == CHEATS_FRONTEND_COMMAND || id == CHEATS_FRONTEND_PANEL || id == CHEATS_ADD_COMMAND ||
             id == CHEATS_TOGGLE_COMMAND) {
             return GROUP_CHEATS;

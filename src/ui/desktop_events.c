@@ -52,12 +52,8 @@ static void activate_menu_row(FrontendDesktopUi *ui, int row) {
             item->id <= DEVICE_COMMAND_BARCODE_SCAN) {
             desktop_copy_status(ui, ui->devices->status);
         }
-    } else if (item->kind == 1 && ui->native_windows) {
-        (void)desktop_open_window(ui, 1, item->id);
     } else if (item->kind == 1) {
-        ui->panel_id = item->id;
-        ui->panel_row = ui->panel_scroll = 0;
-        ui->panel_open = true;
+        (void)frontend_desktop_open_panel(ui, item->id);
     } else if (item->kind == 2) {
         if (!frontend_session_action_open_recent(ui->sessions, item->id, error, sizeof(error))) {
             desktop_copy_status(ui, error);

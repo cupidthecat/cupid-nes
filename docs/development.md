@@ -161,6 +161,8 @@ tests include rollback, memory limits, and endless loops. Session tests cover
 input ownership, checkpoint equality, recording, commands, startup-frame state
 restoration, and restoration of live hardware options. Desktop tests use SDL's
 dummy driver and exercise actual layout hit targets at several display scales.
+They also check the shared native-window opening path, window reuse, movement
+and resizing, keyboard routing, and project retention after closing the editor.
 
 For a supplied game and movie, use `--movie` to run a bounded prefix or all
 recorded input. A frame limit of zero means the full movie; positive limits

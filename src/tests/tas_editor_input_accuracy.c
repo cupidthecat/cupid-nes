@@ -380,6 +380,72 @@ int test_tas_editor_input_accuracy(void) {
     controller.cbutton.button = SDL_CONTROLLER_BUTTON_A;
     CHECK(desktop_tas_event(&ui, &controller));
     CHECK(nes_tas_session_set_recording(session, false, NES_TAS_RECORD_OVERWRITE, 1) == NES_MOVIE_OK);
+
+    /* Command-line, drop and menu opens share the native panel route. Raising or
+     * closing that window must
+     * preserve the project and its edited input. */
+    ui.native_windows = true;
+    CHECK(frontend_desktop_open_panel(&ui, TAS_PANEL));
+    FrontendDesktopUi *tool = ui.tools;
+    CHECK(tool && tool->parent == &ui && !tool->next && !ui.panel_open);
+    CHECK(tool->window != ui.window && tool->renderer != ui.renderer);
+    CHECK(tool->panel_open && tool->panel_id == TAS_PANEL);
+    Uint32 flags = SDL_GetWindowFlags(tool->window);
+    CHECK((flags & SDL_WINDOW_RESIZABLE) && !(flags & SDL_WINDOW_BORDERLESS));
+    int width, height, x, y;
+    SDL_GetWindowSize(tool->window, &width, &height);
+    CHECK(width == 900 && height == 760);
+    render_editor(tool);
+    CHECK(hit_inside_window(tool, HIT_TAS_ACTION, TAS_ACTION_SCRIPT, 0));
+    CHECK(hit_inside_window(tool, HIT_TAS_ACTION, TAS_ACTION_DISCARD, 0));
+    CHECK(hit_inside_window(tool, HIT_TAS_ROW, 0, 0));
+    CHECK(hit_inside_window(tool, HIT_TAS_SCROLL, 0, 0));
+    unsigned rows_before_resize = tool->tas_editor->visible_rows;
+    SDL_SetWindowPosition(tool->window, 113, 127);
+    SDL_GetWindowPosition(tool->window, &x, &y);
+    CHECK(x == 113 && y == 127);
+    SDL_SetWindowSize(tool->window, 1080, 860);
+    render_editor(tool);
+    CHECK(tool->tas_editor->visible_rows > rows_before_resize);
+    CHECK(frontend_desktop_open_panel(&ui, TAS_PANEL));
+    CHECK(frontend_desktop_open_panel(tool, TAS_PANEL));
+    CHECK(ui.tools == tool && !tool->next && !ui.panel_open);
+    ui.open_menu = 5;
+    ui.menu_depth = 0;
+    DesktopMenuItem items[128];
+    int menu_count = desktop_menu_items(&ui, items);
+    ui.menu_row = -1;
+    for (int row = 0; row < menu_count; ++row) {
+        if (items[row].kind == 1 && items[row].id == TAS_PANEL) {
+            ui.menu_row = row;
+            break;
+        }
+    }
+    CHECK(ui.menu_row >= 0);
+    CHECK(send_key(&ui, SDL_SCANCODE_RETURN, KMOD_NONE));
+    CHECK(ui.open_menu == -1 && ui.tools == tool && !tool->next && !ui.panel_open);
+    tool->tas_editor->cursor = 0;
+    tool->tas_editor->column = TAS_GRID_PAD_BASE;
+    uint8_t before_native_edit = nes_tas_project_frame(project, 0)->pads[0];
+    SDL_Event native_key = {.type = SDL_KEYDOWN};
+    native_key.key.windowID = SDL_GetWindowID(tool->window);
+    native_key.key.keysym.scancode = SDL_SCANCODE_SPACE;
+    CHECK(frontend_desktop_handle_event(&ui, &native_key));
+    CHECK(nes_tas_project_frame(project, 0)->pads[0] == (uint8_t)(before_native_edit ^ 1));
+    SDL_Event close = {.type = SDL_WINDOWEVENT};
+    close.window.windowID = SDL_GetWindowID(tool->window);
+    close.window.event = SDL_WINDOWEVENT_CLOSE;
+    CHECK(frontend_desktop_handle_event(&ui, &close));
+    CHECK(!ui.tools && !ui.panel_open && !ui.quit_requested);
+    CHECK(nes_tas_session_active(session) && nes_tas_session_project(session) == project);
+    CHECK(nes_tas_project_frame(project, 0)->pads[0] == (uint8_t)(before_native_edit ^ 1));
+    CHECK(frontend_desktop_open_panel(&ui, TAS_PANEL));
+    CHECK(ui.tools && !ui.tools->next && nes_tas_session_project(session) == project);
+    close.window.windowID = SDL_GetWindowID(ui.tools->window);
+    CHECK(frontend_desktop_handle_event(&ui, &close));
+    CHECK(!ui.tools && nes_tas_session_active(session));
+    ui.native_windows = false;
+    CHECK(frontend_desktop_open_panel(&ui, TAS_PANEL));
     render_editor(&ui);
     CHECK(click_action(&ui, TAS_ACTION_STOP));
     CHECK(nes_tas_session_active(session));
@@ -411,6 +477,6 @@ cleanup:
     (void)joypad_set_adapter(old_adapter);
     (void)nes_file_remove(path);
     (void)nes_file_remove(lua_path);
-    printf("TAS editor input: keyboard, drag, scale, focus and read-only checks, %d failures\n", failures);
+    printf("TAS editor input: keyboard, drag, scale, native window, focus and read-only checks, %d failures\n", failures);
     return failures;
 }

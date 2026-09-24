@@ -959,8 +959,7 @@ static int application_main(int argc, char *argv[]) {
             movie_launch_failed = true;
             running = false;
         } else if (open_tas_editor) {
-            desktop_ui.panel_id = TAS_PANEL;
-            desktop_ui.panel_open = true;
+            (void)frontend_desktop_open_panel(&desktop_ui, TAS_PANEL);
         }
     }
     char last_capture_error[256] = {0};
@@ -1196,8 +1195,7 @@ static int application_main(int argc, char *argv[]) {
                         if (!tas_frontend_open(&execution_runtime, dropped_f, false, movie_error, sizeof(movie_error)))
                             frontend_desktop_set_status(&desktop_ui, movie_error);
                         else {
-                            desktop_ui.panel_id = TAS_PANEL;
-                            desktop_ui.panel_open = true;
+                            (void)frontend_desktop_open_panel(&desktop_ui, TAS_PANEL);
                         }
                     } else {
                         char drop_error[256] = {0};

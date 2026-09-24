@@ -13,10 +13,11 @@ resizable windows, so you can keep the debugger open while a game runs.
 nametables, sprites, palettes, registers, and VRAM. You can paint writable tiles
 and edit RAM while the game is paused.
 
-The [TAS editor](docs/tas.md) opens FCEUX FM2 movies and FM3 projects. It provides
-frame advance and back, seeking, an editable input grid, recording and
-rerecording, markers, ten branch slots, undo/redo, and Lua input editing. Save
-the complete editing session as CTAS or export an FM2/FM3 movie.
+The [TAS editor](docs/tas.md) opens FCEUX FM2 movies and FM3 projects in a
+separate, resizable window. It provides frame advance and back, seeking, an
+editable input grid, recording and rerecording, markers, ten branch slots,
+undo/redo, and Lua input editing. Save the complete editing session as CTAS or
+export an FM2/FM3 movie.
 
 The menu bar and toolbar give you access to the main actions, with submenus
 keeping longer lists on screen. Settings use checkboxes, dropdowns, editable

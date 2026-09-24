@@ -47,7 +47,8 @@ FrontendDesktopUi *desktop_open_window(FrontendDesktopUi *ui, int kind, unsigned
         title = info.title;
     }
     FrontendDesktopUi *tool = calloc(1, sizeof(*tool));
-    SDL_Window *window = SDL_CreateWindow(title, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 900, 680,
+    int height = kind == 1 && desktop_tas_panel(id) ? 760 : 680;
+    SDL_Window *window = SDL_CreateWindow(title, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 900, height,
                                           SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
     SDL_Renderer *renderer = window ? SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED) : NULL;
     if (window && !renderer) {
@@ -99,6 +100,36 @@ FrontendDesktopUi *desktop_open_window(FrontendDesktopUi *ui, int kind, unsigned
     SDL_RenderPresent(renderer);
     SDL_RaiseWindow(window);
     return tool;
+}
+
+bool frontend_desktop_open_panel(FrontendDesktopUi *ui, unsigned id) {
+    if (!ui) {
+        return false;
+    }
+
+    FrontendPanelInfo info;
+    if (!frontend_panel_get(id, &info) || !info.enabled) {
+        desktop_copy_status(ui, "This tool is unavailable for the current session.");
+        return false;
+    }
+
+    FrontendDesktopUi *root = ui->parent ? ui->parent : ui;
+    if (root->native_windows || ui->parent) {
+        if (!desktop_open_window(root, 1, id)) {
+            return false;
+        }
+
+        if (root->panel_open && root->panel_id == id) {
+            root->panel_open = false;
+        }
+
+        return true;
+    }
+
+    ui->panel_id = id;
+    ui->panel_row = ui->panel_scroll = 0;
+    ui->panel_open = true;
+    return true;
 }
 
 static Uint32 event_window(const SDL_Event *event) {
