@@ -10,6 +10,7 @@ typedef struct DesktopTasEditor DesktopTasEditor;
 struct FrontendDesktopUi;
 
 bool desktop_tas_panel(unsigned id);
+const char *desktop_tas_edit_title(unsigned control);
 void desktop_tas_layout(struct FrontendDesktopUi *ui, float width, float height);
 bool desktop_tas_event(struct FrontendDesktopUi *ui, const SDL_Event *event);
 bool desktop_tas_commit(struct FrontendDesktopUi *ui, const char *text, char *error, size_t size);

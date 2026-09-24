@@ -284,6 +284,28 @@ int test_tas_editor_input_accuracy(void) {
     CHECK(send_key(&ui, SDL_SCANCODE_F6, KMOD_LCTRL));
     CHECK(save_file_calls == 1 && load_file_calls == 1);
 
+    /* Insert-count editing accepts one bounded positive count and leaves the
+     * timeline/cursor untouched for malformed or oversized values. */
+    editor->cursor = 6;
+    size_t insert_frames_before = nes_tas_project_frame_count(project);
+    size_t insert_cursor_before = editor->cursor;
+    const char *invalid_insert_counts[] = {"0", "-1", "100001", "18446744073709551615"};
+    for (unsigned i = 0; i < sizeof(invalid_insert_counts) / sizeof(invalid_insert_counts[0]); ++i) {
+        ui.edit_control = TAS_EDIT_INSERT;
+        error[0] = '\0';
+        CHECK(!desktop_tas_commit(&ui, invalid_insert_counts[i], error, sizeof(error)));
+        CHECK(error[0] != '\0');
+        CHECK(nes_tas_project_frame_count(project) == insert_frames_before);
+        CHECK(editor->cursor == insert_cursor_before);
+    }
+    ui.edit_control = TAS_EDIT_INSERT;
+    CHECK(desktop_tas_commit(&ui, "3", error, sizeof(error)));
+    CHECK(nes_tas_project_frame_count(project) == insert_frames_before + 3);
+    CHECK(editor->cursor == insert_cursor_before);
+    desktop_tas_action(&ui, TAS_ACTION_UNDO);
+    CHECK(nes_tas_project_frame_count(project) == insert_frames_before);
+    CHECK(editor->cursor == insert_cursor_before);
+
     render_editor(&ui);
     CHECK(desktop_clay_bounds(ui.clay, HIT_TAS_ACTION, TAS_ACTION_SCRIPT, 0, &(SDL_FRect){0}));
     CHECK(desktop_clay_bounds(ui.clay, HIT_TAS_ACTION, TAS_ACTION_DISCARD, 0, &(SDL_FRect){0}));
@@ -311,13 +333,117 @@ int test_tas_editor_input_accuracy(void) {
     frontend_set_file_chooser(NULL, NULL);
     script_path = NULL;
 
-    render_editor(&ui);
     editor->cursor = 4;
+    desktop_tas_action(&ui, TAS_ACTION_SIDEBAR_MARKERS);
+    render_editor(&ui);
     CHECK(click_action(&ui, TAS_ACTION_MARKER));
     CHECK(ui.edit_text_active);
     snprintf(ui.edit_text, sizeof(ui.edit_text), "%s", "scripted marker");
     CHECK(send_key(&ui, SDL_SCANCODE_RETURN, KMOD_NONE));
     CHECK(!ui.edit_text_active && nes_tas_marker_count(project) == 1);
+
+    CHECK(nes_tas_marker_set(project, 10, "middle") == NES_TAS_OK);
+    CHECK(nes_tas_marker_set(project, 20, "later") == NES_TAS_OK);
+
+    /* Marker jumps remain navigation in read-only mode and clamp to timeline
+     * boundaries when there is no marker in the requested direction. */
+    CHECK(nes_tas_session_set_read_only(session, true) == NES_MOVIE_OK);
+    uint64_t marker_navigation_revision = nes_tas_project_revision(project);
+    editor->cursor = 0;
+    desktop_tas_action(&ui, TAS_ACTION_MARKER_PREV);
+    CHECK(editor->cursor == 0);
+    desktop_tas_action(&ui, TAS_ACTION_MARKER_NEXT);
+    CHECK(editor->cursor == 4);
+    desktop_tas_action(&ui, TAS_ACTION_MARKER_GOTO_BASE + 2);
+    CHECK(editor->cursor == 20);
+    editor->cursor = nes_tas_project_frame_count(project) - 1;
+    desktop_tas_action(&ui, TAS_ACTION_MARKER_NEXT);
+    CHECK(editor->cursor == nes_tas_project_frame_count(project) - 1);
+    CHECK(nes_tas_project_revision(project) == marker_navigation_revision);
+    CHECK(nes_tas_session_set_read_only(session, false) == NES_MOVIE_OK);
+
+    editor->cursor = 1;
+    desktop_tas_action(&ui, TAS_ACTION_SELECT_BETWEEN_MARKERS);
+    CHECK(nes_tas_selection_count(project) == 4);
+    CHECK(nes_tas_selection_contains(project, 0) && nes_tas_selection_contains(project, 3));
+    CHECK(!nes_tas_selection_contains(project, 4));
+    editor->cursor = nes_tas_project_frame_count(project) - 1;
+    desktop_tas_action(&ui, TAS_ACTION_SELECT_BETWEEN_MARKERS);
+    CHECK(nes_tas_selection_count(project) == nes_tas_project_frame_count(project) - 20);
+    CHECK(nes_tas_selection_contains(project, 20));
+
+    /* A header click follows FCEUX column-set behavior across a sparse
+     * selection and records the entire change as one undo item. */
+    desktop_tas_action(&ui, TAS_ACTION_SELECT_NONE);
+    CHECK(nes_tas_selection_set(project, 1, true) == NES_TAS_OK);
+    CHECK(nes_tas_selection_set(project, 3, true) == NES_TAS_OK);
+    editor->cursor = 1;
+    desktop_tas_action(&ui, TAS_ACTION_SIDEBAR_INPUT);
+    render_editor(&ui);
+    CHECK(hit_inside_window(&ui, HIT_TAS_ACTION, TAS_ACTION_HEADER_BASE + 7, 0));
+    CHECK(click_action(&ui, TAS_ACTION_HEADER_BASE + 7));
+    CHECK((nes_tas_project_frame(project, 1)->pads[0] & 0x80u) != 0);
+    CHECK((nes_tas_project_frame(project, 2)->pads[0] & 0x80u) == 0);
+    CHECK((nes_tas_project_frame(project, 3)->pads[0] & 0x80u) != 0);
+    CHECK(send_key(&ui, SDL_SCANCODE_Z, KMOD_LCTRL));
+    CHECK((nes_tas_project_frame(project, 1)->pads[0] & 0x80u) == 0);
+    CHECK((nes_tas_project_frame(project, 2)->pads[0] & 0x80u) == 0);
+    CHECK((nes_tas_project_frame(project, 3)->pads[0] & 0x80u) == 0);
+    CHECK(nes_tas_edit_begin(project) == NES_TAS_OK);
+    uint8_t grouped_pad = nes_tas_project_frame(project, 1)->pads[0];
+    desktop_tas_action(&ui, TAS_ACTION_HEADER_BASE + 6);
+    CHECK(nes_tas_edit_active(project));
+    CHECK(nes_tas_project_frame(project, 1)->pads[0] == grouped_pad);
+    nes_tas_edit_cancel(project);
+
+    /* Sidebar button selection chooses the Hold/Auto target without editing
+     * movie input. It remains available while editing itself is locked out. */
+    uint8_t selector_pad = nes_tas_project_frame(project, 1)->pads[0];
+    CHECK(nes_tas_session_set_read_only(session, true) == NES_MOVIE_OK);
+    uint64_t selector_revision = nes_tas_project_revision(project);
+    render_editor(&ui);
+    CHECK(click_action(&ui, TAS_ACTION_ACTIVE_BUTTON_BASE + 6));
+    CHECK(editor->active_button == 0x40u);
+    CHECK(editor->column == TAS_GRID_PAD_BASE + 6);
+    CHECK(nes_tas_project_frame(project, 1)->pads[0] == selector_pad);
+    CHECK(nes_tas_project_revision(project) == selector_revision);
+    CHECK(nes_tas_session_set_read_only(session, false) == NES_MOVIE_OK);
+    CHECK(nes_tas_session_set_recording(session, true, NES_TAS_RECORD_OVERWRITE, 1) == NES_MOVIE_OK);
+    selector_revision = nes_tas_project_revision(project);
+    render_editor(&ui);
+    CHECK(click_action(&ui, TAS_ACTION_ACTIVE_BUTTON_BASE + 5));
+    CHECK(editor->active_button == 0x20u);
+    CHECK(editor->column == TAS_GRID_PAD_BASE + 5);
+    CHECK(nes_tas_project_frame(project, 1)->pads[0] == selector_pad);
+    CHECK(nes_tas_project_revision(project) == selector_revision);
+    CHECK(nes_tas_session_set_recording(session, false, NES_TAS_RECORD_OVERWRITE, 1) == NES_MOVIE_OK);
+
+    /* Follow scrolls only after playback advances. It never moves the grid
+     * cursor or selection, and painting suppresses the follow adjustment. */
+    size_t follow_selection = nes_tas_selection_count(project);
+    editor->visible_rows = 5;
+    editor->scroll = 0;
+    editor->cursor = 7;
+    editor->follow_playback = true;
+    editor->follow_initialized = false;
+    NesTasProgress follow_progress = {.active = true, .frame = 0};
+    desktop_tas_follow_playback(&ui, &follow_progress);
+    CHECK(editor->scroll == 0 && editor->cursor == 7 && nes_tas_selection_count(project) == follow_selection);
+    follow_progress.frame = 20;
+    desktop_tas_follow_playback(&ui, &follow_progress);
+    CHECK(editor->scroll == 16 && editor->cursor == 7 && nes_tas_selection_count(project) == follow_selection);
+    editor->scroll = 3;
+    desktop_tas_follow_playback(&ui, &follow_progress);
+    CHECK(editor->scroll == 3);
+    editor->painting = true;
+    follow_progress.frame = 30;
+    desktop_tas_follow_playback(&ui, &follow_progress);
+    CHECK(editor->scroll == 3 && editor->cursor == 7 && nes_tas_selection_count(project) == follow_selection);
+    editor->painting = false;
+    follow_progress.frame = 31;
+    desktop_tas_follow_playback(&ui, &follow_progress);
+    CHECK(editor->scroll == 27 && editor->cursor == 7 && nes_tas_selection_count(project) == follow_selection);
+    desktop_tas_action(&ui, TAS_ACTION_SELECT_NONE);
 
     /* A single drag is one undo item even when the mouse skips intervening rows.
      * Events use physical window coordinates at fractional and integer scales. */
@@ -392,9 +518,11 @@ int test_tas_editor_input_accuracy(void) {
     CHECK(tool->panel_open && tool->panel_id == TAS_PANEL);
     Uint32 flags = SDL_GetWindowFlags(tool->window);
     CHECK((flags & SDL_WINDOW_RESIZABLE) && !(flags & SDL_WINDOW_BORDERLESS));
-    int width, height, x, y;
+    int width, height, x, y, minimum_width, minimum_height;
     SDL_GetWindowSize(tool->window, &width, &height);
     CHECK(width == 900 && height == 760);
+    SDL_GetWindowMinimumSize(tool->window, &minimum_width, &minimum_height);
+    CHECK(minimum_width == 900 && minimum_height == 640);
     render_editor(tool);
     CHECK(hit_inside_window(tool, HIT_TAS_ACTION, TAS_ACTION_SCRIPT, 0));
     CHECK(hit_inside_window(tool, HIT_TAS_ACTION, TAS_ACTION_DISCARD, 0));
@@ -407,6 +535,22 @@ int test_tas_editor_input_accuracy(void) {
     SDL_SetWindowSize(tool->window, 1080, 860);
     render_editor(tool);
     CHECK(tool->tas_editor->visible_rows > rows_before_resize);
+    SDL_SetWindowSize(tool->window, 900, 640);
+    tool->tas_editor->cursor = 4;
+    desktop_tas_action(tool, TAS_ACTION_SIDEBAR_BRANCHES);
+    render_editor(tool);
+    CHECK(hit_inside_window(tool, HIT_TAS_ACTION, TAS_ACTION_BRANCH_JUMP, 0));
+    CHECK(hit_inside_window(tool, HIT_TAS_ACTION, TAS_ACTION_BRANCH_STORE, 0));
+    desktop_tas_action(tool, TAS_ACTION_SIDEBAR_MARKERS);
+    render_editor(tool);
+    CHECK(hit_inside_window(tool, HIT_TAS_ACTION, TAS_ACTION_MARKER_PREV, 0));
+    CHECK(hit_inside_window(tool, HIT_TAS_ACTION, TAS_ACTION_MARKER_REMOVE, 0));
+    desktop_tas_action(tool, TAS_ACTION_SIDEBAR_INPUT);
+    render_editor(tool);
+    CHECK(hit_inside_window(tool, HIT_TAS_ACTION, TAS_ACTION_PATTERN, 0));
+    CHECK(hit_inside_window(tool, HIT_TAS_ACTION, TAS_ACTION_HEADER_BASE + 7, 0));
+    SDL_GetWindowSize(tool->window, &width, &height);
+    CHECK(width == 900 && height == 640);
     CHECK(frontend_desktop_open_panel(&ui, TAS_PANEL));
     CHECK(frontend_desktop_open_panel(tool, TAS_PANEL));
     CHECK(ui.tools == tool && !tool->next && !ui.panel_open);

@@ -20,7 +20,8 @@ enum {
 
     TAS_EDIT_SEEK = 0x7410,
     TAS_EDIT_MARKER = 0x7411,
-    TAS_EDIT_BRANCH = 0x7412
+    TAS_EDIT_BRANCH = 0x7412,
+    TAS_EDIT_INSERT = 0x7413
 };
 
 typedef enum {
@@ -60,7 +61,24 @@ typedef enum {
     TAS_ACTION_RECORD_PLAYER_BASE = 50,
     TAS_ACTION_BRANCH_SLOT_BASE = 70,
     TAS_ACTION_EXPORT = 80,
-    TAS_ACTION_SCRIPT
+    TAS_ACTION_SCRIPT,
+    TAS_ACTION_FOLLOW = 82,
+    TAS_ACTION_SEEK_CURSOR,
+    TAS_ACTION_CURSOR_PLAYBACK,
+    TAS_ACTION_MARKER_PREV,
+    TAS_ACTION_MARKER_NEXT,
+    TAS_ACTION_SELECT_BETWEEN_MARKERS,
+    TAS_ACTION_INSERT_MANY,
+    TAS_ACTION_SELECT_ALL,
+    TAS_ACTION_SELECT_NONE,
+    TAS_ACTION_SIDEBAR_BRANCHES,
+    TAS_ACTION_SIDEBAR_MARKERS,
+    TAS_ACTION_SIDEBAR_INPUT,
+    TAS_ACTION_MARKER_REMOVE,
+    TAS_ACTION_BRANCH_JUMP,
+    TAS_ACTION_HEADER_BASE = 200,
+    TAS_ACTION_ACTIVE_BUTTON_BASE = 300,
+    TAS_ACTION_MARKER_GOTO_BASE = 1000
 } DesktopTasAction;
 
 struct DesktopTasEditor {
@@ -72,6 +90,7 @@ struct DesktopTasEditor {
     unsigned edit_player;
     unsigned branch_slot;
     unsigned pattern;
+    unsigned sidebar_tab;
     uint8_t active_button;
     bool anchor_valid;
     bool painting;
@@ -80,6 +99,9 @@ struct DesktopTasEditor {
     uint8_t paint_mask;
     size_t paint_last;
     bool dragging_scroll;
+    bool follow_playback;
+    bool follow_initialized;
+    size_t last_playback_frame;
 };
 
 DesktopTasEditor *desktop_tas_editor(FrontendDesktopUi *ui);
@@ -88,6 +110,7 @@ const NesTasProject *desktop_tas_project_const(const FrontendDesktopUi *ui);
 NesTasProject *desktop_tas_project_writable(FrontendDesktopUi *ui, bool report);
 void desktop_tas_status(FrontendDesktopUi *ui, const char *text);
 void desktop_tas_keep_cursor_visible(FrontendDesktopUi *ui);
+void desktop_tas_follow_playback(FrontendDesktopUi *ui, const NesTasProgress *progress);
 void desktop_tas_after_model_edit(FrontendDesktopUi *ui, NesTasResult result, const char *success);
 
 void desktop_tas_action(FrontendDesktopUi *ui, unsigned action);

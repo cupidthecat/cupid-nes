@@ -66,9 +66,12 @@ void desktop_sync_scale(FrontendDesktopUi *ui) {
     float ddpi = 96.0f;
     int display = SDL_GetWindowDisplayIndex(ui->window);
     if (display >= 0) (void)SDL_GetDisplayDPI(display, &ddpi, NULL, NULL);
-    ui->ui_scale = ddpi >= 180.0f && w >= 1280 && h >= 960 ? 2.0f
-        : ddpi >= 132.0f && w >= 960 && h >= 720 ? 1.5f : 1.0f;
-    SDL_SetWindowMinimumSize(ui->window, 640, 480);
+    bool tas = ui->parent && ui->panel_open && desktop_tas_panel(ui->panel_id);
+    int minimum_width = tas ? 900 : 640;
+    int minimum_height = tas ? 640 : 480;
+    ui->ui_scale = ddpi >= 180.0f && w >= minimum_width * 2 && h >= minimum_height * 2 ? 2.0f
+        : ddpi >= 132.0f && w >= minimum_width * 1.5f && h >= minimum_height * 1.5f ? 1.5f : 1.0f;
+    SDL_SetWindowMinimumSize(ui->window, minimum_width, minimum_height);
 }
 
 void frontend_desktop_compute_game_rect(int ww, int wh, int vw, int vh,

@@ -2,6 +2,7 @@
 #include "desktop_tas_internal.h"
 #include "state_frontend.h"
 #include "../replay/tas_script.h"
+#include "../system/vs_system.h"
 #include "../util/file_io.h"
 
 #include <stdio.h>
@@ -81,6 +82,7 @@ static void choose_open(FrontendDesktopUi *ui, bool create) {
     if (opened && ui->tas_editor) {
         ui->tas_editor->cursor = ui->tas_editor->scroll = 0;
         ui->tas_editor->anchor_valid = false;
+        ui->tas_editor->follow_initialized = false;
     }
 }
 
@@ -307,6 +309,177 @@ static void branch_clear(FrontendDesktopUi *ui) {
     desktop_tas_after_model_edit(ui, nes_tas_bookmark_clear(project, editor->branch_slot), "Branch slot cleared.");
 }
 
+static void cursor_to_frame(FrontendDesktopUi *ui, size_t frame) {
+    DesktopTasEditor *editor = desktop_tas_editor(ui);
+    const NesTasProject *project = desktop_tas_project_const(ui);
+    size_t frames = project ? nes_tas_project_frame_count(project) : 0;
+    if (!editor || !frames) {
+        return;
+    }
+    editor->cursor = frame < frames ? frame : frames - 1;
+    desktop_tas_keep_cursor_visible(ui);
+}
+
+static void seek_to_frame(FrontendDesktopUi *ui, size_t frame, const char *success) {
+    if (!ui || !ui->execution) {
+        return;
+    }
+    char error[256] = {0};
+    bool sought = tas_frontend_seek(ui->execution, frame, error, sizeof(error));
+    report_frontend(ui, sought, error, success);
+    if (sought) {
+        cursor_to_frame(ui, frame);
+    }
+}
+
+static void marker_jump(FrontendDesktopUi *ui, bool next) {
+    DesktopTasEditor *editor = desktop_tas_editor(ui);
+    const NesTasProject *project = desktop_tas_project_const(ui);
+    size_t frames = project ? nes_tas_project_frame_count(project) : 0;
+    if (!editor || !frames) {
+        return;
+    }
+    size_t target = next ? frames - 1 : 0;
+    size_t count = nes_tas_marker_count(project);
+    if (next) {
+        for (size_t i = 0; i < count; ++i) {
+            NesTasMarkerView marker;
+            if (nes_tas_marker(project, i, &marker) && marker.frame > editor->cursor) {
+                target = marker.frame;
+                break;
+            }
+        }
+    } else {
+        for (size_t i = 0; i < count; ++i) {
+            NesTasMarkerView marker;
+            if (!nes_tas_marker(project, i, &marker)) {
+                continue;
+            }
+            if (marker.frame >= editor->cursor) {
+                break;
+            }
+            target = marker.frame;
+        }
+    }
+    cursor_to_frame(ui, target);
+}
+
+static void select_between_markers(FrontendDesktopUi *ui) {
+    DesktopTasEditor *editor = desktop_tas_editor(ui);
+    NesTasProject *project = desktop_tas_project_writable(ui, true);
+    size_t frames = project ? nes_tas_project_frame_count(project) : 0;
+    if (!editor || !project || !frames) {
+        return;
+    }
+    size_t center = editor->cursor < frames ? editor->cursor : frames - 1;
+    size_t first = 0, end = frames;
+    size_t markers = nes_tas_marker_count(project);
+    for (size_t i = 0; i < markers; ++i) {
+        NesTasMarkerView marker;
+        if (!nes_tas_marker(project, i, &marker)) {
+            continue;
+        }
+        if (marker.frame <= center) {
+            first = marker.frame;
+            continue;
+        }
+        end = marker.frame;
+        break;
+    }
+    nes_tas_selection_clear(project);
+    NesTasResult result = nes_tas_selection_set_range(project, first, end - 1, true);
+    desktop_tas_status(ui, result == NES_TAS_OK ? "Selected frames between markers." : nes_tas_result_string(result));
+}
+
+static void select_all(FrontendDesktopUi *ui, bool selected) {
+    NesTasProject *project = desktop_tas_project_writable(ui, true);
+    size_t frames = project ? nes_tas_project_frame_count(project) : 0;
+    if (!project) {
+        return;
+    }
+    if (!selected) {
+        nes_tas_selection_clear(project);
+        desktop_tas_status(ui, "Selection cleared.");
+        return;
+    }
+    if (frames) {
+        NesTasResult result = nes_tas_selection_set_range(project, 0, frames - 1, true);
+        desktop_tas_status(ui, result == NES_TAS_OK ? "All frames selected." : nes_tas_result_string(result));
+    }
+}
+
+static bool pad_player_available(const NesFm2Movie *movie, unsigned player) {
+    return movie && player < 4 &&
+           (movie->fourscore || (player < 2 && movie->ports[player] == NES_FM2_PORT_GAMEPAD));
+}
+
+static bool command_available(const NesFm2Movie *movie, int column) {
+    int command = column - TAS_GRID_COMMAND_BASE;
+    if (!movie || command < 0 || command >= TAS_GRID_COMMAND_COUNT) {
+        return false;
+    }
+    return command < 2 || (command < 4 ? movie->fds : vs_enabled());
+}
+
+static void header_toggle(FrontendDesktopUi *ui, unsigned action) {
+    unsigned offset = action - TAS_ACTION_HEADER_BASE;
+    unsigned player = offset / TAS_GRID_PAD_COLUMNS;
+    unsigned bit = offset % TAS_GRID_PAD_COLUMNS;
+    uint8_t mask = (uint8_t)(1u << bit);
+    DesktopTasEditor *editor = desktop_tas_editor(ui);
+    NesTasProject *project = desktop_tas_project_writable(ui, true);
+    const NesFm2Movie *movie = project ? nes_tas_project_movie(project) : NULL;
+    size_t frames = project ? nes_tas_project_frame_count(project) : 0;
+    if (!editor || !project || !frames || !pad_player_available(movie, player)) {
+        return;
+    }
+
+    size_t selected = nes_tas_selection_count(project);
+    bool pressed = false;
+    if (selected) {
+        for (size_t frame = 0; frame < frames; ++frame) {
+            if (!nes_tas_selection_contains(project, frame)) {
+                continue;
+            }
+            const NesFm2Frame *input = nes_tas_project_frame(project, frame);
+            if (input && !(input->pads[player] & mask)) {
+                pressed = true;
+                break;
+            }
+        }
+    } else {
+        size_t frame = editor->cursor < frames ? editor->cursor : frames - 1;
+        const NesFm2Frame *input = nes_tas_project_frame(project, frame);
+        pressed = input && !(input->pads[player] & mask);
+    }
+
+    NesTasResult result = nes_tas_edit_begin(project);
+    if (result != NES_TAS_OK) {
+        desktop_tas_status(ui, nes_tas_result_string(result));
+        return;
+    }
+    if (selected) {
+        for (size_t frame = 0; frame < frames && result == NES_TAS_OK; ++frame) {
+            if (nes_tas_selection_contains(project, frame)) {
+                result = nes_tas_paint_button(project, frame, frame, player, mask, pressed);
+            }
+        }
+    } else {
+        size_t frame = editor->cursor < frames ? editor->cursor : frames - 1;
+        result = nes_tas_paint_button(project, frame, frame, player, mask, pressed);
+    }
+    if (result != NES_TAS_OK) {
+        nes_tas_edit_cancel(project);
+        desktop_tas_status(ui, nes_tas_result_string(result));
+        return;
+    }
+    result = nes_tas_edit_end(project);
+    editor->edit_player = player;
+    editor->active_button = mask;
+    editor->column = TAS_GRID_PAD_BASE + (int)(player * TAS_GRID_PAD_COLUMNS + bit);
+    desktop_tas_after_model_edit(ui, result, pressed ? "Selected input column set." : "Selected input column cleared.");
+}
+
 static void run_script(FrontendDesktopUi *ui) {
     NesTasProject *project = desktop_tas_project_writable(ui, true);
     if (!project) {
@@ -343,6 +516,29 @@ void desktop_tas_action(FrontendDesktopUi *ui, unsigned action) {
     if (!editor) {
         return;
     }
+    if (action >= TAS_ACTION_HEADER_BASE && action < TAS_ACTION_HEADER_BASE + 4 * TAS_GRID_PAD_COLUMNS) {
+        header_toggle(ui, action);
+        return;
+    }
+    if (action >= TAS_ACTION_ACTIVE_BUTTON_BASE && action < TAS_ACTION_ACTIVE_BUTTON_BASE + TAS_GRID_PAD_COLUMNS) {
+        const NesTasProject *project = desktop_tas_project_const(ui);
+        const NesFm2Movie *movie = project ? nes_tas_project_movie(project) : NULL;
+        unsigned bit = action - TAS_ACTION_ACTIVE_BUTTON_BASE;
+        if (pad_player_available(movie, editor->edit_player)) {
+            editor->active_button = (uint8_t)(1u << bit);
+            editor->column = TAS_GRID_PAD_BASE + (int)(editor->edit_player * TAS_GRID_PAD_COLUMNS + bit);
+        }
+        return;
+    }
+    if (action >= TAS_ACTION_MARKER_GOTO_BASE) {
+        const NesTasProject *project = desktop_tas_project_const(ui);
+        NesTasMarkerView marker;
+        size_t index = action - TAS_ACTION_MARKER_GOTO_BASE;
+        if (project && nes_tas_marker(project, index, &marker)) {
+            cursor_to_frame(ui, marker.frame);
+        }
+        return;
+    }
     if (action >= TAS_ACTION_EDIT_PLAYER_BASE && action < TAS_ACTION_EDIT_PLAYER_BASE + 4) {
         edit_player(ui, action - TAS_ACTION_EDIT_PLAYER_BASE);
         return;
@@ -374,6 +570,63 @@ void desktop_tas_action(FrontendDesktopUi *ui, unsigned action) {
     case TAS_ACTION_SCRIPT:
         run_script(ui);
         break;
+    case TAS_ACTION_FOLLOW:
+        editor->follow_playback = !editor->follow_playback;
+        editor->follow_initialized = false;
+        desktop_tas_status(ui, editor->follow_playback ? "Playback follow enabled." : "Playback follow disabled.");
+        break;
+    case TAS_ACTION_SEEK_CURSOR:
+        if (active) {
+            seek_to_frame(ui, editor->cursor, "Playback moved to the grid cursor.");
+        }
+        break;
+    case TAS_ACTION_CURSOR_PLAYBACK:
+        if (active) {
+            cursor_to_frame(ui, progress.frame);
+        }
+        break;
+    case TAS_ACTION_MARKER_PREV:
+        marker_jump(ui, false);
+        break;
+    case TAS_ACTION_MARKER_NEXT:
+        marker_jump(ui, true);
+        break;
+    case TAS_ACTION_SELECT_BETWEEN_MARKERS:
+        select_between_markers(ui);
+        break;
+    case TAS_ACTION_INSERT_MANY:
+        if (desktop_tas_project_writable(ui, true)) {
+            desktop_start_text_edit(ui, TAS_EDIT_INSERT, "1");
+        }
+        break;
+    case TAS_ACTION_SELECT_ALL:
+        select_all(ui, true);
+        break;
+    case TAS_ACTION_SELECT_NONE:
+        select_all(ui, false);
+        break;
+    case TAS_ACTION_SIDEBAR_BRANCHES:
+    case TAS_ACTION_SIDEBAR_MARKERS:
+    case TAS_ACTION_SIDEBAR_INPUT:
+        editor->sidebar_tab = action - TAS_ACTION_SIDEBAR_BRANCHES;
+        break;
+    case TAS_ACTION_MARKER_REMOVE: {
+        NesTasProject *project = desktop_tas_project_writable(ui, true);
+        if (project) {
+            desktop_tas_after_model_edit(ui, nes_tas_marker_remove(project, editor->cursor), "Marker removed.");
+        }
+        break;
+    }
+    case TAS_ACTION_BRANCH_JUMP: {
+        const NesTasProject *project = desktop_tas_project_const(ui);
+        NesTasBookmarkView bookmark = {0};
+        if (!project || !nes_tas_bookmark(project, editor->branch_slot, &bookmark) || !bookmark.occupied) {
+            desktop_tas_status(ui, "The selected branch slot is empty.");
+        } else if (active) {
+            seek_to_frame(ui, bookmark.key_frame, "Playback moved to the branch keyframe.");
+        }
+        break;
+    }
     case TAS_ACTION_STOP: {
         char error[256] = {0};
         bool stopped = active && frontend_execution_movie_stop(ui->execution, error, sizeof(error));
@@ -581,6 +834,10 @@ void desktop_tas_cell_down(FrontendDesktopUi *ui, size_t row, int column) {
     }
     uint8_t command = command_mask(column);
     if (command) {
+        const NesFm2Movie *movie = nes_tas_project_movie(project);
+        if (!command_available(movie, column)) {
+            return;
+        }
         const NesFm2Frame *old = nes_tas_project_frame(project, row);
         if (!old) {
             return;
@@ -670,6 +927,53 @@ static void move_cursor(FrontendDesktopUi *ui, int delta, bool select) {
     desktop_tas_select_row(ui, next, select ? KMOD_SHIFT : KMOD_NONE);
 }
 
+static void move_column(FrontendDesktopUi *ui, bool right) {
+    DesktopTasEditor *editor = desktop_tas_editor(ui);
+    const NesTasProject *project = desktop_tas_project_const(ui);
+    const NesFm2Movie *movie = project ? nes_tas_project_movie(project) : NULL;
+    if (!editor || !movie) {
+        return;
+    }
+    int columns[1 + TAS_GRID_COMMAND_COUNT + 4 * TAS_GRID_PAD_COLUMNS];
+    size_t count = 0;
+    columns[count++] = TAS_GRID_LAG;
+    for (int command = 0; command < TAS_GRID_COMMAND_COUNT; ++command) {
+        int column = TAS_GRID_COMMAND_BASE + command;
+        if (command_available(movie, column)) {
+            columns[count++] = column;
+        }
+    }
+    for (unsigned player = 0; player < 4; ++player) {
+        if (!pad_player_available(movie, player)) {
+            continue;
+        }
+        for (int bit = TAS_GRID_PAD_COLUMNS - 1; bit >= 0; --bit) {
+            columns[count++] = TAS_GRID_PAD_BASE + (int)(player * TAS_GRID_PAD_COLUMNS) + bit;
+        }
+    }
+    size_t current = count;
+    for (size_t i = 0; i < count; ++i) {
+        if (columns[i] == editor->column) {
+            current = i;
+            break;
+        }
+    }
+    if (current == count) {
+        current = right ? 0 : count - 1;
+    } else if (right && current + 1 < count) {
+        ++current;
+    } else if (!right && current) {
+        --current;
+    }
+    editor->column = columns[current];
+    unsigned player;
+    uint8_t mask;
+    if (decode_pad_column(editor->column, &player, &mask)) {
+        editor->edit_player = player;
+        editor->active_button = mask;
+    }
+}
+
 bool desktop_tas_key(FrontendDesktopUi *ui, const SDL_KeyboardEvent *event) {
     if (!ui || !event) {
         return false;
@@ -693,11 +997,7 @@ bool desktop_tas_key(FrontendDesktopUi *ui, const SDL_KeyboardEvent *event) {
         return true;
     }
     if ((mod & KMOD_CTRL) && key == SDL_SCANCODE_A) {
-        NesTasProject *project = desktop_tas_project_writable(ui, true);
-        size_t frames = project ? nes_tas_project_frame_count(project) : 0;
-        if (frames) {
-            (void)nes_tas_selection_set_range(project, 0, frames - 1, true);
-        }
+        desktop_tas_action(ui, (mod & KMOD_SHIFT) ? TAS_ACTION_SELECT_ALL : TAS_ACTION_SELECT_BETWEEN_MARKERS);
         return true;
     }
     if (key == SDL_SCANCODE_ESCAPE) {
@@ -707,8 +1007,12 @@ bool desktop_tas_key(FrontendDesktopUi *ui, const SDL_KeyboardEvent *event) {
     if (key == SDL_SCANCODE_UP || key == SDL_SCANCODE_DOWN) {
         move_cursor(ui, key == SDL_SCANCODE_UP ? -1 : 1, (mod & KMOD_SHIFT) != 0);
     } else if (key == SDL_SCANCODE_PAGEUP || key == SDL_SCANCODE_PAGEDOWN) {
-        int page = (int)(ui->tas_editor && ui->tas_editor->visible_rows ? ui->tas_editor->visible_rows : 12);
-        move_cursor(ui, key == SDL_SCANCODE_PAGEUP ? -page : page, (mod & KMOD_SHIFT) != 0);
+        if (mod & KMOD_CTRL) {
+            desktop_tas_action(ui, key == SDL_SCANCODE_PAGEUP ? TAS_ACTION_MARKER_PREV : TAS_ACTION_MARKER_NEXT);
+        } else {
+            int page = (int)(ui->tas_editor && ui->tas_editor->visible_rows ? ui->tas_editor->visible_rows : 12);
+            move_cursor(ui, key == SDL_SCANCODE_PAGEUP ? -page : page, (mod & KMOD_SHIFT) != 0);
+        }
     } else if (key == SDL_SCANCODE_HOME) {
         DesktopTasEditor *editor = desktop_tas_editor(ui);
         if (editor) {
@@ -721,26 +1025,7 @@ bool desktop_tas_key(FrontendDesktopUi *ui, const SDL_KeyboardEvent *event) {
             desktop_tas_select_row(ui, frames - 1, (mod & KMOD_SHIFT) ? KMOD_SHIFT : KMOD_NONE);
         }
     } else if (key == SDL_SCANCODE_LEFT || key == SDL_SCANCODE_RIGHT) {
-        DesktopTasEditor *editor = desktop_tas_editor(ui);
-        const NesTasProject *project = desktop_tas_project_const(ui);
-        const NesFm2Movie *movie = project ? nes_tas_project_movie(project) : NULL;
-        int end = TAS_GRID_PAD_BASE + (movie && movie->fourscore ? 32 : 16) - 1;
-        if (editor) {
-            int next = editor->column + (key == SDL_SCANCODE_LEFT ? -1 : 1);
-            if (next > TAS_GRID_COMMAND_COUNT && next < TAS_GRID_PAD_BASE) {
-                next = key == SDL_SCANCODE_LEFT ? TAS_GRID_COMMAND_COUNT : TAS_GRID_PAD_BASE;
-            }
-            if (next < TAS_GRID_LAG) {
-                next = TAS_GRID_LAG;
-            }
-            if (next > end) {
-                next = end;
-            }
-            editor->column = next;
-            if (next >= TAS_GRID_PAD_BASE) {
-                editor->edit_player = (unsigned)(next - TAS_GRID_PAD_BASE) / 8;
-            }
-        }
+        move_column(ui, key == SDL_SCANCODE_RIGHT);
     } else if ((mod & KMOD_CTRL) && key == SDL_SCANCODE_C) {
         desktop_tas_action(ui, TAS_ACTION_COPY);
     } else if ((mod & KMOD_CTRL) && key == SDL_SCANCODE_X) {
@@ -752,9 +1037,11 @@ bool desktop_tas_key(FrontendDesktopUi *ui, const SDL_KeyboardEvent *event) {
     } else if ((mod & KMOD_CTRL) && key == SDL_SCANCODE_Y) {
         desktop_tas_action(ui, TAS_ACTION_REDO);
     } else if (key == SDL_SCANCODE_INSERT) {
-        desktop_tas_action(ui, TAS_ACTION_INSERT);
+        desktop_tas_action(ui, TAS_ACTION_INSERT_MANY);
     } else if (key == SDL_SCANCODE_DELETE) {
         desktop_tas_action(ui, TAS_ACTION_DELETE);
+    } else if (key == SDL_SCANCODE_RETURN || key == SDL_SCANCODE_KP_ENTER) {
+        desktop_tas_action(ui, TAS_ACTION_SEEK_CURSOR);
     } else if (key == SDL_SCANCODE_SPACE) {
         DesktopTasEditor *editor = desktop_tas_editor(ui);
         if (editor) {

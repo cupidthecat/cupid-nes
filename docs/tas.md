@@ -13,6 +13,10 @@ edges to resize it alongside the game. Opening the editor again raises the
 existing window. The Tools menu, `--tas`, and dropping a movie onto the game
 window all open this editor; closing it keeps the project and its edits available.
 
+The input grid occupies the left side of the window. **Branches**, **Markers**,
+and **Input** tabs on the right show the tools for alternate takes, notes, and
+recording. File and playback controls stay above the grid while these tabs change.
+
 The same paths are available from the command line:
 
 ```sh
@@ -25,7 +29,7 @@ one movie option and one game image. On Windows, use
 `.\build\windows\cupid-nes.exe` in place of `./cupid-nes`. A movie can also be
 dropped onto the main game window when no dialog or other movie is open.
 
-![TAS editor with the input grid, recording controls, and branch slots](images/tas-editor.png)
+![TAS editor with its input grid and branch sidebar](images/tas-editor.png)
 
 ## File formats
 
@@ -65,7 +69,11 @@ Pause playback and turn off **Read-only** before changing the timeline. Turn
 off **Record** before using the input grid. Frame numbers start at zero. The
 playback frame names the next input row to execute; the grid cursor identifies
 the row being selected or edited. Moving the grid cursor does not run the game.
-Use **Go to frame** to move playback there.
+Press Enter to run to the grid cursor, or use **Go to** to enter a frame
+number. Locating the playback row moves the grid cursor without running the
+game. **Follow** scrolls the grid as playback advances and leaves the editing
+cursor and selection in place. Turn it off to keep another part of the movie
+in view while playback continues.
 
 Click a button cell to toggle it. Drag down a button column to paint the same
 value across several rows; one drag produces one undo item. Space toggles the
@@ -75,19 +83,30 @@ selection and Ctrl toggles individual rows. **Copy**, **Cut**, **Paste**, and
 blank frame, **Delete** removes selected frames, **Clone** duplicates them, and
 **Trim** removes the timeline after the cursor.
 
+Button columns follow the FCEUX order: Right, Left, Down, Up, Start, Select,
+B, A. The outlined cell is the target for Space; Left and Right move through
+the visible columns. Clicking a button heading sets that button on the selected
+rows, or clears it when every selected row already has it pressed. With no
+selection, it applies to the cursor row. Gaps in a selection stay unchanged,
+and the whole column operation is one undo item.
+
+The multi-frame insertion control, also available with Insert on the keyboard,
+adds between 1 and 100,000 blank frames before the cursor. It creates one undo
+item and shifts later input and markers together.
+
 **Undo** and **Redo** apply to input and project edits. Retained history defaults
 to 256 entries within 64 MiB. An edit larger than the history budget can still
 succeed, but cannot be retained as an undo entry. Failed allocations leave an
 individual edit unchanged. Cancelling a grouped edit restores its preceding state.
 
 Player selectors choose the pad being edited and the pads being recorded.
-Four Score projects expose all four pads. The grid also displays reset, power,
-disk, and VS command columns. Commands that do not apply to the loaded hardware
-are unavailable.
+Four Score projects expose all four pads, with two displayed at a time. Select
+a player to show its pair. The grid displays reset and power commands, along
+with disk or VS commands when they apply to the loaded hardware.
 
-**Pattern** selects a repeating on/off pattern for the active button; **Apply**
-writes it over the selected range. **Skip lag** keeps known lag frames out of
-the pattern phase. Unknown lag is not treated as confirmed lag. The lag column
+In the **Input** tab, **Pattern** selects a repeating on/off pattern for the
+active button; **Apply** writes it over the selected range. **Skip lag** keeps
+known lag frames out of the pattern phase. Unknown lag is not treated as confirmed lag. The lag column
 uses `?` for unknown, `L` for a frame without a controller read, and `.` for a
 frame with a read. Playback measures controller reads and updates these values.
 
@@ -119,11 +138,23 @@ undo item. The rerecord counter
 advances when a take changes existing input, when a branch is deployed, or when
 a compatible movie state is loaded in writable mode.
 
-**Marker** attaches a note to the grid cursor. The ten branch slots store
-alternate timelines with a name, markers, lag information, and a key frame.
+**Marker** attaches a note to the grid cursor. The **Markers** tab lists notes
+with their frame numbers. Selecting a note or moving to the previous or next
+marker moves the grid cursor; Enter then runs to that frame. These navigation
+controls also work in read-only mode. In writable mode, selecting between
+markers includes the preceding marker's row and stops before the next marker.
+Before the first marker or after the last one, the movie's beginning or end
+supplies the boundary.
+
+The ten slots in **Branches** store alternate timelines with a name, markers,
+lag information, and a key frame.
 **Store** captures the current timeline at the playback position; **Load**
 deploys it and seeks to its key frame. A branch deployment and its rerecord
 increment form one undo item. **Clear** removes a slot.
+
+The branch list shows each stored name, key frame, and parent slot. Jumping to a
+branch's key frame seeks within the current timeline without deploying the
+stored input. This is also available in read-only mode.
 
 Editing input or marker notes marks the current branch as changed. Storing or
 loading a branch clears that status; undo and redo restore it with the timeline.
@@ -132,8 +163,10 @@ the rerecord counter does not mark a branch as changed.
 
 In the editor, F5 stores the selected branch and F6 loads it. Ctrl+F5 and
 Ctrl+F6 keep the shared save-state file shortcuts. Ctrl+S saves the project,
-Ctrl+Shift+S opens **Save as**, Ctrl+G opens **Go to frame**, and F2 edits a
-marker. Ctrl+Z undoes an edit; Ctrl+Y or Ctrl+Shift+Z redoes it.
+Ctrl+Shift+S opens **Save as**, Ctrl+G opens **Go to**, and F2 edits a marker.
+Ctrl+Page Up and Ctrl+Page Down move the grid cursor between markers. Ctrl+A
+selects the interval between markers; Ctrl+Shift+A selects the entire movie.
+Ctrl+Z undoes an edit; Ctrl+Y or Ctrl+Shift+Z redoes it.
 
 ## Movie states and closing a project
 
@@ -151,7 +184,7 @@ saves.
 
 ## Lua editing
 
-**Run TAS Script** runs one Lua 5.4 script against a paused, writable project. The
+**Script** runs one Lua 5.4 script against a paused, writable project. The
 script can inspect and edit project input; it cannot execute the emulator,
 read host files, load packages, or access the debugger. It has the base, math,
 string, and table libraries, a 16 MiB Lua allocation budget, a one-million

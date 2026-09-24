@@ -163,6 +163,10 @@ restoration, and restoration of live hardware options. Desktop tests use SDL's
 dummy driver and exercise actual layout hit targets at several display scales.
 They also check the shared native-window opening path, window reuse, movement
 and resizing, keyboard routing, and project retention after closing the editor.
+Editor regressions cover navigation between markers, playback following without
+changing the selection, insertion of several frames as one undo item, and
+column edits over selections with gaps. Sidebar controls are checked against
+the rendered hit targets at multiple display scales.
 
 For a supplied game and movie, use `--movie` to run a bounded prefix or all
 recorded input. A frame limit of zero means the full movie; positive limits

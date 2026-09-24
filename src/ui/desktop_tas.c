@@ -10,6 +10,21 @@ bool desktop_tas_panel(unsigned id) {
     return id == TAS_PANEL;
 }
 
+const char *desktop_tas_edit_title(unsigned control) {
+    switch (control) {
+    case TAS_EDIT_SEEK:
+        return "Go to frame";
+    case TAS_EDIT_MARKER:
+        return "Edit marker";
+    case TAS_EDIT_BRANCH:
+        return "Store branch";
+    case TAS_EDIT_INSERT:
+        return "Insert frames";
+    default:
+        return "Edit value";
+    }
+}
+
 DesktopTasEditor *desktop_tas_editor(FrontendDesktopUi *ui) {
     if (!ui) {
         return NULL;
@@ -19,6 +34,7 @@ DesktopTasEditor *desktop_tas_editor(FrontendDesktopUi *ui) {
         if (ui->tas_editor) {
             ui->tas_editor->active_button = 1u;
             ui->tas_editor->column = TAS_GRID_PAD_BASE;
+            ui->tas_editor->follow_playback = true;
         }
     }
     return ui->tas_editor;
@@ -102,6 +118,47 @@ void desktop_tas_keep_cursor_visible(FrontendDesktopUi *ui) {
         editor->scroll = editor->cursor;
     } else if (editor->cursor >= editor->scroll + rows) {
         editor->scroll = editor->cursor - rows + 1;
+    }
+    size_t max_scroll = frames > rows ? frames - rows : 0;
+    if (editor->scroll > max_scroll) {
+        editor->scroll = max_scroll;
+    }
+}
+
+void desktop_tas_follow_playback(FrontendDesktopUi *ui, const NesTasProgress *progress) {
+    DesktopTasEditor *editor = desktop_tas_editor(ui);
+    if (!editor) {
+        return;
+    }
+    if (!progress || !progress->active) {
+        editor->follow_initialized = false;
+        return;
+    }
+    if (!editor->follow_initialized) {
+        editor->last_playback_frame = progress->frame;
+        editor->follow_initialized = true;
+        return;
+    }
+    if (editor->last_playback_frame == progress->frame) {
+        return;
+    }
+    editor->last_playback_frame = progress->frame;
+    if (!editor->follow_playback || editor->painting || editor->dragging_scroll) {
+        return;
+    }
+
+    const NesTasProject *project = desktop_tas_project_const(ui);
+    size_t frames = project ? nes_tas_project_frame_count(project) : 0;
+    if (!frames) {
+        editor->scroll = 0;
+        return;
+    }
+    size_t frame = progress->frame < frames ? progress->frame : frames - 1;
+    size_t rows = editor->visible_rows ? editor->visible_rows : 1;
+    if (frame < editor->scroll) {
+        editor->scroll = frame;
+    } else if (frame >= editor->scroll + rows) {
+        editor->scroll = frame - rows + 1;
     }
     size_t max_scroll = frames > rows ? frames - rows : 0;
     if (editor->scroll > max_scroll) {
@@ -263,7 +320,30 @@ bool desktop_tas_commit(FrontendDesktopUi *ui, const char *text, char *error, si
         return false;
     }
     NesTasResult result = NES_TAS_OK;
-    if (ui->edit_control == TAS_EDIT_MARKER) {
+    if (ui->edit_control == TAS_EDIT_INSERT) {
+        size_t count;
+        if (!tas_frontend_parse_frame(text, &count) || !count || count > 100000) {
+            snprintf(error, size, "Enter a whole number from 1 to 100000.");
+            return false;
+        }
+        size_t frames = nes_tas_project_frame_count(project);
+        size_t max_frames = SIZE_MAX / sizeof(NesFm2Frame);
+        if (frames > max_frames || count > max_frames - frames) {
+            snprintf(error, size, "Frame count is too large.");
+            return false;
+        }
+        size_t at = editor->cursor <= frames ? editor->cursor : frames;
+        result = nes_tas_insert_frames(project, at, count);
+        if (result != NES_TAS_OK) {
+            snprintf(error, size, "%s", nes_tas_result_string(result));
+            return false;
+        }
+        editor->cursor = at;
+        /* The insertion has committed. Closing prevents a repeated insert if
+         * rebuilding playback needs a later retry. */
+        desktop_tas_after_model_edit(ui, result, "Blank frames inserted as one edit.");
+        return true;
+    } else if (ui->edit_control == TAS_EDIT_MARKER) {
         result =
             *text ? nes_tas_marker_set(project, editor->cursor, text) : nes_tas_marker_remove(project, editor->cursor);
     } else if (ui->edit_control == TAS_EDIT_BRANCH) {

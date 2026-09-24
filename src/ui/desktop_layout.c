@@ -753,6 +753,8 @@ void desktop_layout(FrontendDesktopUi *ui, const char *title, const char *region
                     label(ui,
                           ui->capture_binding  ? "Set binding"
                           : ui->prompt_command ? "Add cheat"
+                          : ui->panel_open && desktop_tas_panel(ui->panel_id)
+                              ? desktop_tas_edit_title(ui->edit_control)
                                                : "Edit value",
                           24, ink);
                     label(ui,

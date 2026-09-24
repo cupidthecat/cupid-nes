@@ -94,6 +94,7 @@ FrontendDesktopUi *desktop_open_window(FrontendDesktopUi *ui, int kind, unsigned
         tool->log_count = root->log_count;
         memcpy(tool->log_lines, root->log_lines, sizeof(tool->log_lines));
     }
+    desktop_sync_scale(tool);
     SDL_SetRenderDrawColor(renderer, 24, 28, 39, 255);
     SDL_RenderClear(renderer);
     desktop_layout(tool, "", "", "");
