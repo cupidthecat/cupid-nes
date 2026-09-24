@@ -58,7 +58,9 @@ static void heading(FrontendDesktopUi *ui, const char *title, const char *subtit
                 label(ui, subtitle, 13, muted);
             }
         }
-        button(ui, "Close", HIT_CLOSE, 0, 0, false, true);
+        if (!ui->parent) {
+            button(ui, "Close", HIT_CLOSE, 0, 0, false, true);
+        }
     }
 }
 

@@ -1,0 +1,79 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mxfile host="drawio" version="31.4.5" type="device">
+  <diagram id="architecture-flow" name="Frame and device flow">
+    <mxGraphModel dx="1500" dy="620" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1500" pageHeight="620" math="0" shadow="0" background="#F6F8FB">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" value="Frame and device flow" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=Helvetica;fontSize=26;fontColor=#183153;fontStyle=1;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="55" y="35" width="1390" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle" value="One frame enters the CPU bus scheduler, which clocks the console devices and feeds host output." style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=Helvetica;fontSize=13;fontColor=#52657A;fontStyle=0;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="57" y="78" width="1386" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="frontend" value="SDL frontend&lt;br&gt;&lt;font style=&quot;font-size:12px;color:#52657A&quot;&gt;Host events and frame presentation&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#BCC8D6;strokeWidth=1.5;fontFamily=Helvetica;fontSize=16;fontColor=#183153;spacing=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="65" y="260" width="205" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="frame" value="Frame coordinator&lt;br&gt;&lt;font style=&quot;font-size:12px;color:#52657A&quot;&gt;VS-aware CPU stepping&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#F0EAF8;strokeColor=#9073B5;strokeWidth=1.5;fontFamily=Helvetica;fontSize=17;fontColor=#183153;spacing=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="350" y="260" width="230" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="cpu" value="CPU bus scheduler&lt;br&gt;&lt;font style=&quot;font-size:12px;color:#52657A&quot;&gt;Instruction cycles, DMA and IRQ polling&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#EAF2FF;strokeColor=#6B91CC;strokeWidth=1.5;fontFamily=Helvetica;fontSize=17;fontColor=#183153;spacing=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="660" y="245" width="275" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="ppu" value="PPU&lt;br&gt;&lt;font style=&quot;font-size:12px;color:#52657A&quot;&gt;Clocks, rendering and memory&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#E7F6F3;strokeColor=#49A394;strokeWidth=1.5;fontFamily=Helvetica;fontSize=17;fontColor=#183153;spacing=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="1030" y="115" width="220" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="apu" value="APU&lt;br&gt;&lt;font style=&quot;font-size:12px;color:#52657A&quot;&gt;Clocks, mixing and sample ring&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#E7F6F3;strokeColor=#49A394;strokeWidth=1.5;fontFamily=Helvetica;fontSize=17;fontColor=#183153;spacing=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="1030" y="270" width="220" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="cart" value="Cartridge and mapper&lt;br&gt;&lt;font style=&quot;font-size:12px;color:#52657A&quot;&gt;Banking, RAM and expansion audio&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFF4DB;strokeColor=#D4A13B;strokeWidth=1.5;fontFamily=Helvetica;fontSize=16;fontColor=#183153;spacing=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="1030" y="425" width="220" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="video" value="Video output&lt;br&gt;&lt;font style=&quot;font-size:12px;color:#52657A&quot;&gt;Framebuffer to SDL texture&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#BCC8D6;strokeWidth=1.5;fontFamily=Helvetica;fontSize=16;fontColor=#183153;spacing=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="1280" y="115" width="185" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="audio" value="Audio output&lt;br&gt;&lt;font style=&quot;font-size:12px;color:#52657A&quot;&gt;SDL callback consumes samples&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#BCC8D6;strokeWidth=1.5;fontFamily=Helvetica;fontSize=16;fontColor=#183153;spacing=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="1280" y="270" width="185" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="e_front_frame" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#60758F;strokeWidth=1.7;endArrow=block;endFill=1;fontFamily=Helvetica;fontSize=12;fontColor=#40536B;labelBackgroundColor=#F6F8FB;" edge="1" parent="1" source="frontend" target="frame">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_frame_cpu" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#60758F;strokeWidth=1.7;endArrow=block;endFill=1;fontFamily=Helvetica;fontSize=12;fontColor=#40536B;labelBackgroundColor=#F6F8FB;" edge="1" parent="1" source="frame" target="cpu">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_cpu_ppu" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#60758F;strokeWidth=1.7;endArrow=block;endFill=1;fontFamily=Helvetica;fontSize=12;fontColor=#40536B;labelBackgroundColor=#F6F8FB;" edge="1" parent="1" source="cpu" target="ppu">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="985" y="275" />
+              <mxPoint x="985" y="165" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_cpu_apu" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#60758F;strokeWidth=1.7;endArrow=block;endFill=1;fontFamily=Helvetica;fontSize=12;fontColor=#40536B;labelBackgroundColor=#F6F8FB;" edge="1" parent="1" source="cpu" target="apu">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_cpu_cart" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#60758F;strokeWidth=1.7;endArrow=block;endFill=1;fontFamily=Helvetica;fontSize=12;fontColor=#40536B;labelBackgroundColor=#F6F8FB;" edge="1" parent="1" source="cpu" target="cart">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="985" y="355" />
+              <mxPoint x="985" y="475" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_ppu_video" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#60758F;strokeWidth=1.7;endArrow=block;endFill=1;fontFamily=Helvetica;fontSize=12;fontColor=#40536B;labelBackgroundColor=#F6F8FB;" edge="1" parent="1" source="ppu" target="video">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_apu_audio" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#60758F;strokeWidth=1.7;endArrow=block;endFill=1;fontFamily=Helvetica;fontSize=12;fontColor=#40536B;labelBackgroundColor=#F6F8FB;" edge="1" parent="1" source="apu" target="audio">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_cart_apu" value="expansion audio" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#60758F;strokeWidth=1.7;endArrow=block;endFill=1;fontFamily=Helvetica;fontSize=12;fontColor=#40536B;labelBackgroundColor=#F6F8FB;startArrow=none;startFill=1;" edge="1" parent="1" source="cart" target="apu">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1140" y="405" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

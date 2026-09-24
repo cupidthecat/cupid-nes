@@ -33,22 +33,9 @@ Large C translation units use private implementation headers at existing subsyst
 
 ## From a frame to a bus access
 
-```mermaid
-flowchart TD
-    Frontend[SDL frontend] --> Frame[VS-aware frame and CPU stepping]
-    Frame --> CPU[CPU instruction and bus accesses]
-    CPU --> PPU[PPU clocks and rendering]
-    CPU --> APU[APU clocks and DMA requests]
-    CPU --> Cart[Cartridge clocks and bus callbacks]
-    CPU --> Input[Controller port reads and writes]
-    CPU --> EPSM[EPSM clocks, bus writes and timer IRQs]
-    PPU --> Cart
-    PPU --> Pixels[Framebuffer]
-    APU --> Samples[Per-APU sample ring]
-    EPSM --> APU
-    Pixels --> Display[Frame composition and SDL texture]
-    Samples --> Callback[SDL audio callback]
-```
+![Cupid frame and device flow](../img/architecture-flow.png)
+
+Editable source: [architecture-flow.drawio](../img/architecture-flow.drawio). The diagrams use [drawio-skill](https://github.com/Agents365-ai/drawio-skill).
 
 The main loop handles host events, starts a frame with `vs_start_frame()`, and calls `vs_cpu_step()` until the main PPU completes that frame. It then presents `vs_video_framebuffer()` and paces the next frame using elapsed emulated CPU time.
 
@@ -61,6 +48,10 @@ The CPU delays `$4016` output changes before delivering them to the controller l
 The [accuracy notes](accuracy.md) describe the exact register-delay and collision models. Changes to this path need bus-level tests because correct register values at an instruction boundary can conceal an incorrect access order.
 
 ## CPU and PPU memory
+
+![NES CPU and PPU address routing](../img/memory-routing.png)
+
+Editable source: [memory-routing.drawio](../img/memory-routing.drawio).
 
 An ordinary cartridge uses 2 KiB internal CPU RAM with mirrors through `$1FFF`. The FamicomBox menu board supplies 8 KiB of distinct RAM over that range; loading an ordinary cartridge restores the 2 KiB mirrors. CPU `$2000-$3FFF` accesses reach mirrored PPU registers. APU, controller, and DMA registers occupy the CPU I/O range, while the cartridge layer handles board-specific registers and memory.
 
@@ -112,6 +103,10 @@ Hardware-profile choices live outside the state cleared by power/reset operation
 NSF and NSFe use the production CPU and sound chips with a small playback program and a CPU-cycle timer. Their PPU advances frame timing without rendering or VBL NMIs, and their base-APU frame/DMC IRQs are masked. Music resets always reset that timing state, including when cartridge PPU reset suppression is enabled. Application track keys hold the audio-device lock while clearing and restarting the music state. Loading a cartridge restores ordinary PPU and APU interrupt behavior.
 
 ## Dual VS execution
+
+![Dual VS machine coordination](../img/dual-vs.png)
+
+Editable source: [dual-vs.drawio](../img/dual-vs.drawio).
 
 The secondary side has independent CPU RAM, bus latches, interrupt and DMA state, PPU memory and rendering state, and an APU. The scheduler selects the appropriate context while stepping each CPU. It advances the secondary CPU when the main side is more than five CPU cycles ahead or has advanced to a later frame, then restores the main selection.
 

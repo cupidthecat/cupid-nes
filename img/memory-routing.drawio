@@ -1,0 +1,53 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mxfile host="drawio" version="31.4.5" type="device">
+  <diagram id="memory-routing" name="CPU and PPU address maps">
+    <mxGraphModel dx="1500" dy="680" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1500" pageHeight="680" math="0" shadow="0" background="#F6F8FB">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" value="CPU and PPU address maps" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=Helvetica;fontSize=26;fontColor=#183153;fontStyle=1;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="55" y="35" width="1390" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle" value="Address ranges reach different devices; the mapper chooses cartridge-backed memory." style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=Helvetica;fontSize=13;fontColor=#52657A;fontStyle=0;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="57" y="78" width="1386" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="cpu_panel" value="CPU address map" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#DCE4EE;strokeWidth=1.5;fontFamily=Helvetica;fontSize=18;fontColor=#183153;fontStyle=1;align=left;verticalAlign=top;spacingTop=18;spacingLeft=22;container=1;pointerEvents=0;" vertex="1" parent="1">
+          <mxGeometry x="55" y="130" width="675" height="495" as="geometry" />
+        </mxCell>
+        <mxCell id="ppu_panel" value="PPU address map" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#DCE4EE;strokeWidth=1.5;fontFamily=Helvetica;fontSize=18;fontColor=#183153;fontStyle=1;align=left;verticalAlign=top;spacingTop=18;spacingLeft=22;container=1;pointerEvents=0;" vertex="1" parent="1">
+          <mxGeometry x="770" y="130" width="675" height="495" as="geometry" />
+        </mxCell>
+        <mxCell id="cpu_hint" value="Three broad regions" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=#52657A;fontStyle=0;spacing=0;" vertex="1" parent="cpu_panel">
+          <mxGeometry x="27.0" y="44.0" width="590" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="ppu_hint" value="Pattern, nametable and palette space" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=#52657A;fontStyle=0;spacing=0;" vertex="1" parent="ppu_panel">
+          <mxGeometry x="27.0" y="44.0" width="590" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="cpu_ram" value="$0000-$1FFF&lt;br&gt;&lt;font style=&quot;font-size:12px;color:#52657A&quot;&gt;2 KiB internal RAM, mirrored on an ordinary NES&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#E7F6F3;strokeColor=#49A394;strokeWidth=1.5;fontFamily=Helvetica;fontSize=17;fontColor=#183153;spacing=12;align=center;verticalAlign=middle;" vertex="1" parent="cpu_panel">
+          <mxGeometry x="30.0" y="85.0" width="615" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="cpu_io" value="$2000-$401F&lt;br&gt;&lt;font style=&quot;font-size:12px;color:#52657A&quot;&gt;PPU, APU, controller and DMA registers&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFF0E5;strokeColor=#D98A4C;strokeWidth=1.5;fontFamily=Helvetica;fontSize=17;fontColor=#183153;spacing=12;align=center;verticalAlign=middle;" vertex="1" parent="cpu_panel">
+          <mxGeometry x="30.0" y="205.0" width="615" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="cpu_cart" value="$4020-$FFFF&lt;br&gt;&lt;font style=&quot;font-size:12px;color:#52657A&quot;&gt;Cartridge registers, PRG ROM and cartridge RAM&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFF4DB;strokeColor=#D4A13B;strokeWidth=1.5;fontFamily=Helvetica;fontSize=17;fontColor=#183153;spacing=12;align=center;verticalAlign=middle;" vertex="1" parent="cpu_panel">
+          <mxGeometry x="30.0" y="325.0" width="615" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="ppu_chr" value="$0000-$1FFF  |  Pattern tables&lt;br&gt;&lt;font style=&quot;font-size:12px;color:#52657A&quot;&gt;CHR data is selected through the mapper&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#E7F6F3;strokeColor=#49A394;strokeWidth=1.5;fontFamily=Helvetica;fontSize=16;fontColor=#183153;spacing=12;align=center;verticalAlign=middle;" vertex="1" parent="ppu_panel">
+          <mxGeometry x="30.0" y="85.0" width="615" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="ppu_nt" value="$2000-$3EFF  |  Nametables&lt;br&gt;&lt;font style=&quot;font-size:12px;color:#52657A&quot;&gt;Mapper routes CIRAM, cartridge memory or generated data&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFF4DB;strokeColor=#D4A13B;strokeWidth=1.5;fontFamily=Helvetica;fontSize=16;fontColor=#183153;spacing=12;align=center;verticalAlign=middle;" vertex="1" parent="ppu_panel">
+          <mxGeometry x="30.0" y="205.0" width="615" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="ppu_pal" value="$3F00-$3FFF  |  Palette&lt;br&gt;&lt;font style=&quot;font-size:12px;color:#52657A&quot;&gt;Palette RAM is internal to the PPU&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#E7F6F3;strokeColor=#49A394;strokeWidth=1.5;fontFamily=Helvetica;fontSize=16;fontColor=#183153;spacing=12;align=center;verticalAlign=middle;" vertex="1" parent="ppu_panel">
+          <mxGeometry x="30.0" y="325.0" width="615" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="cpu_note" value="Board decoding can treat reads and writes differently." style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=#52657A;fontStyle=0;spacing=0;" vertex="1" parent="cpu_panel">
+          <mxGeometry x="30.0" y="442.0" width="615" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="ppu_note" value="Nametable access uses cart_nt_read() and cart_nt_write()." style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=#52657A;fontStyle=0;spacing=0;" vertex="1" parent="ppu_panel">
+          <mxGeometry x="30.0" y="442.0" width="615" height="28" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
