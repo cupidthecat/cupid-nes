@@ -48,6 +48,33 @@ jobs:
           persist-credentials: false
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y build-essential clang libsdl2-dev
+      - name: Package reproducible validation inputs
+        if: matrix.compiler == 'gcc'
+        run: |
+          mkdir -p build/validation-inputs/include
+          git archive --format=tar HEAD | gzip -n > build/validation-inputs/source.tar.gz
+          tar --exclude=.git -czf build/validation-inputs/diagnostics.tar.gz -C build diagnostic-roms accuracycoin
+          cp -a /usr/include/SDL2 build/validation-inputs/include/
+          if [ -d /usr/include/x86_64-linux-gnu/SDL2 ]; then
+            mkdir -p build/validation-inputs/include/x86_64-linux-gnu
+            cp -a /usr/include/x86_64-linux-gnu/SDL2 build/validation-inputs/include/x86_64-linux-gnu/
+          fi
+          cp /usr/share/doc/libsdl2-dev/copyright build/validation-inputs/SDL2-COPYRIGHT
+          {
+            printf 'emulator=%s\n' "$(git rev-parse HEAD)"
+            printf 'diagnostics=%s\n' "$(git -C build/diagnostic-roms rev-parse HEAD)"
+            printf 'accuracycoin=%s\n' "$(git -C build/accuracycoin rev-parse HEAD)"
+            sdl2-config --version
+            sha256sum build/accuracycoin/AccuracyCoin.nes
+          } > build/validation-inputs/manifest.txt
+      - name: Upload validation inputs
+        if: matrix.compiler == 'gcc'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: validation-inputs-${{ github.sha }}
+          path: build/validation-inputs/
+          if-no-files-found: error
+          retention-days: 7
       - name: Check source file sizes
         run: python3 scripts/check-source-size.py
       - name: Build emulator and run hardware regressions
