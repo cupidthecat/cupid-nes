@@ -21,9 +21,8 @@ paths for screenshots, audio, and video, along with Browse buttons, output
 selection, sample rate, and a file-size limit. One audio or video recording can
 run at a time. Screenshots remain available during recording and while paused.
 
-On Windows, the chooser supports Unicode paths. Linux uses `zenity` or
-`kdialog`; when neither is installed, enter the output path in the panel. A
-cancelled chooser leaves the existing path unchanged. Cupid rejects output paths
+The GTK chooser supports Unicode paths on Windows and Linux. A cancelled
+chooser leaves the existing path unchanged. Cupid rejects output paths
 that identify the active image, its firmware, or its protected save files,
 including another spelling of the same path.
 

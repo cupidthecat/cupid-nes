@@ -2,7 +2,7 @@
 
 [Documentation index](README.md)
 
-Cupid builds an SDL2 emulator application and a separate hardware test program. Building from source requires C11 and C++17 compilers, Make on Linux, SDL2 development files, and libcurl development files for update checks. The C++ compiler builds the EPSM sound engine. Python 3 is used by the external diagnostic workflow described in [development](development.md), not by the emulator itself.
+Cupid builds a GTK4 desktop application and a separate hardware test program. Building from source requires C11 and C++17 compilers, Make, GTK4 and SDL2 development files, and libcurl development files for update checks. The C++ compiler builds the EPSM sound engine. Python 3 is used by the external diagnostic workflow described in [development](development.md), not by the emulator itself.
 
 ## Get the source
 
@@ -19,7 +19,7 @@ Ubuntu and the Linux CI job use the normal Makefile build. Install GCC/G++, Make
 
 ```sh
 sudo apt update
-sudo apt install build-essential libsdl2-dev libcurl4-openssl-dev
+sudo apt install build-essential libgtk-4-dev libsdl2-dev libcurl4-openssl-dev
 make
 ./cupid-nes "path/to/game.nes"
 ```
@@ -34,35 +34,37 @@ make clean
 make CC=clang
 ```
 
-Use `make clean` before switching compiler families or compiler flags because those settings are not source-file dependencies in the Makefile.
+Build configuration changes trigger recompilation. GTK and headless builds use separate object directories; `make GTK=0 test` runs hardware regressions without the GTK dependency.
 
 ## Windows
 
-The repository includes a PowerShell build script for x64 Windows. It defaults to Clang and clang++, so install Clang plus the Windows SDK/MSVC build tools, then extract the SDL2 VC development package. The directory passed to `-SdlRoot` must contain:
+The preview ZIP includes GTK, SDL2, and the libraries and resources they need.
+Extract the archive into a new folder and run `cupid-nes.cmd`. Keep the `bin`,
+`lib`, `share`, and `etc` directories beside that launcher.
 
-```text
-SDL2-directory/
-  include/SDL.h
-  lib/x64/SDL2.lib
-  lib/x64/SDL2.dll
-```
-
-From PowerShell in the repository root:
+To build from PowerShell in the repository root:
 
 ```powershell
-.\scripts\test-windows.ps1 -SdlRoot 'C:\dependencies\SDL2-2.32.10'
-.\build\windows\cupid-nes.exe 'C:\games\game.nes'
+.\scripts\setup-gtk-windows.ps1
+.\scripts\build-gtk-windows.ps1 -Jobs 8 -Test -Package
+Expand-Archive .\build\release\cupid-windows-x64.zip .\build\cupid-preview
+.\build\cupid-preview\cupid-nes.cmd 'C:\games\game.nes'
 ```
 
-The script builds both programs, copies `SDL2.dll` beside them, and runs the hardware regression suite. A normal build produces:
+Setup installs an isolated MSYS2 UCRT64 toolchain under `build/dependencies`.
+The build writes `build/windows-gtk1/cupid-nes.exe`; packaging adds its runtime
+libraries and writes `build/release/cupid-windows-x64.zip` and a SHA-256 file.
+`-Test` runs the hardware suite. The package checker verifies every packaged
+file and launches the application without a compiler/toolchain PATH:
 
-```text
-build/windows/cupid-nes.exe
-build/windows/accuracy-tests.exe
-build/windows/SDL2.dll
+```powershell
+.\scripts\check-gtk-package.ps1
 ```
 
-`-Compiler gcc` selects `g++` automatically. The default `clang` selects `clang++`; any other compiler basename needs an explicit `-CxxCompiler`. Normal builds use C11 or C++17 with `-Wall -Wextra -Werror -O2`. `-Sanitize` writes the binaries to `build/windows-sanitized`, changes the optimization/debug flags, enables AddressSanitizer and UndefinedBehaviorSanitizer, and requires Clang's Windows AddressSanitizer runtime. See [development](development.md) for the exact flags and test workflows. This checkout has no dedicated macOS build script or CI job.
+The separate `scripts/test-windows.ps1 -SdlRoot <SDL2-VC-SDK>` script retains
+Clang/MSVC hardware and sanitizer builds under `build/windows` and
+`build/windows-sanitized`. Those builds are intended for regression testing.
+This checkout has no dedicated macOS build script or CI job.
 
 ## Open a cartridge
 
@@ -70,11 +72,13 @@ build/windows/SDL2.dll
 ./cupid-nes "games/game.nes"
 ```
 
-On Windows, use `.\build\windows\cupid-nes.exe` in place of `./cupid-nes`. Cupid reads iNES, NES 2.0, and supported UNIF cartridge images, NSF and NSFe music files, and supported images inside ZIP and 7z archives. An archive containing several supported images opens a member-selection dialog. The selected image is read in memory; Cupid does not extract the archive over files in your game folder.
+On Windows, use the `cupid-nes.cmd` launcher from the extracted package in place of `./cupid-nes`. Cupid reads iNES, NES 2.0, and supported UNIF cartridge images, NSF and NSFe music files, and supported images inside ZIP and 7z archives. An archive containing several supported images opens a member-selection dialog. The selected image is read in memory; Cupid does not extract the archive over files in your game folder.
 
 Starting `cupid-nes` without an image opens a desktop with an **Open** button and recent games. Use **File > Open Game** or Ctrl+O to load a game or switch to another one. The command line accepts one initial image path; quote paths containing spaces. Hardware selection is covered in [configuration](configuration.md).
 
-Windows file dialogs and command-line paths use Unicode. On Linux, the file dialog uses Zenity or KDialog when installed. When neither is available, the dialog reports that requirement; a command-line image path remains usable. Install `zenity` on Ubuntu to use the native file picker.
+File dialogs and command-line paths support Unicode. The GTK desktop provides
+its own file picker on Windows and Linux. You can also pass an image path on
+the command line.
 
 Open and recent-image actions retain the previous machine when validation or saving fails. An archive selection can be cancelled without changing the game. IPS, UPS, and BPS patches are validated before loading the resulting image, and patched or archived games receive separate save identities. A palette drop affects the palette rather than replacing the cartridge.
 

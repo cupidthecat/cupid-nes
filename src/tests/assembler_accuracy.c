@@ -333,6 +333,47 @@ static int rejected_syntax(void) {
     return 0;
 }
 
+static int multiline_programs(void) {
+    DebugAssemblyProgram result, before;
+    static const uint8_t expected[] = {0xA9, 0x2A, 0x8D, 0x00, 0x02, 0xD0, 0xF9, 0x4C, 0x0A, 0x06, 0x60};
+    BOARD_CHECK(debugger_assemble_program(0x600,
+                                          "; program\r\nstart: LDA #42\nSTA $0200\nBNE start\nJMP done\ndone: RTS\n",
+                                          &result, assembly_error, sizeof(assembly_error)));
+    BOARD_CHECK(result.address == 0x600 && result.length == sizeof(expected));
+    BOARD_CHECK(!memcmp(result.bytes, expected, sizeof(expected)) && strstr(result.listing, "$060A"));
+    BOARD_CHECK(debugger_assemble_program(0, "JMP next\nnext: NOP", &result, assembly_error, sizeof(assembly_error)));
+    BOARD_CHECK(result.length == 4 && result.bytes[1] == 3 && result.bytes[2] == 0);
+    BOARD_CHECK(
+        debugger_assemble_program(0, "BNE next\nNOP\nnext: RTS", &result, assembly_error, sizeof(assembly_error)));
+    BOARD_CHECK(result.bytes[1] == 1);
+    before = result;
+    const char *invalid[] = {"NOP\nLDA #256", "same: NOP\nsame: RTS", "JMP missing", "; empty\n", "LDA #<label"};
+    for (size_t i = 0; i < sizeof(invalid) / sizeof(*invalid); ++i) {
+        BOARD_CHECK(!debugger_assemble_program(0x600, invalid[i], &result, assembly_error, sizeof(assembly_error)));
+        BOARD_CHECK(strstr(assembly_error, "Line ") && !memcmp(&before, &result, sizeof(result)));
+    }
+    BOARD_CHECK(!debugger_assemble_program(0xFFFF, "NOP\nNOP", &result, assembly_error, sizeof(assembly_error)));
+    BOARD_CHECK(!memcmp(&before, &result, sizeof(result)));
+    BOARD_CHECK(debugger_assemble_program(0xFFFF, "BEQ $0001", &result, assembly_error, sizeof(assembly_error)));
+    BOARD_CHECK(result.length == 2 && result.bytes[1] == 0);
+    char *large = malloc((DEBUG_ASSEMBLY_PROGRAM_LIMIT + 1) * 4 + 1);
+    BOARD_CHECK(large);
+    for (unsigned i = 0; i <= DEBUG_ASSEMBLY_PROGRAM_LIMIT; ++i) {
+        memcpy(large + i * 4, "NOP\n", 4);
+    }
+    large[(DEBUG_ASSEMBLY_PROGRAM_LIMIT + 1) * 4] = 0;
+    before = result;
+    bool oversized = !debugger_assemble_program(0, large, &result, assembly_error, sizeof(assembly_error));
+    bool retained = !memcmp(&before, &result, sizeof(result));
+    large[DEBUG_ASSEMBLY_PROGRAM_LIMIT * 4] = 0;
+    bool maximum = debugger_assemble_program(0, large, &result, assembly_error, sizeof(assembly_error));
+    free(large);
+    BOARD_CHECK(oversized && retained && maximum && result.length == DEBUG_ASSEMBLY_PROGRAM_LIMIT);
+    BOARD_CHECK(!debugger_assemble_program(0, NULL, &result, NULL, 0));
+    BOARD_CHECK(!debugger_assemble_program(0, "NOP", NULL, NULL, 0));
+    return 0;
+}
+
 static bool act(unsigned id, const char *value, int selected) {
     return frontend_panel_action(ASSEMBLER_FRONTEND_PANEL, id, value, selected, assembly_error, sizeof(assembly_error));
 }
@@ -381,6 +422,18 @@ static int preview_and_apply(FrontendExecutionRuntime *execution, DebugFrontend 
     BOARD_CHECK(read_mem(0x40) == 0xA9 && read_mem(0x41) == 0x42);
     DebugDisassembly disassembly;
     BOARD_CHECK(debugger_disassemble(0x40, &disassembly) && strstr(disassembly.text, "LDA #$42"));
+    BOARD_CHECK(preview_at(0, 0x100, "start: LDA #7\nSTA $20\nBNE start"));
+    BOARD_CHECK(act(ASSEMBLER_APPLY, NULL, 0));
+    BOARD_CHECK(read_mem(0x100) == 0xA9 && read_mem(0x104) == 0xD0 && read_mem(0x105) == 0xFA);
+    BOARD_CHECK(preview_at(0, 0x100, "LDA #8\nSTA $21\nNOP"));
+    write_mem(0x104, 0x60);
+    BOARD_CHECK(!act(ASSEMBLER_APPLY, NULL, 0) && read_mem(0x101) == 7 && read_mem(0x103) == 0x20);
+    BOARD_CHECK(nes_state_capture(&before) == NES_STATE_OK);
+    bool crossing_preview = preview_at(1, 0x7FD, "LDA #1\nSTA $20");
+    bool crossing_refused = !act(ASSEMBLER_APPLY, NULL, 0);
+    bool crossing_unchanged = consume_unchanged(&before);
+    BOARD_CHECK(crossing_preview && crossing_refused && crossing_unchanged);
+    BOARD_CHECK(!preview_at(0, 0x100, "NOP\nLDA #256") && !act(ASSEMBLER_APPLY, NULL, 0));
     BOARD_CHECK(preview_at(0, 0x840, "LDX #$23") && act(ASSEMBLER_APPLY, NULL, 0));
     BOARD_CHECK(read_mem(0x40) == 0xA2 && read_mem(0x41) == 0x23);
     BOARD_CHECK(preview_at(1, 0x60, "JMP $1234") && act(ASSEMBLER_APPLY, NULL, 0));
@@ -433,6 +486,19 @@ static int protected_targets(void) {
         bool unchanged = consume_unchanged(&before);
         BOARD_CHECK(previewed && disabled && refused && unchanged);
     }
+    char *aliases = malloc(2048 * 4 + 4);
+    BOARD_CHECK(aliases);
+    for (unsigned i = 0; i < 2048; ++i) {
+        memcpy(aliases + i * 4, "NOP\n", 4);
+    }
+    memcpy(aliases + 2048 * 4, "BRK", 4);
+    NesStateBlob alias_before = {0};
+    bool captured = nes_state_capture(&alias_before) == NES_STATE_OK;
+    bool alias_preview = preview_at(0, 0, aliases);
+    bool alias_refused = !act(ASSEMBLER_APPLY, NULL, 0);
+    bool alias_unchanged = captured && consume_unchanged(&alias_before);
+    free(aliases);
+    BOARD_CHECK(captured && alias_preview && alias_refused && alias_unchanged);
     BOARD_CHECK(!preview_at(0, 0x10000, "NOP") && !act(ASSEMBLER_APPLY, NULL, 0));
     char oversized[DEBUG_ASSEMBLY_TEXT_LIMIT + 2];
     memset(oversized, 'x', sizeof(oversized) - 1);
@@ -608,6 +674,7 @@ int test_assembler_accuracy(void) {
     int failures = official_encodings();
     failures += operand_boundaries();
     failures += rejected_syntax();
+    failures += multiline_programs();
     failures += frontend_controls();
     printf("6502 assembler: %s (%d failures)\n", failures ? "FAIL" : "PASS", failures);
     return failures;

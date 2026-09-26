@@ -9,6 +9,7 @@
 #define CUPID_HEX_FRONTEND_H
 
 #include "frontend_execution.h"
+#include "../debugger/memory_editor.h"
 
 enum { HEX_FRONTEND_PANEL = 0x1388, HEX_ROWS = 16, HEX_COLUMNS = 16 };
 enum {
@@ -25,5 +26,10 @@ bool hex_frontend_register(HexFrontend *frontend);
 void hex_frontend_unregister(HexFrontend *frontend);
 void hex_frontend_image_changed(HexFrontend *frontend);
 void hex_frontend_destroy(HexFrontend *frontend);
+/* Read-only native viewport. Values, frozen copies and changed flags share
+ * the frontend capture; no machine pointers escape. Count is bounded by
+ * DEBUG_MEMORY_EDIT_LIMIT and must fit entirely within the memory space. */
+bool hex_frontend_view(uint32_t first, size_t count, DebugMemoryByte *bytes,
+                       uint32_t *selection_first, uint32_t *selection_last);
 
 #endif

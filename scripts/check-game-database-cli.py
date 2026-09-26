@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Author: @frankischilling
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Check default database discovery through the production application."""
 
 import argparse

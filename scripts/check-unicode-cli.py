@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Author: @frankischilling
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Check production Windows launches with UTF-8 data and image paths."""
 
 import argparse

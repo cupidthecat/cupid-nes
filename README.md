@@ -14,8 +14,9 @@ nametables, sprites, palettes, registers, and VRAM. You can paint writable tiles
 and edit RAM while the game is paused.
 [Debugger tools](docs/debugger-tools.md) add code coverage, CPU profiles,
 event traces, symbols, source lines, and text extraction.
-The [inline assembler](docs/debugging.md#inline-assembler) previews 6502
-instructions and applies their bytes to writable RAM during paused debugging.
+The [6502 assembler](docs/debugging.md#inline-assembler) has a multiline editor
+with syntax highlighting, labels, undo/redo, and a generated-byte preview.
+It applies the previewed program to writable RAM during paused debugging.
 [Memory Search, Memory Watches, and the Hex / Memory Editor](docs/debugging.md#memory-search-and-cheat-finder)
 inspect live memory, compare snapshots, and edit writable bytes. Cheat Finder
 turns CPU-space search results into editable or testable cheats.
@@ -33,8 +34,9 @@ time per frame, with separate post-render and vblank controls.
 state recording, game settings, and update checks.
 
 The [TAS editor](docs/tas.md) opens FCEUX FM2 movies and FM3 projects in a
-separate, resizable window. Its input grid sits beside branch, marker, and
-recording controls. Follow playback, jump between markers, insert several
+separate, resizable window. Its input grid sits beside a live game preview and
+branch, marker, and recording controls. Drag the divider to resize either pane.
+Follow playback, jump between markers, insert several
 frames at once, or edit a button across selected rows from its column heading.
 The editor also has frame advance and back, recording and rerecording, ten
 branch slots, undo/redo, and Lua input editing. A checkpoint cache tab shows
@@ -55,8 +57,9 @@ key input in a separate window, with pressed-key feedback and latchable keys.
 The menu bar and toolbar give you access to the main actions, with submenus
 keeping longer lists on screen. Settings use checkboxes, dropdowns, editable
 numbers, and native file pickers. The audio output dropdown lists detected
-devices. SDL2 handles video, audio, and controllers; Clay handles desktop
-layouts, with cached TrueType text. The CPU and PPU core is written in C11.
+devices. GTK4 provides the desktop menus, settings, text editors, and tool
+windows. On Windows, the interface follows the system light/dark preference.
+SDL2 handles the emulation video pipeline, audio, and controllers. The CPU and PPU core is written in C11.
 Cartridge board modules and the EPSM YMF288 sound engine use C++17.
 The [Video settings](docs/desktop.md#settings) include optional bilinear
 interpolation, pixel-art scalers, integer prescaling, and an LCD Grid filter
@@ -139,10 +142,10 @@ cd cupid-nes
 
 ### Linux
 
-Install C11 and C++17 compilers, Make, and the SDL2 and libcurl development libraries. On Ubuntu:
+Install C11 and C++17 compilers, Make, GTK4, and the SDL2 and libcurl development libraries. On Ubuntu:
 
 ```sh
-sudo apt install build-essential libsdl2-dev libcurl4-openssl-dev
+sudo apt install build-essential libgtk-4-dev libsdl2-dev libcurl4-openssl-dev
 make
 ./cupid-nes path/to/game.nes
 ```
@@ -153,16 +156,20 @@ compilers or flags.
 
 ### Windows
 
-Install Clang and the Windows SDK/MSVC build tools, and extract the SDL2 VC
-development package. In PowerShell:
+Download the Windows ZIP from [Releases](https://github.com/cupidthecat/cupid-nes/releases).
+The preview ZIP includes its GTK runtime. Extract it into a new folder and run
+`cupid-nes.cmd`. To build the desktop from source, use the isolated MSYS2 setup:
 
 ```powershell
-.\scripts\test-windows.ps1 -SdlRoot 'C:\path\to\SDL2-2.32.10'
-.\build\windows\cupid-nes.exe 'C:\path\to\game.nes'
+.\scripts\setup-gtk-windows.ps1
+.\scripts\build-gtk-windows.ps1 -Jobs 8 -Package
+Expand-Archive .\build\release\cupid-windows-x64.zip .\build\cupid-preview
+.\build\cupid-preview\cupid-nes.cmd 'C:\path\to\game.nes'
 ```
 
-The script builds the application and hardware tests, copies `SDL2.dll` beside
-the executables, and runs the hardware suite. See
+The package contains the executable, libraries, GTK resources, and licenses.
+Add `-Test` to run hardware regressions. `make GTK=0 test` and
+`scripts/test-windows.ps1` retain a headless regression build. See
 [getting started](docs/getting-started.md) for prerequisites, output paths, and
 sanitizer builds.
 

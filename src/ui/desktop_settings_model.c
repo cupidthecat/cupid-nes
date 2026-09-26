@@ -338,6 +338,30 @@ static double number_value(Number n) {
     return 0;
 }
 
+/* Read editable staged text without entering edit mode or changing capture state. */
+bool desktop_setting_edit_text(FrontendDesktopUi *ui, int row, char *text, size_t size) {
+    if (!ui || !text || !size || row < 0 || row >= desktop_setting_rows(ui)) return false;
+    Number n = number(ui, row);
+    if (n.value) {
+        int length = snprintf(text, size, "%.10g", number_value(n));
+        return length >= 0 && (size_t)length < size;
+    }
+    const FrontendSettings *s = &ui->staged;
+    const char *value = NULL;
+    if (ui->settings_category == 4 && row == 7 && ui->settings_player < NES_INPUT_PLAYERS)
+        value = s->device_guid[ui->settings_player];
+    else if (ui->settings_category == 5 && ((row >= 0 && row <= 4) || row == 9 || row == 10)) {
+        const char *paths[] = {s->fds_bios_path, s->studybox_bios_path, s->epsm_adpcm_path,
+            s->fcns_kanji_path, s->disk_overlay_path, s->tape_play_path, s->tape_record_path};
+        value = paths[row <= 4 ? row : row - 4];
+    } else if (ui->settings_category == 6 && row >= 1 && row <= 4)
+        value = row == 1 ? s->state_file_path : s->capture_paths[row - 2];
+    text[0] = 0;
+    if (!value) return false;
+    int length = snprintf(text, size, "%s", value);
+    return length >= 0 && (size_t)length < size;
+}
+
 bool desktop_setting_commit_number(FrontendDesktopUi *ui, int row, const char *text) {
     Number n = number(ui, row);
     if (!n.value) {

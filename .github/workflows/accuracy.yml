@@ -1,3 +1,6 @@
+# accuracy.yml - Hardware validation on the legacy SDL test host.
+# Author: @frankischilling
+# SPDX-License-Identifier: GPL-3.0-or-later
 name: NES hardware accuracy
 
 on:
@@ -82,7 +85,7 @@ jobs:
       - name: Check source attribution and licenses
         run: python3 scripts/check-source-headers.py
       - name: Build emulator and run hardware regressions
-        run: make -j2 CC='${{ matrix.compiler }}' CXX='${{ matrix.cpp_compiler }}' CFLAGS='${{ matrix.flags }}' all test
+        run: make -j2 GTK=0 CC='${{ matrix.compiler }}' CXX='${{ matrix.cpp_compiler }}' CFLAGS='${{ matrix.flags }}' all test
       - name: Check network sessions
         run: python3 scripts/check-netplay.py build/accuracy-tests
       - name: Check region launch options

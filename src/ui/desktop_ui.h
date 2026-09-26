@@ -28,6 +28,7 @@ typedef enum {
 } FrontendIdleResult;
 
 typedef struct FrontendDesktopUi {
+    struct CupidGtkDesktop *gtk;
     struct FrontendDesktopUi *parent, *tools, *next;
     bool native_windows, focused, palette_window;
     uint32_t tool_rendered;

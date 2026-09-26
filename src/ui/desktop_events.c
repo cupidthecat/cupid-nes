@@ -6,6 +6,7 @@
  */
 /* Desktop input and command routing. SPDX-License-Identifier: GPL-3.0-or-later */
 #include "desktop_internal.h"
+#include "gtk_desktop.h"
 #include "desktop_keyboard.h"
 #include "cheat_frontend.h"
 #include "memory_search_frontend.h"
@@ -783,6 +784,9 @@ static bool handle_event(FrontendDesktopUi *ui, const SDL_Event *event) {
 }
 
 bool frontend_desktop_handle_event(FrontendDesktopUi *ui, const SDL_Event *event) {
+#ifdef CUPID_GTK
+    if (ui && ui->gtk) return cupid_gtk_event(ui, event);
+#endif
     if (!ui || !event) {
         return false;
     }

@@ -1,3 +1,6 @@
+# test-windows.ps1 - Legacy SDL hardware regressions; GTK uses build-gtk-windows.ps1.
+# Author: @frankischilling
+# SPDX-License-Identifier: GPL-3.0-or-later
 param(
     [Parameter(Mandatory = $true)]
     [string]$SdlRoot,
@@ -39,6 +42,7 @@ Copy-Item -LiteralPath $sdkRuntime -Destination (Join-Path $outputDirectory 'SDL
 
 $flags = @('-std=c11', '-Wall', '-Wextra', '-Werror', '-D_CRT_SECURE_NO_WARNINGS', '-DSDL_MAIN_HANDLED',
            '-DZ7_PPMD_SUPPORT', '-DZ7_EXTRACT_ONLY', '-DMINIZ_NO_ZLIB_COMPATIBLE_NAMES', "-I$includeDirectory")
+$flags += ('-DCUPID_VERSION="' + [IO.File]::ReadAllText((Join-Path $projectRoot 'VERSION')).Trim() + '"')
 if ($Sanitize) {
     $flags += @('-O1', '-g', '-fsanitize=address,undefined', '-fno-omit-frame-pointer')
     $resourceDirectory = & $Compiler '-print-resource-dir'

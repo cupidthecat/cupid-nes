@@ -30,6 +30,7 @@ bool update_checker_init(UpdateChecker *c, const char *version, const char *pref
     }
     memset(c, 0, sizeof(*c));
     strcpy(c->current, version);
+    c->channel = update_version_channel(version);
     strcpy(c->preferences, preferences);
     c->fetch = update_fetch_native;
     uint8_t *bytes = NULL;
@@ -74,14 +75,14 @@ bool update_checker_init(UpdateChecker *c, const char *version, const char *pref
 
 static int worker(void *context) {
     UpdateChecker *c = context;
-    char *body = malloc(UPDATE_METADATA_LIMIT + 1);
+    char *body = calloc(UPDATE_METADATA_LIMIT + 1, 1);
     unsigned status = 0;
     c->worker_status = UPDATE_ERROR;
     c->worker_message[0] = 0;
     memset(&c->worker_release, 0, sizeof(c->worker_release));
     if (!body) {
         snprintf(c->worker_message, sizeof(c->worker_message), "Not enough memory to check updates");
-    } else if (!c->fetch(c->fetch_context, body, UPDATE_METADATA_LIMIT + 1, &status, c->worker_message,
+    } else if (!c->fetch(c->fetch == update_fetch_native ? &c->channel : c->fetch_context, body, UPDATE_METADATA_LIMIT + 1, &status, c->worker_message,
                          sizeof(c->worker_message))) {
         if (!c->worker_message[0]) {
             snprintf(c->worker_message, sizeof(c->worker_message), "Offline or update server unavailable");
@@ -91,12 +92,16 @@ static int worker(void *context) {
                  status == 403 || status == 429 ? "Update server rate limit reached (HTTP %u); try later"
                                                 : "Update server returned HTTP %u",
                  status);
-    } else if (!update_metadata_parse(body, strlen(body), &c->worker_release)) {
+    } else if (!memchr(body, 0, UPDATE_METADATA_LIMIT + 1) ||
+               !update_metadata_select(body, strlen(body), c->channel, &c->worker_release)) {
         snprintf(c->worker_message, sizeof(c->worker_message), "Update server returned malformed release metadata");
+    } else if (!c->worker_release.version[0]) {
+        c->worker_status = UPDATE_UNKNOWN;
+        snprintf(c->worker_message, sizeof(c->worker_message), "No eligible releases found for this channel");
     } else {
         int order = 0;
         if (!strcmp(c->current, "0.0.0-dev")) {
-            c->worker_status = UPDATE_CURRENT;
+            c->worker_status = UPDATE_UNKNOWN;
             snprintf(c->worker_message, sizeof(c->worker_message),
                      "Development build: latest release %s; version ordering unavailable", c->worker_release.version);
         } else if (update_version_compare(c->worker_release.version, c->current, &order)) {
@@ -124,6 +129,7 @@ bool update_checker_start(UpdateChecker *c, bool automatic, char *error, size_t 
     c->attempted = true;
     c->notify = !automatic;
     c->status = UPDATE_CHECKING;
+    memset(&c->release, 0, sizeof(c->release));
     SDL_AtomicSet(&c->finished, 0);
     snprintf(c->message, sizeof(c->message), "Checking for updates...");
     c->thread = SDL_CreateThread(worker, "release-check", c);
@@ -191,7 +197,11 @@ static bool snapshot(void *context, FrontendPanelModel *model, char *error, size
         {3, FRONTEND_PANEL_CHECKBOX, "Check automatically on startup", NULL, NULL, 0, c->automatic, true, false},
         {4, FRONTEND_PANEL_ACTION, "Check now", NULL, NULL, 0, 0, c->status != UPDATE_CHECKING, false},
         {5, FRONTEND_PANEL_ACTION, "Open release page", NULL, NULL, 0, 0, c->release.url[0] != 0, false},
-        {6, FRONTEND_PANEL_ACTION, "Acknowledge this release", NULL, NULL, 0, 0, c->release.version[0] != 0, false}};
+        {6, FRONTEND_PANEL_ACTION, "Acknowledge this release", NULL, NULL, 0, 0, c->release.version[0] != 0, false},
+        {7, FRONTEND_PANEL_TEXT, "Update channel", c->channel == UPDATE_CHANNEL_PREVIEW ? "Preview (includes stable releases)" : "Stable", NULL, 0, 0, true, true},
+        {8, FRONTEND_PANEL_TEXT, "Build revision", CUPID_BUILD_REVISION, NULL, 0, 0, true, true},
+        {9, FRONTEND_PANEL_ACTION, "Download Windows ZIP in browser", NULL, NULL, 0, 0, c->release.package_url[0] != 0, false},
+        {10, FRONTEND_PANEL_TEXT, "Install downloaded ZIP", "Close Cupid; extract the entire ZIP into a NEW folder and launch cupid-nes.cmd at its root. Keep your old folder and user files.", NULL, 0, 0, true, true}};
     for (size_t i = 0; i < sizeof(controls) / sizeof(controls[0]); ++i) {
         if (!frontend_panel_add_control(model, &controls[i])) {
             return false;
@@ -216,7 +226,15 @@ static bool action(void *context, unsigned id, const char *value, int selected, 
     if (id == 6) {
         return update_checker_acknowledge(c, error, size);
     }
-    if (id == 5 && c->release.url[0]) {
+    if (id == 9 && update_release_url_valid(c->release.package_url, c->release.version, true)) {
+        if (SDL_OpenURL(c->release.package_url) != 0) {
+            if (error && size) snprintf(error, size, "%s", SDL_GetError());
+            return false;
+        }
+        snprintf(c->message, sizeof(c->message), "Download opened in browser. Close Cupid, extract the entire ZIP into a new folder, then launch cupid-nes.cmd at its root. Keep your old folder and user files.");
+        return true;
+    }
+    if (id == 5 && update_release_url_valid(c->release.url, c->release.version, false)) {
         if (SDL_OpenURL(c->release.url) != 0) {
             if (error && size) {
                 snprintf(error, size, "%s", SDL_GetError());

@@ -13,7 +13,9 @@ edges to resize it alongside the game. Opening the editor again raises the
 existing window. The Tools menu, `--tas`, and dropping a movie onto the game
 window all open this editor; closing it keeps the project and its edits available.
 
-The input grid occupies the left side of the window. **Branches**, **Markers**,
+The input grid occupies the left side of the window. A live game preview stays
+visible on the right; drag the divider to resize it alongside the grid.
+**Branches**, **Markers**,
 **Input**, **Cache**, **History**, and **Bookmarks** tabs on the right show alternate takes,
 notes, recording tools, executable checkpoints, retained edits, and named navigation positions. File and
 playback controls stay above the grid while these tabs change.
@@ -27,7 +29,7 @@ The same paths are available from the command line:
 
 `--movie` starts playback. `--tas` opens the editor with playback paused. Supply
 one movie option and one game image. On Windows, use
-`.\build\windows\cupid-nes.exe` in place of `./cupid-nes`. A movie can also be
+`.\build\cupid-preview\cupid-nes.cmd` in place of `./cupid-nes`. A movie can also be
 dropped onto the main game window when no dialog or other movie is open.
 
 ![TAS editor with its input grid and branch sidebar](images/tas-editor.png)

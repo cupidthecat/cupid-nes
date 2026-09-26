@@ -4,7 +4,7 @@
  * This file is part of Cupid NES Emulator.
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
-/* Inline assembler controls. SPDX-License-Identifier: GPL-3.0-or-later */
+/* Multiline assembler controls. SPDX-License-Identifier: GPL-3.0-or-later */
 #ifndef CUPID_ASSEMBLER_FRONTEND_H
 #define CUPID_ASSEMBLER_FRONTEND_H
 
@@ -25,6 +25,9 @@ enum {
     ASSEMBLER_SYNTAX
 };
 
+/* ASSEMBLER_SOURCE accepts a bounded multiline program. ASSEMBLER_BYTES is
+ * the complete generated listing; ASSEMBLER_CONTEXT retains existing memory
+ * disassembly. Source/target/address edits invalidate the transactional preview. */
 typedef struct AssemblerFrontend AssemblerFrontend;
 AssemblerFrontend *assembler_frontend_create(FrontendExecutionRuntime *execution);
 bool assembler_frontend_register(AssemblerFrontend *frontend);

@@ -379,6 +379,39 @@ static int watch_rollback(FrontendExecutionRuntime *execution) {
     return 0;
 }
 
+static int extended_view(void) {
+    DebugMemoryByte bytes[2048];
+    uint32_t first, last;
+    for (uint16_t i = 0; i < 0x800; i++) write_mem(i, (uint8_t)i);
+    BOARD_CHECK(act(HEX_TEXT_MODE, NULL, 0) && act(HEX_LIVE, NULL, 1) && select_bytes(DEBUG_MEMORY_RAM, 0, 1));
+    BOARD_CHECK(hex_frontend_view(0, 2048, bytes, &first, &last));
+    BOARD_CHECK(first == 0 && last == 0);
+    for (unsigned i = 0; i < 2048; i++) BOARD_CHECK(bytes[i].readable && bytes[i].value == (uint8_t)i);
+    BOARD_CHECK(act(HEX_LIVE, NULL, 0));
+    write_mem(0x100, 0xA5);
+    write_mem(0x708, 0x5A);
+    BOARD_CHECK(hex_frontend_view(0, 2048, bytes, NULL, NULL));
+    BOARD_CHECK(bytes[0x100].value == 0 && bytes[0x708].value == 8);
+    BOARD_CHECK(act(HEX_PICK, NULL, 0xFF) && act(HEX_EXTEND, NULL, 0x101));
+    BOARD_CHECK(act(HEX_COPY, NULL, 0) && clipboard_equals("FF 00 01"));
+    BOARD_CHECK(hex_frontend_view(0, 2048, bytes, &first, &last) && first == 0xFF && last == 0x101);
+    BOARD_CHECK(act(HEX_REFRESH, NULL, 0));
+    BOARD_CHECK(hex_frontend_view(0, 2048, bytes, NULL, NULL));
+    BOARD_CHECK(bytes[0x100].value == 0xA5 && bytes[0x100].changed);
+    BOARD_CHECK(bytes[0x708].value == 0x5A && bytes[0x708].changed);
+    BOARD_CHECK(act(HEX_COPY, NULL, 0) && clipboard_equals("FF A5 01"));
+    BOARD_CHECK(act(HEX_BASELINE, NULL, 0));
+    BOARD_CHECK(hex_frontend_view(0, 2048, bytes, NULL, NULL));
+    for (unsigned i = 0; i < 2048; i++) BOARD_CHECK(!bytes[i].changed);
+    BOARD_CHECK(!hex_frontend_view(1, 2048, bytes, NULL, NULL));
+    BOARD_CHECK(select_bytes(DEBUG_MEMORY_PALETTE, 0x3F00, 1));
+    BOARD_CHECK(hex_frontend_view(0x3F00, 32, bytes, NULL, NULL));
+    BOARD_CHECK(!hex_frontend_view(0x3F00, 33, bytes, NULL, NULL));
+    BOARD_CHECK(select_bytes(DEBUG_MEMORY_RAM, 0x100, 1));
+    BOARD_CHECK(hex_frontend_view(0x100, 1, bytes, NULL, NULL) && bytes[0].value == 0xA5);
+    return 0;
+}
+
 int test_hex_frontend_accuracy(void) {
     bool video_owned = (SDL_WasInit(SDL_INIT_VIDEO) & SDL_INIT_VIDEO) == 0;
     if (video_owned) {
@@ -423,6 +456,7 @@ int test_hex_frontend_accuracy(void) {
     failures += replay_and_policies(&execution);
     failures += files_and_fields(&execution);
     failures += watch_handoff();
+    failures += extended_view();
     debug_frontend_destroy(debug);
     failures += watch_rollback(&execution);
     frontend_execution_shutdown(&execution);

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Author: @frankischilling
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Compare full movie playback with a supplied FCEUX reference executable.
 
 Inputs and executables are hashed before execution. No games or movie files are

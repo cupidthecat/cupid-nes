@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Author: @frankischilling
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Regenerate owned archive fixtures. Runtime tests need no archive programs."""
 from __future__ import annotations
 

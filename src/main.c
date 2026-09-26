@@ -67,6 +67,7 @@
 #include "ui/image_open.h"
 #include "ui/session_actions.h"
 #include "ui/host_input.h"
+#include "ui/gtk_desktop.h"
 #include "ui/peripheral_input.h"
 #include "ui/desktop_ui.h"
 #include "ui/device_frontend.h"
@@ -581,8 +582,10 @@ static int application_main(int argc, char *argv[]) {
     if (!renderer) renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
     if (!renderer) renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
     if (!renderer) { fprintf(stderr, "SDL_CreateRenderer Error: %s\n", SDL_GetError()); return 1; }
+#ifndef CUPID_GTK
     if (frontend_settings.fullscreen)
         (void)SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
+#endif
     FrontendVideoRuntime video_runtime;
     if (!frontend_video_runtime_init(&video_runtime, renderer, &frontend_settings,
                                      ntsc_composite_requested,
@@ -846,6 +849,9 @@ static int application_main(int argc, char *argv[]) {
             if (main_mouse_event) {
                 int mouse_x, mouse_y, window_width, window_height;
                 uint32_t buttons = SDL_GetMouseState(&mouse_x, &mouse_y);
+#ifdef CUPID_GTK
+                if(desktop_ui.gtk)buttons=cupid_gtk_pointer(&desktop_ui,&e,&mouse_x,&mouse_y);
+#endif
                 SDL_GetWindowSize(window, &window_width, &window_height);
                 SDL_Rect game_rect;
                 frontend_desktop_game_rect(&desktop_ui, window_width, window_height,
@@ -1084,7 +1090,7 @@ static int application_main(int argc, char *argv[]) {
             if (!frontend_presentation_restore_settings(&video_runtime, &audio_runtime, &frontend_settings,
                                                         path_error, sizeof(path_error)))
                 frontend_desktop_set_status(&desktop_ui, path_error);
-            if (SDL_SetWindowFullscreen(window, frontend_settings.fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0) != 0)
+            if (!desktop_ui.gtk && SDL_SetWindowFullscreen(window, frontend_settings.fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0) != 0)
                 frontend_desktop_set_status(&desktop_ui, SDL_GetError());
             (void)frontend_command_set_checked(FRONTEND_COMMAND_FULLSCREEN, frontend_settings.fullscreen);
             frontend_settings.audio_mix.muted = frontend_settings.muted;

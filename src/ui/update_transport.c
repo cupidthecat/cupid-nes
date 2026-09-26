@@ -12,7 +12,7 @@
 #include <winhttp.h>
 
 bool update_fetch_native(void *context, char *body, size_t capacity, unsigned *status, char *error, size_t error_size) {
-    (void)context;
+    bool preview = context && *(const UpdateChannel *)context == UPDATE_CHANNEL_PREVIEW;
     HINTERNET session = NULL, connection = NULL, request = NULL;
     bool ok = false;
     size_t used = 0;
@@ -25,18 +25,19 @@ bool update_fetch_native(void *context, char *body, size_t capacity, unsigned *s
     if (!session) {
         goto done;
     }
-    WinHttpSetTimeouts(session, 5000, 5000, 5000, 5000);
+    if (!WinHttpSetTimeouts(session, 5000, 5000, 5000, 5000)) goto done;
     connection = WinHttpConnect(session, L"api.github.com", INTERNET_DEFAULT_HTTPS_PORT, 0);
     if (!connection) {
         goto done;
     }
-    request = WinHttpOpenRequest(connection, L"GET", L"/repos/cupidthecat/cupid-nes/releases/latest", NULL,
+    request = WinHttpOpenRequest(connection, L"GET", preview ? L"/repos/cupidthecat/cupid-nes/releases?per_page=100" :
+                                 L"/repos/cupidthecat/cupid-nes/releases/latest", NULL,
                                  WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
     if (!request) {
         goto done;
     }
     DWORD redirect = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
-    WinHttpSetOption(request, WINHTTP_OPTION_REDIRECT_POLICY, &redirect, sizeof(redirect));
+    if (!WinHttpSetOption(request, WINHTTP_OPTION_REDIRECT_POLICY, &redirect, sizeof(redirect))) goto done;
     if (!WinHttpSendRequest(request, L"Accept: application/vnd.github+json\r\n", (DWORD)-1L, WINHTTP_NO_REQUEST_DATA, 0,
                             0, 0) ||
         !WinHttpReceiveResponse(request, NULL)) {
@@ -116,7 +117,7 @@ static size_t receive(void *data, size_t size, size_t count, void *context) {
 }
 
 bool update_fetch_native(void *context, char *body, size_t capacity, unsigned *status, char *error, size_t error_size) {
-    (void)context;
+    bool preview = context && *(const UpdateChannel *)context == UPDATE_CHANNEL_PREVIEW;
     if (!body || capacity < 2 || !status) {
         return false;
     }
@@ -127,7 +128,8 @@ bool update_fetch_native(void *context, char *body, size_t capacity, unsigned *s
         return false;
     }
     Download download = {body, 0, capacity};
-    curl_easy_setopt(curl, CURLOPT_URL, "https://api.github.com/repos/cupidthecat/cupid-nes/releases/latest");
+    curl_easy_setopt(curl, CURLOPT_URL, preview ? "https://api.github.com/repos/cupidthecat/cupid-nes/releases?per_page=100" :
+                     "https://api.github.com/repos/cupidthecat/cupid-nes/releases/latest");
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "Cupid release checker");
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 5000L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 15000L);

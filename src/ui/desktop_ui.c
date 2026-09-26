@@ -7,6 +7,7 @@
  * GNU General Public License, version 3 or any later version.
  */
 #include "desktop_ui.h"
+#include "gtk_desktop.h"
 #include "desktop_keyboard.h"
 #include "host_input.h"
 #include "cheat_frontend.h"
@@ -98,6 +99,14 @@ void frontend_desktop_compute_game_rect(int ww, int wh, int vw, int vh,
 
 void frontend_desktop_game_rect(const FrontendDesktopUi *ui, int ww, int wh,
                                  int vw, int vh, bool integer_scaling, SDL_Rect *rect) {
+    if (ui && ui->gtk) {
+        double scale = vw > 0 && vh > 0 ? (double)ww / vw : 0;
+        if (vh > 0 && (double)wh / vh < scale) scale = (double)wh / vh;
+        if (integer_scaling && scale >= 1) scale = (int)scale;
+        int w = (int)(vw * scale), h = (int)(vh * scale);
+        *rect = (SDL_Rect){(ww-w)/2, (wh-h)/2, w, h};
+        return;
+    }
     float scale=ui && ui->ui_scale>0?ui->ui_scale:1;
     frontend_desktop_compute_game_rect(ww,wh-(scale-1)*(MENU_H+TOOLBAR_H+STATUS_H),vw,vh,integer_scaling,rect);
     rect->y+=(scale-1)*(MENU_H+TOOLBAR_H);
@@ -198,7 +207,7 @@ static void restore_runtime_settings(FrontendDesktopUi *ui,
         (void)frontend_execution_set_run_ahead(ui->execution, previous->run_ahead_frames);
         frontend_execution_set_muted(ui->execution, previous->muted);
     }
-    if ((ui->parent ? ui->parent->window : ui->window))
+    if (!ui->gtk && (ui->parent ? ui->parent->window : ui->window))
         (void)SDL_SetWindowFullscreen((ui->parent ? ui->parent->window : ui->window),
             previous->fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
     if (ui->video) {
@@ -246,7 +255,7 @@ static bool save_settings(FrontendDesktopUi *ui) {
         trace_prepared = true;
     }
 
-    bool fullscreen_changed = (ui->parent ? ui->parent->window : ui->window) && previous.fullscreen != ui->staged.fullscreen;
+    bool fullscreen_changed = !ui->gtk && (ui->parent ? ui->parent->window : ui->window) && previous.fullscreen != ui->staged.fullscreen;
     if (fullscreen_changed
         && SDL_SetWindowFullscreen((ui->parent ? ui->parent->window : ui->window),
             ui->staged.fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0) != 0) {
@@ -326,7 +335,7 @@ static bool command_settings(void *context, char *error, size_t error_size) {
 static bool command_fullscreen(void *context, char *error, size_t error_size) {
     FrontendDesktopUi *ui = context;
     ui->settings->fullscreen = !ui->settings->fullscreen;
-    if (SDL_SetWindowFullscreen(ui->window,
+    if (!ui->gtk && SDL_SetWindowFullscreen(ui->window,
         ui->settings->fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0) != 0) {
         if (error && error_size) snprintf(error, error_size, "%s", SDL_GetError());
         ui->settings->fullscreen = !ui->settings->fullscreen;
@@ -354,7 +363,6 @@ void frontend_desktop_init(FrontendDesktopUi *ui, SDL_Window *window,
                            const char *settings_path) {
     if (!ui) return;
     memset(ui, 0, sizeof(*ui));
-    ui->clay = renderer ? desktop_clay_create(renderer) : NULL;
     ui->idle_recent_index = -1;
     ui->visible_rows = 6;
     ui->window = window;
@@ -368,6 +376,10 @@ void frontend_desktop_init(FrontendDesktopUi *ui, SDL_Window *window,
     ui->dragging_scroll = -1;
     ui->focused = true;
     desktop_sync_scale(ui);
+#ifdef CUPID_GTK
+    if (cupid_gtk_init(ui)) return;
+#endif
+    ui->clay = renderer ? desktop_clay_create(renderer) : NULL;
 }
 
 void frontend_desktop_set_runtime(FrontendDesktopUi *ui,
@@ -913,8 +925,9 @@ int desktop_menu_all(FrontendDesktopUi *ui, DesktopMenuItem items[128]) {
         }
     }
     if (ui->open_menu==0) {
-        if (ui->sessions) for (size_t i=0; i<frontend_session_recent_count(ui->sessions->session) && count<126; ++i) {
-            const FrontendImageRequest *recent=frontend_session_recent(ui->sessions->session,i);
+        const FrontendSession *recent_session=ui->sessions?ui->sessions->session:ui->idle_session;
+        if (recent_session) for (size_t i=0; i<frontend_session_recent_count(recent_session) && count<126; ++i) {
+            const FrontendImageRequest *recent=frontend_session_recent(recent_session,i);
             items[count]=(DesktopMenuItem){.id=(unsigned)i,.kind=2,.enabled=true};
             snprintf(items[count++].label,128,"Recent: %.90s",recent->archive_member[0]?recent->archive_member:recent->path);
         }
@@ -939,6 +952,9 @@ int desktop_menu_all(FrontendDesktopUi *ui, DesktopMenuItem items[128]) {
 
 void frontend_desktop_render(FrontendDesktopUi *ui,int vw,int vh,const char *title,const char *region,const char *state) {
     (void)vw;(void)vh;
+#ifdef CUPID_GTK
+    if (ui && ui->gtk) { cupid_gtk_render(ui,title,region,state); return; }
+#endif
     if(ui&&ui->window&&ui->renderer) { desktop_layout(ui,title,region,state); desktop_render_windows(ui); }
 }
 
@@ -1058,6 +1074,9 @@ void desktop_settings_button(FrontendDesktopUi *ui, int button) {
 }
 
 bool frontend_desktop_input_captured(const FrontendDesktopUi *ui) {
+#ifdef CUPID_GTK
+    if (ui && ui->gtk) return cupid_gtk_captured(ui);
+#endif
     if (!ui) return false;
     for (const FrontendDesktopUi *tool = ui->tools; tool; tool = tool->next)
         if (tool->focused && (tool->settings_open || tool->edit_text_active || tool->capture_binding || tool->choice_open)) return true;
@@ -1065,8 +1084,20 @@ bool frontend_desktop_input_captured(const FrontendDesktopUi *ui) {
         ui->capture_binding || ui->choice_open || ui->open_menu >= 0 || desktop_palette_visible(ui);
 }
 bool frontend_desktop_quit_requested(const FrontendDesktopUi *ui){return ui&&ui->quit_requested;}
-void frontend_desktop_update_window_settings(FrontendDesktopUi *ui){if(!ui||ui->parent||!ui->window||!ui->settings||!ui->settings->remember_window_size)return;int w,h;SDL_GetWindowSize(ui->window,&w,&h);if(w>0&&h>0){ui->settings->window_width=(unsigned)w;ui->settings->window_height=(unsigned)h;}}
-void frontend_desktop_shutdown(FrontendDesktopUi *ui){if(!ui)return;desktop_keyboard_release(ui);desktop_close_windows(ui);desktop_ppu_destroy(ui);desktop_tas_destroy(ui);desktop_settings_open(ui,false);SDL_StopTextInput();desktop_clay_destroy(ui->clay);ui->clay=NULL;}
+void frontend_desktop_update_window_settings(FrontendDesktopUi *ui){
+#ifdef CUPID_GTK
+    if(ui&&ui->gtk){cupid_gtk_save_size(ui);return;}
+#endif
+    if(!ui||ui->parent||!ui->window||!ui->settings||!ui->settings->remember_window_size)return;
+    int w,h;SDL_GetWindowSize(ui->window,&w,&h);if(w>0&&h>0){ui->settings->window_width=(unsigned)w;ui->settings->window_height=(unsigned)h;}
+}
+void frontend_desktop_shutdown(FrontendDesktopUi *ui){
+    if(!ui)return;
+#ifdef CUPID_GTK
+    if(ui->gtk)cupid_gtk_shutdown(ui);
+#endif
+    desktop_keyboard_release(ui);desktop_close_windows(ui);desktop_ppu_destroy(ui);desktop_tas_destroy(ui);desktop_settings_open(ui,false);SDL_StopTextInput();desktop_clay_destroy(ui->clay);ui->clay=NULL;
+}
 
 bool desktop_palette_visible(const FrontendDesktopUi *ui) {
     return ui && (ui->palette_window || (!ui->parent && palette_tool_is_visible()));

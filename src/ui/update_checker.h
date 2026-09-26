@@ -11,12 +11,19 @@
 #ifndef CUPID_VERSION
 #define CUPID_VERSION "0.0.0-dev"
 #endif
-enum { UPDATE_PANEL = 0x2640, UPDATE_CHECK_COMMAND = 0x2641, UPDATE_METADATA_LIMIT = 256 * 1024 };
+#ifndef CUPID_BUILD_REVISION
+#define CUPID_BUILD_REVISION "unknown"
+#endif
+/* Release builds must stamp CUPID_VERSION with their immutable SemVer tag.
+ * Prerelease tags opt into previews; build metadata does not affect ordering.
+ * CUPID_BUILD_REVISION identifies the source commit for display only. */
+typedef enum { UPDATE_CHANNEL_STABLE, UPDATE_CHANNEL_PREVIEW } UpdateChannel;
+enum { UPDATE_PANEL = 0x2640, UPDATE_CHECK_COMMAND = 0x2641, UPDATE_METADATA_LIMIT = 2 * 1024 * 1024 };
 
-typedef enum { UPDATE_IDLE, UPDATE_CHECKING, UPDATE_CURRENT, UPDATE_AVAILABLE, UPDATE_ERROR } UpdateStatus;
+typedef enum { UPDATE_IDLE, UPDATE_CHECKING, UPDATE_CURRENT, UPDATE_AVAILABLE, UPDATE_UNKNOWN, UPDATE_ERROR } UpdateStatus;
 
 typedef struct {
-    char version[96], url[512];
+    char version[96], url[512], package_url[768];
 } UpdateRelease;
 
 typedef bool (*UpdateFetch)(void *context, char *body, size_t capacity, unsigned *status, char *error,
@@ -25,6 +32,7 @@ typedef bool (*UpdateFetch)(void *context, char *body, size_t capacity, unsigned
 typedef struct {
     char current[96], preferences[2048], acknowledged[96], message[256];
     bool automatic, automatic_request, notify, attempted;
+    UpdateChannel channel;
     UpdateRelease release;
     UpdateStatus status;
     SDL_Thread *thread;
@@ -37,6 +45,9 @@ typedef struct {
 } UpdateChecker;
 
 bool update_version_compare(const char *a, const char *b, int *order);
+UpdateChannel update_version_channel(const char *version);
+bool update_release_url_valid(const char *url, const char *version, bool package);
+bool update_metadata_select(const char *text, size_t size, UpdateChannel channel, UpdateRelease *release);
 bool update_metadata_parse(const char *text, size_t size, UpdateRelease *release);
 bool update_fetch_native(void *context, char *body, size_t capacity, unsigned *status, char *error, size_t error_size);
 bool update_checker_init(UpdateChecker *checker, const char *version, const char *preferences, char *error,

@@ -61,10 +61,57 @@ static int updates(void) {
     CHECK(!update_metadata_parse("{}", 2, &release));
     const char *malformed = "{\"tag_name\":\"1.2.0\",}";
     CHECK(!update_metadata_parse(malformed, strlen(malformed), &release));
+
+    CHECK(update_version_channel("1.2.0-preview.205.1+abc") == UPDATE_CHANNEL_PREVIEW);
+    CHECK(update_version_channel("1.2.0+preview") == UPDATE_CHANNEL_STABLE);
+    CHECK(!update_release_url_valid("https://github.com/cupidthecat/cupid-nes/releases/tag/v1.2.0?evil", "v1.2.0", false));
+    CHECK(!update_release_url_valid("https://github.com/cupidthecat/cupid-nes/releases/download/v1.2.0/../evil.zip", "v1.2.0", true));
+    CHECK(!update_release_url_valid("https://github.com/cupidthecat/cupid-nes/releases/download/v1.2.0/%2e.zip", "v1.2.0", true));
+    CHECK(!update_release_url_valid("https://evil.example/releases/download/v1.2.0/cupid-windows-x64.zip", "v1.2.0", true));
+    CHECK(update_release_url_valid("https://github.com/cupidthecat/cupid-nes/releases/download/v1.2.0/cupid-windows-x64.zip", "v1.2.0", true));
+    const char *preview = "{\"tag_name\":\"v1.3.0-preview.10\",\"html_url\":\"https://github.com/cupidthecat/cupid-nes/releases/tag/v1.3.0-preview.10\",\"draft\":false,\"prerelease\":true,\"assets\":[{\"name\":\"cupid-windows-x64.zip\",\"browser_download_url\":\"https://github.com/cupidthecat/cupid-nes/releases/download/v1.3.0-preview.10/cupid-windows-x64.zip\"}]}";
+    char list[4096];
+    snprintf(list, sizeof(list), "[%s,%s]", json, preview);
+    CHECK(update_metadata_select(list, strlen(list), UPDATE_CHANNEL_PREVIEW, &release) && !strcmp(release.version, "v1.3.0-preview.10"));
+#if defined(_WIN64) && !defined(_M_ARM64) && !defined(__aarch64__)
+    CHECK(strstr(release.package_url, "/v1.3.0-preview.10/cupid-windows-x64.zip"));
+#endif
+    CHECK(update_metadata_select(list, strlen(list), UPDATE_CHANNEL_STABLE, &release) && !strcmp(release.version, "v1.2.0"));
+    snprintf(list, sizeof(list), "[%s,%s]", preview, json);
+    CHECK(update_metadata_select(list, strlen(list), UPDATE_CHANNEL_PREVIEW, &release) && !strcmp(release.version, "v1.3.0-preview.10"));
+    CHECK(!update_metadata_parse(preview, strlen(preview), &release));
+    CHECK(update_metadata_select("[]", 2, UPDATE_CHANNEL_PREVIEW, &release) && !release.version[0]);
+    CHECK(!update_metadata_select("[] trailing", 11, UPDATE_CHANNEL_PREVIEW, &release));
+    const char *duplicate = "{\"tag_name\":\"1.2.0\",\"draft\":false,\"draft\":true}";
+    CHECK(!update_metadata_select(duplicate, strlen(duplicate), UPDATE_CHANNEL_PREVIEW, &release));
+
+    char changed[4096];
+    snprintf(changed, sizeof(changed), "%s", preview);
+    char *flag = strstr(changed, "\"draft\":false");
+    CHECK(flag);
+    /* Same width substitution keeps the JSON valid while changing eligibility. */
+    memcpy(flag + 8, "true ", 5);
+    CHECK(update_metadata_select(changed, strlen(changed), UPDATE_CHANNEL_PREVIEW, &release) && !release.version[0]);
+    snprintf(changed, sizeof(changed), "%s", preview);
+    char *asset_tag = strstr(changed, "/download/v1.3.0-preview.10/");
+    CHECK(asset_tag);
+    asset_tag[11] = '9';
+#if defined(_WIN32)
+    CHECK(!update_metadata_select(changed, strlen(changed), UPDATE_CHANNEL_PREVIEW, &release));
+#endif
+    CHECK(!update_metadata_select(list, strlen(list) - 1, UPDATE_CHANNEL_PREVIEW, &release));
+    CHECK(!update_metadata_select("[null]", 6, UPDATE_CHANNEL_PREVIEW, &release));
     char path[256], error[256];
     snprintf(path, sizeof(path), "build/update-check-%llu.ini", (unsigned long long)SDL_GetPerformanceCounter());
     UpdateChecker checker;
     CHECK(update_checker_init(&checker, "1.0.0", path, error, sizeof(error)));
+    CHECK(update_checker_register_ui(&checker));
+    FrontendPanelControl update_controls[10];
+    FrontendPanelModel update_model = {update_controls, 10, 0, NULL};
+    CHECK(frontend_panel_snapshot(UPDATE_PANEL, &update_model, error, sizeof(error)) && update_model.count == 10);
+    strcpy(checker.release.version, "v1.2.0");
+    strcpy(checker.release.package_url, "https://evil.example/payload.zip");
+    CHECK(!frontend_panel_action(UPDATE_PANEL, 9, NULL, 0, error, sizeof(error)));
     Response response = {json, 200, 0, false};
     checker.fetch = fetch;
     checker.fetch_context = &response;
@@ -96,11 +143,23 @@ static int updates(void) {
     response.body = "{malformed}";
     CHECK(update_checker_start(&checker, false, error, sizeof(error)) && completed(&checker) &&
           checker.status == UPDATE_ERROR);
+
+    response.body = list;
+    checker.channel = UPDATE_CHANNEL_PREVIEW;
+    strcpy(checker.current, "1.3.0-preview.2");
+    CHECK(update_checker_start(&checker, false, error, sizeof(error)) && completed(&checker) && checker.status == UPDATE_AVAILABLE);
+    strcpy(checker.current, "1.3.0-preview.10");
+    CHECK(update_checker_start(&checker, false, error, sizeof(error)) && completed(&checker) && checker.status == UPDATE_CURRENT);
+    strcpy(checker.current, "0.0.0-dev");
+    CHECK(update_checker_start(&checker, false, error, sizeof(error)) && completed(&checker) && checker.status == UPDATE_UNKNOWN);
+    response.body = "[]";
+    CHECK(update_checker_start(&checker, false, error, sizeof(error)) && completed(&checker) && checker.status == UPDATE_UNKNOWN && !checker.release.url[0]);
     update_checker_shutdown(&checker);
     CHECK(nes_file_remove(path) == NES_FILE_OK);
     return 0;
 }
 
+#ifndef CUPID_UPDATE_TEST_MAIN
 static int options(void) {
     frontend_panels_reset();
     FrontendCliHelp help;
@@ -151,6 +210,7 @@ int test_update_cli_accuracy(void) {
     printf("Update worker/CLI reference: %s\n", result ? "FAIL" : "PASS");
     return result;
 }
+#endif
 #ifdef CUPID_LIFECYCLE_TEST_MAIN
 #include "../../include/globals.h"
 #include "../joypad/joypad.h"
@@ -160,6 +220,15 @@ int test_lifecycle_accuracy(void);
 
 int main(void) {
     int result = test_update_cli_accuracy() + test_lifecycle_accuracy();
+    SDL_Quit();
+    return result;
+}
+#endif
+
+#ifdef CUPID_UPDATE_TEST_MAIN
+int main(void) {
+    int result = updates();
+    printf("Update regressions: %s\n", result ? "FAIL" : "PASS");
     SDL_Quit();
     return result;
 }

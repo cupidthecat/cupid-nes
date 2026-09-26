@@ -6,6 +6,7 @@
  */
 /* Independent desktop tool windows. SPDX-License-Identifier: GPL-3.0-or-later */
 #include "desktop_internal.h"
+#include "gtk_desktop.h"
 #include "desktop_keyboard.h"
 #include "frontend_panels.h"
 #include "memory_search_frontend.h"
@@ -40,6 +41,9 @@ void desktop_window_context(const FrontendDesktopUi *ui, const char **title, con
 }
 
 FrontendDesktopUi *desktop_open_window(FrontendDesktopUi *ui, int kind, unsigned id) {
+#ifdef CUPID_GTK
+    if (ui->gtk) return cupid_gtk_open(ui, kind, id);
+#endif
     FrontendDesktopUi *root = ui->parent ? ui->parent : ui;
     for (FrontendDesktopUi *tool = root->tools; tool; tool = tool->next) {
         if ((kind == 0 && tool->settings_open) || (kind == 1 && tool->panel_open && tool->panel_id == id) ||
@@ -214,6 +218,9 @@ bool desktop_route_window(FrontendDesktopUi *ui, const SDL_Event *event) {
 }
 
 void frontend_desktop_update_activity(FrontendDesktopUi *ui) {
+#ifdef CUPID_GTK
+    if (ui && ui->gtk) { cupid_gtk_activity(ui); return; }
+#endif
     if (!ui || ui->parent || !ui->execution || !ui->settings) {
         return;
     }

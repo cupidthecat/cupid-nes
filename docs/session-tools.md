@@ -32,9 +32,19 @@ Recorder files are separate from numbered save slots and rewind. A capture write
 
 ## Updates and command-line help
 
-**Help > Check for Updates** shows the running version and latest release. Checks run in a worker while the desktop remains responsive. Offline use, rate limits, and invalid responses appear as non-fatal results. **Open release page** opens the release in your browser; installing it is manual.
+**Help > Check for Updates** checks releases while the desktop remains responsive.
+The update panel shows the running version, build revision, channel, and latest
+eligible release. Preview builds include preview releases in their checks;
+stable builds check stable releases. Offline use, rate limits, and invalid
+responses appear as non-fatal results.
 
-Automatic checking is off by default. When enabled, it checks once at startup. **Acknowledge this release**, or opening its release page, saves the acknowledgement so automatic checks do not keep announcing the same version. Development builds without a release version show `0.0.0-dev` and report that version ordering is unavailable.
+**Download Windows ZIP in browser** opens the matching repository release
+asset. Close Cupid, extract the ZIP into a new folder, and run `cupid-nes.cmd`.
+Keep your existing folder and user files. Installation is manual; the checker
+does not replace a running executable. **Open release page** shows release
+notes and other downloads.
+
+Automatic checking is off by default. When enabled, it checks when the game session starts. **Acknowledge this release**, or opening its release page, saves the acknowledgement so automatic checks do not keep announcing the same version. Development builds without a release version show `0.0.0-dev` and report that version ordering is unavailable.
 
 **Help > Command Line Help** lists application switches, accepted values, defaults, aliases, and descriptions from the same definitions used by the parser. Search matches those fields without regard to case. Use Tab to select controls, Enter to edit search, and the list's navigation or Previous/Next buttons to browse. The reference works without a game. `cupid-nes --help` prints it in a terminal.
 

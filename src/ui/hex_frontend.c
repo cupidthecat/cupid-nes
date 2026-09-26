@@ -22,9 +22,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+enum { VIEW_PAGES = DEBUG_MEMORY_EDIT_LIMIT / DEBUG_MEMORY_PAGE_SIZE };
+
 struct HexFrontend {
     FrontendExecutionRuntime *execution;
     DebugMemoryPage page;
+    DebugMemoryPage *view_pages[VIEW_PAGES];
     DebugMemorySpace space;
     uint32_t first, last, anchor, cursor;
     bool live, text_mode, wrap, registered;
@@ -37,6 +40,19 @@ struct HexFrontend {
     const char *items[HEX_ROWS][HEX_COLUMNS + 2];
 };
 
+static HexFrontend *registered_view;
+
+static DebugMemoryPage *cached_page(HexFrontend *frontend, uint32_t first) {
+    uint32_t low, high;
+    if (!debug_memory_bounds(frontend->space, &low, &high) || first < low || first > high)
+        return NULL;
+    size_t index = (first - low) / DEBUG_MEMORY_PAGE_SIZE;
+    if (index >= VIEW_PAGES) return NULL;
+    DebugMemoryPage *page = frontend->view_pages[index];
+    return page && page->valid && page->space == frontend->space && page->first == first
+        && page->session == debugger_session_revision() ? page : NULL;
+}
+
 static bool report(HexFrontend *frontend, char *error, size_t size, const char *message, bool success) {
     snprintf(frontend->status, sizeof(frontend->status), "%s", message);
     if (error && size) snprintf(error, size, "%s", success ? "" : message);
@@ -47,6 +63,10 @@ static bool capture(HexFrontend *frontend, uint32_t first, bool baseline) {
     if (!frontend_panel_session_active()) return false;
     frontend_execution_begin_machine_change(frontend->execution);
     bool ok = debug_memory_capture(&frontend->page, frontend->space, first, baseline);
+    if (ok) {
+        DebugMemoryPage *cached = cached_page(frontend, first);
+        if (cached) *cached = frontend->page;
+    }
     frontend_execution_end_machine_change_preserving_audio(frontend->execution);
     return ok;
 }
@@ -76,7 +96,11 @@ static bool select_range(HexFrontend *frontend, uint32_t first, size_t count, ui
         || count > (size_t)(high - first) + 1 || cursor < first || cursor - first >= count)
         return false;
     uint32_t page = low + ((cursor - low) / DEBUG_MEMORY_PAGE_SIZE) * DEBUG_MEMORY_PAGE_SIZE;
-    if ((!current(frontend) || page != frontend->page.first) && !capture(frontend, page, true)) return false;
+    if (!current(frontend) || page != frontend->page.first) {
+        DebugMemoryPage *cached = cached_page(frontend, page);
+        if (cached) frontend->page = *cached;
+        if ((!cached || frontend->live) && !capture(frontend, page, !cached)) return false;
+    }
     frontend->first = first;
     frontend->last = first + (uint32_t)count - 1;
     frontend->cursor = cursor;
@@ -227,11 +251,14 @@ static bool apply_text(HexFrontend *frontend, const char *text, char *error, siz
 static bool read_selection(HexFrontend *frontend, uint8_t *bytes, size_t count, char *error, size_t error_size) {
     if (!current(frontend)) return report(frontend, error, error_size, "Refresh the memory view first", false);
     if (!frontend->live) {
-        if (frontend->first < frontend->page.first
-            || frontend->last - frontend->page.first >= frontend->page.count)
-            return report(frontend, error, error_size, "A frozen selection must fit in the captured page; enable Live for larger ranges", false);
         for (size_t i = 0; i < count; ++i) {
-            const DebugMemoryByte *byte = &frontend->page.bytes[frontend->first - frontend->page.first + i];
+            uint32_t address = frontend->first + (uint32_t)i, low, high;
+            (void)debug_memory_bounds(frontend->space, &low, &high);
+            uint32_t start = low + ((address - low) / DEBUG_MEMORY_PAGE_SIZE) * DEBUG_MEMORY_PAGE_SIZE;
+            const DebugMemoryPage *page = start == frontend->page.first ? &frontend->page : cached_page(frontend, start);
+            if (!page || address - start >= page->count)
+                return report(frontend, error, error_size, "A frozen selection must fit in captured pages; enable Live for larger ranges", false);
+            const DebugMemoryByte *byte = &page->bytes[address - start];
             if (!byte->readable) return report(frontend, error, error_size, "The selection contains an unreadable byte", false);
             bytes[i] = byte->value;
         }
@@ -369,6 +396,9 @@ static bool action(void *context, unsigned id, const char *value, int selected, 
     uint32_t low, high;
     if (!debug_memory_bounds(frontend->space, &low, &high)) return false;
     if (id == HEX_SPACE && selected >= 0 && selected < DEBUG_MEMORY_SPACE_COUNT) {
+        for (size_t i = 0; i < VIEW_PAGES; i++) {
+            if (frontend->view_pages[i]) frontend->view_pages[i]->valid = false;
+        }
         frontend->space = (DebugMemorySpace)selected;
         (void)debug_memory_bounds(frontend->space, &low, &high);
         frontend->page.valid = false;
@@ -385,7 +415,15 @@ static bool action(void *context, unsigned id, const char *value, int selected, 
     }
     if (id == HEX_REFRESH || id == HEX_BASELINE) {
         uint32_t first = low + ((frontend->cursor - low) / DEBUG_MEMORY_PAGE_SIZE) * DEBUG_MEMORY_PAGE_SIZE;
-        return capture(frontend, first, id == HEX_BASELINE)
+        bool ok = capture(frontend, first, id == HEX_BASELINE);
+        frontend_execution_begin_machine_change(frontend->execution);
+        for (size_t i = 0; ok && i < VIEW_PAGES; i++) {
+            DebugMemoryPage *page = frontend->view_pages[i];
+            if (page && cached_page(frontend, page->first) == page && page->first != first)
+                ok = debug_memory_capture(page, frontend->space, page->first, id == HEX_BASELINE);
+        }
+        frontend_execution_end_machine_change_preserving_audio(frontend->execution);
+        return ok
             ? report(frontend, error, error_size, id == HEX_BASELINE ? "Changed-byte baseline reset" : "Memory refreshed", true)
             : report(frontend, error, error_size, "The memory view is unavailable", false);
     }
@@ -473,6 +511,7 @@ bool hex_frontend_register(HexFrontend *frontend) {
     FrontendPanelSpec spec = {HEX_FRONTEND_PANEL, "Hex / Memory Editor", "Tools", FRONTEND_PANEL_NEEDS_SESSION,
                              snapshot, action, frontend};
     frontend->registered = frontend_panel_register(&spec);
+    if (frontend->registered) registered_view = frontend;
     return frontend->registered;
 }
 
@@ -480,6 +519,7 @@ void hex_frontend_unregister(HexFrontend *frontend) {
     if (!frontend || !frontend->registered) return;
     (void)frontend_panel_unregister(HEX_FRONTEND_PANEL);
     frontend->registered = false;
+    if (registered_view == frontend) registered_view = NULL;
 }
 
 void hex_frontend_image_changed(HexFrontend *frontend) {
@@ -487,6 +527,9 @@ void hex_frontend_image_changed(HexFrontend *frontend) {
     uint32_t low, high;
     (void)debug_memory_bounds(frontend->space, &low, &high);
     frontend->page.valid = false;
+    for (size_t i = 0; i < VIEW_PAGES; i++) {
+        if (frontend->view_pages[i]) frontend->view_pages[i]->valid = false;
+    }
     frontend->first = frontend->last = frontend->anchor = frontend->cursor = low;
     frontend->bytes[0] = frontend->status[0] = '\0';
     selection_fields(frontend);
@@ -495,5 +538,45 @@ void hex_frontend_image_changed(HexFrontend *frontend) {
 void hex_frontend_destroy(HexFrontend *frontend) {
     if (!frontend) return;
     hex_frontend_unregister(frontend);
+    for (size_t i = 0; i < VIEW_PAGES; i++) free(frontend->view_pages[i]);
     free(frontend);
+}
+
+bool hex_frontend_view(uint32_t first, size_t count, DebugMemoryByte *bytes,
+                       uint32_t *selection_first, uint32_t *selection_last) {
+    HexFrontend *frontend = registered_view;
+    uint32_t low, high;
+    if (!frontend || !bytes || !count || count > DEBUG_MEMORY_EDIT_LIMIT || !current(frontend)
+        || !debug_memory_bounds(frontend->space, &low, &high) || first < low || first > high
+        || count > (size_t)(high - first) + 1) return false;
+    bool ok = true;
+    frontend_execution_begin_machine_change(frontend->execution);
+    for (size_t copied = 0; ok && copied < count;) {
+        uint32_t address = first + (uint32_t)copied;
+        size_t index = (address - low) / DEBUG_MEMORY_PAGE_SIZE;
+        if (index >= VIEW_PAGES) { ok = false; break; }
+        uint32_t start = low + (uint32_t)index * DEBUG_MEMORY_PAGE_SIZE;
+        DebugMemoryPage **slot = &frontend->view_pages[index];
+        if (!*slot) *slot = calloc(1, sizeof(**slot));
+        if (!*slot) { ok = false; break; }
+        DebugMemoryPage *page = *slot;
+        if (start == frontend->page.first) {
+            if (frontend->live)
+                ok = debug_memory_capture(&frontend->page, frontend->space, start, false);
+            if (ok) *page = frontend->page;
+        } else if (frontend->live || !cached_page(frontend, start)) {
+            ok = debug_memory_capture(page, frontend->space, start, false);
+        }
+        if (!ok) break;
+        size_t offset = address - start, amount = page->count - offset;
+        if (amount > count - copied) amount = count - copied;
+        memcpy(bytes + copied, page->bytes + offset, amount * sizeof(*bytes));
+        copied += amount;
+    }
+    frontend_execution_end_machine_change_preserving_audio(frontend->execution);
+    if (ok) {
+        if (selection_first) *selection_first = frontend->first;
+        if (selection_last) *selection_last = frontend->last;
+    }
+    return ok;
 }

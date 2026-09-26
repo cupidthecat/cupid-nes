@@ -59,6 +59,7 @@ void desktop_setting_choice_text(FrontendDesktopUi *ui, int row, int option, cha
 void desktop_setting_choose(FrontendDesktopUi *ui, int row, int option);
 void desktop_browse_setting(FrontendDesktopUi *ui);
 void desktop_activate_setting(FrontendDesktopUi *ui, int row);
+bool desktop_setting_edit_text(FrontendDesktopUi *ui, int row, char *text, size_t size);
 bool desktop_setting_commit_number(FrontendDesktopUi *ui, int row, const char *text);
 int desktop_choice_count(FrontendDesktopUi *ui);
 void desktop_choice_text(FrontendDesktopUi *ui, int option, char *text, size_t size);

@@ -6,6 +6,7 @@
 #include "update_checker.h"
 #include <ctype.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -304,70 +305,162 @@ static bool value(Json *j) {
     return true;
 }
 
-bool update_metadata_parse(const char *text, size_t size, UpdateRelease *release) {
-    if (!text || !release || size > UPDATE_METADATA_LIMIT || memchr(text, 0, size)) {
-        return false;
-    }
-    Json j = {text, text + size, 0};
-    UpdateRelease parsed = {{0}, {0}};
-    bool tag = false, url = false;
-    ws(&j);
-    if (j.p == j.end || *j.p++ != '{') {
-        return false;
-    }
-    for (;;) {
-        ws(&j);
-        char key[128];
-        if (!string(&j, key, sizeof(key))) {
-            return false;
-        }
-        ws(&j);
-        if (j.p == j.end || *j.p++ != ':') {
-            return false;
-        }
-        ws(&j);
-        if (!strcmp(key, "tag_name")) {
-            if (tag || !string(&j, parsed.version, sizeof(parsed.version))) {
-                return false;
-            }
-            tag = true;
-        } else if (!strcmp(key, "html_url")) {
-            if (url || !string(&j, parsed.url, sizeof(parsed.url))) {
-                return false;
-            }
-            url = true;
-        } else if (!strcmp(key, "draft") || !strcmp(key, "prerelease")) {
-            if (j.end - j.p < 5 || memcmp(j.p, "false", 5)) {
-                return false;
-            }
-            j.p += 5;
-        } else if (!value(&j)) {
-            return false;
-        }
-        ws(&j);
-        if (j.p == j.end) {
-            return false;
-        }
-        char c = *j.p++;
-        if (c == '}') {
-            break;
-        }
-        if (c != ',') {
-            return false;
-        }
-    }
-    ws(&j);
+
+UpdateChannel update_version_channel(const char *version) {
+    Version parsed;
+    return parse_version(version, &parsed) && parsed.pre_size ? UPDATE_CHANNEL_PREVIEW : UPDATE_CHANNEL_STABLE;
+}
+
+bool update_release_url_valid(const char *url, const char *version, bool package) {
     int ignored;
-    const char prefix[] = "https://github.com/cupidthecat/cupid-nes/releases/tag/";
-    if (j.p != j.end || !tag || !url || !update_version_compare(parsed.version, parsed.version, &ignored) ||
-        strncmp(parsed.url, prefix, sizeof(prefix) - 1) || !parsed.url[sizeof(prefix) - 1]) {
-        return false;
+    char prefix[640];
+    if (!url || !update_version_compare(version, version, &ignored)) return false;
+    snprintf(prefix, sizeof(prefix), "https://github.com/cupidthecat/cupid-nes/releases/%s/%s%s",
+             package ? "download" : "tag", version, package ? "/" : "");
+    if (!package) return !strcmp(url, prefix);
+    size_t n = strlen(prefix);
+    if (strncmp(url, prefix, n) || !url[n]) return false;
+    const char *name = url + n;
+    /* A single literal filename: no escaping, traversal, query or fragment. */
+    for (const unsigned char *p = (const unsigned char *)name; *p; ++p)
+        if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+              (*p >= '0' && *p <= '9') || *p == '-' || *p == '_' || *p == '.')) return false;
+    return !strstr(name, "..") && name[0] != '.';
+}
+
+static bool boolean(Json *j, bool *out) {
+    if (j->end - j->p >= 4 && !memcmp(j->p, "true", 4)) {
+        j->p += 4; *out = true; return true;
     }
-    for (const unsigned char *p = (const unsigned char *)parsed.url; *p; ++p) {
-        if (*p <= 32 || *p >= 127 || *p == '\\') {
-            return false;
+    if (j->end - j->p >= 5 && !memcmp(j->p, "false", 5)) {
+        j->p += 5; *out = false; return true;
+    }
+    return false;
+}
+
+static bool assets(Json *j, char *package, size_t capacity) {
+    if (j->p == j->end || *j->p++ != '[') return false;
+    ws(j);
+    if (j->p < j->end && *j->p == ']') { ++j->p; return true; }
+    for (;;) {
+        char name[256] = {0}, url[768] = {0};
+        bool seen_name = false, seen_url = false;
+        if (j->p == j->end || *j->p++ != '{') return false;
+        ws(j);
+        if (j->p < j->end && *j->p == '}') ++j->p;
+        else for (;;) {
+            char key[128];
+            if (!string(j, key, sizeof(key))) return false;
+            ws(j);
+            if (j->p == j->end || *j->p++ != ':') return false;
+            ws(j);
+            if (!strcmp(key, "name")) {
+                if (seen_name || !string(j, name, sizeof(name))) return false;
+                seen_name = true;
+            } else if (!strcmp(key, "browser_download_url")) {
+                if (seen_url || !string(j, url, sizeof(url))) return false;
+                seen_url = true;
+            } else if (!value(j)) return false;
+            ws(j);
+            if (j->p == j->end) return false;
+            char delimiter = *j->p++;
+            if (delimiter == '}') break;
+            if (delimiter != ',') return false;
+            ws(j);
         }
+        /* Packaging contract: exactly one architecture-specific portable ZIP. */
+#if defined(_M_ARM64) || defined(__aarch64__)
+        const char *wanted = "cupid-windows-arm64.zip";
+#elif defined(_WIN64)
+        const char *wanted = "cupid-windows-x64.zip";
+#elif defined(_WIN32)
+        const char *wanted = "cupid-windows-x86.zip";
+#else
+        const char *wanted = "";
+#endif
+        if (*wanted && !strcmp(name, wanted)) {
+            if (*package || !*url) return false;
+            const char *filename = strrchr(url, '/');
+            if (!filename || strcmp(filename + 1, name)) return false;
+            snprintf(package, capacity, "%s", url);
+        }
+        ws(j);
+        if (j->p == j->end) return false;
+        char delimiter = *j->p++;
+        if (delimiter == ']') return true;
+        if (delimiter != ',') return false;
+        ws(j);
     }
+}
+
+static bool release_object(Json *j, UpdateChannel channel, UpdateRelease *parsed, bool *eligible) {
+    memset(parsed, 0, sizeof(*parsed));
+    unsigned seen = 0;
+    bool draft = false, prerelease = false;
+    ws(j);
+    if (j->p == j->end || *j->p++ != '{') return false;
+    for (;;) {
+        ws(j);
+        char key[128];
+        if (!string(j, key, sizeof(key))) return false;
+        ws(j);
+        if (j->p == j->end || *j->p++ != ':') return false;
+        ws(j);
+        unsigned bit = !strcmp(key, "tag_name") ? 1 : !strcmp(key, "html_url") ? 2 :
+                       !strcmp(key, "draft") ? 4 : !strcmp(key, "prerelease") ? 8 :
+                       !strcmp(key, "assets") ? 16 : 0;
+        if (bit && (seen & bit)) return false;
+        seen |= bit;
+        if (bit == 1) { if (!string(j, parsed->version, sizeof(parsed->version))) return false; }
+        else if (bit == 2) { if (!string(j, parsed->url, sizeof(parsed->url))) return false; }
+        else if (bit == 4) { if (!boolean(j, &draft)) return false; }
+        else if (bit == 8) { if (!boolean(j, &prerelease)) return false; }
+        else if (bit == 16) { if (!assets(j, parsed->package_url, sizeof(parsed->package_url))) return false; }
+        else if (!value(j)) return false;
+        ws(j);
+        if (j->p == j->end) return false;
+        char delimiter = *j->p++;
+        if (delimiter == '}') break;
+        if (delimiter != ',') return false;
+    }
+    *eligible = (seen & 15) == 15 && !draft &&
+        (channel == UPDATE_CHANNEL_PREVIEW || (!prerelease && update_version_channel(parsed->version) == UPDATE_CHANNEL_STABLE)) &&
+        update_release_url_valid(parsed->url, parsed->version, false);
+    if (*parsed->package_url && !update_release_url_valid(parsed->package_url, parsed->version, true)) return false;
+    return true;
+}
+
+bool update_metadata_select(const char *text, size_t size, UpdateChannel channel, UpdateRelease *release) {
+    if (!text || !release || size > UPDATE_METADATA_LIMIT || memchr(text, 0, size)) return false;
+    Json j = {text, text + size, 0};
+    UpdateRelease best = {0};
+    ws(&j);
+    bool list = j.p < j.end && *j.p == '[';
+    if (list) { ++j.p; ws(&j); }
+    if (list && j.p < j.end && *j.p == ']') { ++j.p; }
+    else for (;;) {
+        UpdateRelease candidate;
+        bool eligible;
+        if (!release_object(&j, channel, &candidate, &eligible)) return false;
+        int order = 0;
+        if (eligible && (!best.version[0] ||
+            (update_version_compare(candidate.version, best.version, &order) && order > 0))) best = candidate;
+        ws(&j);
+        if (!list) break;
+        if (j.p == j.end) return false;
+        char delimiter = *j.p++;
+        if (delimiter == ']') break;
+        if (delimiter != ',') return false;
+    }
+    ws(&j);
+    if (j.p != j.end) return false;
+    *release = best;
+    return true;
+}
+
+bool update_metadata_parse(const char *text, size_t size, UpdateRelease *release) {
+    UpdateRelease parsed;
+    if (!update_metadata_select(text, size, UPDATE_CHANNEL_STABLE, &parsed) || !parsed.version[0]) return false;
     *release = parsed;
     return true;
 }

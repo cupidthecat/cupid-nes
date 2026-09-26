@@ -1,5 +1,27 @@
+# Makefile - GTK desktop and isolated hardware regression builds.
+# Author: @frankischilling
+# SPDX-License-Identifier: GPL-3.0-or-later
+.DEFAULT_GOAL := all
 CC = gcc
+GTK ?= 1
+PKG_CONFIG ?= pkg-config
+VERSION ?= $(strip $(shell cat VERSION))
+BUILD_REVISION ?= unknown
+BUILD_DIR ?= build/$(if $(filter Windows_NT,$(OS)),windows,linux)-gtk$(GTK)
+CPPFLAGS += -DCUPID_VERSION='"$(VERSION)"' -DCUPID_BUILD_REVISION='"$(BUILD_REVISION)"'
+ifeq ($(GTK),1)
+ifeq ($(shell $(PKG_CONFIG) --atleast-version=4.8 gtk4 && echo yes),yes)
+CPPFLAGS += -DCUPID_GTK $(shell $(PKG_CONFIG) --cflags gtk4)
+CPPFLAGS += -DGDK_VERSION_MIN_REQUIRED=GDK_VERSION_4_8 -DGDK_VERSION_MAX_ALLOWED=GDK_VERSION_4_8
+GTK_LIBS = $(shell $(PKG_CONFIG) --libs gtk4)
+else
+$(error GTK 4.8+ development files are required; install gtk4 or use GTK=0 for hardware tests)
+endif
+endif
 CFLAGS ?= -std=c11 -Wall -Wextra -O2
+# SDL event initializers rely on the pre-GCC-15 union initialization behavior.
+# Probe the flag so older GCC and Clang remain supported.
+UNION_INIT_CFLAGS := $(shell $(CC) -Werror -fzero-init-padding-bits=unions -x c -E - < /dev/null > /dev/null 2>&1 && echo -fzero-init-padding-bits=unions)
 ifeq ($(origin CXX),default)
 CXX = $(if $(findstring clang,$(CC)),clang++,g++)
 endif
@@ -11,12 +33,17 @@ endif
 LDLIBS ?= -lSDL2 -lm
 ifeq ($(OS),Windows_NT)
 LDLIBS += -lwinhttp
+LDLIBS += -lshell32 -lcomdlg32 -lws2_32 -lole32
+LDFLAGS += -Wl,--no-insert-timestamp
 else
 LDLIBS += -lcurl
 endif
 
-TARGET = cupid-nes
-TEST_TARGET = build/accuracy-tests
+LDLIBS += $(GTK_LIBS)
+TARGET ?= cupid-nes$(if $(filter Windows_NT,$(OS)),.exe)
+TEST_TARGET ?= build/accuracy-tests$(if $(filter Windows_NT,$(OS)),.exe)
+GTK_SMOKE_TARGET ?= build/gtk-ui-smoke$(if $(filter Windows_NT,$(OS)),.exe)
+GTK_SETTINGS_TEST_TARGET ?= build/gtk-settings-test$(if $(filter Windows_NT,$(OS)),.exe)
 CORE_SRC = src/system/timing.c src/system/hardware.c src/system/vs_system.c src/state/state.c src/state/state_io.c src/state/state_alloc.c src/cpu/cpu.c src/cpu/cpu_observer.c src/ppu/ppu.c src/rom/rom.c src/rom/mapper.c \
            src/rom/fds.c src/rom/nsf.c src/util/file_io.c src/util/sha1.c \
            src/debugger/ppu_inspector.c src/debugger/debugger.c src/debugger/disassembly.c src/debugger/lua_runtime.c src/cheats/cheats.c \
@@ -153,7 +180,11 @@ CORE_CXX_SRC += src/video/pixel_scalers.cpp src/third_party/xbrz/xbrz.cpp \
                 src/third_party/hqx/hq4x.cpp src/third_party/hqx/init.cpp \
                 src/third_party/scale2x/scale2x.cpp src/third_party/scale2x/scale3x.cpp \
                 src/third_party/sai/2xSai.cpp src/third_party/sai/Super2xSai.cpp src/third_party/sai/SuperEagle.cpp
-CORE_OBJ = $(CORE_SRC:.c=.o) $(CORE_CXX_SRC:.cpp=.o)
+GTK_SRC ?= $(wildcard src/ui/gtk_*.c)
+ifeq ($(GTK),1)
+CORE_SRC += $(GTK_SRC)
+endif
+CORE_OBJ = $(addprefix $(BUILD_DIR)/,$(CORE_SRC:.c=.o) $(CORE_CXX_SRC:.cpp=.o))
 CORE_SRC += src/ui/capture_tools.c src/ui/recovery_store.c src/ui/state_recorder.c \
             src/ui/lifecycle_frontend.c src/ui/game_config.c src/ui/cli_options.c \
             src/ui/cli_parse.c src/ui/cli_help.c src/ui/update_metadata.c \
@@ -172,32 +203,72 @@ TEST_SRC += src/tests/header_editor_accuracy.c
 TEST_SRC += src/tests/overclock_accuracy.c src/tests/desktop_menu_accuracy.c
 TEST_SRC += src/tests/presentation_history_accuracy.c src/tests/presentation_audio_accuracy.c
 TEST_CXX_SRC += src/tests/hd_builder_accuracy.cpp src/tests/shader_preset_accuracy.cpp
-TEST_OBJ = $(TEST_SRC:.c=.o) $(TEST_CXX_SRC:.cpp=.o)
-OBJ = $(CORE_OBJ) $(TEST_OBJ) src/main.o
+TEST_OBJ = $(addprefix $(BUILD_DIR)/,$(TEST_SRC:.c=.o) $(TEST_CXX_SRC:.cpp=.o))
+OBJ = $(CORE_OBJ) $(TEST_OBJ) $(BUILD_DIR)/src/main.o
+ifeq ($(GTK),1)
+GTK_SMOKE_OBJ = $(BUILD_DIR)/src/tests/gtk_ui_smoke.o $(BUILD_DIR)/src/tests/gtk_input_accuracy.o
+GTK_SETTINGS_TEST_OBJ = $(BUILD_DIR)/src/tests/gtk_settings_accuracy.o
+OBJ += $(GTK_SMOKE_OBJ) $(GTK_SETTINGS_TEST_OBJ)
+endif
+
+# Rebuild when command-line version, revision, compiler or flags change.
+$(OBJ): $(BUILD_DIR)/build-config
+$(BUILD_DIR):
+	mkdir -p $@
+$(BUILD_DIR)/build-config: FORCE | $(BUILD_DIR)
+	$(file >$(BUILD_DIR)/build-config.tmp,$(CC) $(CXX) $(CPPFLAGS) $(CFLAGS) $(UNION_INIT_CFLAGS) $(CXXFLAGS))
+	@cmp -s $@ $@.tmp || cp $@.tmp $@
+	@rm -f $@.tmp
 
 all: $(TARGET)
 
-$(TARGET): $(CORE_OBJ) src/main.o
-	$(CXX) $(CXXFLAGS) $(LDFLAGS) $^ -o $@ $(LDLIBS)
+$(TARGET): $(CORE_OBJ) $(BUILD_DIR)/src/main.o FORCE
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(filter %.o,$^) -o $@ $(LDLIBS)
 
-$(TEST_TARGET): $(CORE_OBJ) $(TEST_OBJ) | build
-	$(CXX) $(CXXFLAGS) $(LDFLAGS) $^ -o $@ $(LDLIBS)
+$(TEST_TARGET): $(CORE_OBJ) $(TEST_OBJ) FORCE | build
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(filter %.o,$^) -o $@ $(LDLIBS)
+
+ifeq ($(GTK),1)
+gtk-smoke: $(GTK_SMOKE_TARGET) $(GTK_SETTINGS_TEST_TARGET)
+gtk-settings-test: $(GTK_SETTINGS_TEST_TARGET)
+# This regression includes the native controls/model plus isolated desktop adapters.
+# Keep its symbols separate from CORE_OBJ and the full GTK smoke executable.
+$(GTK_SETTINGS_TEST_OBJ): src/tests/gtk_settings_accuracy.c VERSION
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(UNION_INIT_CFLAGS) -DCUPID_GTK_SETTINGS_TEST_MAIN -MMD -MP -c $< -o $@
+$(GTK_SETTINGS_TEST_TARGET): $(GTK_SETTINGS_TEST_OBJ) FORCE
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(filter %.o,$^) -o $@ $(LDLIBS)
+$(GTK_SMOKE_TARGET): $(CORE_OBJ) $(GTK_SMOKE_OBJ) FORCE
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(filter %.o,$^) -o $@ $(LDLIBS)
+else
+gtk-smoke gtk-settings-test:
+	@echo "GTK smoke tests require GTK=1" >&2
+	@exit 1
+endif
 
 build:
 	mkdir -p $@
 
-%.o: %.c
-	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c $< -o $@
+$(BUILD_DIR)/%.o: %.c VERSION
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(UNION_INIT_CFLAGS) -MMD -MP -c $< -o $@
 
-%.o: %.cpp
+$(BUILD_DIR)/%.o: %.cpp VERSION
+	@mkdir -p $(dir $@)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c $< -o $@
 
 test: $(TEST_TARGET)
 	./$(TEST_TARGET)
 
 clean:
-	rm -f $(OBJ) $(OBJ:.o=.d) $(TARGET) $(TEST_TARGET)
+	rm -f $(OBJ) $(OBJ:.o=.d) $(TARGET) $(TEST_TARGET) $(GTK_SMOKE_TARGET) $(GTK_SETTINGS_TEST_TARGET)
 
 -include $(OBJ:.o=.d)
 
-.PHONY: all test clean
+FORCE:
+
+.PHONY: all test gtk-smoke gtk-settings-test clean FORCE
