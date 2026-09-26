@@ -1,3 +1,9 @@
+/*
+ * desktop_features.c
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* Apply settings through the active feature owners. SPDX-License-Identifier: GPL-3.0-or-later */
 #include "desktop_ui.h"
 #include "../rom/fds.h"

@@ -72,6 +72,7 @@ typedef struct FrontendDesktopUi {
     bool choice_open, choice_panel, edit_number;
     int choice_row, choice_index, choice_page;
     int dragging_scroll;
+    bool hex_selecting;
     int panel_row;
     int panel_scroll;
     int settings_focus;

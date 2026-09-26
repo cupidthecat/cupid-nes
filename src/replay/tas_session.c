@@ -1,5 +1,12 @@
+/*
+ * tas_session.c
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* TAS session lifecycle and project files. SPDX-License-Identifier: GPL-3.0-or-later */
 #include "tas_session_internal.h"
+#include "../capture/movie_backup.h"
 #include "tas_startup.h"
 #include "input_event.h"
 #include "rewind.h"
@@ -136,6 +143,7 @@ static NesMovieResult preflight(NesTasSession *session, const char *path) {
 }
 
 static NesMovieResult activate(NesTasSession *session, NesTasProject *project, const char *path) {
+    static uint64_t next_generation;
     const NesFm2Movie *movie = nes_tas_project_movie(project);
     NesMovieResult valid = nes_tas_startup_validate(movie, session->error, sizeof(session->error));
     if (valid != NES_MOVIE_OK) {
@@ -176,6 +184,7 @@ static NesMovieResult activate(NesTasSession *session, NesTasProject *project, c
                                                    : "Movie startup could not be prepared.");
     }
     session->project = project;
+    session->generation = ++next_generation;
     session->path = copy;
     session->initial = initial;
     session->resume = resume;
@@ -365,7 +374,7 @@ NesMovieResult nes_tas_session_save(NesTasSession *session, const char *path) {
             if (!exported || written != size) {
                 result = tas_result(session, NES_MOVIE_FORMAT_ERROR, diagnostic.message);
             } else {
-                NesFileResult write = nes_file_write_atomic(path, data, size);
+                NesFileResult write = nes_movie_save_atomic(path, data, size);
                 if (write != NES_FILE_OK) {
                     result = tas_result(session, NES_MOVIE_IO_ERROR, nes_file_result_message(write));
                 }
@@ -468,6 +477,7 @@ void nes_tas_session_progress(const NesTasSession *session, NesTasProgress *out)
         return;
     }
     out->active = session->active;
+    out->generation = session->generation;
     out->read_only = session->read_only;
     out->recording = session->recording;
     out->seeking = session->seeking;
@@ -478,8 +488,10 @@ void nes_tas_session_progress(const NesTasSession *session, NesTasProgress *out)
     out->total_frames = nes_tas_project_frame_count(session->project);
     out->seek_target = session->seek_target;
     out->lag_count = session->lag_count;
-    out->checkpoint_count = session->checkpoint_count + (session->initial.data != NULL);
-    out->checkpoint_bytes = session->checkpoint_bytes + session->initial.size;
+    NesTasCacheInfo cache;
+    nes_tas_session_cache_info(session, &cache);
+    out->checkpoint_count = cache.checkpoint_count + (cache.initial_bytes != 0);
+    out->checkpoint_bytes = cache.checkpoint_bytes + cache.initial_bytes;
     out->rerecord_count = nes_tas_rerecord_count(session->project);
     out->record_players = session->record_players;
     out->record_mode = session->record_mode;

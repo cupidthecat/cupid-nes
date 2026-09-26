@@ -45,6 +45,8 @@ static bool output_path_allowed(const char *path,
                                    char *error, size_t error_size, bool movie_save) {
     if (!frontend_output_path_excludes(path, protected_paths, count, error, error_size)) return false;
     if (!execution) return true;
+    if (!frontend_output_path_excludes(path, execution->protected_paths, execution->protected_path_count,
+                                       error, error_size)) return false;
     if (!movie_save && nes_movie_mode(execution->movie) != NES_MOVIE_IDLE) {
         NesMovieProgress progress;
         nes_movie_progress(execution->movie, &progress);

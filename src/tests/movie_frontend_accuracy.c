@@ -38,6 +38,7 @@
 typedef struct {
     BoardImage image;
     FrontendExecutionRuntime execution;
+    FrontendSettings settings;
     SDL_AudioDeviceID audio;
     bool audio_initialized;
     char rom[256], movie[256], retry[256], saved[256], bad[256];
@@ -118,6 +119,9 @@ static bool fixture_create(MovieFixture *fixture, const char *directory, unsigne
     if (!fixture->audio) return false;
     frontend_execution_init(&fixture->execution, &fixture->audio, have.freq,
                               fixture->rom, NULL, NULL, NULL);
+    frontend_settings_defaults(&fixture->settings);
+    fixture->settings.movie_preferences.end_behavior = NES_MOVIE_END_STOP;
+    fixture->execution.settings = &fixture->settings;
     execution_control_set_paused(&fixture->execution.execution, true);
     fixture->execution.before_machine_change = before_change;
     fixture->execution.machine_change_context = fixture;

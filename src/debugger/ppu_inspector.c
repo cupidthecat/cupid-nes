@@ -1,3 +1,9 @@
+/*
+ * ppu_inspector.c
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* PPU inspector snapshots and pixel decoding. SPDX-License-Identifier: GPL-3.0-or-later */
 #include "ppu_inspector.h"
 #include "../ppu/ppu.h"

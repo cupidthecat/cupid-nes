@@ -9,11 +9,19 @@ Cupid has an SDL application for running games and music and a separate executab
 | [Desktop interface](desktop.md) | Menus, settings, feature panels, storage paths, and rendered examples |
 | [Getting started](getting-started.md) | Linux and Windows builds, output paths, opening cartridges, disks, and VS images |
 | [Configuration](configuration.md) | Application options, device selection, startup phases, diagnostic reads, EPSM firmware, and valid combinations |
+| [CPU overclock](overclock.md) | Optional blank scanlines, sound compatibility, and state behavior |
 | [Controls and peripherals](controls.md) | Gamepads, adapters, paddles, light guns, mats, keyboards, Subor mouse, Hori Track, Oeka tablet, and specialty expansion controls |
 | [Hardware and compatibility](hardware.md) | Supported systems and mappers, RAM/register behavior, expansion sound, ROM metadata, and implementation limits |
 | [Saves and media](saves.md) | Cartridge saves, EEPROM and flash, Turbo File/BattleBox storage, disk images, tapes, and save failures |
 | [States and replay](replay.md) | State slots and files, rewind, run-ahead, deterministic input movies, and isolated save ownership |
 | [TAS movies and editing](tas.md) | FM2/FM3 playback, CTAS projects, input editing, branches, recording, seeking, and Lua editing |
+| [Movie preferences](movie-preferences.md) | Playback endings, recording defaults, subtitles, overlays, and backup copies |
+| [Family BASIC keyboard](keyboard.md) | Mouse, touch, physical-key feedback, and latched keys |
+| [Cheat database](cheat-database.md) | Game identity matching, code previews, built-in entries, and custom catalogs |
+| [Cartridge header editor](header-editor.md) | Inspect and save a validated copy of iNES and NES 2.0 headers |
+| [Presentation tools](presentation-tools.md) | Shader presets, HD drafts, frame timing, history viewing, and native audio backends |
+| [Session tools](session-tools.md) | Unloading games, automatic resume, state recording, game settings, and updates |
+| [Debugger tools](debugger-tools.md) | Code coverage, profiles, event traces, symbols, source lines, and text hooks |
 | [Netplay](netplay.md) | Host and guest setup, slot assignment, synchronization, and disconnect behavior |
 | [HD packs](hd-packs.md) | Replacement graphics and audio, installation, selection, export, and capture |
 | [Music player](music.md) | NSF/NSFe track selection, pause and stop, metadata, fades, silence detection, repeat, and shuffle |

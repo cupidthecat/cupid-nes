@@ -3,3 +3,5 @@
 /cupid-nes.exe
 *.o
 *.d
+__pycache__/
+*.pyc

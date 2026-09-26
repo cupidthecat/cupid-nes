@@ -9,6 +9,7 @@
 #include "machine_actions.h"
 #include "../apu/apu.h"
 #include "../cpu/cpu.h"
+#include "../debugger/debugger.h"
 #include "../ppu/ppu.h"
 #include "../replay/input_event.h"
 #include "../system/vs_system.h"
@@ -16,6 +17,7 @@
 bool frontend_machine_soft_reset(void) {
     NesInputEvent event = {.type = NES_INPUT_EVENT_SOFT_RESET};
     if (!nes_input_event_submit(&event)) return false;
+    debugger_invalidate_memory();
     ppu_soft_reset(&ppu);
     apu_soft_reset(&apu);
     cpu_soft_reset(&cpu);
@@ -26,6 +28,7 @@ bool frontend_machine_soft_reset(void) {
 bool frontend_machine_power_cycle(void) {
     NesInputEvent event = {.type = NES_INPUT_EVENT_POWER_CYCLE};
     if (!nes_input_event_submit(&event)) return false;
+    debugger_invalidate_memory();
     ppu_power_on(&ppu);
     apu_power_on(&apu);
     if (!cpu_power_on(&cpu)) return false;

@@ -211,6 +211,15 @@ static int output_destinations(const char *directory) {
     char error[160];
     CHECK(frontend_output_path_allowed(safe, &execution, NULL, 0, error, sizeof(error)));
     CHECK(!frontend_output_path_allowed(rom, &execution, NULL, 0, error, sizeof(error)));
+    const char *reserved[] = {safe};
+    frontend_execution_set_protected_paths(&execution, reserved, 1);
+    CHECK(!frontend_output_path_allowed(safe, &execution, NULL, 0, error, sizeof(error)));
+    CHECK(!frontend_movie_output_path_allowed(safe, &execution, NULL, 0, error, sizeof(error)));
+    const char *additional[] = {alias};
+    CHECK(!frontend_output_path_allowed(safe, &execution, additional, 1, error, sizeof(error)));
+    CHECK(!frontend_output_path_allowed(alias, &execution, additional, 1, error, sizeof(error)));
+    frontend_execution_set_protected_paths(&execution, NULL, 0);
+    CHECK(frontend_output_path_allowed(safe, &execution, NULL, 0, error, sizeof(error)));
     static const char *const suffixes[] = {
         ".sav", ".chr.sav", ".flash.sav", ".chr.flash.sav", ".eeprom128",
         ".eeprom256", ".turbofile.sav", ".battlebox.sav"

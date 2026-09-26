@@ -1,6 +1,16 @@
+/*
+ * desktop_windows.c
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* Independent desktop tool windows. SPDX-License-Identifier: GPL-3.0-or-later */
 #include "desktop_internal.h"
+#include "desktop_keyboard.h"
 #include "frontend_panels.h"
+#include "memory_search_frontend.h"
+#include "watch_frontend.h"
+#include "hex_frontend.h"
 #include "palette_tool.h"
 #include "netplay_frontend.h"
 #include "../system/timing.h"
@@ -47,7 +57,8 @@ FrontendDesktopUi *desktop_open_window(FrontendDesktopUi *ui, int kind, unsigned
         title = info.title;
     }
     FrontendDesktopUi *tool = calloc(1, sizeof(*tool));
-    int height = kind == 1 && desktop_tas_panel(id) ? 760 : 680;
+    int height = kind == 1 && (memory_tools_panel(id) || id == WATCH_FRONTEND_PANEL || id == HEX_FRONTEND_PANEL) ? 820 :
+                 kind == 1 && desktop_tas_panel(id) ? 760 : 680;
     SDL_Window *window = SDL_CreateWindow(title, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 900, height,
                                           SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
     SDL_Renderer *renderer = window ? SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED) : NULL;
@@ -153,12 +164,17 @@ static Uint32 event_window(const SDL_Event *event) {
         return event->wheel.windowID;
     case SDL_DROPFILE:
         return event->drop.windowID;
+    case SDL_FINGERDOWN:
+    case SDL_FINGERUP:
+    case SDL_FINGERMOTION:
+        return event->tfinger.windowID;
     default:
         return 0;
     }
 }
 
 static void destroy_tool(FrontendDesktopUi *tool) {
+    desktop_keyboard_release(tool);
     if (tool->edit_text_active) {
         SDL_StopTextInput();
     }
@@ -209,7 +225,10 @@ void frontend_desktop_update_activity(FrontendDesktopUi *ui) {
         /* Inspection tools are modeless, including their editable controls. */
         modal |= tool->settings_open;
     }
-    unsigned reasons = modal && ui->settings->pause_on_ui ? FRONTEND_SUSPEND_UI : 0;
+    unsigned reasons = ui->execution->suspend_reasons & ~(FRONTEND_SUSPEND_UI | FRONTEND_SUSPEND_FOCUS);
+    if (modal && ui->settings->pause_on_ui) {
+        reasons |= FRONTEND_SUSPEND_UI;
+    }
     if (!focused && ui->settings->pause_on_focus_loss) {
         reasons |= FRONTEND_SUSPEND_FOCUS;
     }

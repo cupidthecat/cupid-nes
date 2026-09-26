@@ -39,6 +39,13 @@ EPSM uses Aaron Giles's ymfm YMF288 implementation. The bundled OPN, SSG, and AD
 
 The YMF288 percussion ROM is not included. [Configuration](configuration.md#epsm-sound) explains how to supply an existing 8 KiB file.
 
+## Pixel scaling
+
+Video filters bundle xBRZ, HQx, Scale2x/3x, and the SaI/Eagle scalers. Their
+[component notes](../src/third_party/pixel-filters.md) identify the authors,
+licenses, and local portability edits. Cupid supplies per-screen filtering,
+capture geometry, and the settings controls.
+
 ## SDL2
 
 Cupid links against SDL2 for windows, rendering, controller events, and audio.

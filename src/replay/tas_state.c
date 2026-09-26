@@ -1,3 +1,9 @@
+/*
+ * tas_state.c
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* Save states bound to movie input and startup. SPDX-License-Identifier: GPL-3.0-or-later */
 #include "tas_session_internal.h"
 #include "../state/state_io.h"
@@ -168,6 +174,9 @@ NesStateResult nes_tas_session_load_state(NesTasSession *session, const char *pa
         tas_invalidate_after(session, changes.first_changed_frame);
     }
     session->frame = (size_t)frame;
+    /* A loaded movie state becomes the current execution boundary. Future
+     * cached states, including another state at that boundary, must rebuild. */
+    tas_invalidate_after(session, frame ? (size_t)frame - 1 : 0);
     session->lag_count = (size_t)lag_count;
     session->selected_side = (size_t)selected_side;
     session->frame_in_progress = session->completed_pending = session->pending_record = session->seeking = false;

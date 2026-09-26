@@ -1,6 +1,19 @@
+/*
+ * desktop_events.c
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* Desktop input and command routing. SPDX-License-Identifier: GPL-3.0-or-later */
 #include "desktop_internal.h"
+#include "desktop_keyboard.h"
 #include "cheat_frontend.h"
+#include "memory_search_frontend.h"
+#include "desktop_memory.h"
+#include "watch_frontend.h"
+#include "hex_frontend.h"
+#include "desktop_hex.h"
+#include "game_genie_frontend.h"
 #include "debug_frontend.h"
 #include "../debugger/debugger.h"
 #include "../cheats/cheats.h"
@@ -169,12 +182,33 @@ static void activate_panel(FrontendDesktopUi *ui, int row, int direction) {
     if ((control->type == FRONTEND_PANEL_CHOICE || control->type == FRONTEND_PANEL_LIST) && control->item_count) {
         selected = (selected + (int)control->item_count + direction) % (int)control->item_count;
     }
-    if (!frontend_panel_action(ui->panel_id, control->id, NULL, selected, error, sizeof(error)) && error[0]) {
-        desktop_copy_status(ui, error);
+    if (!frontend_panel_action(ui->panel_id, control->id, NULL, selected, error, sizeof(error))) {
+        if (error[0]) {
+            desktop_copy_status(ui, error);
+        }
+    } else if (ui->panel_id == CHEATS_GAME_GENIE_PANEL && control->id == GAME_GENIE_SEND) {
+        (void)frontend_desktop_open_panel(ui, CHEATS_FRONTEND_PANEL);
+    } else if (memory_tools_panel(ui->panel_id) &&
+               (control->id == MEMORY_SEARCH_SEND || control->id == MEMORY_SEARCH_TEST)) {
+        (void)frontend_desktop_open_panel(ui, CHEATS_FRONTEND_PANEL);
+    } else if ((memory_tools_panel(ui->panel_id) && control->id == MEMORY_SEARCH_WATCH) ||
+               (ui->panel_id == HEX_FRONTEND_PANEL && control->id == HEX_WATCH)) {
+        (void)frontend_desktop_open_panel(ui, WATCH_FRONTEND_PANEL);
     }
 }
 
 static void panel_key(FrontendDesktopUi *ui, SDL_Scancode sc) {
+    if (ui->panel_id == WATCH_FRONTEND_PANEL && (sc == SDL_SCANCODE_PAGEUP || sc == SDL_SCANCODE_PAGEDOWN)) {
+        (void)frontend_panel_action(ui->panel_id, sc == SDL_SCANCODE_PAGEUP ? WATCH_PREV_PAGE : WATCH_NEXT_PAGE,
+                                   NULL, 0, NULL, 0);
+        return;
+    }
+    if (memory_tools_panel(ui->panel_id) && (sc == SDL_SCANCODE_PAGEUP || sc == SDL_SCANCODE_PAGEDOWN)) {
+        (void)frontend_panel_action(ui->panel_id,
+                                   sc == SDL_SCANCODE_PAGEUP ? MEMORY_SEARCH_PREV_PAGE : MEMORY_SEARCH_NEXT_PAGE,
+                                   NULL, 0, NULL, 0);
+        return;
+    }
     FrontendPanelControl controls[64];
     FrontendPanelModel model = {.controls = controls, .capacity = 64};
     if (!frontend_panel_snapshot(ui->panel_id, &model, NULL, 0) || !model.count) {
@@ -183,7 +217,10 @@ static void panel_key(FrontendDesktopUi *ui, SDL_Scancode sc) {
     if (ui->panel_row < 0 || (size_t)ui->panel_row >= model.count) {
         ui->panel_row = 0;
     }
-    if (sc == SDL_SCANCODE_DOWN || sc == SDL_SCANCODE_TAB) {
+    if ((memory_tools_panel(ui->panel_id) || ui->panel_id == WATCH_FRONTEND_PANEL || ui->panel_id == HEX_FRONTEND_PANEL) &&
+        (sc == SDL_SCANCODE_DOWN || sc == SDL_SCANCODE_TAB || sc == SDL_SCANCODE_UP)) {
+        desktop_memory_focus(ui, &model, sc == SDL_SCANCODE_UP ? -1 : 1);
+    } else if (sc == SDL_SCANCODE_DOWN || sc == SDL_SCANCODE_TAB) {
         ui->panel_row = (ui->panel_row + 1) % (int)model.count;
     } else if (sc == SDL_SCANCODE_UP) {
         ui->panel_row = (ui->panel_row + (int)model.count - 1) % (int)model.count;
@@ -461,6 +498,8 @@ static bool handle_event(FrontendDesktopUi *ui, const SDL_Event *event) {
         }
         return true;
     }
+    if (ui->panel_open && ui->panel_id == HEX_FRONTEND_PANEL && event->type == SDL_KEYDOWN &&
+        desktop_hex_event(ui, event)) return true;
     if (ui->panel_open && desktop_tas_panel(ui->panel_id) && !ui->edit_text_active &&
         !ui->settings_open && !ui->choice_open && !desktop_palette_visible(ui) &&
         event->type == SDL_KEYDOWN && desktop_tas_event(ui, event)) return true;
@@ -475,7 +514,7 @@ static bool handle_event(FrontendDesktopUi *ui, const SDL_Event *event) {
                 }
             }
         }
-        if (profile && !ui->edit_text_active && !ui->capture_binding && !ui->settings_open &&
+        if (profile && ui->open_menu < 0 && !ui->edit_text_active && !ui->capture_binding && !ui->settings_open &&
             !desktop_palette_visible(ui) && frontend_profile_shortcut_key(profile, &event->key, &shortcut)) {
             ui->open_menu = -1;
             if (shortcut == FRONTEND_SHORTCUT_FAST_FORWARD_HOLD || shortcut == FRONTEND_SHORTCUT_REWIND) {
@@ -565,6 +604,8 @@ static bool handle_event(FrontendDesktopUi *ui, const SDL_Event *event) {
             return true;
         }
     }
+    if (ui->panel_open && ui->panel_id == HEX_FRONTEND_PANEL && event->type != SDL_KEYDOWN &&
+        desktop_hex_event(ui, event)) return true;
     if (ui->panel_open && desktop_ppu_panel(ui->panel_id) && !ui->edit_text_active &&
         desktop_ppu_event(ui, event)) return true;
     if (ui->panel_open && desktop_tas_panel(ui->panel_id) && !ui->edit_text_active &&
@@ -647,7 +688,13 @@ static bool handle_event(FrontendDesktopUi *ui, const SDL_Event *event) {
             return true;
         }
         if (sc == SDL_SCANCODE_ESCAPE && frontend_desktop_input_captured(ui)) {
-            if (ui->settings_open) {
+            if (ui->open_menu >= 0) {
+                if (ui->menu_depth) {
+                    ui->menu_row = ui->menu_parent_rows[--ui->menu_depth];
+                } else {
+                    ui->open_menu = -1;
+                }
+            } else if (ui->settings_open) {
                 desktop_settings_open(ui, false);
             } else if (ui->panel_open) {
                 ui->panel_open = false;
@@ -656,11 +703,11 @@ static bool handle_event(FrontendDesktopUi *ui, const SDL_Event *event) {
             } else if (desktop_palette_visible(ui)) {
                 ui->palette_window = false;
                 palette_tool_hide_overlay();
-            } else if (ui->menu_depth) {
-                ui->menu_row = ui->menu_parent_rows[--ui->menu_depth];
-            } else {
-                ui->open_menu = -1;
             }
+            return true;
+        }
+        if (ui->open_menu >= 0) {
+            menu_key(ui, sc);
             return true;
         }
         if (ui->settings_open) {
@@ -669,10 +716,6 @@ static bool handle_event(FrontendDesktopUi *ui, const SDL_Event *event) {
         }
         if (ui->panel_open) {
             panel_key(ui, sc);
-            return true;
-        }
-        if (ui->open_menu >= 0) {
-            menu_key(ui, sc);
             return true;
         }
         if ((event->key.keysym.mod & KMOD_ALT) && sc == SDL_SCANCODE_F) {
@@ -746,7 +789,7 @@ bool frontend_desktop_handle_event(FrontendDesktopUi *ui, const SDL_Event *event
     if (desktop_route_window(ui, event)) {
         return true;
     }
-    bool handled = handle_event(ui, event);
+    bool handled = desktop_keyboard_event(ui, event) || handle_event(ui, event);
     if (!ui->native_windows && !ui->parent) {
         frontend_desktop_update_activity(ui);
     }

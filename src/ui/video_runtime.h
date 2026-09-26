@@ -17,10 +17,20 @@
 #include "hd_pack_frontend.h"
 #include "frontend_session.h"
 #include "../video/presentation.h"
+#include "../video/shader_preset.h"
+#include "../hd/hd_builder.h"
 
 typedef struct {
     NesHdRuntime *hd;
     NesHdFrontend *hd_frontend;
+    NesPixelFilter *pixel_filter;
+    NesShaderPreset *shader;
+    NesHdBuilder *builder;
+    NesHdFrame builder_frame;
+    bool builder_preview;
+    char shader_error[512];
+    char shader_requested_path[1024];
+    char builder_error[256];
     SDL_Renderer *renderer;
     SDL_Texture *texture;
     FrontendSettings *settings;
@@ -51,5 +61,8 @@ void frontend_video_runtime_display_size(const FrontendVideoRuntime *runtime,
                                          unsigned *width, unsigned *height);
 bool frontend_video_runtime_aim(const FrontendVideoRuntime *runtime, int x, int y,
                                 unsigned *side, int *nes_x, int *nes_y);
+bool frontend_video_runtime_load_shader(FrontendVideoRuntime *runtime, const char *path,
+                                        char *error, size_t error_size);
+void frontend_video_runtime_unload_image(FrontendVideoRuntime *runtime);
 
 #endif

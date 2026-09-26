@@ -223,6 +223,41 @@ class Rainbow final : public Board {
     void WriteRegister(uint16_t address, uint8_t value) override;
 
 public:
+    uint8_t PeekCpu(uint16_t address, uint8_t openBus) const override {
+        switch (address) {
+            case 0x4100: return _highMode | (_lowMode << 7);
+            case 0x4120: return _chrMode | (_windowEnabled ? 0x10 : 0)
+                | (_spriteExtended ? 0x20 : 0) | (_chrSource << 6);
+            case 0x412A: case 0x412B: case 0x412C: case 0x412D:
+                return _ntControl[address - 0x412A].packed;
+            case 0x412F: return _windowControl.packed;
+            case 0x4150: return static_cast<uint8_t>(_scanline);
+            case 0x4151: return (_inFrame ? 0x40 : 0) | (_inHBlank ? 0x80 : 0);
+            case 0x4154: return _jitterCounter;
+            case 0x4157: return _parityCounter ? 0x80 : 0;
+            case 0x415F: return _mapperRam[_fpgaAddress];
+            case 0x4160: return 0x21;
+            case 0x4161: return (_cpuPending ? 0x40 : 0) | (_scanlinePending ? 0x80 : 0);
+            case 0x4190: return _wifiControl;
+            case 0x4191: case 0x4192: return 0;
+            case 0xFFFA: case 0xFFFB:
+                return (_vectorControl & 1) ? static_cast<uint8_t>(_nmiVector >> ((address & 1) * 8))
+                    : Board::PeekCpu(address, openBus);
+            case 0xFFFE: case 0xFFFF:
+                return (_vectorControl & 2) ? static_cast<uint8_t>(_irqVector >> ((address & 1) * 8))
+                    : Board::PeekCpu(address, openBus);
+        }
+        // Inspect the existing OAM program without generating or unlocking it.
+        if (address >= 0x4280 && address - 0x4280 < static_cast<int>(_oamCode.size())) {
+            return _oamCode[address - 0x4280];
+        }
+        if (address >= 0x6000 && _prgFlash.Identifying()) {
+            int64_t offset = PrgRomOffset(address);
+            if (offset >= 0) return _prgFlash.Read(static_cast<uint32_t>(offset));
+        }
+        return Board::PeekCpu(address, openBus);
+    }
+
     bool VisitState(BoardStateVisitor &state) override {
         if (!Board::VisitState(state)
             || !_prgFlash.VisitState(state) || !_chrFlash.VisitState(state)

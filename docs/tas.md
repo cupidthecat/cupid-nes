@@ -14,8 +14,9 @@ existing window. The Tools menu, `--tas`, and dropping a movie onto the game
 window all open this editor; closing it keeps the project and its edits available.
 
 The input grid occupies the left side of the window. **Branches**, **Markers**,
-and **Input** tabs on the right show the tools for alternate takes, notes, and
-recording. File and playback controls stay above the grid while these tabs change.
+**Input**, **Cache**, **History**, and **Bookmarks** tabs on the right show alternate takes,
+notes, recording tools, executable checkpoints, retained edits, and named navigation positions. File and
+playback controls stay above the grid while these tabs change.
 
 The same paths are available from the command line:
 
@@ -37,7 +38,7 @@ dropped onto the main game window when no dialog or other movie is open.
 | --- | --- |
 | FM2 | FCEUX version 3 input movies, in text or binary form. Export writes text FM2. |
 | FM3 | FCEUX TAS project containers, including the input movie and separate editing modules. |
-| CTAS | Cupid's editable project format. It retains the timeline, markers, lag annotations, selections, clipboard, branches, and retained undo/redo history. |
+| CTAS | Cupid's editable project format. It retains the timeline, markers, navigation bookmarks, lag annotations, selections, clipboard, branches, and retained undo/redo history. |
 | CMV or `.movie` | Cupid's existing event movie format, available through Rewind, Run-Ahead and Movies. It retains its own execution and state rules. |
 
 Use **Save** or **Save as** for a CTAS project. Use **Export** for FM2 or FM3.
@@ -45,10 +46,12 @@ Exporting a movie keeps the open project's branches and history; it does not
 mark an unsaved CTAS project as saved. FM2 has no editor history or branch
 container, so keep a CTAS copy of editing work.
 
-CTAS version 2 retains whether the current timeline has changed since its stored
-branch, including that status in undo/redo history. Version 1 projects still
-open; Cupid compares their input and markers with the stored branch to recover
-the status. Saving writes version 2, which older Cupid builds cannot open.
+CTAS version 3 stores navigation bookmarks in the current project and its retained
+undo/redo states. Version 1 and 2 projects still open with an empty bookmark list.
+Version 2 and later retain whether the timeline has changed since its stored branch.
+For version 1, Cupid recovers that status from the stored input, markers, and any
+retained source branch metadata. Saving writes version 3, which older Cupid builds
+cannot open.
 
 FM3 imports markers, the current selection, known lag results, and branch
 timelines with their names and parent relationships. Cupid rebuilds executable
@@ -96,8 +99,10 @@ item and shifts later input and markers together.
 
 **Undo** and **Redo** apply to input and project edits. Retained history defaults
 to 256 entries within 64 MiB. An edit larger than the history budget can still
-succeed, but cannot be retained as an undo entry. Failed allocations leave an
-individual edit unchanged. Cancelling a grouped edit restores its preceding state.
+succeed, but starts a new history boundary because its preceding state cannot
+be retained. Older undo entries are discarded at that boundary. Failed
+allocations leave an individual edit unchanged. Cancelling a grouped edit
+restores its preceding state.
 
 Player selectors choose the pad being edited and the pads being recorded.
 Four Score projects expose all four pads, with two displayed at a time. Select
@@ -115,6 +120,58 @@ edit affects the current playback position, Cupid restores a valid checkpoint
 and runs the changed input to rebuild that position. The window remains usable
 between frames. Checkpoints default to a 64 MiB budget and a 30-frame interval;
 the initial state is retained separately so seeking can always start from zero.
+
+## Edit history
+
+Open **History** to inspect retained input edits, markers, branch operations,
+lag annotations, and recording takes. Each row describes the change that
+reaches that position. Selecting a row shows its affected frame range without
+changing the project or running the game. **Older** and **Newer** page through
+the list; **Current** returns to the current position. `>` marks the current
+position, and `+` marks edits available for redo.
+
+**Restore selected position** applies all undo or redo steps needed to reach
+that retained state. It restores the project's input, markers, branches,
+selection, and rerecord count together. Playback must be paused, read-only
+mode and recording must be off, and no edit or seek can be in progress.
+An input change rebuilds playback through the same checkpoint reconciliation
+used by Undo and Redo. A list that changed after selection must be refreshed
+before restoration.
+
+The viewer shares the existing history budget. Evicted states disappear from
+the list, and the first row is the earliest state still retained rather than
+necessarily the original movie. Grouped edits and recording takes occupy one
+row; rejected or cancelled edits do not add rows. CTAS retains these snapshots
+and the current history position, with descriptions reconstructed when the
+project is loaded. FM2 and rebuilt FM3 exports do not carry Cupid's undo history.
+
+## Checkpoint cache
+
+The frame column marks a cached execution boundary with a green **C**, and the
+startup boundary with **S**. A marker means Cupid can restore that exact
+boundary. Other rows require replay from an earlier state; a measured lag
+result alone does not mean that a state is cached.
+
+Open **Cache** to inspect the valid checkpoint count, memory use, and recent
+states. The cursor summary shows the nearest earlier state and how many frames
+must run to reach the cursor. **Previous state** and **Next state** move the
+editing cursor between checkpoints without running the game. Enter seeks to
+the cursor through the normal playback controls.
+
+The budget accepts 0 through 1024 MiB; zero disables optional checkpoints.
+The capture interval accepts 1 through 3600 frames. Reducing the budget removes
+older checkpoints as needed. **Clear all** releases optional checkpoints while
+retaining startup. **Clear after cursor** keeps the state at the cursor, if one
+exists, and releases later states. Inspecting or clearing the cache does not
+change the current machine state, input, cursor, or undo history.
+
+Input edits, branch changes, undo/redo, and rerecording remove affected future
+checkpoints. Indicators exclude stale states immediately, even before playback
+rebuilds the changed input. Loading a movie state also discards checkpoints at
+and after the loaded boundary. Clicking a lag annotation makes an undoable edit
+and invalidates later checkpoints; playback measures lag again when those
+frames run. Executable cache data is never imported from another emulator or
+used as a substitute for validating the movie input.
 
 ## Recording and alternate takes
 
@@ -167,6 +224,72 @@ Ctrl+Shift+S opens **Save as**, Ctrl+G opens **Go to**, and F2 edits a marker.
 Ctrl+Page Up and Ctrl+Page Down move the grid cursor between markers. Ctrl+A
 selects the interval between markers; Ctrl+Shift+A selects the entire movie.
 Ctrl+Z undoes an edit; Ctrl+Y or Ctrl+Shift+Z redoes it.
+
+## Navigation bookmarks
+
+The **Bookmarks** tab keeps named positions separately from markers and the ten
+branch slots. **At cursor** bookmarks the editing row; **At playback** bookmarks
+the next input boundary. Enter a name, then use **Note** to add an optional note.
+Names can use up to 63 bytes of UTF-8 and notes up to 255 bytes. A project can
+retain up to 4,096 bookmarks. **Earlier page** and **Later page** browse eight
+entries at a time. Selecting an entry shows its boundary; **Details** opens the
+full name and note. Long words wrap at character boundaries. **Earlier** and
+**Later** page through the text, including multiline notes, and **List** returns
+to the selected entry. Viewing details works in read-only mode and does not run
+the movie or load a branch.
+
+**Go to** seeks to the selected boundary. **Previous** and **Next** seek to a
+strictly earlier or later bookmarked boundary relative to playback, without
+wrapping at the ends. Several bookmarks may name the same position. A bookmark
+at the movie's end seeks past the last input row; the grid cursor stays on that
+last row because the final boundary has no input to edit.
+
+Pause playback and disable read-only and recording to create, rename, annotate,
+or delete bookmarks. Seeking remains available in read-only mode. Finish the
+current frame, seek, recording take, or grouped edit before using these actions.
+An intervening project edit or replacement invalidates an open bookmark dialog;
+cancel it and select the entry again.
+
+Inserting frames shifts bookmarks at or after the insertion. Deleting frames
+clamps positions within the removed range to its beginning and shifts later
+positions back. Loading a shorter branch keeps the bookmarks and clamps positions
+past its end. Undo and redo restore these positions and text with the edit.
+Editing bookmark names or notes leaves input, lag results, executable checkpoints,
+and branch change status intact. CTAS retains this metadata; FM2 and FM3 exports
+omit navigation bookmarks, so save a CTAS copy to keep them.
+
+## Splicing input
+
+Choose **Splicer** in the editor's file toolbar to append, insert, or replace a range of input.
+Use the current project or load a compatible source movie. Enter the source
+start and frame count, choose the destination range, and review the resulting
+length before applying. Frame numbers start at zero. The source must match the
+game, timing, input configuration, and startup rules accepted by the editor.
+
+Pause playback and turn off read-only mode before applying a splice. Each
+successful splice is one undoable edit. A project change while a range dialog
+is open invalidates that dialog; reopen it before applying. Zero-length and
+out-of-range selections leave the project unchanged.
+
+**Extract** replaces the active timeline with the selected source range as one
+undoable edit. Use **Export** to write that timeline to a separate movie, or
+**Save as** to keep a CTAS project. The result keeps the destination's original
+startup; it does not create a saved state at the first selected frame. A middle
+section may therefore need additional work to play as a standalone run.
+
+## Converting legacy FCM movies
+
+Load the matching game and choose **Tools > Rewind and movies > Convert FCM
+Movie**. Select the source FCM file and an output FM2 path, then convert. Cupid
+checks the loaded game's checksum and region before writing the output.
+
+Conversion supports version 2 power-on movies with standard synchronization,
+including controller changes, reset and power events, and four-player input.
+Save-state starts, older synchronization modes, unsupported commands, multiple
+reset/power commands at one frame boundary, and damaged streams report an error.
+Conversion preserves the recorded input;
+check playback in Cupid before relying on the converted run. The source file
+and loaded game cannot be overwritten by the converter.
 
 ## Movie states and closing a project
 

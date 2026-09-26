@@ -370,6 +370,7 @@ NesTasResult nes_tas_bookmark_deploy(NesTasProject *project, unsigned slot) {
     tas_timeline_free(&project->state.timeline);
     project->state.timeline = replacement;
     tas_timeline_init(&replacement);
+    tas_navigation_clamp(&project->state);
     free(project->state.selection);
     project->state.selection = selection;
     project->state.current_branch = (int)slot;

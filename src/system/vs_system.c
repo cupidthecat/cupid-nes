@@ -449,6 +449,15 @@ static void remapped_buttons(unsigned side, uint8_t out[2]) {
     }
 }
 
+bool vs_input_overlay_buttons(unsigned player, uint8_t *buttons) {
+    if (!buttons || !vs_enabled() || player >= (vs_dual_system() ? 4u : 2u)
+        || (player == 0 && vs.config.input_type == VS_INPUT_ZAPPER)) return false;
+    uint8_t mapped[2];
+    remapped_buttons(player / 2u, mapped);
+    *buttons = mapped[player % 2u];
+    return true;
+}
+
 static void latch_controllers(unsigned side) {
     uint8_t buttons[2];
     remapped_buttons(side, buttons);

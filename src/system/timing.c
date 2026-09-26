@@ -103,36 +103,141 @@ NesRegion nes_resolve_region(NesRegion detected_region) {
     }
 }
 
-static bool timing_state_decode(NesStateReader *reader, NesRegion *region,
-                                NesRegionMode *mode) {
-    uint8_t encoded_region, encoded_mode;
-    if (!nes_state_read_u8(reader, &encoded_region)
-        || !nes_state_read_u8(reader, &encoded_mode)
-        || encoded_region > NES_REGION_DENDY
-        || encoded_mode > NES_REGION_MODE_DENDY
-        || nes_state_reader_remaining(reader) != 0) return false;
-    *region = (NesRegion)encoded_region;
-    *mode = (NesRegionMode)encoded_mode;
+static NesOverclockConfig overclock_requested = {false, 0, 0, true};
+static NesOverclockConfig overclock_active = {false, 0, 0, true};
+static unsigned overclock_dots;
+static bool overclock_pcm;
+
+NesOverclockConfig nes_overclock_config(void) {
+    return overclock_requested;
+}
+
+NesOverclockConfig nes_overclock_active_config(void) {
+    return overclock_active;
+}
+
+static bool overclock_valid(const NesOverclockConfig *config) {
+    return config && config->postrender_scanlines <= NES_OVERCLOCK_MAX_SCANLINES &&
+           config->vblank_scanlines <= NES_OVERCLOCK_MAX_SCANLINES;
+}
+
+bool nes_set_overclock_config(const NesOverclockConfig *config) {
+    if (!overclock_valid(config) || !nes_execution_allows_host_configuration()) {
+        return false;
+    }
+    overclock_requested = *config;
     return true;
 }
 
+bool nes_overclock_extra_active(void) {
+    return overclock_dots != 0;
+}
+
+unsigned nes_overclock_extra_dots(void) {
+    return overclock_dots;
+}
+
+void nes_overclock_begin_frame(bool supported, bool dmc_active) {
+    overclock_active = overclock_requested;
+    if (!supported || (overclock_active.dmc_compatibility && (dmc_active || overclock_pcm))) {
+        overclock_active.enabled = false;
+    }
+    overclock_pcm = false;
+    overclock_dots = 0;
+}
+
+void nes_overclock_begin_extra(bool before_nmi) {
+    if (overclock_active.enabled) {
+        overclock_dots =
+            341u * (before_nmi ? overclock_active.postrender_scanlines : overclock_active.vblank_scanlines);
+    }
+}
+
+void nes_overclock_step_dot(void) {
+    if (overclock_dots) {
+        --overclock_dots;
+    }
+}
+
+void nes_overclock_note_pcm_write(void) {
+    if (overclock_requested.enabled || overclock_active.enabled) {
+        overclock_pcm = true;
+    }
+}
+
+static bool overclock_write(NesStateWriter *writer, const NesOverclockConfig *config) {
+    return nes_state_write_bool(writer, config->enabled) && nes_state_write_u16(writer, config->postrender_scanlines) &&
+           nes_state_write_u16(writer, config->vblank_scanlines) &&
+           nes_state_write_bool(writer, config->dmc_compatibility);
+}
+
+static bool overclock_read(NesStateReader *reader, NesOverclockConfig *config) {
+    return nes_state_read_bool(reader, &config->enabled) && nes_state_read_u16(reader, &config->postrender_scanlines) &&
+           nes_state_read_u16(reader, &config->vblank_scanlines) &&
+           nes_state_read_bool(reader, &config->dmc_compatibility) && overclock_valid(config);
+}
+
+static bool overclock_default(const NesOverclockConfig *config) {
+    return !config->enabled && !config->postrender_scanlines && !config->vblank_scanlines && config->dmc_compatibility;
+}
+
+typedef struct {
+    uint8_t region, mode;
+    NesOverclockConfig requested, active;
+    uint32_t dots;
+    bool pcm;
+} TimingState;
+
+static bool timing_state_decode(NesStateReader *reader, TimingState *state) {
+    memset(state, 0, sizeof(*state));
+    state->requested.dmc_compatibility = state->active.dmc_compatibility = true;
+    if (!nes_state_read_u8(reader, &state->region) || !nes_state_read_u8(reader, &state->mode) ||
+        state->region > NES_REGION_DENDY || state->mode > NES_REGION_MODE_DENDY) {
+        return false;
+    }
+    if (!nes_state_reader_remaining(reader)) {
+        return true;
+    }
+    uint8_t version;
+    return nes_state_read_u8(reader, &version) && version == 1 && overclock_read(reader, &state->requested) &&
+           overclock_read(reader, &state->active) && nes_state_read_u32(reader, &state->dots) &&
+           nes_state_read_bool(reader, &state->pcm) &&
+           state->dots <= 341u * (state->active.postrender_scanlines > state->active.vblank_scanlines
+                                      ? state->active.postrender_scanlines
+                                      : state->active.vblank_scanlines) &&
+           (!state->dots || state->active.enabled) && nes_state_reader_remaining(reader) == 0;
+}
+
 bool timing_state_capture(NesStateWriter *writer) {
-    return writer
-        && nes_state_write_u8(writer, (uint8_t)active_timing->region)
-        && nes_state_write_u8(writer, (uint8_t)region_mode);
+    if (!writer || !nes_state_write_u8(writer, (uint8_t)active_timing->region) ||
+        !nes_state_write_u8(writer, (uint8_t)region_mode)) {
+        return false;
+    }
+    /* Preserve the legacy bytes for normal hardware timing. */
+    if (overclock_default(&overclock_requested) && overclock_default(&overclock_active) && !overclock_dots &&
+        !overclock_pcm) {
+        return true;
+    }
+    return nes_state_write_u8(writer, 1) && overclock_write(writer, &overclock_requested) &&
+           overclock_write(writer, &overclock_active) && nes_state_write_u32(writer, overclock_dots) &&
+           nes_state_write_bool(writer, overclock_pcm);
 }
 
 bool timing_state_validate(NesStateReader *reader) {
-    NesRegion region;
-    NesRegionMode mode;
-    return reader && timing_state_decode(reader, &region, &mode);
+    TimingState state;
+    return reader && timing_state_decode(reader, &state);
 }
 
 bool timing_state_apply(NesStateReader *reader) {
-    NesRegion region;
-    NesRegionMode mode;
-    if (!reader || !timing_state_decode(reader, &region, &mode)) return false;
-    active_timing = &timings[region];
-    region_mode = mode;
+    TimingState state;
+    if (!reader || !timing_state_decode(reader, &state)) {
+        return false;
+    }
+    active_timing = &timings[state.region];
+    region_mode = (NesRegionMode)state.mode;
+    overclock_requested = state.requested;
+    overclock_active = state.active;
+    overclock_dots = state.dots;
+    overclock_pcm = state.pcm;
     return true;
 }

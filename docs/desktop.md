@@ -39,6 +39,26 @@ Tools > Debugging > PPU tools opens graphical pattern, nametable, sprite, palett
 register, VRAM, and tile windows. See [visual PPU tools](debugging.md#visual-ppu-tools)
 for inspection controls and editing limits.
 
+Tools > Debugging > 6502 Assembler previews one instruction, its generated
+bytes, and the mapped write target. Pause the game to apply it to writable RAM.
+See [inline assembler](debugging.md#inline-assembler) for operand syntax and
+the rules for editing a running session.
+
+## Game Genie utility
+
+Tools > Cheats > Game Genie converts between six- or eight-letter codes and
+hexadecimal address, value, and compare fields. Edit a field and press Enter
+to update the others. Addresses must be 8000 through FFFF; values and compare
+bytes must be 00 through FF. Leave Compare blank for a six-letter code. Letter
+input is case-insensitive, and the utility displays the canonical uppercase
+code. Invalid entries leave the previous result intact.
+
+Copy code copies the result to the clipboard. With a game open, Send to cheat
+editor opens Cheats with a new draft and its description. Review it and select
+Add new cheat to activate it. Conversion itself does not change active cheats,
+and movie recording, playback, and netplay retain their normal restrictions on
+cheat changes.
+
 ## Settings
 
 Ctrl+Comma opens Settings. The eight categories cover General, Emulation,
@@ -65,6 +85,61 @@ settings. Explicit launch options retain precedence over saved preferences.
 The settings window indicates when those overrides are present.
 
 Display, mixing, speed, and binding changes apply to the running session.
+Video > Bilinear interpolation smooths the game texture as it scales to the
+window. It is off by default, which keeps nearest-neighbor sampling. The
+setting also applies to composite and HD output. PPU inspection textures keep
+their own exact-pixel rendering. Interpolation does not change screenshot or
+recording dimensions, overscan, or light-gun coordinates. Apply updates the
+display even while emulation is paused.
+
+Video > Pixel filter offers xBRZ at 2x through 6x; HQ2x, HQ3x, and HQ4x;
+Scale2x, Scale3x, and Scale4x; 2xSaI, Super2xSaI, and SuperEagle; and integer
+prescaling at 2x, 3x, 4x, 6x, 8x, and 10x. Use Next in the option picker for
+the final prescale choices. Prescaling repeats pixels without changing their
+colors. The other scalers use neighboring pixels to smooth edges. All filters
+operate after cropping and optional composite or HD rendering, with each VS
+screen processed independently. Their output dimensions are the incoming
+dimensions multiplied by the selected factor. Integer window scaling applies
+to that output; a smaller window fits the whole image at a fractional scale.
+
+LCD Grid expands each displayed pixel into four cells.
+The top-left cell defaults to 100% brightness; the other three default to 85%.
+Each LCD brightness field accepts 0 through 100%. Choose None to return to
+direct output. The filter follows overscan, layer selection, composite, and HD
+rendering. Displayed-output screenshots and recordings include its cells at
+twice the incoming width and height; raw captures keep the original pixels.
+Window stretching and bilinear interpolation happen after this capture stage.
+The filter keeps the two VS screens separate and preserves light-gun mapping.
+Outputs above 8192 pixels in either dimension or 256 MiB are rejected with an
+error, and a failed Apply restores the previous filter and texture.
+
+Enable Video > NTSC composite to use the picture controls. The presets are
+Default composite, Sharp composite, Soft television, and Monochrome. Choosing
+a preset replaces all ten picture controls; editing one displays Custom.
+Apply updates a paused picture too, and Cancel keeps the applied settings.
+
+Hue accepts -180 through 180 degrees; brightness accepts -100 through 100%.
+Contrast and saturation accept 0 through 200%, with 100% as neutral. Contrast
+at zero produces black; saturation at zero produces grayscale. Luma filter
+width accepts 1 through 96 signal samples, while the I and Q chroma widths
+accept 12 through 96. Larger widths blur horizontal detail or color. These
+widths control resolution and color bleed rather than adding separate
+artifact or fringing controls that the decoder cannot independently model.
+
+Gamma accepts 25 through 400%, with 100% leaving the decoded levels unchanged.
+Larger values brighten intermediate levels. Scanline strength accepts 0 through
+100% and dims every second output row; zero leaves both rows equal. Follow PPU
+phase uses the frame's carrier phase. Fixed phase always decodes phase zero.
+Blend three phases averages three reconstructions of the same signal before
+gamma and scanline dimming; it does not blend previous emulated frames.
+
+The default picture uses hue and brightness zero, contrast and saturation
+100%, all three filter widths 36 samples, gamma 100%, scanlines zero, and
+Follow PPU phase. Picture controls retain the 512 by 480 composite dimensions
+before cropping and later filters. They apply to displayed captures but leave
+raw captures, PPU pixels, emulation timing, and light-gun sensing unchanged.
+PAL, Dendy, and VS output bypass composite reconstruction and its controls.
+
 Rewind speed selects 1 through 30 retained frames per step. Holding the rewind
 binding repeats steps at the emulated frame rate. A menu step pauses on the
 restored frame; Resume continues from there. Applying unrelated settings keeps
@@ -96,9 +171,24 @@ after menus, aspect scaling, overscan, HD rendering, and dual-display layout.
 | Disk sides, insertion, write protection, tape, barcodes, cabinet input | Media device panels |
 | PNG screenshots, WAV audio, AVI video | Capture panel |
 | Replacement graphics/audio, pack install/export/capture | Tools > HD graphics |
-| Effective paths and database selection | Tools > Storage |
+| Effective paths, database selection, cartridge header editor | Tools > Storage |
+| Per-game settings, recovery snapshots, session restore | Tools > Game and recovery |
+| Virtual keyboard | Tools > Input tools, or Media when registered as a media panel |
+| Shader presets, native audio output, frame timing, CPU overclock | Tools > Picture, sound and timing |
+| Command-line reference and update panel | Tools > Application; related commands also appear under Help |
 | Loaded image and effective hardware | Help > Game information |
 | Recent application errors and notices | Help > Recent messages |
+
+Tool categories appear only when their commands or panels are registered.
+Large menus use nested pages sized to the available window height. Root pages
+show their first and last category names. Left returns to the previous level;
+Right or Enter opens the selected category or page. Disabled entries remain
+visible so their location does not change when a game is unloaded.
+
+At 900 by 680 pixels, the menu bar fits at 100%, 150%, and 200% UI scaling.
+Short settings windows use a compact category list and show fewer settings
+rows. The option picker keeps its twenty-choice pages and reduces row spacing
+in short windows so Previous and Next remain visible.
 
 Panels use Up/Down or Tab to select a row and Enter to activate it. Text rows
 accept paths or values, and choice fields open an option list. Lists with more

@@ -708,8 +708,11 @@ extern "C" void nes_hd_runtime_clear_game(NesHdRuntime *handle) {
     if (!handle) return;
     (void)nes_hd_runtime_enable(handle, false, nullptr, 0);
     auto &runtime = handle->impl;
-    runtime.pack.reset(); runtime.renderer.reset(); runtime.candidates.clear(); runtime.output.clear();
-    runtime.rom_path.clear(); runtime.rom_sha1.clear(); runtime.game_name.clear(); runtime.chr_copy.clear();
+    runtime.pack.reset(); runtime.renderer.reset();
+    std::vector<Candidate>().swap(runtime.candidates);
+    std::vector<std::uint32_t>().swap(runtime.output);
+    std::vector<std::uint8_t>().swap(runtime.chr_copy);
+    runtime.rom_path.clear(); runtime.rom_sha1.clear(); runtime.game_name.clear();
     runtime.active_path.clear(); runtime.status = "No game is attached"; runtime.trace_ready = false;
 }
 

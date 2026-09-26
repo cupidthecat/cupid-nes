@@ -38,7 +38,10 @@ static const FileDialog open_dialogs[] = {
     {"Install HD Pack", "HD pack archives", "*.zip", "zip", false, false},
     {"Load Lua Script", "Lua scripts", "*.lua", "lua", false, false},
     {"Load Cheats", "Cheat files", "*.txt;*.cht", "txt", false, false},
-    {"Choose a Folder", "Folders", "*", NULL, false, true}
+    {"Choose a Folder", "Folders", "*", NULL, false, true},
+    {"Import Memory", "Binary memory dumps", "*.bin;*.dump", "bin", false, false},
+    {"Load Cheat Database", "Tab-separated cheat catalogs", "*.tsv;*.txt", "tsv", false, false},
+    {"Convert Legacy Movie", "FCM input movies", "*.fcm", "fcm", false, false}
 };
 
 static const FileDialog save_dialogs[] = {
@@ -52,7 +55,9 @@ static const FileDialog save_dialogs[] = {
     {"Save Cheats", "Cheat files", "*.txt;*.cht", "txt", true, false},
     {"Choose Disk Overlay", "Disk overlays", "*.ips", "ips", true, false},
     {"Save TAS Project", "Editable TAS projects", "*.ctas", "ctas", true, false},
-    {"Export TAS Movie", "FCEUX movies and projects", "*.fm2;*.fm3", "fm2", true, false}
+    {"Export TAS Movie", "FCEUX movies and projects", "*.fm2;*.fm3", "fm2", true, false},
+    {"Export Table", "CSV tables", "*.csv", "csv", true, false},
+    {"Export Memory", "Binary memory dumps", "*.bin;*.dump", "bin", true, false}
 };
 
 static FrontendFileChooser file_chooser;

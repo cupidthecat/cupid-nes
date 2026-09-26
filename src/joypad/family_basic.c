@@ -19,6 +19,7 @@
 #endif
 
 static uint8_t matrix[9];
+static uint8_t host_matrix[2][9];
 static unsigned scan_row;
 static bool scan_half;
 static bool enabled;
@@ -33,6 +34,7 @@ static struct {
 
 void family_basic_reset(void) {
     memset(matrix, 0, sizeof(matrix));
+    memset(host_matrix, 0, sizeof(host_matrix));
     scan_row = 0;
     scan_half = false;
     enabled = false;
@@ -58,6 +60,31 @@ bool family_basic_set_key(FamilyBasicKey key, bool pressed) {
     if (pressed) matrix[row] |= bit;
     else matrix[row] &= (uint8_t)~bit;
     return true;
+}
+
+bool family_basic_key_pressed(FamilyBasicKey key) {
+    return (unsigned)key < FB_KEY_COUNT && (matrix[(unsigned)key / 8] & (1u << ((unsigned)key & 7))) != 0;
+}
+
+bool family_basic_set_host_key(FamilyBasicKey key, bool pressed, bool virtual_key) {
+    if ((unsigned)key >= FB_KEY_COUNT) return false;
+    unsigned row = (unsigned)key / 8, lane = virtual_key ? 1 : 0;
+    uint8_t bit = (uint8_t)(1u << ((unsigned)key & 7));
+    uint8_t next = pressed ? host_matrix[lane][row] | bit : host_matrix[lane][row] & (uint8_t)~bit;
+    bool combined = ((next | host_matrix[1 - lane][row]) & bit) != 0;
+    if (!family_basic_set_key(key, combined)) return false;
+    host_matrix[lane][row] = next;
+    return true;
+}
+
+void family_basic_release_host_keys(void) {
+    for (unsigned key = 0; key < FB_KEY_COUNT; ++key) {
+        unsigned row = key / 8, bit = 1u << (key & 7);
+        if ((host_matrix[0][row] | host_matrix[1][row]) & bit) {
+            (void)family_basic_set_key((FamilyBasicKey)key, false);
+        }
+    }
+    memset(host_matrix, 0, sizeof(host_matrix));
 }
 
 static bool reserve_samples(size_t count) {

@@ -5,6 +5,7 @@
  *
  * This file is part of Cupid NES Emulator, licensed under the GNU General
  * Public License, version 3 or any later version.
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #ifndef CUPID_EPSM_H
 #define CUPID_EPSM_H

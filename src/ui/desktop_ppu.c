@@ -1,3 +1,9 @@
+/*
+ * desktop_ppu.c
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* Visual PPU tools hosted by the desktop. SPDX-License-Identifier: GPL-3.0-or-later */
 #include "desktop_internal.h"
 #include "frontend_panels.h"

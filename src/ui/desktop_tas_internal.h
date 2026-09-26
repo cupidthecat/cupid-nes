@@ -1,3 +1,9 @@
+/*
+ * desktop_tas_internal.h
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* Desktop TAS editor internals. SPDX-License-Identifier: GPL-3.0-or-later */
 #ifndef CUPID_DESKTOP_TAS_INTERNAL_H
 #define CUPID_DESKTOP_TAS_INTERNAL_H
@@ -10,6 +16,7 @@
 #include "tas_frontend.h"
 #include "../replay/tas_project.h"
 #include "../replay/tas_session.h"
+#include "../replay/tas_splice.h"
 
 enum {
     TAS_GRID_LAG = 0,
@@ -21,7 +28,16 @@ enum {
     TAS_EDIT_SEEK = 0x7410,
     TAS_EDIT_MARKER = 0x7411,
     TAS_EDIT_BRANCH = 0x7412,
-    TAS_EDIT_INSERT = 0x7413
+    TAS_EDIT_INSERT = 0x7413,
+    TAS_EDIT_CACHE_MB = 0x7414,
+    TAS_EDIT_CACHE_INTERVAL = 0x7415,
+    TAS_EDIT_NAVIGATION_ADD = 0x7416,
+    TAS_EDIT_NAVIGATION_NAME = 0x7417,
+    TAS_EDIT_NAVIGATION_NOTE = 0x7418,
+    TAS_EDIT_SPLICE_SOURCE_FIRST = 0x7419,
+    TAS_EDIT_SPLICE_SOURCE_COUNT,
+    TAS_EDIT_SPLICE_DESTINATION_FIRST,
+    TAS_EDIT_SPLICE_DESTINATION_COUNT
 };
 
 typedef enum {
@@ -76,12 +92,80 @@ typedef enum {
     TAS_ACTION_SIDEBAR_INPUT,
     TAS_ACTION_MARKER_REMOVE,
     TAS_ACTION_BRANCH_JUMP,
+    TAS_ACTION_SIDEBAR_CACHE = 120,
+    TAS_ACTION_CACHE_CLEAR,
+    TAS_ACTION_CACHE_CLEAR_AFTER,
+    TAS_ACTION_CACHE_MB,
+    TAS_ACTION_CACHE_INTERVAL,
+    TAS_ACTION_CACHE_PREV,
+    TAS_ACTION_CACHE_NEXT,
+    TAS_ACTION_SIDEBAR_HISTORY,
+    TAS_ACTION_HISTORY_OLDER,
+    TAS_ACTION_HISTORY_NEWER,
+    TAS_ACTION_HISTORY_CURRENT,
+    TAS_ACTION_HISTORY_RESTORE,
+    TAS_ACTION_SIDEBAR_NAVIGATION,
+    TAS_ACTION_NAVIGATION_CURSOR,
+    TAS_ACTION_NAVIGATION_PLAYBACK,
+    TAS_ACTION_NAVIGATION_NAME,
+    TAS_ACTION_NAVIGATION_NOTE,
+    TAS_ACTION_NAVIGATION_REMOVE,
+    TAS_ACTION_NAVIGATION_PREV,
+    TAS_ACTION_NAVIGATION_NEXT,
+    TAS_ACTION_NAVIGATION_GOTO,
+    TAS_ACTION_NAVIGATION_OLDER,
+    TAS_ACTION_NAVIGATION_NEWER,
+    TAS_ACTION_NAVIGATION_DETAILS,
+    TAS_ACTION_NAVIGATION_LIST,
+    TAS_ACTION_NAVIGATION_DETAIL_PREV,
+    TAS_ACTION_NAVIGATION_DETAIL_NEXT,
+    TAS_ACTION_SPLICE_OPEN = 160,
+    TAS_ACTION_SPLICE_LOAD,
+    TAS_ACTION_SPLICE_CURRENT,
+    TAS_ACTION_SPLICE_SOURCE_SELECTION,
+    TAS_ACTION_SPLICE_SOURCE_FIRST,
+    TAS_ACTION_SPLICE_SOURCE_COUNT,
+    TAS_ACTION_SPLICE_DESTINATION_FIRST,
+    TAS_ACTION_SPLICE_DESTINATION_COUNT,
+    TAS_ACTION_SPLICE_DESTINATION_SELECTION,
+    TAS_ACTION_SPLICE_MARKERS,
+    TAS_ACTION_SPLICE_APPLY,
+    TAS_ACTION_SPLICE_APPEND,
+    TAS_ACTION_SPLICE_INSERT,
+    TAS_ACTION_SPLICE_REPLACE,
+    TAS_ACTION_SPLICE_EXTRACT,
     TAS_ACTION_HEADER_BASE = 200,
     TAS_ACTION_ACTIVE_BUTTON_BASE = 300,
+    TAS_ACTION_HISTORY_SELECT_BASE = 400,
+    TAS_HISTORY_VISIBLE = 8,
+    TAS_ACTION_NAVIGATION_SELECT_BASE = 500,
+    TAS_NAVIGATION_VISIBLE = 8,
+    TAS_NAVIGATION_DETAIL_LINES = 8,
     TAS_ACTION_MARKER_GOTO_BASE = 1000
 } DesktopTasAction;
 
+typedef struct {
+    /* NULL selects the current project. A loaded source is independently owned. */
+    NesTasProject *source;
+    const NesTasProject *destination;
+    uint64_t revision;
+    uint64_t generation;
+    uint64_t settings_serial;
+    NesTasSpliceOptions options;
+    NesTasSplicePreview preview;
+    bool initialized;
+    bool preview_valid;
+    char source_name[160];
+    char error[256];
+    const NesTasProject *edit_destination;
+    uint64_t edit_revision;
+    uint64_t edit_generation;
+    uint64_t edit_settings_serial;
+    unsigned edit_control;
+} DesktopTasSplicer;
+
 struct DesktopTasEditor {
+    DesktopTasSplicer splice;
     size_t scroll;
     size_t cursor;
     size_t anchor;
@@ -102,6 +186,28 @@ struct DesktopTasEditor {
     bool follow_playback;
     bool follow_initialized;
     size_t last_playback_frame;
+    const NesTasProject *history_project;
+    uint64_t history_revision;
+    NesTasHistoryInfo history_snapshot;
+    size_t history_scroll;
+    size_t history_selection;
+    bool history_initialized;
+    const NesTasProject *navigation_project;
+    uint64_t navigation_revision;
+    uint64_t navigation_generation;
+    size_t navigation_count;
+    size_t navigation_scroll;
+    size_t navigation_selection;
+    bool navigation_details;
+    size_t navigation_detail_page;
+    size_t navigation_detail_pages;
+    bool navigation_initialized;
+    const NesTasProject *navigation_edit_project;
+    uint64_t navigation_edit_revision;
+    uint64_t navigation_edit_generation;
+    unsigned navigation_edit_control;
+    size_t navigation_edit_index;
+    size_t navigation_edit_frame;
 };
 
 DesktopTasEditor *desktop_tas_editor(FrontendDesktopUi *ui);
@@ -112,6 +218,13 @@ void desktop_tas_status(FrontendDesktopUi *ui, const char *text);
 void desktop_tas_keep_cursor_visible(FrontendDesktopUi *ui);
 void desktop_tas_follow_playback(FrontendDesktopUi *ui, const NesTasProgress *progress);
 void desktop_tas_after_model_edit(FrontendDesktopUi *ui, NesTasResult result, const char *success);
+void desktop_tas_navigation_observe(FrontendDesktopUi *ui);
+void desktop_tas_navigation_action(FrontendDesktopUi *ui, unsigned action);
+bool desktop_tas_navigation_commit(FrontendDesktopUi *ui, const char *text, char *error, size_t size);
+void desktop_tas_splice_observe(FrontendDesktopUi *ui);
+void desktop_tas_splice_action(FrontendDesktopUi *ui, unsigned action);
+bool desktop_tas_splice_commit(FrontendDesktopUi *ui, const char *text, char *error, size_t size);
+void desktop_tas_splice_layout(FrontendDesktopUi *ui, const NesTasProgress *progress, bool writable, float width);
 
 void desktop_tas_action(FrontendDesktopUi *ui, unsigned action);
 void desktop_tas_select_row(FrontendDesktopUi *ui, size_t row, SDL_Keymod modifiers);

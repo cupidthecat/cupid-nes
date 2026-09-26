@@ -7,6 +7,7 @@
  * GNU General Public License, version 3 or any later version.
  */
 #include "desktop_ui.h"
+#include "desktop_keyboard.h"
 #include "host_input.h"
 #include "cheat_frontend.h"
 #include "debug_frontend.h"
@@ -148,7 +149,7 @@ void desktop_settings_open(FrontendDesktopUi *ui, bool open) {
         ui->panel_open=ui->info_open=false;
         ui->open_menu=-1;
         ui->settings_focus=ui->settings_button=0;
-        if(ui->capture){ui->settings->capture=ui->capture->options;memcpy(ui->settings->capture_paths,ui->capture->paths,sizeof(ui->settings->capture_paths));}
+        if(ui->capture){ui->settings->movie_preferences=ui->capture->preferences;ui->settings->capture=ui->capture->options;memcpy(ui->settings->capture_paths,ui->capture->paths,sizeof(ui->settings->capture_paths));}
         if(ui->devices){snprintf(ui->settings->tape_play_path,sizeof(ui->settings->tape_play_path),"%s",ui->devices->tape_input);snprintf(ui->settings->tape_record_path,sizeof(ui->settings->tape_record_path),"%s",ui->devices->tape_output);}
         if(ui->music)ui->settings->nsf_player=ui->music->options;
         ui->staged = *ui->settings;
@@ -183,6 +184,10 @@ static void restore_runtime_settings(FrontendDesktopUi *ui,
     if (!ui || !previous) return;
     char ignored[160] = {0};
     (void)frontend_desktop_apply_features(ui,previous,ignored,sizeof(ignored));
+    if (ui->capture && ui->capture->apply_preferences) {
+        (void)ui->capture->apply_preferences(ui->capture->overlay_context, &previous->movie_preferences, ignored, sizeof(ignored));
+        ui->capture->preferences = previous->movie_preferences;
+    }
     (void)frontend_settings_apply_core(previous, ignored, sizeof(ignored));
     (void)nes_video_presentation_set(&previous->presentation, ignored, sizeof(ignored));
     (void)nes_audio_mix_set(&previous->audio_mix, ignored, sizeof(ignored));
@@ -197,6 +202,7 @@ static void restore_runtime_settings(FrontendDesktopUi *ui,
         (void)SDL_SetWindowFullscreen((ui->parent ? ui->parent->window : ui->window),
             previous->fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
     if (ui->video) {
+        ui->video->settings = ui->settings;
         if (!frontend_settings_cli_overridden(previous, FRONTEND_OVERRIDE_VIDEO_FILTER))
             frontend_video_runtime_set_composite(ui->video, previous->ntsc_composite);
         (void)frontend_video_runtime_refresh(ui->video, ignored, sizeof(ignored));
@@ -217,6 +223,8 @@ static bool save_settings(FrontendDesktopUi *ui) {
         return false;
     }
 
+    if (ui->sessions && ui->sessions->before_configuration)
+        ui->sessions->before_configuration(ui->sessions->configuration_context);
     FrontendSettings previous = *ui->settings;
     FrontendAudioPrepared prepared_audio = {0};
     if (ui->audio
@@ -250,6 +258,11 @@ static bool save_settings(FrontendDesktopUi *ui) {
 
     frontend_execution_begin_machine_change(ui->execution);
     if (!frontend_desktop_apply_features(ui,&ui->staged,error,sizeof(error)))goto rollback;
+    if (ui->capture && ui->capture->apply_preferences) {
+        if (!ui->capture->apply_preferences(ui->capture->overlay_context, &ui->staged.movie_preferences,
+                                             error, sizeof(error))) goto rollback;
+        ui->capture->preferences = ui->staged.movie_preferences;
+    }
     if (!frontend_settings_apply_core(&ui->staged, error, sizeof(error))) goto rollback;
     if (ui->execution) {
         if (!frontend_execution_set_speeds(ui->execution, ui->staged.speed,
@@ -264,6 +277,7 @@ static bool save_settings(FrontendDesktopUi *ui) {
     if (!nes_video_presentation_set(&ui->staged.presentation, error, sizeof(error))) goto rollback;
     if (!nes_audio_mix_set(&ui->staged.audio_mix, error, sizeof(error))) goto rollback;
     if (ui->video) {
+        ui->video->settings = &ui->staged;
         if (!frontend_settings_cli_overridden(&ui->staged, FRONTEND_OVERRIDE_VIDEO_FILTER))
             frontend_video_runtime_set_composite(ui->video, ui->staged.ntsc_composite);
         if (!frontend_video_runtime_refresh(ui->video, error, sizeof(error))) goto rollback;
@@ -271,7 +285,10 @@ static bool save_settings(FrontendDesktopUi *ui) {
 
     if (ui->settings_path) {
         FrontendSettingsReport report;
-        if (!frontend_settings_save(ui->settings_path, &ui->staged, &report)) {
+        bool saved = ui->sessions && ui->sessions->game_config
+            ? game_config_save_globals(ui->sessions->game_config, ui->settings_path, &ui->staged, &report)
+            : frontend_settings_save(ui->settings_path, &ui->staged, &report);
+        if (!saved) {
             snprintf(error, sizeof(error), "%s", report.message);
             goto rollback;
         }
@@ -380,6 +397,7 @@ static bool command_palette_reset(void *context, char *error, size_t size) {
 }
 
 bool frontend_desktop_register_commands(FrontendDesktopUi *ui) {
+    if (!desktop_keyboard_register()) return false;
     if (!ui || !ui->settings) return false;
     const FrontendCommandSpec specs[] = {
         {0x1B00,"Palette editor","View","F7",0,command_palette,ui},
@@ -440,7 +458,7 @@ int desktop_setting_rows(const FrontendDesktopUi *ui) {
     switch (ui->settings_category) {
         case 0: return 10;
         case 1: return 6;
-        case 2: return 19;
+        case 2: return 36;
         case 3: return 5 + NES_AUDIO_CHANNEL_COUNT * 2;
         case 4: return 24 + FRONTEND_SHORTCUT_COUNT * 2;
         case 5: return 17;
@@ -496,6 +514,26 @@ void desktop_setting_text(FrontendDesktopUi *ui, int row, char *label, size_t lc
             else if (row == 4) snprintf(value, vc, "%s", on_off(s->ntsc_composite));
             else if (row == 5) snprintf(value, vc, "%s", on_off(s->presentation.show_background));
             else snprintf(value, vc, "%s", on_off(s->presentation.show_sprites));
+        } else if (row == 19) {
+            snprintf(label, lc, "Bilinear interpolation");
+            snprintf(value, vc, "%s", on_off(s->bilinear_interpolation));
+        } else if (row == 20) {
+            snprintf(label, lc, "Pixel filter");
+            snprintf(value, vc, "%s", nes_pixel_filter_name(s->pixel_filter.kind));
+        } else if (row == 25) {
+            snprintf(label, lc, "NTSC picture preset");
+            snprintf(value, vc, "%s", ntsc_composite_preset_name((unsigned)ntsc_composite_preset_index(&s->ntsc_picture)));
+        } else if (row >= 26 && row < 36) {
+            unsigned id = (unsigned)(row - 26);
+            const NtscCompositeControl *control = ntsc_composite_control_info(id);
+            snprintf(label, lc, "%s", control->label);
+            if (id == NTSC_CONTROL_FIELDS)
+                snprintf(value, vc, "%s", ntsc_composite_field_name((unsigned)s->ntsc_picture.fields));
+            else snprintf(value, vc, "%d%s", ntsc_composite_control_get(&s->ntsc_picture, id), control->unit);
+        } else if (row >= 21 && row < 25) {
+            static const char *const cells[] = {"top left", "top right", "bottom left", "bottom right"};
+            snprintf(label, lc, "LCD %s brightness", cells[row - 21]);
+            snprintf(value, vc, "%u%%", s->pixel_filter.lcd_brightness[row - 21]);
         } else {
             static const char *const regions[] = {"NTSC", "PAL", "Dendy"};
             static const char *const edges[] = {"left", "right", "top", "bottom"};
@@ -670,7 +708,27 @@ void desktop_adjust_setting(FrontendDesktopUi *ui, int row, int direction) {
         else if (row == 4) s->ntsc_composite = !s->ntsc_composite;
         else if (row == 5) s->presentation.show_background = !s->presentation.show_background;
         else if (row == 6) s->presentation.show_sprites = !s->presentation.show_sprites;
-        else {
+        else if (row == 19) s->bilinear_interpolation = !s->bilinear_interpolation;
+        else if (row == 20) s->pixel_filter.kind = (NesPixelFilterKind)(((int)s->pixel_filter.kind + direction + NES_PIXEL_FILTER_COUNT) % NES_PIXEL_FILTER_COUNT);
+        else if (row == 25) {
+            int preset = ntsc_composite_preset_index(&s->ntsc_picture);
+            preset = preset < 0 ? (direction > 0 ? 0 : NTSC_PRESET_COUNT - 1)
+                : (preset + direction + NTSC_PRESET_COUNT) % NTSC_PRESET_COUNT;
+            (void)ntsc_composite_preset(&s->ntsc_picture, (unsigned)preset);
+        }
+        else if (row == 35) s->ntsc_picture.fields = (s->ntsc_picture.fields + direction + NTSC_FIELDS_COUNT) % NTSC_FIELDS_COUNT;
+        else if (row >= 26 && row < 35) {
+            unsigned id = (unsigned)(row - 26);
+            const NtscCompositeControl *control = ntsc_composite_control_info(id);
+            int *value = ntsc_composite_control_value(&s->ntsc_picture, id);
+            int next = *value + direction;
+            *value = next < control->minimum ? control->minimum : next > control->maximum ? control->maximum : next;
+        }
+        else if (row >= 21 && row < 25) {
+            int value = (int)s->pixel_filter.lcd_brightness[row - 21] + direction;
+            s->pixel_filter.lcd_brightness[row - 21] = (unsigned)(value < 0 ? 0 : value > 100 ? 100 : value);
+        }
+        else if (row >= 7 && row < 19) {
             unsigned index = (unsigned)(row - 7), region = index / 4, edge = index % 4;
             NesVideoOverscan *o = &s->presentation.overscan[region];
             unsigned *values[] = {&o->left, &o->right, &o->top, &o->bottom};
@@ -828,9 +886,10 @@ void desktop_binding_gamepad(FrontendDesktopUi *ui, SDL_GameControllerButton but
 int desktop_menu_all(FrontendDesktopUi *ui, DesktopMenuItem items[128]) {
     if (ui->open_menu < 0 || ui->open_menu >= 7) return 0;
     const char *menu = menu_names[ui->open_menu];
+    int limit = ui->open_menu == 0 ? 126 : ui->open_menu == 6 ? 125 : 128;
     int count = 0;
     FrontendCommandInfo command;
-    for (size_t i=0; i<frontend_command_count() && count<100; ++i) {
+    for (size_t i=0; i<frontend_command_count() && count<limit; ++i) {
         if (!frontend_command_at(i,&command) || strcmp(command.menu,menu)) continue;
         items[count]=(DesktopMenuItem){.id=command.id,.enabled=command.enabled};
         if (command.id == CHEATS_ADD_COMMAND) command.label = "Add cheat…";
@@ -845,7 +904,7 @@ int desktop_menu_all(FrontendDesktopUi *ui, DesktopMenuItem items[128]) {
     }
     if (ui->open_menu==5 || ui->open_menu==4) {
         FrontendPanelInfo panel;
-        for (size_t i=0; i<frontend_panel_count() && count<120; ++i) {
+        for (size_t i=0; i<frontend_panel_count() && count<limit; ++i) {
             if (!frontend_panel_at(i,&panel)) continue;
             bool media = !strcmp(panel.category,"Media");
             if (media != (ui->open_menu==4)) continue;
@@ -909,6 +968,9 @@ static void category_defaults(FrontendDesktopUi *ui) {
             break;
         case 2:
             memcpy(&ui->staged.fullscreen, &d.fullscreen, sizeof(d.fullscreen));
+            ui->staged.bilinear_interpolation = d.bilinear_interpolation;
+            ui->staged.pixel_filter = d.pixel_filter;
+            ui->staged.ntsc_picture = d.ntsc_picture;
             memcpy(&ui->staged.integer_scaling, &d.integer_scaling, sizeof(d.integer_scaling));
             memcpy(&ui->staged.vsync, &d.vsync, sizeof(d.vsync));
             memcpy(&ui->staged.aspect_mode, &d.aspect_mode, sizeof(d.aspect_mode));
@@ -1004,7 +1066,7 @@ bool frontend_desktop_input_captured(const FrontendDesktopUi *ui) {
 }
 bool frontend_desktop_quit_requested(const FrontendDesktopUi *ui){return ui&&ui->quit_requested;}
 void frontend_desktop_update_window_settings(FrontendDesktopUi *ui){if(!ui||ui->parent||!ui->window||!ui->settings||!ui->settings->remember_window_size)return;int w,h;SDL_GetWindowSize(ui->window,&w,&h);if(w>0&&h>0){ui->settings->window_width=(unsigned)w;ui->settings->window_height=(unsigned)h;}}
-void frontend_desktop_shutdown(FrontendDesktopUi *ui){if(!ui)return;desktop_close_windows(ui);desktop_ppu_destroy(ui);desktop_tas_destroy(ui);desktop_settings_open(ui,false);SDL_StopTextInput();desktop_clay_destroy(ui->clay);ui->clay=NULL;}
+void frontend_desktop_shutdown(FrontendDesktopUi *ui){if(!ui)return;desktop_keyboard_release(ui);desktop_close_windows(ui);desktop_ppu_destroy(ui);desktop_tas_destroy(ui);desktop_settings_open(ui,false);SDL_StopTextInput();desktop_clay_destroy(ui->clay);ui->clay=NULL;}
 
 bool desktop_palette_visible(const FrontendDesktopUi *ui) {
     return ui && (ui->palette_window || (!ui->parent && palette_tool_is_visible()));

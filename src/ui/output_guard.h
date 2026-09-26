@@ -17,6 +17,7 @@ struct FrontendExecutionRuntime;
 bool frontend_output_path_excludes(const char *path,
                                     const char *const *protected_paths, size_t count,
                                     char *error, size_t error_size);
+/* Runtime media and protected paths always apply; callers can reserve more paths. */
 bool frontend_output_path_allowed(const char *path,
                                    const struct FrontendExecutionRuntime *execution,
                                    const char *const *protected_paths, size_t count,

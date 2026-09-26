@@ -9,13 +9,17 @@
 #include "../system/execution_policy.h"
 #include "debugger.h"
 #include "lua_runtime.h"
+#include "memory_watch.h"
+#include "debug_analysis.h"
+#include "debug_capture.h"
+#include "debug_catalog.h"
 
 #include "../ppu/ppu.h"
 
 #include <stdio.h>
 #include <string.h>
 
-enum { DEBUG_MAX_BREAKPOINTS = 128, DEBUG_MAX_WATCHES = 64, DEBUG_TRACE_CAPACITY = 4096 };
+enum { DEBUG_MAX_BREAKPOINTS = 128, DEBUG_TRACE_CAPACITY = 4096 };
 
 typedef enum {
     STEP_NONE,
@@ -26,9 +30,8 @@ typedef enum {
 
 typedef struct {
     DebugBreakpoint breakpoints[DEBUG_MAX_BREAKPOINTS];
+    uint64_t breakpoint_keys[DEBUG_MAX_BREAKPOINTS];
     size_t breakpoint_count;
-    DebugWatch watches[DEBUG_MAX_WATCHES];
-    size_t watch_count;
     DebugTraceEntry trace[DEBUG_TRACE_CAPACITY];
     size_t trace_head, trace_count;
     uint32_t next_id;
@@ -46,8 +49,20 @@ typedef struct {
 
 static DebuggerState debug_state;
 static uint64_t pause_revision;
+
 static uint64_t session_revision;
-uint64_t debugger_session_revision(void) { return session_revision; }
+
+uint64_t debugger_session_revision(void) {
+    return session_revision;
+}
+
+void debugger_invalidate_memory(void) {
+    if (!(nes_execution_policy() & NES_EXECUTION_SPECULATIVE)) {
+        ++session_revision;
+        debug_analysis_discontinuity();
+        debug_capture_discontinuity();
+    }
+}
 
 static void set_paused(bool paused) {
     if (debug_state.paused == paused) return;
@@ -71,26 +86,39 @@ static void stop_at(DebugStopReason reason, uint16_t address, uint8_t value, uin
 static bool breakpoint_match(uint8_t type, uint16_t address) {
     for (size_t i = 0; i < debug_state.breakpoint_count; ++i) {
         const DebugBreakpoint *bp = &debug_state.breakpoints[i];
-        if (bp->enabled && (bp->type & type) && address >= bp->first && address <= bp->last)
+        if (bp->enabled && (bp->type & type) && address >= bp->first && address <= bp->last
+            && (debug_state.breakpoint_keys[i] == DEBUG_KEY_NONE
+                || debug_analysis_key(address) == debug_state.breakpoint_keys[i] + address - bp->first))
             return true;
     }
     return false;
 }
 
 void debugger_init(void) {
+    (void)debug_analysis_image_changed();
+    debug_catalog_image_changed();
+    debug_capture_shutdown();
     ++session_revision;
+    debug_watch_reset();
     memset(&debug_state, 0, sizeof(debug_state));
     debug_state.next_id = 1;
     ++pause_revision;
 }
 
 void debugger_shutdown(void) {
+    debug_analysis_shutdown();
+    debug_catalog_clear();
+    debug_capture_shutdown();
+    ++session_revision;
+    debug_watch_reset();
     debugger_lua_unload();
     memset(&debug_state, 0, sizeof(debug_state));
     ++pause_revision;
 }
 
 void debugger_reset_session(void) {
+    debug_analysis_discontinuity();
+    debug_capture_discontinuity();
     ++session_revision;
     debug_state.stop = (DebugStopInfo){0};
     debug_state.step = STEP_NONE;
@@ -167,9 +195,23 @@ bool debugger_run_until_break(CPU *target, uint64_t instruction_limit) {
 uint32_t debugger_add_breakpoint(DebugBreakpointType type, uint16_t first, uint16_t last) {
     if (!type || first > last || debug_state.breakpoint_count >= DEBUG_MAX_BREAKPOINTS) return 0;
     uint32_t id = debug_state.next_id++;
+    debug_state.breakpoint_keys[debug_state.breakpoint_count] = DEBUG_KEY_NONE;
     debug_state.breakpoints[debug_state.breakpoint_count++] =
         (DebugBreakpoint){id, first, last, (uint8_t)type, true};
     return id;
+}
+
+uint32_t debugger_add_mapped_breakpoint(DebugBreakpointType type, uint16_t first, uint16_t last, uint64_t key) {
+    uint32_t id = debugger_add_breakpoint(type, first, last);
+    if (id) debug_state.breakpoint_keys[debug_state.breakpoint_count - 1] = key;
+    return id;
+}
+
+void debugger_clear_mapped_breakpoints(void) {
+    for (size_t i = debug_state.breakpoint_count; i; --i) {
+        if (debug_state.breakpoint_keys[i - 1] != DEBUG_KEY_NONE)
+            (void)debugger_remove_breakpoint(debug_state.breakpoints[i - 1].id);
+    }
 }
 
 bool debugger_update_breakpoint(uint32_t id, DebugBreakpointType type,
@@ -189,6 +231,8 @@ bool debugger_remove_breakpoint(uint32_t id) {
         if (debug_state.breakpoints[i].id != id) continue;
         memmove(&debug_state.breakpoints[i], &debug_state.breakpoints[i + 1],
                 (debug_state.breakpoint_count - i - 1) * sizeof(debug_state.breakpoints[0]));
+        memmove(&debug_state.breakpoint_keys[i], &debug_state.breakpoint_keys[i + 1],
+                (debug_state.breakpoint_count - i - 1) * sizeof(debug_state.breakpoint_keys[0]));
         --debug_state.breakpoint_count;
         return true;
     }
@@ -217,6 +261,8 @@ bool debugger_set_cpu_register(const char *name, uint32_t value) {
     else if (!strcmp(name, "P") || !strcmp(name, "p") || !strcmp(name, "status"))
         cpu.status = (uint8_t)value;
     else return false;
+    debug_analysis_discontinuity();
+    debug_capture_discontinuity();
     return true;
 }
 
@@ -249,51 +295,13 @@ void debugger_copy_palette(uint8_t out[32]) {
     for (unsigned i = 0; i < 32; ++i) out[i] = ppu_debug_peek((uint16_t)(0x3F00u + i));
 }
 
-void debugger_copy_oam(uint8_t out[256]) { if (out) memcpy(out, ppu.oam, 256); }
+void debugger_copy_oam(uint8_t out[256]) { ppu_debug_copy_oam(out); }
 
-uint32_t debugger_add_watch(uint16_t address, uint8_t size, const char *label) {
-    if ((size != 1 && size != 2 && size != 4) || debug_state.watch_count >= DEBUG_MAX_WATCHES) return 0;
-    DebugWatch *watch = &debug_state.watches[debug_state.watch_count++];
-    memset(watch, 0, sizeof(*watch));
-    watch->id = debug_state.next_id++; watch->address = address; watch->size = size; watch->enabled = true;
-    if (label) snprintf(watch->label, sizeof(watch->label), "%s", label);
-    return watch->id;
-}
-
-bool debugger_update_watch(uint32_t id, uint16_t address, uint8_t size,
-                           const char *label, bool enabled) {
-    if (size != 1 && size != 2 && size != 4) return false;
-    for (size_t i = 0; i < debug_state.watch_count; ++i) {
-        DebugWatch *watch = &debug_state.watches[i];
-        if (watch->id != id) continue;
-        watch->address = address; watch->size = size; watch->enabled = enabled;
-        snprintf(watch->label, sizeof(watch->label), "%s", label ? label : "");
-        return true;
-    }
-    return false;
-}
-
-bool debugger_remove_watch(uint32_t id) {
-    for (size_t i = 0; i < debug_state.watch_count; ++i) {
-        if (debug_state.watches[i].id != id) continue;
-        memmove(&debug_state.watches[i], &debug_state.watches[i + 1],
-                (debug_state.watch_count - i - 1) * sizeof(debug_state.watches[0]));
-        --debug_state.watch_count; return true;
-    }
-    return false;
-}
-
-size_t debugger_watch_count(void) { return debug_state.watch_count; }
-bool debugger_watch_at(size_t index, DebugWatch *out, uint32_t *value) {
-    if (index >= debug_state.watch_count || !out) return false;
-    *out = debug_state.watches[index];
-    if (value) {
-        uint32_t result = 0;
-        if (out->enabled) for (unsigned i = 0; i < out->size; ++i)
-            result |= (uint32_t)debugger_peek_cpu((uint16_t)(out->address + i)) << (8u * i);
-        *value = result;
-    }
-    return true;
+uint32_t debugger_reserve_identifiers(size_t count) {
+    if (!count || !debug_state.next_id || count - 1 > UINT32_MAX - debug_state.next_id) return 0;
+    uint32_t first = debug_state.next_id;
+    debug_state.next_id += (uint32_t)count;
+    return first;
 }
 
 void debugger_trace_enable(bool enabled) { debug_state.trace_enabled = enabled; }
@@ -339,12 +347,30 @@ bool debugger_before_instruction(CPU *state) {
     }
     trace_instruction(state);
     debugger_lua_on_execute(state->pc);
+    if (!debug_state.paused) {
+        debug_analysis_begin(state);
+        debug_log_instruction(state);
+    }
     return !debug_state.paused;
+}
+
+void debugger_after_instruction(const CPU *state) {
+    debug_analysis_end(state);
+    debug_log_end();
+}
+
+void debugger_on_opcode(uint8_t opcode) {
+    if (nes_execution_policy() != NES_EXECUTION_LIVE) return;
+    debug_analysis_opcode(opcode);
+    debug_log_opcode(opcode);
 }
 
 void debugger_on_cpu_read(uint16_t address, uint8_t *value) {
     if (!value || nes_execution_policy() != NES_EXECUTION_LIVE) return;
     debugger_lua_on_read(address, value);
+    debug_analysis_read(address, *value);
+    debug_log_read(address, *value);
+    debug_text_access(address, *value, false);
     if (breakpoint_match(DEBUG_BREAK_READ, address))
         stop_at(DEBUG_STOP_BREAKPOINT, address, *value, DEBUG_BREAK_READ);
 }
@@ -352,6 +378,8 @@ void debugger_on_cpu_read(uint16_t address, uint8_t *value) {
 void debugger_on_cpu_write(uint16_t address, uint8_t value) {
     if (nes_execution_policy() != NES_EXECUTION_LIVE) return;
     debugger_lua_on_write(address, value);
+    debug_analysis_write(address, value);
+    debug_text_access(address, value, true);
     if (breakpoint_match(DEBUG_BREAK_WRITE, address))
         stop_at(DEBUG_STOP_BREAKPOINT, address, value, DEBUG_BREAK_WRITE);
 }

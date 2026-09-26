@@ -39,6 +39,7 @@
 #include "../system/timing.h"
 #include "../system/vs_system.h"
 #include "../debugger/debugger.h"
+#include "../debugger/debug_analysis.h"
 #include "../cheats/cheats.h"
 
 uint8_t ram[0x0800];        // 2KB internal RAM
@@ -170,6 +171,16 @@ uint8_t cpu_peek_internal_ram(uint16_t addr) {
     return expanded ? expanded[addr & 0x1FFF] : cpu_ram[addr & 0x07FF];
 }
 
+bool cpu_debug_memory_location(uint16_t addr, NesMemoryLocation *out) {
+    if (addr < 0x2000) {
+        uint8_t *expanded = cart_cpu_ram_8k();
+        size_t size = expanded ? 0x2000 : 0x800;
+        return nes_memory_location(out, expanded ? expanded : cpu_ram, size, addr % size,
+                                   expanded ? "Expanded CPU RAM" : "CPU RAM", true, NULL);
+    }
+    return addr >= 0x4020 && cart_debug_cpu_location(addr, out);
+}
+
 bool cpu_replay_set_ram(const uint8_t *bytes, size_t size) {
     uint8_t *expanded = cart_cpu_ram_8k();
     size_t expected = expanded ? 0x2000u : 0x0800u;
@@ -249,10 +260,11 @@ static void end_cpu_cycle(bool read) {
     if (cpu_nmi_line && !cpu_nmi_previous_line) cpu_nmi_pending = true;
     cpu_nmi_previous_line = cpu_nmi_line;
     cpu_irq_ready = cpu_irq_polled;
-    cpu_irq_polled = ((!cart_nsf_active() && apu_irq_pending(apu_active_state())) || cart_irq_pending()
-                      || epsm_irq_pending()
-                      || vs_external_irq_pending()) &&
-                     !(running_cpu->status & INTERRUPT_FLAG);
+    bool mapper_irq = cart_irq_pending();
+    bool irq = (!cart_nsf_active() && apu_irq_pending(apu_active_state())) || mapper_irq || epsm_irq_pending()
+               || vs_external_irq_pending();
+    debug_analysis_signals(cpu_nmi_line, irq, mapper_irq);
+    cpu_irq_polled = irq && !(running_cpu->status & INTERRUPT_FLAG);
     in_bus_cycle = false;
 }
 
@@ -601,6 +613,8 @@ void cpu_request_nmi(void) {
 }
 
 void cpu_irq(CPU* cpu) {
+    debugger_after_instruction(cpu);
+    CPU debug_before = *cpu;
     NMI_BRK_LOG("cpu_irq enter pc=%04X sp=%02X p=%02X", cpu->pc, cpu->sp, cpu->status);
     (void)read_mem_cycle(cpu->pc, true);
     dummy_read_next(cpu);
@@ -615,6 +629,7 @@ void cpu_irq(CPU* cpu) {
     write_mem(0x0100 + cpu->sp--, p);
     cpu->status |= INTERRUPT_FLAG;
     cpu->pc = read_mem_word(vector);
+    debug_analysis_interrupt(&debug_before, cpu->pc, vector == 0xFFFA);
     NMI_BRK_LOG("cpu_irq vector=%04X pushedP=%02X newSP=%02X", cpu->pc, p, cpu->sp);
 }
 
@@ -986,9 +1001,11 @@ int cpu_step(CPU* cpu) {
         cpu_irq(cpu);
     } else {
         uint8_t opcode = read_mem_cycle(cpu->pc++, true);
+        debugger_on_opcode(opcode);
         execute(cpu, opcode);
         if (!cpu->halted && (cpu_irq_ready || cpu_nmi_ready)) cpu_irq(cpu);
     }
+    debugger_after_instruction(cpu);
     running_cpu = NULL;
     return (int)(active_cpu_cycles - start);
 }
