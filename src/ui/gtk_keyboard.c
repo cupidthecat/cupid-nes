@@ -290,6 +290,8 @@ GtkWidget *cupid_gtk_keyboard_new(CupidGtkTool *tool) {
         }
     }
     GtkWidget *release = gtk_button_new_with_label("Release all");
+    gtk_widget_set_halign(release, GTK_ALIGN_END);
+    gtk_widget_set_size_request(release, 100, -1);
     g_signal_connect(release, "clicked", G_CALLBACK(release_clicked), k);
     gtk_box_append(GTK_BOX(k->root), release);
     GtkEventController *focus = gtk_event_controller_focus_new();

@@ -1,12 +1,17 @@
 # Cupid documentation
 
-Cupid has an SDL application for running games and music and a separate executable for testing the hardware core. Both link the same C11 device code and C++17 cartridge and expansion-sound implementations. Start with [getting started](getting-started.md) to build the application, or [development and testing](development.md) to investigate a failure.
+Cupid uses GTK4 for its desktop and SDL2 for video, audio, and controllers. A
+separate executable tests the hardware core. Both link the same C11 device code
+and C++17 cartridge and expansion-sound implementations. Start with
+[getting started](getting-started.md) to build the application, or
+[development and testing](development.md) to investigate a failure.
 
 ## Using the emulator
 
 | Guide | Contents |
 | --- | --- |
 | [Desktop interface](desktop.md) | Menus, settings, feature panels, storage paths, and rendered examples |
+| [Window gallery](ui-gallery.md) | Current GTK screenshots and capture instructions |
 | [Getting started](getting-started.md) | Linux and Windows builds, output paths, opening cartridges, disks, and VS images |
 | [Configuration](configuration.md) | Application options, device selection, startup phases, diagnostic reads, EPSM firmware, and valid combinations |
 | [CPU overclock](overclock.md) | Optional blank scanlines, sound compatibility, and state behavior |

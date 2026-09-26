@@ -1,8 +1,16 @@
 # Cartridge header editor
 
-Open **Tools > iNES / NES 2.0 Header Editor** and choose an uncompressed `.nes` file. A game does not need to be running. The editor keeps a private snapshot of the chosen file; editing or saving does not replace the active cartridge.
+Open **Tools > Storage > iNES / NES 2.0 Header Editor** and choose an uncompressed `.nes` file. A game does not need to be running. The editor keeps a private snapshot of the chosen file; editing or saving does not replace the active cartridge.
 
-Fields show decimal values. ROM and RAM sizes are bytes. The labels explain format, mirroring, console and timing codes. NES 2.0 also provides mapper/submapper, four RAM/NVRAM sizes, VS PPU and hardware codes, extended console subtype, miscellaneous ROM count, and the default input/expansion device code. Battery and trainer use 0 or 1. The iNES byte 8 field is preserved as metadata; Cupid uses the cartridge board's RAM defaults when loading iNES.
+ROM and mapper, RAM sizes, and Console and timing have separate tabs. Format,
+mirroring, console, and region use named choices. Battery-backed memory and
+trainer presence use checkboxes. Sizes and hardware codes use decimal fields;
+ROM and RAM sizes are bytes. NES 2.0 includes mapper/submapper, four RAM/NVRAM
+sizes, VS PPU and hardware codes, extended console subtype, miscellaneous ROM
+count, and the default input/expansion device code. The iNES byte 8 field is
+preserved as metadata; Cupid uses the cartridge board's RAM defaults when loading iNES.
+
+![Header editor](images/header-editor.png)
 
 Change fields, check the validation message, then select **Save edited copy (.nes)**. Choose a `.nes` filename different from the source and active media. **Revert draft** restores the selected file's original metadata. Selecting another file replaces the draft only after the file is read successfully.
 

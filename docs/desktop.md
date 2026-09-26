@@ -2,13 +2,19 @@
 
 [Documentation index](README.md)
 
+The [window gallery](ui-gallery.md) shows the settings pages and main tools.
+
+The screenshots below show native GTK windows with generated diagnostic data.
+Window decorations and colors depend on the host theme.
+
 Launch Cupid without an image to open the startup window. Use Open, press
 Ctrl+O, drop a game image, or select a recent entry. Recent entries retain the
 archive member, patch, firmware selection, and save identity needed to reopen
 that image. A failed replacement leaves the current machine available.
 
 The top menu bar contains File, Emulation, View, Audio, Media, Tools, and Help.
-A separate toolbar below it provides Open, Pause/Resume, Reset, and Settings.
+A compact icon toolbar below it provides Open, Pause/Resume, Frame advance,
+Reset, and Settings. Hover over a button to see its name.
 Commands are grouped into native submenus. Keyboard navigation, focus, text
 selection, and scrolling use GTK controls. The main status bar shows the region,
 execution state, and recent action message. Netplay supplies its connection
@@ -16,8 +22,11 @@ status while listening or connected.
 
 The startup screen, menus, settings, feature panels, palette editor, and text
 entry use GTK4. On Windows, the light/dark appearance follows the system
-preference. Split panes give data views and controls separate space; narrow
-windows scroll their contents instead of switching to a different layout.
+preference. Each tool has its own initial window size and named control groups.
+Split panes keep data and controls together in the debugger and memory tools.
+Short tasks use compact forms. Longer tools use tabs or scroll their controls.
+
+![Desktop](images/desktop-main.png)
 
 Settings, game information, the palette editor, and feature panels open in separate native windows.
 Use the operating system's window frame to close or resize them, or drag the title bar to move them beside the game or onto another display.
@@ -41,6 +50,8 @@ apply the previewed program to writable RAM.
 See [inline assembler](debugging.md#inline-assembler) for operand syntax and
 the rules for editing a running session.
 
+![Debugger](images/desktop-debugger-window.png)
+
 ## Game Genie utility
 
 Tools > Cheats > Game Genie converts between six- or eight-letter codes and
@@ -56,13 +67,26 @@ Add new cheat to activate it. Conversion itself does not change active cheats,
 and movie recording, playback, and netplay retain their normal restrictions on
 cheat changes.
 
+![Game Genie converter](images/desktop-game-genie.png)
+
 ## Settings
 
 Ctrl+Comma opens Settings. The eight categories cover General, Emulation,
 Video, Audio, Controllers and shortcuts, Media and firmware, Capture and states,
-and Hardware. Select a category in the left sidebar. Tab moves between
+and Hardware. Select a category in the left sidebar. Video has Display,
+Overscan, Filters, and NTSC picture tabs. Audio separates Output, Channel mixer,
+and Expansion mixer. Input separates Devices, Controller mapping, Keyboard
+shortcuts, and Controller shortcuts. General, Emulation, and Capture and states
+show their groups together. Tab moves between
 controls; arrow keys navigate choices. Checkboxes toggle options, dropdowns
 list available values, and text fields accept custom numbers and paths.
+
+Overscan uses a row for each region and a column for each edge. The audio mixers
+place volume and pan beside each channel. Controller mapping pairs keyboard and
+gamepad bindings on the same row. If Apply finds an invalid value on another
+tab, it opens that tab and focuses the field without applying the pending edits.
+
+![Video settings](images/desktop-category-2.png)
 Numeric fields accept values such as 1.25 for speed or 44100 for sample rate.
 Invalid entries remain available for correction with their allowed range shown.
 Ctrl+A selects all, Ctrl+C copies, and Ctrl+V pastes in text fields.

@@ -16,8 +16,33 @@ static struct {
     struct FrontendExecutionRuntime *execution;
     HeaderEditorMetadata draft;
     char fields[HEADER_FIELD_COUNT][32], status[256];
+    char path[4096];
     bool loaded;
 } panel;
+
+static const char *const formats[] = {"iNES", "NES 2.0"};
+static const char *const mirrors[] = {"Horizontal", "Vertical", "Four-screen"};
+static const char *const consoles[] = {"NES / Famicom", "VS System", "PlayChoice", "Extended console"};
+static const char *const timings[] = {"NTSC", "PAL", "Multi-region", "Dendy"};
+
+static size_t choices(unsigned field, const char *const **items) {
+    switch (field) {
+    case HEADER_FORMAT:
+        *items = formats;
+        return 2;
+    case HEADER_MIRROR:
+        *items = mirrors;
+        return 3;
+    case HEADER_CONSOLE:
+        *items = consoles;
+        return 4;
+    case HEADER_TIMING:
+        *items = timings;
+        return 4;
+    default:
+        return 0;
+    }
+}
 
 static void refresh(void) {
     for (unsigned i = 0; i < HEADER_FIELD_COUNT; ++i) {
@@ -37,7 +62,7 @@ static bool snapshot(void *context, FrontendPanelModel *model, char *error, size
     FrontendPanelControl open = {HEADER_EDITOR_OPEN,
                                  FRONTEND_PANEL_FILE_OPEN,
                                  "Choose cartridge image",
-                                 NULL,
+                                 panel.path,
                                  NULL,
                                  0,
                                  FRONTEND_OPEN_IMAGE,
@@ -56,6 +81,19 @@ static bool snapshot(void *context, FrontendPanelModel *model, char *error, size
                                         0,
                                         panel.loaded,
                                         false};
+        control.item_count = choices(i, &control.items);
+        if (control.item_count) {
+            control.type = FRONTEND_PANEL_CHOICE;
+            control.selected = (int)panel.draft.value[i] - (i == HEADER_FORMAT ? 1 : 0);
+            control.label = i == HEADER_FORMAT    ? "Format"
+                            : i == HEADER_MIRROR  ? "Mirroring"
+                            : i == HEADER_CONSOLE ? "Console"
+                                                  : "Region";
+        } else if (i == HEADER_BATTERY || i == HEADER_TRAINER) {
+            control.type = FRONTEND_PANEL_CHECKBOX;
+            control.selected = panel.draft.value[i] != 0;
+            control.label = i == HEADER_BATTERY ? "Battery-backed memory" : "Trainer present";
+        }
         if (!frontend_panel_add_control(model, &control)) {
             return false;
         }
@@ -77,12 +115,12 @@ static bool snapshot(void *context, FrontendPanelModel *model, char *error, size
 
 static bool action(void *context, unsigned id, const char *value, int selected, char *error, size_t size) {
     (void)context;
-    (void)selected;
     if (id == HEADER_EDITOR_OPEN) {
         if (!header_editor_open(panel.editor, value, error, size)) {
             return false;
         }
         panel.loaded = header_editor_metadata(panel.editor, &panel.draft);
+        snprintf(panel.path, sizeof(panel.path), "%s", value);
         refresh();
         return panel.loaded;
     }
@@ -93,6 +131,20 @@ static bool action(void *context, unsigned id, const char *value, int selected, 
     }
     if (id == HEADER_EDITOR_SAVE) {
         return header_editor_save_copy(panel.editor, &panel.draft, value, panel.execution, error, size);
+    }
+    if (panel.loaded && !value && id >= HEADER_EDITOR_FIELD_BASE &&
+        id < HEADER_EDITOR_FIELD_BASE + HEADER_FIELD_COUNT) {
+        unsigned field = id - HEADER_EDITOR_FIELD_BASE;
+        const char *const *items = NULL;
+        size_t count = choices(field, &items);
+        if (field == HEADER_BATTERY || field == HEADER_TRAINER) {
+            count = 2;
+        }
+        if (selected >= 0 && (size_t)selected < count) {
+            panel.draft.value[field] = (unsigned)selected + (field == HEADER_FORMAT ? 1 : 0);
+            refresh();
+            return true;
+        }
     }
     if (panel.loaded && id >= HEADER_EDITOR_FIELD_BASE && id < HEADER_EDITOR_FIELD_BASE + HEADER_FIELD_COUNT && value &&
         *value) {

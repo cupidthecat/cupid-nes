@@ -154,6 +154,18 @@ int run_header_editor_accuracy_tests(void) {
     FrontendPanelControl controls[32];
     FrontendPanelModel model = {controls, 32, 0, NULL};
     BOARD_CHECK(frontend_panel_snapshot(HEADER_EDITOR_PANEL, &model, error, sizeof(error)) && model.count == 23);
+    BOARD_CHECK(frontend_panel_action(HEADER_EDITOR_PANEL, HEADER_EDITOR_FIELD_BASE + HEADER_FORMAT, NULL, 1, error,
+                                      sizeof(error)));
+    BOARD_CHECK(frontend_panel_action(HEADER_EDITOR_PANEL, HEADER_EDITOR_FIELD_BASE + HEADER_MIRROR, NULL, 2, error,
+                                      sizeof(error)));
+    BOARD_CHECK(frontend_panel_action(HEADER_EDITOR_PANEL, HEADER_EDITOR_FIELD_BASE + HEADER_BATTERY, NULL, 1, error,
+                                      sizeof(error)));
+    BOARD_CHECK(!frontend_panel_action(HEADER_EDITOR_PANEL, HEADER_EDITOR_FIELD_BASE + HEADER_TIMING, NULL, 4, error,
+                                       sizeof(error)));
+    model.count = 0;
+    BOARD_CHECK(frontend_panel_snapshot(HEADER_EDITOR_PANEL, &model, error, sizeof(error)));
+    BOARD_CHECK(controls[1 + HEADER_FORMAT].type == FRONTEND_PANEL_CHOICE && controls[1 + HEADER_FORMAT].selected == 1);
+    BOARD_CHECK(controls[1 + HEADER_MIRROR].selected == 2 && controls[1 + HEADER_BATTERY].selected == 1);
     BOARD_CHECK(!frontend_panel_action(HEADER_EDITOR_PANEL, HEADER_EDITOR_FIELD_BASE + HEADER_PRG,
                                        "18446744073709551616", 0, error, sizeof(error)));
     header_editor_frontend_unregister();

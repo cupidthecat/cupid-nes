@@ -11,6 +11,7 @@
 #define GDK_VERSION_MAX_ALLOWED GDK_VERSION_4_8
 #endif
 #include "gtk_internal.h"
+#include "gtk_layout.h"
 #include "gtk_desktop.h"
 #include "frontend_commands.h"
 #include "output_guard.h"
@@ -822,6 +823,7 @@ GtkWidget *cupid_gtk_ppu_new(CupidGtkTool *tool) {
     v->root = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     cupid_gtk_margins(v->root, 10);
     GtkWidget *bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    gtk_widget_add_css_class(bar, "toolbar");
     gtk_box_append(GTK_BOX(v->root), bar);
     if (!v->runtime_palette) {
         v->pause = button(bar, "Pause", G_CALLBACK(command), v);
@@ -852,6 +854,15 @@ GtkWidget *cupid_gtk_ppu_new(CupidGtkTool *tool) {
     gtk_paned_set_resize_end_child(GTK_PANED(split), FALSE);
     gtk_paned_set_shrink_start_child(GTK_PANED(split), FALSE);
     gtk_paned_set_position(GTK_PANED(split), 550);
+    GtkWidget *sidebar = side;
+    const char *selection_title = v->runtime_palette || v->panel == DEBUG_PPU_PALETTE ? "Selected color"
+                                  : v->panel == DEBUG_PPU_SPRITES                     ? "Selected sprite"
+                                  : v->panel == DEBUG_PPU_NAMETABLES                  ? "Selected nametable tile"
+                                  : v->panel == DEBUG_PPU_VRAM                        ? "Memory address"
+                                                                                      : "Selected tile";
+    if (v->panel != DEBUG_PPU_REGISTERS || v->runtime_palette) {
+        side = cupid_gtk_group(sidebar, selection_title);
+    }
     v->canvas = gtk_drawing_area_new();
     gtk_widget_set_size_request(v->canvas, 256, 240);
     gtk_widget_set_hexpand(v->canvas, TRUE);
@@ -938,6 +949,7 @@ GtkWidget *cupid_gtk_ppu_new(CupidGtkTool *tool) {
         button(side, "Open tile editor", G_CALLBACK(open_tile), v);
     }
     v->undo = button(side, "Undo last edit", G_CALLBACK(undo), v);
+    side = cupid_gtk_group(sidebar, v->panel == DEBUG_PPU_REGISTERS ? "PPU registers" : "Selection details");
     v->detail = cupid_gtk_label("");
     gtk_label_set_wrap(GTK_LABEL(v->detail), TRUE);
     gtk_label_set_selectable(GTK_LABEL(v->detail), TRUE);
@@ -945,6 +957,11 @@ GtkWidget *cupid_gtk_ppu_new(CupidGtkTool *tool) {
     gtk_box_append(GTK_BOX(side), v->detail);
     if (!v->runtime_palette && v->panel == DEBUG_PPU_REGISTERS) {
         gtk_widget_set_visible(v->canvas, FALSE);
+        gtk_widget_set_visible(v->undo, FALSE);
+        gtk_paned_set_position(GTK_PANED(split), 0);
+        gtk_paned_set_resize_end_child(GTK_PANED(split), TRUE);
+        gtk_label_set_max_width_chars(GTK_LABEL(v->detail), 90);
+        gtk_widget_add_css_class(v->detail, "monospace");
     }
     v->footer = cupid_gtk_label("");
     gtk_box_append(GTK_BOX(v->root), v->footer);

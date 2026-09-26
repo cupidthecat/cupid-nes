@@ -5,6 +5,7 @@
  */
 #include "gtk_desktop.h"
 #include "gtk_internal.h"
+#include "gtk_layout.h"
 #include "gtk_assembler.h"
 #include "gtk_keyboard.h"
 #include "desktop_keyboard.h"
@@ -31,7 +32,7 @@ void cupid_gtk_margins(GtkWidget *w, int n) {
 GtkWidget *cupid_gtk_label(const char *text) {
     GtkWidget *w = gtk_label_new(text ? text : "");
     gtk_label_set_xalign(GTK_LABEL(w), 0);
-    gtk_label_set_selectable(GTK_LABEL(w), TRUE);
+    gtk_label_set_selectable(GTK_LABEL(w), FALSE);
     return w;
 }
 
@@ -380,8 +381,14 @@ static GMenu *menu_level(CupidGtkDesktop *d, int depth, unsigned *serial) {
     DesktopMenuItem rows[128];
     int count = desktop_menu_level(d->ui, depth, rows);
     GMenu *menu = g_menu_new();
+    GMenu *section = g_menu_new();
     for (int i = 0; i < count; i++) {
         if (rows[i].kind == 7 && depth < 4) {
+            if (g_menu_model_get_n_items(G_MENU_MODEL(section))) {
+                g_menu_append_section(menu, NULL, G_MENU_MODEL(section));
+                g_object_unref(section);
+                section = g_menu_new();
+            }
             d->ui->menu_path[depth] = rows[i].id;
             GMenu *sub = menu_level(d, depth + 1, serial);
             g_menu_append_submenu(menu, rows[i].label, G_MENU_MODEL(sub));
@@ -409,8 +416,36 @@ static GMenu *menu_level(CupidGtkDesktop *d, int depth, unsigned *serial) {
         if (checkable && !strncmp(label, "[x] ", 4)) {
             label += 4;
         }
-        g_menu_append(menu, label, full);
+        GMenuItem *item = g_menu_item_new(label, full);
+        if (rows[i].shortcut[0]) {
+            gchar **parts = g_strsplit(rows[i].shortcut, "+", -1);
+            GString *accel = g_string_new("");
+            for (unsigned k = 0; parts[k]; ++k) {
+                if (!g_ascii_strcasecmp(parts[k], "Ctrl")) {
+                    g_string_append(accel, "<Control>");
+                } else if (!g_ascii_strcasecmp(parts[k], "Alt")) {
+                    g_string_append(accel, "<Alt>");
+                } else if (!g_ascii_strcasecmp(parts[k], "Shift")) {
+                    g_string_append(accel, "<Shift>");
+                } else {
+                    g_string_append(accel, parts[k]);
+                }
+            }
+            guint key = 0;
+            GdkModifierType mods = 0;
+            if (gtk_accelerator_parse(accel->str, &key, &mods) && key) {
+                g_menu_item_set_attribute(item, "accel", "s", accel->str);
+            }
+            g_string_free(accel, TRUE);
+            g_strfreev(parts);
+        }
+        g_menu_append_item(section, item);
+        g_object_unref(item);
     }
+    if (g_menu_model_get_n_items(G_MENU_MODEL(section))) {
+        g_menu_append_section(menu, NULL, G_MENU_MODEL(section));
+    }
+    g_object_unref(section);
     return menu;
 }
 
@@ -601,6 +636,7 @@ bool cupid_gtk_init(FrontendDesktopUi *ui) {
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
     ui->gtk = d;
     d->window = gtk_window_new();
+    gtk_widget_add_css_class(d->window, "cupid-desktop");
     gtk_window_set_title(GTK_WINDOW(d->window), "Cupid NES");
     gtk_window_set_default_size(GTK_WINDOW(d->window), (int)ui->settings->window_width,
                                 (int)ui->settings->window_height);
@@ -611,13 +647,18 @@ bool cupid_gtk_init(FrontendDesktopUi *ui) {
     g_object_unref(empty);
     gtk_box_append(GTK_BOX(box), d->menubar);
     GtkWidget *bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    gtk_widget_add_css_class(bar, "toolbar");
     cupid_gtk_margins(bar, 6);
     gtk_box_append(GTK_BOX(box), bar);
     const char *labels[] = {"Open game", "Pause / Resume", "Frame advance", "Reset", "Settings"};
+    const char *icons[] = {"document-open-symbolic", "media-playback-pause-symbolic", "media-skip-forward-symbolic",
+                           "view-refresh-symbolic", "preferences-system-symbolic"};
     unsigned ids[] = {FRONTEND_COMMAND_OPEN, FRONTEND_COMMAND_PAUSE, FRONTEND_COMMAND_FRAME_ADVANCE,
                       FRONTEND_COMMAND_SOFT_RESET, FRONTEND_COMMAND_SETTINGS};
     for (unsigned i = 0; i < G_N_ELEMENTS(ids); i++) {
-        GtkWidget *b = gtk_button_new_with_label(labels[i]);
+        GtkWidget *b = gtk_button_new_from_icon_name(icons[i]);
+        gtk_widget_set_tooltip_text(b, labels[i]);
+        gtk_accessible_update_property(GTK_ACCESSIBLE(b), GTK_ACCESSIBLE_PROPERTY_LABEL, labels[i], -1);
         g_object_set_data(G_OBJECT(b), "command", GUINT_TO_POINTER(ids[i]));
         g_signal_connect(b, "clicked", G_CALLBACK(toolbar_action), d);
         gtk_box_append(GTK_BOX(bar), b);
@@ -634,6 +675,7 @@ bool cupid_gtk_init(FrontendDesktopUi *ui) {
     d->empty = gtk_label_new("Cupid NES\n\nOpen a game or drop a ROM here");
     gtk_overlay_add_overlay(GTK_OVERLAY(overlay), d->empty);
     d->status = cupid_gtk_label("Ready");
+    gtk_widget_add_css_class(d->status, "tool-status");
     cupid_gtk_margins(d->status, 6);
     gtk_box_append(GTK_BOX(box), d->status);
     GtkEventController *keys = gtk_event_controller_key_new();
@@ -656,7 +698,17 @@ bool cupid_gtk_init(FrontendDesktopUi *ui) {
     GtkCssProvider *css = gtk_css_provider_new();
     gtk_css_provider_load_from_data(
         css,
-        ".game-view { background: #08090b; } .monospace { font-family: monospace; } .tool-status { padding: 6px; }",
+        ".game-view { background: #08090b; } .monospace { font-family: monospace; }"
+        ".cupid-desktop { font-size: 12px; }"
+        ".cupid-desktop button { min-height: 22px; padding: 3px 8px; border-radius: 3px; }"
+        ".cupid-desktop entry { min-height: 24px; padding: 2px 6px; border-radius: 2px; }"
+        ".cupid-desktop dropdown button { min-height: 24px; }"
+        ".cupid-desktop notebook > header tab { min-height: 24px; padding: 3px 9px; }"
+        ".cupid-desktop frame { border-radius: 2px; }"
+        ".cupid-desktop frame > label { margin: 2px 8px; font-weight: bold; }"
+        ".cupid-desktop flowboxchild { padding: 0; }"
+        ".cupid-desktop .toolbar button { padding: 4px 7px; }"
+        ".tool-status { padding: 4px 8px; border-top: 1px solid alpha(currentColor, 0.18); }",
         -1);
     gtk_style_context_add_provider_for_display(gtk_widget_get_display(d->window), GTK_STYLE_PROVIDER(css),
                                                GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
@@ -755,8 +807,16 @@ FrontendDesktopUi *cupid_gtk_open(FrontendDesktopUi *ui, int kind, unsigned id) 
         title = info.title;
     }
     t->window = gtk_window_new();
+    gtk_widget_add_css_class(t->window, "cupid-desktop");
     gtk_window_set_title(GTK_WINDOW(t->window), title);
-    gtk_window_set_default_size(GTK_WINDOW(t->window), kind == 0 ? 920 : 1150, 760);
+    CupidGtkLayout layout = cupid_gtk_layout(id);
+    gtk_window_set_default_size(GTK_WINDOW(t->window), kind == 0 ? 880 : layout.width, kind == 0 ? 620 : layout.height);
+    if (kind == 2) {
+        gtk_window_set_default_size(GTK_WINDOW(t->window), id ? 760 : 540, id ? 480 : 300);
+    }
+    if (kind == 3) {
+        gtk_window_set_default_size(GTK_WINDOW(t->window), 760, 510);
+    }
     gtk_window_set_transient_for(GTK_WINDOW(t->window), GTK_WINDOW(d->window));
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
     gtk_window_set_child(GTK_WINDOW(t->window), box);
@@ -790,7 +850,14 @@ FrontendDesktopUi *cupid_gtk_open(FrontendDesktopUi *ui, int kind, unsigned id) 
             desktop_window_context(ui, &game, &region, &state);
             g_string_append_printf(text, "%s\n%s | %s", game ? game : "No game loaded", region, state);
         }
-        t->content = cupid_gtk_scroll(cupid_gtk_label(text->str));
+        GtkWidget *view = gtk_text_view_new();
+        gtk_text_view_set_editable(GTK_TEXT_VIEW(view), FALSE);
+        gtk_text_view_set_monospace(GTK_TEXT_VIEW(view), id != 0);
+        gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(view), GTK_WRAP_WORD_CHAR);
+        gtk_text_view_set_left_margin(GTK_TEXT_VIEW(view), 14);
+        gtk_text_view_set_top_margin(GTK_TEXT_VIEW(view), 14);
+        gtk_text_buffer_set_text(gtk_text_view_get_buffer(GTK_TEXT_VIEW(view)), text->str, -1);
+        t->content = cupid_gtk_scroll(view);
         g_string_free(text, TRUE);
     }
     gtk_widget_set_vexpand(t->content, TRUE);

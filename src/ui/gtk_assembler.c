@@ -283,9 +283,6 @@ GtkWidget *cupid_gtk_assembler_new(unsigned panel_id) {
     gtk_widget_set_tooltip_text(ui->address, "Start address or debugger expression, for example $0600");
     gtk_box_append(GTK_BOX(bar), ui->address);
     action_button(ui, bar, "Use PC", ASSEMBLER_PC);
-    ui->preview = action_button(ui, bar, "Preview", ASSEMBLER_PREVIEW);
-    ui->apply = action_button(ui, bar, "Apply", ASSEMBLER_APPLY);
-    gtk_widget_add_css_class(ui->apply, "suggested-action");
     GtkWidget *edit_bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
     gtk_box_append(GTK_BOX(ui->root), edit_bar);
     ui->undo = gtk_button_new_with_label("Undo");
@@ -304,6 +301,12 @@ GtkWidget *cupid_gtk_assembler_new(unsigned panel_id) {
     gtk_widget_set_vexpand(split, TRUE);
     gtk_widget_set_size_request(split, -1, 280);
     gtk_box_append(GTK_BOX(ui->root), split);
+    GtkWidget *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    gtk_widget_set_halign(actions, GTK_ALIGN_END);
+    gtk_box_append(GTK_BOX(ui->root), actions);
+    ui->preview = action_button(ui, actions, "Assemble / preview", ASSEMBLER_PREVIEW);
+    ui->apply = action_button(ui, actions, "Apply to memory", ASSEMBLER_APPLY);
+    gtk_widget_add_css_class(ui->apply, "suggested-action");
     ui->backing = gtk_label_new("");
     ui->status = gtk_label_new("");
     GtkWidget *labels[] = {ui->backing, ui->status};

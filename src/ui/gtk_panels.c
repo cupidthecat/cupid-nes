@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "gtk_internal.h"
+#include "gtk_layout.h"
+#include "header_editor_frontend.h"
 #include "debug_frontend.h"
 #include "game_genie_frontend.h"
 #include "../cheats/cheats.h"
@@ -19,7 +21,7 @@ typedef struct {
     Panel *panel;
     unsigned id;
     FrontendPanelControlType type;
-    GtkWidget *widget, *label;
+    GtkWidget *widget, *label, *row;
     GtkNativeDialog *dialog;
     GtkWidget *cells[8];
     unsigned cell_count;
@@ -30,7 +32,7 @@ typedef struct {
 
 struct Panel {
     CupidGtkTool *tool;
-    GtkWidget *root, *data, *fields, *debug;
+    GtkWidget *root, *data, *fields, *debug, *hex;
     Control controls[256];
     size_t count;
     bool updating, positioned;
@@ -166,12 +168,6 @@ static void cleanup(gpointer data) {
     g_free(p);
 }
 
-static GtkWidget *frame(const char *title, GtkWidget *child) {
-    GtkWidget *w = gtk_frame_new(title);
-    gtk_frame_set_child(GTK_FRAME(w), child);
-    return w;
-}
-
 static void first_map(GtkWidget *widget, gpointer data) {
     Panel *p = data;
     if (!p->positioned && gtk_widget_get_width(widget) > 0) {
@@ -214,9 +210,15 @@ static GtkWidget *control_new(Panel *p, const FrontendPanelControl *m) {
     *c = (Control){.panel = p, .id = m->id, .type = m->type, .readonly = m->read_only, .file_type = m->selected};
     c->explicit_commit = p->tool->id == DEBUGGER_FRONTEND_PANEL && m->id == DEBUG_CONTROL_REGISTER;
     c->explicit_commit |= p->tool->id == CHEATS_GAME_GENIE_PANEL && m->type == FRONTEND_PANEL_TEXT && !m->read_only;
-    GtkWidget *row = gtk_box_new(GTK_ORIENTATION_VERTICAL, 3);
+    bool field = m->type == FRONTEND_PANEL_CHOICE || (m->type == FRONTEND_PANEL_TEXT && !m->read_only);
+    GtkWidget *row = gtk_box_new(field ? GTK_ORIENTATION_HORIZONTAL : GTK_ORIENTATION_VERTICAL, 6);
+    c->row = row;
     c->label = cupid_gtk_label(m->label);
     gtk_label_set_wrap(GTK_LABEL(c->label), TRUE);
+    gtk_label_set_max_width_chars(GTK_LABEL(c->label), field ? 24 : 48);
+    if (field) {
+        gtk_widget_set_size_request(c->label, 140, -1);
+    }
     switch (m->type) {
     case FRONTEND_PANEL_ACTION:
         c->widget = gtk_button_new_with_label(m->label);
@@ -241,6 +243,7 @@ static GtkWidget *control_new(Panel *p, const FrontendPanelControl *m) {
         break;
     case FRONTEND_PANEL_CHOICE:
         c->widget = gtk_drop_down_new(NULL, NULL);
+        gtk_drop_down_set_enable_search(GTK_DROP_DOWN(c->widget), TRUE);
         g_signal_connect(c->widget, "notify::selected", G_CALLBACK(choice_changed), c);
         break;
     case FRONTEND_PANEL_LIST:
@@ -253,6 +256,8 @@ static GtkWidget *control_new(Panel *p, const FrontendPanelControl *m) {
     case FRONTEND_PANEL_FILE_SAVE:
     case FRONTEND_PANEL_DIRECTORY:
         c->widget = gtk_button_new_with_label(m->value && *m->value ? m->value : "Browse...");
+        gtk_label_set_ellipsize(GTK_LABEL(gtk_button_get_child(GTK_BUTTON(c->widget))), PANGO_ELLIPSIZE_MIDDLE);
+        gtk_label_set_max_width_chars(GTK_LABEL(gtk_button_get_child(GTK_BUTTON(c->widget))), 48);
         g_signal_connect(c->widget, "clicked", G_CALLBACK(browse), c);
         break;
     default:
@@ -263,7 +268,10 @@ static GtkWidget *control_new(Panel *p, const FrontendPanelControl *m) {
             gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(c->widget), GTK_WRAP_NONE);
         } else if (m->read_only) {
             c->widget = cupid_gtk_label(m->value);
+            gtk_label_set_selectable(GTK_LABEL(c->widget), TRUE);
+            gtk_widget_set_focusable(c->widget, FALSE);
             gtk_label_set_wrap(GTK_LABEL(c->widget), TRUE);
+            gtk_label_set_max_width_chars(GTK_LABEL(c->widget), 48);
             gtk_widget_add_css_class(c->widget, "monospace");
         } else {
             c->widget = gtk_entry_new();
@@ -277,6 +285,8 @@ static GtkWidget *control_new(Panel *p, const FrontendPanelControl *m) {
         break;
     }
     bool data_view = m->type == FRONTEND_PANEL_LIST || GTK_IS_TEXT_VIEW(c->widget);
+    gtk_accessible_update_property(GTK_ACCESSIBLE(c->widget), GTK_ACCESSIBLE_PROPERTY_LABEL, m->label, -1);
+    gtk_widget_set_hexpand(c->widget, TRUE);
     if (m->type != FRONTEND_PANEL_ACTION && m->type != FRONTEND_PANEL_CHECKBOX) {
         gtk_box_append(GTK_BOX(row), c->label);
     } else {
@@ -299,52 +309,146 @@ static GtkWidget *control_new(Panel *p, const FrontendPanelControl *m) {
 GtkWidget *cupid_gtk_panel_new(CupidGtkTool *tool) {
     Panel *p = g_new0(Panel, 1);
     p->tool = tool;
-    p->root = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
-    gtk_paned_set_position(GTK_PANED(p->root), 830);
-    g_signal_connect(p->root, "map", G_CALLBACK(first_map), p);
+    CupidGtkLayout layout = cupid_gtk_layout(tool->id);
+    p->root = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    cupid_gtk_margins(p->root, 8);
     GtkEventController *keys = gtk_event_controller_key_new();
     gtk_event_controller_set_propagation_phase(keys, GTK_PHASE_CAPTURE);
     g_signal_connect(keys, "key-pressed", G_CALLBACK(panel_key), p);
     gtk_widget_add_controller(p->root, keys);
-    p->data = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
-    p->fields = gtk_box_new(GTK_ORIENTATION_VERTICAL, 9);
-    cupid_gtk_margins(p->data, 8);
-    cupid_gtk_margins(p->fields, 10);
-    gtk_widget_set_size_request(p->fields, 280, -1);
+    p->data = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+    p->fields = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    GtkWidget *footer = tool->id == HEADER_EDITOR_PANEL ? gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8) : NULL;
+    GtkWidget *table_header = NULL;
+    if (memory_tools_panel(tool->id) || tool->id == WATCH_FRONTEND_PANEL) {
+        table_header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
+        gtk_box_append(GTK_BOX(p->data), table_header);
+    }
+    GtkWidget *groups[16] = {0}, *actions[16] = {0};
+    const char *titles[16] = {0};
+    unsigned group_count = 0, data_count = 0;
     FrontendPanelControl controls[256];
     FrontendPanelModel model = {.controls = controls, .capacity = 256};
+    if (tool->id == DEBUGGER_FRONTEND_PANEL) {
+        p->debug = cupid_gtk_debug_new(tool);
+        gtk_box_append(GTK_BOX(p->data), p->debug);
+        ++data_count;
+    }
     if (frontend_panel_snapshot(tool->id, &model, NULL, 0)) {
         for (size_t i = 0; i < model.count; i++) {
             FrontendPanelControl *c = &controls[i];
             if (tool->id == HEX_FRONTEND_PANEL && c->id >= HEX_ROW) {
                 continue;
             }
+            if (tool->id == DEBUGGER_FRONTEND_PANEL && c->id >= DEBUG_CONTROL_TOGGLE &&
+                c->id <= DEBUG_CONTROL_STEP_OUT) {
+                continue;
+            }
             GtkWidget *row = control_new(p, c);
+            if (footer && c->id < HEADER_EDITOR_FIELD_BASE) {
+                gtk_widget_set_valign(row, GTK_ALIGN_END);
+                gtk_box_append(GTK_BOX(c->id == HEADER_EDITOR_OPEN ? p->root : footer), row);
+                continue;
+            }
+            bool sort = (memory_tools_panel(tool->id) && c->id >= MEMORY_SEARCH_SORT) ||
+                        (tool->id == WATCH_FRONTEND_PANEL && c->id >= WATCH_SORT);
+            if (sort && table_header) {
+                gtk_box_append(GTK_BOX(table_header), row);
+                continue;
+            }
             bool data_view = (c->type == FRONTEND_PANEL_ACTION && c->item_count) || c->type == FRONTEND_PANEL_LIST ||
-                             (c->type == FRONTEND_PANEL_TEXT && c->read_only);
+                             (c->type == FRONTEND_PANEL_TEXT && c->read_only && c->value && strchr(c->value, '\n'));
             if (memory_tools_panel(tool->id) && c->id >= MEMORY_SEARCH_ROW &&
                 c->id < MEMORY_SEARCH_ROW + MEMORY_SEARCH_PAGE_SIZE) {
                 data_view = true;
             }
-            gtk_box_append(GTK_BOX(data_view ? p->data : p->fields), row);
+            /* Breakpoint lists belong beside the disassembly, with their editor. */
+            if (tool->id == DEBUGGER_FRONTEND_PANEL && c->id != DEBUG_CONTROL_TRACE) {
+                data_view = false;
+            }
+            if (data_view) {
+                gtk_box_append(GTK_BOX(p->data), row);
+                ++data_count;
+                continue;
+            }
+            const char *title = cupid_gtk_control_group(tool->id, c->id);
+            unsigned group = 0;
+            while (group < group_count && strcmp(titles[group], title)) {
+                ++group;
+            }
+            if (group == group_count) {
+                if (group_count == G_N_ELEMENTS(groups)) {
+                    group = group_count - 1;
+                } else {
+                    titles[group] = title;
+                    groups[group] = cupid_gtk_group(p->fields, title);
+                    ++group_count;
+                }
+            }
+            if (c->type == FRONTEND_PANEL_ACTION) {
+                if (!actions[group]) {
+                    actions[group] = gtk_flow_box_new();
+                    gtk_flow_box_set_selection_mode(GTK_FLOW_BOX(actions[group]), GTK_SELECTION_NONE);
+                    gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(actions[group]), layout.vertical ? 3 : 2);
+                    gtk_flow_box_set_min_children_per_line(GTK_FLOW_BOX(actions[group]), 1);
+                    gtk_flow_box_set_row_spacing(GTK_FLOW_BOX(actions[group]), 4);
+                    gtk_flow_box_set_column_spacing(GTK_FLOW_BOX(actions[group]), 4);
+                    gtk_box_append(GTK_BOX(groups[group]), actions[group]);
+                }
+                gtk_flow_box_insert(GTK_FLOW_BOX(actions[group]), row, -1);
+            } else {
+                gtk_box_append(GTK_BOX(groups[group]), row);
+            }
         }
     }
-    GtkWidget *fields = cupid_gtk_scroll(p->fields);
-    if (tool->id == DEBUGGER_FRONTEND_PANEL) {
-        p->debug = cupid_gtk_debug_new(tool);
-        gtk_box_append(GTK_BOX(p->data), p->debug);
+    /* Actions finish each group even when the model interleaves fields and commands. */
+    for (unsigned i = 0; i < group_count; ++i) {
+        if (actions[i]) {
+            gtk_box_reorder_child_after(GTK_BOX(groups[i]), actions[i],
+                                        gtk_widget_get_last_child(groups[i]) == actions[i]
+                                            ? gtk_widget_get_prev_sibling(actions[i])
+                                            : gtk_widget_get_last_child(groups[i]));
+        }
+    }
+    if (tool->id == 0x2b00 || tool->id == 0x1800 || tool->id == 0x2501 || tool->id == HEX_FRONTEND_PANEL) {
+        GtkWidget *tabs = gtk_notebook_new();
+        gtk_notebook_set_scrollable(GTK_NOTEBOOK(tabs), TRUE);
+        for (unsigned i = 0; i < group_count; ++i) {
+            GtkWidget *frame = gtk_widget_get_parent(groups[i]);
+            g_object_ref(frame);
+            gtk_box_remove(GTK_BOX(p->fields), frame);
+            gtk_notebook_append_page(GTK_NOTEBOOK(tabs), cupid_gtk_scroll(frame), gtk_label_new(titles[i]));
+            g_object_unref(frame);
+        }
+        gtk_widget_set_vexpand(tabs, TRUE);
+        gtk_box_append(GTK_BOX(p->fields), tabs);
     }
     if (tool->id == HEX_FRONTEND_PANEL) {
-        GtkWidget *hex = cupid_gtk_hex_new(tool, p->data);
-        gtk_paned_set_start_child(GTK_PANED(p->root), hex);
-    } else {
-        gtk_paned_set_start_child(GTK_PANED(p->root), cupid_gtk_scroll(p->data));
+        p->hex = cupid_gtk_hex_new(tool, p->data);
+        ++data_count;
     }
-    gtk_paned_set_end_child(GTK_PANED(p->root), frame("Controls", fields));
-    gtk_paned_set_resize_start_child(GTK_PANED(p->root), TRUE);
-    gtk_paned_set_resize_end_child(GTK_PANED(p->root), FALSE);
-    gtk_paned_set_shrink_start_child(GTK_PANED(p->root), FALSE);
-    gtk_paned_set_shrink_end_child(GTK_PANED(p->root), FALSE);
+    if (data_count) {
+        GtkWidget *split = gtk_paned_new(layout.vertical ? GTK_ORIENTATION_VERTICAL : GTK_ORIENTATION_HORIZONTAL);
+        gtk_widget_set_vexpand(split, TRUE);
+        gtk_paned_set_start_child(GTK_PANED(split), p->hex ? p->hex : cupid_gtk_scroll(p->data));
+        gtk_paned_set_end_child(GTK_PANED(split), cupid_gtk_scroll(p->fields));
+        gtk_paned_set_resize_start_child(GTK_PANED(split), TRUE);
+        gtk_paned_set_resize_end_child(GTK_PANED(split), FALSE);
+        gtk_paned_set_shrink_start_child(GTK_PANED(split), FALSE);
+        gtk_paned_set_position(GTK_PANED(split), layout.vertical ? layout.height / 2 : layout.width - 360);
+        if (!layout.vertical) {
+            gtk_widget_set_size_request(p->fields, 320, -1);
+            g_signal_connect(split, "map", G_CALLBACK(first_map), p);
+        }
+        gtk_box_append(GTK_BOX(p->root), split);
+    } else {
+        g_object_ref_sink(p->data);
+        g_object_unref(p->data);
+        gtk_box_append(GTK_BOX(p->root), cupid_gtk_scroll(p->fields));
+    }
+    if (footer) {
+        gtk_box_append(GTK_BOX(p->root), footer);
+    }
     g_object_set_data_full(G_OBJECT(p->root), "panel", p, cleanup);
     cupid_gtk_panel_refresh(p->root);
     return p->root;
@@ -384,6 +488,13 @@ void cupid_gtk_panel_refresh(GtkWidget *root) {
             continue;
         }
         gtk_widget_set_sensitive(c->widget, m->enabled);
+        bool result_row =
+            (memory_tools_panel(p->tool->id) && c->id >= MEMORY_SEARCH_ROW &&
+             c->id < MEMORY_SEARCH_ROW + MEMORY_SEARCH_PAGE_SIZE) ||
+            (p->tool->id == WATCH_FRONTEND_PANEL && c->id >= WATCH_ROW && c->id < WATCH_ROW + WATCH_PAGE_SIZE);
+        if (result_row) {
+            gtk_widget_set_visible(c->row, m->label && *m->label);
+        }
         c->readonly = m->read_only;
         if (c->type == FRONTEND_PANEL_CHECKBOX) {
             gtk_check_button_set_active(GTK_CHECK_BUTTON(c->widget), m->selected != 0);
@@ -462,6 +573,6 @@ void cupid_gtk_panel_refresh(GtkWidget *root) {
         cupid_gtk_debug_refresh(p->debug);
     }
     if (p->tool->id == HEX_FRONTEND_PANEL) {
-        cupid_gtk_hex_refresh(gtk_paned_get_start_child(GTK_PANED(root)));
+        cupid_gtk_hex_refresh(p->hex);
     }
 }

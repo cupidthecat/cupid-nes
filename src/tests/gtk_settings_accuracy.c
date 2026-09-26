@@ -7,6 +7,7 @@
 /* Compile this translation unit alone with GTK4 and SDL2. The native controls and
  * typed model are real; desktop I/O and renderer-dependent adapters are isolated. */
 #include "../ui/gtk_settings.c"
+#include "../ui/gtk_layout.c"
 #include "../ui/desktop_settings_model.c"
 #include <assert.h>
 
@@ -196,6 +197,10 @@ int main(void) {
     gtk_drop_down_set_selected(GTK_DROP_DOWN(s->rows[25].widget), 3);
     assert(tool->ui.staged.ntsc_picture.hue == 20 &&
            gtk_drop_down_get_selected(GTK_DROP_DOWN(s->rows[25].widget)) == 2);
+    assert(!strcmp(gtk_editable_get_text(GTK_EDITABLE(hue)), "bad"));
+    gtk_notebook_set_current_page(GTK_NOTEBOOK(s->tabs), 0);
+    assert(!commit(s));
+    assert(gtk_notebook_get_current_page(GTK_NOTEBOOK(s->tabs)) == 3);
     assert(!strcmp(gtk_editable_get_text(GTK_EDITABLE(hue)), "bad"));
     cupid_gtk_settings_reset(root);
     gtk_list_box_select_row(GTK_LIST_BOX(s->categories), gtk_list_box_get_row_at_index(GTK_LIST_BOX(s->categories), 5));

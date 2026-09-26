@@ -12,6 +12,24 @@
 #include "../ui/debug_tools_frontend.h"
 #include "../ui/memory_search_frontend.h"
 #include "../ui/watch_frontend.h"
+#include "../ui/header_editor_frontend.h"
+#include "../ui/overclock_frontend.h"
+#include "../ui/presentation_tools.h"
+#include "../ui/capture_runtime.h"
+#include "../ui/state_runtime.h"
+#include "../ui/game_config.h"
+#include "../ui/update_checker.h"
+#include "../ui/cli_help.h"
+#include "../ui/device_frontend.h"
+#include "../ui/history_frontend.h"
+#include "../ui/timing_frontend.h"
+#include "../ui/lifecycle_frontend.h"
+#include "../ui/storage_frontend.h"
+#include "../ui/nsf_player_runtime.h"
+#include "../ui/hd_pack_frontend.h"
+#include "../ui/gtk_layout.h"
+#include "../ui/game_genie_frontend.h"
+#include "../cheats/cheats.h"
 #include "../ui/hex_frontend.h"
 #include "../ui/tas_frontend.h"
 #include "../ui/desktop_tas_internal.h"
@@ -60,6 +78,18 @@ static bool capture(GtkWidget *widget, const char *path) {
     return ok;
 }
 
+static bool capture_ready(FrontendDesktopUi *ui, GtkWidget *widget, const char *path) {
+    for (unsigned attempt = 0; attempt < 10; ++attempt) {
+        gtk_widget_queue_draw(widget);
+        pump(ui);
+        if (gtk_widget_get_mapped(widget) && capture(widget, path)) {
+            return true;
+        }
+    }
+    fprintf(stderr, "Window capture failed: %s\n", path);
+    return false;
+}
+
 #define CHECK(expression)                                                                                              \
     do {                                                                                                               \
         if (!(expression)) {                                                                                           \
@@ -105,7 +135,9 @@ static GtkWidget *find_register_entry(GtkWidget *root) {
 
 static gboolean cancel_file_dialog(gpointer data) {
     GtkNativeDialog *dialog = g_object_get_data(G_OBJECT(data), "cupid-file-dialog");
-    if (dialog) g_signal_emit_by_name(dialog, "response", GTK_RESPONSE_CANCEL);
+    if (dialog) {
+        g_signal_emit_by_name(dialog, "response", GTK_RESPONSE_CANCEL);
+    }
     return G_SOURCE_REMOVE;
 }
 
@@ -114,7 +146,9 @@ static bool file_dialog_interactions(FrontendDesktopUi *ui) {
     cupid_gtk_files_install(GTK_WINDOW(ui->gtk->window));
     guint source = g_idle_add(cancel_file_dialog, ui->gtk->window);
     bool accepted = frontend_open_file_dialog(FRONTEND_OPEN_IMAGE, path, sizeof(path), error, sizeof(error));
-    if (g_main_context_find_source_by_id(NULL, source)) g_source_remove(source);
+    if (g_main_context_find_source_by_id(NULL, source)) {
+        g_source_remove(source);
+    }
     CHECK(!accepted && !error[0] && !strcmp(path, "unchanged"));
     CHECK(!g_object_get_data(G_OBJECT(ui->gtk->window), "cupid-file-dialog"));
     return true;
@@ -381,6 +415,19 @@ static bool capture_tool(FrontendDesktopUi *ui, CupidGtkTool *tool, unsigned pan
     gtk_widget_set_visible(tool->window, TRUE);
     gtk_window_present(GTK_WINDOW(tool->window));
     pump(ui);
+    char default_path[4096];
+    g_snprintf(default_path, sizeof(default_path), "%s/panel-%04x-default.png", out, panel);
+    CHECK(capture_ready(ui, tool->window, default_path));
+    GtkWidget *tabs = find_widget(tool->content, GTK_TYPE_NOTEBOOK);
+    if (tabs && panel != TAS_PANEL) {
+        int selected = gtk_notebook_get_current_page(GTK_NOTEBOOK(tabs));
+        for (int page = 0; page < gtk_notebook_get_n_pages(GTK_NOTEBOOK(tabs)); ++page) {
+            gtk_notebook_set_current_page(GTK_NOTEBOOK(tabs), page);
+            g_snprintf(default_path, sizeof(default_path), "%s/panel-%04x-tab-%d.png", out, panel, page);
+            CHECK(capture_ready(ui, tool->window, default_path));
+        }
+        gtk_notebook_set_current_page(GTK_NOTEBOOK(tabs), selected);
+    }
     for (unsigned size = 0; size < 2; ++size) {
         gtk_window_set_default_size(GTK_WINDOW(tool->window), size ? 760 : 1280, size ? 540 : 850);
         pump(ui);
@@ -412,6 +459,11 @@ int main(int argc, char **argv) {
     rom[5] = 1;
     rom[16 + 0x7ffc] = 0;
     rom[16 + 0x7ffd] = 0x80;
+    char cartridge_path[4096];
+    g_snprintf(cartridge_path, sizeof(cartridge_path), "%s/ui-cartridge.nes", out);
+    if (!g_file_set_contents(cartridge_path, (const char *)rom, 16 + 32768 + 8192, NULL)) {
+        return 1;
+    }
     memset(rom + 16, 0xea, 32768);
     rom[16 + 0x7ffc] = 0;
     rom[16 + 0x7ffd] = 0x80;
@@ -455,6 +507,32 @@ int main(int argc, char **argv) {
     DebugFrontend *debug = debug_frontend_create(&execution);
     CheatFrontend *cheats = cheat_frontend_create(out);
     MemoryToolsFrontend *memory = memory_tools_create(cheats);
+    FrontendAudioRuntime audio = {0};
+    FrontendPresentationTools *presentation = frontend_presentation_tools_create(&video, &audio, NULL, NULL);
+    FrontendOverclock overclock = {0};
+    NesCaptureRuntime recording = {0};
+    StateRuntime states;
+    state_runtime_init(&states, &settings, out, &execution);
+    GameConfigFrontend config = {0};
+    FrontendCliHelp help;
+    UpdateChecker update;
+    char update_path[4096];
+    g_snprintf(update_path, sizeof(update_path), "%s/updates.ini", out);
+    FrontendDeviceRuntime devices;
+    size_t disk_side = 0;
+    frontend_devices_init(&devices, &execution, &settings, &disk_side);
+    FrontendHistory *history = frontend_history_create(&execution);
+    FrontendTiming timing = {0};
+    FrontendSession session;
+    frontend_session_init(&session, NULL, NULL);
+    FrontendSessionActions session_actions;
+    frontend_session_actions_init(&session_actions, &session, &settings, "");
+    frontend_session_actions_set_execution(&session_actions, &execution);
+    LifecycleFrontend lifecycle;
+    FrontendStorage storage;
+    NsfPlayer music = {0};
+    NesHdRuntime *hd = nes_hd_runtime_create(out, NULL, 0);
+    NesHdFrontend *hd_panel = nes_hd_frontend_create(hd, NULL, 0);
     bool ok = true;
 #define REGISTER(call)                                                                                                 \
     do {                                                                                                               \
@@ -468,6 +546,26 @@ int main(int argc, char **argv) {
     REGISTER(debug_frontend_register_ui(debug));
     REGISTER(cheat_frontend_register_ui(cheats));
     REGISTER(memory_tools_register(memory));
+    REGISTER(header_editor_frontend_register(&execution));
+    REGISTER(frontend_overclock_register(&overclock));
+    REGISTER(presentation);
+    REGISTER(nes_capture_runtime_init(&recording, &execution, NULL, NULL, NULL, 0));
+    REGISTER(state_runtime_register_ui(&states));
+    REGISTER(game_config_init(&config, &settings, out));
+    REGISTER(game_config_register_ui(&config, &settings, out));
+    REGISTER(frontend_cli_help_register(&help));
+    REGISTER(update_checker_init(&update, CUPID_VERSION, update_path, NULL, 0));
+    REGISTER(update_checker_register_ui(&update));
+    REGISTER(frontend_devices_register(&devices));
+    REGISTER(history);
+    REGISTER(frontend_timing_register(&timing));
+    REGISTER(lifecycle_init(&lifecycle, &session_actions, &states, out, NULL, 0));
+    REGISTER(lifecycle_register_ui(&lifecycle));
+    REGISTER(frontend_storage_register(&storage, &session_actions, &execution, ""));
+    REGISTER(nsf_player_bind_frontend(&music, &execution, 1));
+    REGISTER(hd && hd_panel);
+    REGISTER(frontend_panel_action(HEADER_EDITOR_PANEL, HEADER_EDITOR_OPEN, cartridge_path, 0, NULL, 0));
+    REGISTER(frontend_panel_action(CHEATS_GAME_GENIE_PANEL, GAME_GENIE_CODE, "SXIOPO", 0, NULL, 0));
 #undef REGISTER
     frontend_panel_set_session_active(true);
     frontend_command_set_session_active(true);
@@ -516,6 +614,9 @@ int main(int argc, char **argv) {
         if (!frontend_panel_at(i, &panel) || panel.id == TAS_PANEL) {
             continue;
         }
+        if (memory_tools_panel(panel.id)) {
+            ok = frontend_panel_action(panel.id, MEMORY_SEARCH_START, NULL, 0, NULL, 0) && ok;
+        }
         FrontendDesktopUi *model = cupid_gtk_open(&ui, 1, panel.id);
         if (!model) {
             ok = false;
@@ -529,12 +630,64 @@ int main(int argc, char **argv) {
         ok = capture_tool(&ui, tool, panel.id, out);
         ++count;
     }
-    cupid_gtk_open(&ui, 0, 0);
+    for (unsigned extra = 0; ok && extra < 3; ++extra) {
+        CupidGtkTool *tool = find_tool(&ui, cupid_gtk_open(&ui, extra == 2 ? 3 : 2, extra == 1 ? 1 : 0));
+        ok = tool && capture_tool(&ui, tool, 0x3000 + extra, out);
+        ++count;
+    }
+    CupidGtkTool *preferences = find_tool(&ui, cupid_gtk_open(&ui, 0, 0));
     pump(&ui);
     char path[4096];
     g_snprintf(path, sizeof(path), "%s/settings.png", out);
-    ok = capture(ui.gtk->tools->window, path) && ok;
+    ok = preferences && capture(preferences->window, path) && ok;
+    for (int category = 0; preferences && category < 8; ++category) {
+        preferences->ui.settings_category = category;
+        cupid_gtk_settings_reset(preferences->content);
+        pump(&ui);
+        GtkWidget *tabs = find_widget(preferences->content, GTK_TYPE_NOTEBOOK);
+        int pages = tabs ? gtk_notebook_get_n_pages(GTK_NOTEBOOK(tabs)) : 1;
+        for (int page = 0; page < pages; ++page) {
+            if (tabs) {
+                gtk_notebook_set_current_page(GTK_NOTEBOOK(tabs), page);
+            }
+            pump(&ui);
+            g_snprintf(path, sizeof(path), "%s/settings-%d-%d.png", out, category, page);
+            ok = capture(preferences->window, path) && ok;
+        }
+    }
+    if (preferences) {
+        gtk_widget_set_visible(preferences->window, FALSE);
+    }
+    gtk_window_present(GTK_WINDOW(ui.gtk->window));
+    pump(&ui);
+    g_snprintf(path, sizeof(path), "%s/desktop.png", out);
+    bool desktop_captured = false;
+    for (unsigned attempt = 0; attempt < 10 && !desktop_captured; ++attempt) {
+        gtk_widget_queue_draw(ui.gtk->window);
+        pump(&ui);
+        desktop_captured = capture(ui.gtk->window, path);
+    }
+    if (!desktop_captured) {
+        fprintf(stderr, "Main desktop capture failed\n");
+    }
+    ok = desktop_captured && ok;
     frontend_desktop_shutdown(&ui);
+    frontend_history_destroy(history);
+    frontend_timing_unregister();
+    lifecycle_unregister_ui();
+    frontend_storage_unregister();
+    nsf_player_shutdown(&music);
+    nes_hd_frontend_destroy(hd_panel);
+    nes_hd_runtime_destroy(hd);
+    frontend_presentation_tools_destroy(presentation);
+    frontend_overclock_unregister();
+    header_editor_frontend_unregister();
+    nes_capture_runtime_shutdown(&recording);
+    state_runtime_shutdown(&states);
+    game_config_unregister_ui();
+    frontend_cli_help_unregister();
+    update_checker_shutdown(&update);
+    frontend_devices_unregister();
     memory_tools_destroy(memory);
     cheat_frontend_destroy(cheats);
     debug_frontend_destroy(debug);

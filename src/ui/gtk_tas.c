@@ -1143,6 +1143,7 @@ GtkWidget *cupid_gtk_tas_new(CupidGtkTool *tool) {
     gtk_box_append(GTK_BOX(tas->root), tas->body);
     gtk_box_append(GTK_BOX(tas->body), horizontal_scroll(menus()));
     GtkWidget *toolbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+    gtk_widget_add_css_class(toolbar, "toolbar");
     gtk_box_append(GTK_BOX(tas->body), horizontal_scroll(toolbar));
     button(tas, toolbar, "Open…", TAS_ACTION_OPEN);
     button(tas, toolbar, "New…", TAS_ACTION_NEW);
@@ -1216,7 +1217,8 @@ GtkWidget *cupid_gtk_tas_new(CupidGtkTool *tool) {
     GtkWidget *right = gtk_paned_new(GTK_ORIENTATION_VERTICAL);
     gtk_widget_set_size_request(right, 300, -1);
     GtkWidget *preview = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
-    gtk_box_append(GTK_BOX(preview), cupid_gtk_label("Game preview"));
+    GtkWidget *preview_frame = gtk_frame_new("Game preview");
+    gtk_frame_set_child(GTK_FRAME(preview_frame), preview);
     tas->picture = gtk_picture_new();
     gtk_picture_set_can_shrink(GTK_PICTURE(tas->picture), TRUE);
     gtk_picture_set_content_fit(GTK_PICTURE(tas->picture), GTK_CONTENT_FIT_CONTAIN);
@@ -1224,7 +1226,7 @@ GtkWidget *cupid_gtk_tas_new(CupidGtkTool *tool) {
     gtk_widget_set_vexpand(tas->picture, TRUE);
     gtk_widget_set_size_request(tas->picture, 128, 120);
     gtk_box_append(GTK_BOX(preview), tas->picture);
-    gtk_paned_set_start_child(GTK_PANED(right), preview);
+    gtk_paned_set_start_child(GTK_PANED(right), preview_frame);
     tas->notebook = gtk_notebook_new();
     gtk_notebook_set_scrollable(GTK_NOTEBOOK(tas->notebook), TRUE);
     build_pages(tas);
