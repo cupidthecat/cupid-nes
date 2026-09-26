@@ -31,6 +31,7 @@
 #include "rom.h"
 #include "nsf.h"
 #include "../audio/audio_mix.h"
+#include "../system/memory_location.h"
 
 typedef struct CartridgeBoard CartridgeBoard;
 
@@ -81,6 +82,8 @@ uint8_t cart_debug_chr(uint16_t addr, CartPpuFetchSource source);
 void cart_debug_bg_row(uint16_t nt_addr, uint16_t pattern_addr, unsigned row,
                        uint8_t *low, uint8_t *high, uint8_t *palette);
 bool cart_debug_write_ppu(uint16_t addr, uint8_t value, uint8_t *nt_ram);
+bool cart_debug_cpu_location(uint16_t addr, NesMemoryLocation *out);
+bool cart_debug_ppu_location(uint16_t addr, uint8_t *nt_ram, NesMemoryLocation *out);
 void    cart_ppu_write(uint16_t addr, uint8_t v);
 void    cart_set_ppu_fetch_source(CartPpuFetchSource src);
 // Notify an exact CPU write to $2000. MMC5 does not observe PPU register mirrors.

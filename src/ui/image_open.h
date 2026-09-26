@@ -10,9 +10,18 @@
 #define FRONTEND_IMAGE_OPEN_H
 
 #include "frontend_session.h"
+#include "game_config.h"
 
-bool frontend_image_open(void *userdata, const FrontendImageRequest *request,
-                         FrontendImageResult *result,
-                         char *error, size_t error_size);
+typedef struct {
+    GameConfigFrontend *configuration;
+    FrontendSettings *effective;
+    const FrontendSettings *rollback_settings;
+    bool machine_changed;
+    char cheat_path[1024];
+    bool cheat_override;
+} FrontendImageEnvironment;
+
+bool frontend_image_open(void *userdata, const FrontendImageRequest *request, FrontendImageResult *result, char *error,
+                         size_t error_size);
 
 #endif

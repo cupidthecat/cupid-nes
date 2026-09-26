@@ -15,6 +15,7 @@
 #include <stdint.h>
 #include "../joypad/joypad.h"
 #include "../capture/capture_session.h"
+#include "../capture/movie_preferences.h"
 #include "../apu/apu.h"
 #include "../audio/audio_mix.h"
 #include "../ppu/ppu.h"
@@ -24,6 +25,7 @@
 #include "../system/timing.h"
 #include "../util/file_io.h"
 #include "../video/presentation.h"
+#include "../video/pixel_filter.h"
 #include "nsf_player.h"
 
 enum {
@@ -123,6 +125,7 @@ typedef struct {
     bool ppu_viewer_live, ppu_viewer_grid;
     bool fullscreen;
     bool integer_scaling;
+    bool bilinear_interpolation;
     bool vsync;
     FrontendAspectMode aspect_mode;
     bool muted;
@@ -132,8 +135,18 @@ typedef struct {
     unsigned window_width;
     unsigned window_height;
     NesVideoPresentationSettings presentation;
+    NesPixelFilterSettings pixel_filter;
+    NtscCompositeSettings ntsc_picture;
     NesAudioMixSettings audio_mix;
     char audio_device[256];
+    char audio_backend[32];
+    char shader_path[FRONTEND_SETTINGS_PATH_TEXT];
+    bool shader_enabled;
+    size_t shader_parameter_count;
+    struct {
+        char name[64];
+        float value;
+    } shader_parameters[64];
     unsigned audio_sample_rate;
     unsigned audio_buffer_samples;
     FdsSaveMode disk_save_mode;
@@ -149,6 +162,8 @@ typedef struct {
     bool fds_loading_fast_forward;
     NsfPlayerOptions nsf_player;
     NesCaptureOptions capture;
+    NesMoviePreferences movie_preferences;
+    NesOverclockConfig overclock;
     char capture_paths[3][FRONTEND_SETTINGS_PATH_TEXT];
     unsigned state_slot;
     char state_file_path[FRONTEND_SETTINGS_PATH_TEXT];
@@ -204,6 +219,7 @@ bool frontend_settings_save(const char *path, const FrontendSettings *settings,
                             FrontendSettingsReport *report);
 bool frontend_settings_validate(const FrontendSettings *settings,
                                 char *error, size_t error_size);
+bool frontend_settings_presentation_valid(const FrontendSettings *settings);
 bool frontend_settings_prepare_power(const FrontendSettings *settings);
 bool frontend_settings_validate_firmware(const FrontendSettings *settings, char *error, size_t error_size);
 bool frontend_settings_apply_core(const FrontendSettings *settings,

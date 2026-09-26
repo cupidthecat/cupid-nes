@@ -1,4 +1,3 @@
-#include "../util/sha1.h"
 /*
  * frontend_accuracy.c - Desktop frontend execution regression tests
  *
@@ -7,6 +6,7 @@
  * This file is part of Cupid NES Emulator and is distributed under the
  * GNU General Public License, version 3 or any later version.
  */
+#include "../util/sha1.h"
 #include "../apu/apu.h"
 #include "../cpu/cpu.h"
 #include "../ppu/ppu.h"
@@ -271,6 +271,15 @@ static int settings_round_trip(void) {
     saved.ppu_viewer_live = saved.ppu_viewer_grid = false;
     saved.fullscreen = true;
     saved.integer_scaling = true;
+    saved.bilinear_interpolation = true;
+    strcpy(saved.audio_backend, "wasapi");
+    strcpy(saved.shader_path, "C:/shaders/picture.glslp");
+    saved.shader_enabled = true;
+    saved.shader_parameter_count = 2;
+    strcpy(saved.shader_parameters[0].name, "BRIGHTNESS");
+    saved.shader_parameters[0].value = 0.875f;
+    strcpy(saved.shader_parameters[1].name, "GAMMA");
+    saved.shader_parameters[1].value = 2.25f;
     saved.muted = true;
     saved.window_width = 1234;
     saved.window_height = 777;
@@ -287,6 +296,7 @@ static int settings_round_trip(void) {
     saved.nsf_player.silence_threshold = 0.0025f;
     saved.capture.sample_rate = 96000;
     saved.capture.byte_limit = 123456789u;
+    saved.overclock = (NesOverclockConfig){true, 17, 23, false};
     saved.capture.displayed_output = true;
     strcpy(saved.capture_paths[0], "C:/capture/shot.png");
     strcpy(saved.capture_paths[1], "C:/capture/audio.wav");
@@ -315,6 +325,11 @@ static int settings_round_trip(void) {
     CHECK(loaded.reopen_last_image && !loaded.pause_on_focus_loss && !loaded.pause_on_ui
           && loaded.show_fps && !loaded.ppu_viewer_live && !loaded.ppu_viewer_grid);
     CHECK(loaded.fullscreen && loaded.integer_scaling && loaded.muted);
+    CHECK(loaded.bilinear_interpolation);
+    CHECK(!strcmp(loaded.audio_backend, "wasapi") && loaded.shader_enabled);
+    CHECK(!strcmp(loaded.shader_path, saved.shader_path) && loaded.shader_parameter_count == 2);
+    CHECK(!strcmp(loaded.shader_parameters[0].name, "BRIGHTNESS") && loaded.shader_parameters[0].value == 0.875f);
+    CHECK(!strcmp(loaded.shader_parameters[1].name, "GAMMA") && loaded.shader_parameters[1].value == 2.25f);
     CHECK(loaded.window_width == 1234 && loaded.window_height == 777);
     CHECK(loaded.disk_save_mode == FDS_SAVE_IN_PLACE);
     CHECK(strcmp(loaded.disk_overlay_path, "C:/saves/custom disk.ips") == 0);
@@ -323,6 +338,8 @@ static int settings_round_trip(void) {
     CHECK(!loaded.nsf_player.detect_silence && loaded.nsf_player.silence_ms == 4321);
     CHECK(fabs((double)loaded.nsf_player.silence_threshold - 0.0025) < 0.000001);
     CHECK(loaded.capture.sample_rate == 96000 && loaded.capture.byte_limit == 123456789u);
+    CHECK(loaded.overclock.enabled && loaded.overclock.postrender_scanlines == 17 &&
+          loaded.overclock.vblank_scanlines == 23 && !loaded.overclock.dmc_compatibility);
     CHECK(loaded.capture.displayed_output);
     CHECK(strcmp(loaded.capture_paths[0], "C:/capture/shot.png") == 0);
     CHECK(strcmp(loaded.capture_paths[1], "C:/capture/audio.wav") == 0);
@@ -590,8 +607,10 @@ static int settings_text_editing(void) {
     FrontendDesktopUi ui = {0};
     ui.settings = &settings;
     ui.staged = settings;
+    ui.open_menu = -1;
     ui.settings_open = true;
     ui.settings_category = 5;
+    strcpy(ui.staged.fds_bios_path, "previous.bin");
     frontend_set_file_chooser(choose_unicode_firmware, settings.fds_bios_path);
     SDL_Event event = {0};
     event.type = SDL_KEYDOWN;
@@ -604,6 +623,7 @@ static int settings_text_editing(void) {
     ui.settings_row = 7;
     event.key.keysym.scancode = SDL_SCANCODE_RIGHT;
     CHECK(frontend_desktop_handle_event(&ui, &event));
+    CHECK(ui.edit_text_active);
     event.key.keysym.scancode = SDL_SCANCODE_END;
     CHECK(frontend_desktop_handle_event(&ui, &event));
     strcpy(ui.edit_text, "aé猫🎮");

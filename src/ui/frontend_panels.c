@@ -10,7 +10,7 @@
 #include <stdio.h>
 #include <string.h>
 
-enum { PANEL_CAPACITY = 48, PANEL_TEXT = 64 };
+enum { PANEL_CAPACITY = 96, PANEL_TEXT = 64 };
 
 typedef struct {
     bool used;

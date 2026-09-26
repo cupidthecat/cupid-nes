@@ -291,11 +291,16 @@ void frontend_settings_defaults(FrontendSettings *settings) {
     settings->window_height = 640;
     settings->audio_sample_rate = 44100;
     settings->audio_buffer_samples = 1024;
+    strcpy(settings->audio_backend, "default");
     nes_video_presentation_defaults(&settings->presentation);
+    nes_pixel_filter_defaults(&settings->pixel_filter);
+    ntsc_composite_defaults(&settings->ntsc_picture);
     nes_audio_mix_defaults(&settings->audio_mix);
     settings->disk_save_mode = FDS_SAVE_OVERLAY;
     nsf_player_options_defaults(&settings->nsf_player);
     nes_capture_options_defaults(&settings->capture);
+    nes_movie_preferences_defaults(&settings->movie_preferences);
+    settings->overclock.dmc_compatibility = true;
     settings->input.adapter = NES_ADAPTER_NONE;
     settings->input.ports[0] = NES_PORT_GAMEPAD;
     settings->input.ports[1] = NES_PORT_GAMEPAD;
@@ -613,6 +618,59 @@ static bool set_known_setting(FrontendSettings *settings, const char *key,
                               FrontendSettingsReport *report, bool *known) {
     *known = true;
     int parsed;
+    if (!strcmp(key, "audio_backend")) {
+        if (strcmp(value, "default") && strcmp(value, "wasapi") && strcmp(value, "directsound")) return false;
+        strcpy(settings->audio_backend, value);
+        return true;
+    }
+    if (!strcmp(key, "shader_path")) {
+        if (strlen(value) >= sizeof(settings->shader_path)) return false;
+        strcpy(settings->shader_path, value);
+        return true;
+    }
+    if (!strcmp(key, "shader_enabled")) return parse_boolean(value, &settings->shader_enabled);
+    if (!strcmp(key, "overclock_enabled")) return parse_boolean(value, &settings->overclock.enabled);
+    if (!strcmp(key, "overclock_dmc_compatibility"))
+        return parse_boolean(value, &settings->overclock.dmc_compatibility);
+    if (!strcmp(key, "overclock_postrender_scanlines") || !strcmp(key, "overclock_vblank_scanlines")) {
+        unsigned count;
+        if (!parse_unsigned_range(value, NES_OVERCLOCK_MAX_SCANLINES, &count)) return false;
+        if (!strcmp(key, "overclock_postrender_scanlines")) settings->overclock.postrender_scanlines = (uint16_t)count;
+        else settings->overclock.vblank_scanlines = (uint16_t)count;
+        return true;
+    }
+    if (!strncmp(key, "shader_parameter.", 17)) {
+        const char *name = key + 17;
+        if (!name[0] || strlen(name) >= sizeof(settings->shader_parameters[0].name)) return false;
+        for (const char *p = name; *p; ++p) if (!isalnum((unsigned char)*p) && *p != '_') return false;
+        char *end;
+        errno = 0;
+        float number = strtof(value, &end);
+        if (errno || end == value || *end || !isfinite(number)) return false;
+        size_t i = 0;
+        while (i < settings->shader_parameter_count && strcmp(settings->shader_parameters[i].name, name)) ++i;
+        if (i == 64) return false;
+        if (i == settings->shader_parameter_count) ++settings->shader_parameter_count;
+        strcpy(settings->shader_parameters[i].name, name);
+        settings->shader_parameters[i].value = number;
+        return true;
+    }
+    for (unsigned i = 0; i < NES_MOVIE_PREFERENCE_COUNT; ++i) {
+        if (!strcmp(key, nes_movie_preferences_key(i))) {
+            return nes_movie_preferences_set(&settings->movie_preferences, key, value);
+        }
+    }
+    if (!strcmp(key, "capture_codec") || !strcmp(key, "capture_format") ||
+        !strcmp(key, "capture_compression") || !strcmp(key, "capture_gif_scale")) {
+        unsigned number;
+        unsigned maximum = !strcmp(key, "capture_compression") ? 9 : !strcmp(key, "capture_gif_scale") ? 4 : 1;
+        if (!parse_unsigned_range(value, maximum, &number) || (!strcmp(key, "capture_gif_scale") && !number)) return false;
+        if (!strcmp(key, "capture_codec")) settings->capture.codec = (NesCaptureCodec)number;
+        else if (!strcmp(key, "capture_format")) settings->capture.format = (NesCaptureFormat)number;
+        else if (!strcmp(key, "capture_compression")) settings->capture.compression_level = number;
+        else settings->capture.gif_scale = number;
+        return true;
+    }
     if (strcmp(key, "region") == 0) {
         if (!parse_name_value(region_names, 4, value, &parsed)) return false;
         settings->region_mode = (NesRegionMode)parsed;
@@ -653,6 +711,21 @@ static bool set_known_setting(FrontendSettings *settings, const char *key,
         if (!parse_boolean(value, &settings->fullscreen)) return false;
     } else if (strcmp(key, "integer_scaling") == 0) {
         if (!parse_boolean(value, &settings->integer_scaling)) return false;
+    } else if (strcmp(key, "bilinear_interpolation") == 0) {
+        if (!parse_boolean(value, &settings->bilinear_interpolation)) return false;
+    } else if (strcmp(key, "pixel_filter") == 0) {
+        if (!nes_pixel_filter_from_key(value, &settings->pixel_filter.kind)) return false;
+    } else if (strncmp(key, "lcd_brightness.", 15) == 0) {
+        if (key[15] < '0' || key[15] > '3' || key[16]) return false;
+        if (!parse_unsigned_range(value, 100, &settings->pixel_filter.lcd_brightness[key[15] - '0'])) return false;
+    } else if (strncmp(key, "ntsc.", 5) == 0) {
+        for (unsigned i = 0; i < NTSC_CONTROL_COUNT; ++i) {
+            const NtscCompositeControl *control = ntsc_composite_control_info(i);
+            if (!strcmp(key + 5, control->key))
+                return parse_int_range(value, control->minimum, control->maximum,
+                                       ntsc_composite_control_value(&settings->ntsc_picture, i));
+        }
+        return false;
     } else if (strcmp(key, "vsync") == 0) {
         if (!parse_boolean(value, &settings->vsync)) return false;
     } else if (strcmp(key, "aspect_ratio") == 0) {
@@ -1041,7 +1114,10 @@ static bool append_text(char *buffer, size_t capacity, size_t *used,
 bool frontend_settings_save(const char *path, const FrontendSettings *settings,
                             FrontendSettingsReport *report) {
     if (report) memset(report, 0, sizeof(*report));
-    if (!path || !settings || !frontend_settings_active_profile_const(settings)) {
+    if (!path || !settings || !frontend_settings_active_profile_const(settings)
+        || !nes_pixel_filter_validate(&settings->pixel_filter, NULL, 0)
+        || !ntsc_composite_validate(&settings->ntsc_picture, NULL, 0)
+        || !frontend_settings_presentation_valid(settings)) {
         report_error(report, 0, NES_FILE_INVALID_ARGUMENT, "Invalid settings", NULL);
         return false;
     }
@@ -1117,7 +1193,7 @@ bool frontend_settings_save(const char *path, const FrontendSettings *settings,
                           settings->zapper_radius, settings->active_profile);
     ok = ok && append_text(buffer, SETTINGS_SAVE_CAPACITY, &used,
                           "rewind_seconds=%u\nrewind_step_frames=%u\nrun_ahead_frames=%u\n"
-                          "vsync=%s\naspect_ratio=%s\n"
+                          "vsync=%s\naspect_ratio=%s\nbilinear_interpolation=%s\n"
                           "show_background=%s\nshow_sprites=%s\n"
                           "audio_master_volume=%u\naudio_device=%s\n"
                           "audio_sample_rate=%u\naudio_buffer_samples=%u\n"
@@ -1136,6 +1212,7 @@ bool frontend_settings_save(const char *path, const FrontendSettings *settings,
                           settings->rewind_seconds, settings->rewind_step_frames, settings->run_ahead_frames,
                           settings->vsync ? "true" : "false",
                           settings->aspect_mode == FRONTEND_ASPECT_4_3 ? "4:3" : "source",
+                          settings->bilinear_interpolation ? "true" : "false",
                           settings->presentation.show_background ? "true" : "false",
                           settings->presentation.show_sprites ? "true" : "false",
                           settings->audio_mix.master_volume,
@@ -1168,6 +1245,16 @@ bool frontend_settings_save(const char *path, const FrontendSettings *settings,
                           settings->startup_seed_set ? "true" : "false", settings->startup_seed,
                           settings->power_on_seed_set ? "true" : "false",
                           settings->power_on_seed);
+    ok = ok && append_text(buffer, SETTINGS_SAVE_CAPACITY, &used,
+                          "pixel_filter=%s\nlcd_brightness.0=%u\nlcd_brightness.1=%u\n"
+                          "lcd_brightness.2=%u\nlcd_brightness.3=%u\n",
+                          nes_pixel_filter_key(settings->pixel_filter.kind),
+                          settings->pixel_filter.lcd_brightness[0], settings->pixel_filter.lcd_brightness[1],
+                          settings->pixel_filter.lcd_brightness[2], settings->pixel_filter.lcd_brightness[3]);
+    for (unsigned control = 0; ok && control < NTSC_CONTROL_COUNT; ++control)
+        ok = append_text(buffer, SETTINGS_SAVE_CAPACITY, &used, "ntsc.%s=%d\n",
+                         ntsc_composite_control_info(control)->key,
+                         ntsc_composite_control_get(&settings->ntsc_picture, control));
     for (unsigned region = 0; ok && region < 3; ++region) {
         const NesVideoOverscan *o = &settings->presentation.overscan[region];
         ok = append_text(buffer, SETTINGS_SAVE_CAPACITY, &used,
@@ -1216,6 +1303,28 @@ bool frontend_settings_save(const char *path, const FrontendSettings *settings,
                                frontend_gamepad_button_name(binding->gamepad_button));
         }
     }
+    ok = ok && append_text(buffer, SETTINGS_SAVE_CAPACITY, &used,
+        "audio_backend=%s\nshader_path=%s\nshader_enabled=%s\n", settings->audio_backend,
+        settings->shader_path, settings->shader_enabled ? "true" : "false");
+    ok = ok && append_text(buffer, SETTINGS_SAVE_CAPACITY, &used,
+        "overclock_enabled=%s\noverclock_postrender_scanlines=%u\n"
+        "overclock_vblank_scanlines=%u\noverclock_dmc_compatibility=%s\n",
+        settings->overclock.enabled ? "true" : "false", settings->overclock.postrender_scanlines,
+        settings->overclock.vblank_scanlines, settings->overclock.dmc_compatibility ? "true" : "false");
+    for (size_t i = 0; ok && i < settings->shader_parameter_count; ++i)
+        ok = append_text(buffer, SETTINGS_SAVE_CAPACITY, &used, "shader_parameter.%s=%.9g\n",
+                         settings->shader_parameters[i].name, (double)settings->shader_parameters[i].value);
+    for (unsigned i = 0; ok && i < NES_MOVIE_PREFERENCE_COUNT; ++i) {
+        char value[4096];
+        const char *key = nes_movie_preferences_key(i);
+        ok = nes_movie_preferences_get(&settings->movie_preferences, key, value, sizeof(value))
+            && !strchr(value, '\n') && !strchr(value, '\r')
+            && append_text(buffer, SETTINGS_SAVE_CAPACITY, &used, "%s=%s\n", key, value);
+    }
+    ok = ok && append_text(buffer, SETTINGS_SAVE_CAPACITY, &used,
+        "capture_codec=%u\ncapture_format=%u\ncapture_compression=%u\ncapture_gif_scale=%u\n",
+        (unsigned)settings->capture.codec, (unsigned)settings->capture.format,
+        settings->capture.compression_level, settings->capture.gif_scale);
     ok = ok && append_text(buffer,SETTINGS_SAVE_CAPACITY,&used,
         "game_database_path=%s\ndisable_database_corrections=%s\nmovie_file_path=%s\n",
         settings->game_database_path,settings->disable_database_corrections?"true":"false",settings->movie_file_path);
@@ -1238,186 +1347,4 @@ bool frontend_settings_save(const char *path, const FrontendSettings *settings,
         snprintf(report->message, sizeof(report->message), "Saved settings");
     }
     return true;
-}
-
-bool frontend_settings_validate(const FrontendSettings *settings,
-                                char *error, size_t error_size) {
-    if (!settings) return false;
-#define SETTINGS_FAIL(message) do { \
-    if (error && error_size) snprintf(error, error_size, "%s", (message)); \
-    return false; \
-} while (0)
-    if ((unsigned)settings->region_mode > NES_REGION_MODE_DENDY
-        || (unsigned)settings->console_model > NES_CONSOLE_HVC101)
-        SETTINGS_FAIL("Timing or console selection is invalid");
-    if (!isfinite(settings->speed) || settings->speed < 0.1 || settings->speed > 16.0
-        || !isfinite(settings->fast_forward_speed) || settings->fast_forward_speed < 0.1
-        || settings->fast_forward_speed > 16.0)
-        SETTINGS_FAIL("Emulation speed must be from 0.1x to 16x");
-    if (!settings->rewind_step_frames || settings->rewind_step_frames > 30)
-        SETTINGS_FAIL("Rewind speed must be from 1 to 30 frames per activation");
-    if (settings->rewind_seconds > 60 || settings->run_ahead_frames > 4)
-        SETTINGS_FAIL("Rewind must be at most 60 seconds and run-ahead at most 4 frames");
-    if (settings->window_width < 320 || settings->window_width > 16384
-        || settings->window_height < 240 || settings->window_height > 16384)
-        SETTINGS_FAIL("Window size is outside the supported range");
-    if (settings->recent_file_limit > FRONTEND_RECENT_MAX)
-        SETTINGS_FAIL("Recent-file history length is invalid");
-    if ((unsigned)settings->aspect_mode > FRONTEND_ASPECT_4_3)
-        SETTINGS_FAIL("Video aspect ratio is invalid");
-    for (unsigned i = 0; i < 3; ++i)
-        if (!nes_video_overscan_valid(settings->presentation.overscan[i]))
-            SETTINGS_FAIL("Video overscan must leave visible pixels on every side");
-    if (settings->audio_sample_rate < 8000 || settings->audio_sample_rate > 192000
-        || settings->audio_buffer_samples < 64 || settings->audio_buffer_samples > 8192
-        || settings->audio_mix.master_volume > 100)
-        SETTINGS_FAIL("Audio output settings are outside the supported range");
-    for (unsigned i = 0; i < NES_AUDIO_CHANNEL_COUNT; ++i)
-        if (settings->audio_mix.volume[i] > 200
-            || settings->audio_mix.pan[i] < -100 || settings->audio_mix.pan[i] > 100)
-            SETTINGS_FAIL("Audio channel volume or panning is outside the supported range");
-    if (settings->state_slot >= NES_STATE_SLOT_COUNT || settings->zapper_radius > NES_ZAPPER_MAX_RADIUS)
-        SETTINGS_FAIL("State slot or light-gun radius is invalid");
-    if ((unsigned)settings->input.adapter > NES_ADAPTER_FAMICOM_FOUR
-        || (unsigned)settings->input.ports[0] > NES_PORT_VIRTUAL_BOY
-        || (unsigned)settings->input.ports[1] > NES_PORT_VIRTUAL_BOY
-        || (unsigned)settings->input.expansion > NES_EXPANSION_FCNS_CONTROLLER)
-        SETTINGS_FAIL("Controller connector selection is invalid");
-    if (!settings->profile_count || settings->profile_count > FRONTEND_SETTINGS_MAX_PROFILES
-        || !find_profile_const(settings, settings->active_profile))
-        SETTINGS_FAIL("The active controller binding profile does not exist");
-    if (settings->startup_phase_set && settings->startup_seed_set)
-        SETTINGS_FAIL("Startup phase and seed are mutually exclusive");
-    if (settings->startup_cpu_offset > 15 || settings->startup_ppu_phase > 4
-        || settings->cart_dips > 255)
-        SETTINGS_FAIL("Advanced hardware value is outside the supported range");
-    if ((unsigned)settings->cpu_revision > APU_CPU_REVISION_LATE_2A03
-        || (unsigned)settings->ppu_revision > PPU_REVISION_2C02_E_PLUS
-        || (unsigned)settings->ram_power_state > NES_RAM_POWER_RANDOM)
-        SETTINGS_FAIL("Advanced hardware selection is invalid");
-    if (settings->nsf_player.silence_ms < 10 || settings->nsf_player.silence_ms > 600000
-        || !isfinite(settings->nsf_player.silence_threshold)
-        || settings->nsf_player.silence_threshold < 0.0f
-        || settings->nsf_player.silence_threshold > 0.1f)
-        SETTINGS_FAIL("Music silence detection settings are invalid");
-    if (settings->capture.sample_rate < 8000 || settings->capture.sample_rate > 192000
-        || settings->capture.byte_limit < 1024 || settings->capture.byte_limit > UINT32_MAX)
-        SETTINGS_FAIL("Capture settings are outside the supported range");
-    if (error && error_size) error[0] = '\0';
-    return true;
-#undef SETTINGS_FAIL
-}
-
-bool frontend_settings_apply_core(const FrontendSettings *settings,
-                                  char *error, size_t error_size) {
-    if (!settings) return false;
-    NesInputConfiguration previous = {
-        .adapter = joypad_adapter(),
-        .ports = {joypad_port_device(0), joypad_port_device(1)},
-        .expansion = joypad_expansion_device()
-    };
-    uint8_t previous_overrides = joypad_configuration_overrides();
-    unsigned previous_radius = joypad_zapper_radius();
-    NesRegionMode previous_region = nes_region_mode();
-    NesConsoleModel previous_console = nes_console_model();
-    ApuCpuRevision previous_cpu_revision = apu_get_cpu_revision();
-    bool previous_noise_mode = apu_noise_mode_disabled();
-    bool previous_duty_swap = apu_swap_duty_cycles_enabled();
-    NesRamPowerOnState previous_ram_power = nes_ram_power_on_state();
-    bool previous_random_vblank = nes_randomize_vblank_enabled();
-    PpuRevision previous_ppu_revision = ppu_revision();
-    bool previous_oam_row = ppu_oam_row_corruption_worst_case();
-    bool previous_ppu_startup = ppu_startup_write_restriction_enabled();
-    bool previous_oam_decay = ppu_oam_decay_enabled();
-    bool previous_sprite_wrap = ppu_sprite_eval_wrap_bug_enabled();
-    bool previous_oamdata = ppu_oamdata_read_disabled();
-    bool previous_palette = ppu_palette_readback_disabled();
-    bool previous_ppu_reset = ppu_reset_suppression_enabled();
-    bool previous_mmc3_a = strcmp(cart_mmc3_revision_name(), "a") == 0;
-    unsigned previous_cart_dips = cart_dip_switches();
-
-    NesInputConfiguration selected = settings->input;
-    if (settings->cli_overrides & FRONTEND_OVERRIDE_ADAPTER)
-        selected.adapter = previous.adapter;
-    if (settings->cli_overrides & FRONTEND_OVERRIDE_PORT1)
-        selected.ports[0] = previous.ports[0];
-    if (settings->cli_overrides & FRONTEND_OVERRIDE_PORT2)
-        selected.ports[1] = previous.ports[1];
-    if (settings->cli_overrides & FRONTEND_OVERRIDE_EXPANSION)
-        selected.expansion = previous.expansion;
-
-    bool valid = ((settings->cli_overrides & FRONTEND_OVERRIDE_REGION)
-                  || nes_set_region_mode(settings->region_mode))
-        && ((settings->cli_overrides & FRONTEND_OVERRIDE_CONSOLE)
-            || nes_set_console_model(settings->console_model))
-        && joypad_apply_configuration(&selected)
-        && ((settings->cli_overrides & FRONTEND_OVERRIDE_ZAPPER_RADIUS)
-            || joypad_set_zapper_radius(settings->zapper_radius))
-        && joypad_configuration_valid();
-    valid = valid && ((settings->cli_overrides & FRONTEND_OVERRIDE_CPU_REVISION)
-        || apu_set_cpu_revision(settings->cpu_revision));
-    if (!(settings->cli_overrides & FRONTEND_OVERRIDE_APU_NOISE_MODE))
-        apu_set_disable_noise_mode(settings->apu_disable_noise_mode);
-    if (!(settings->cli_overrides & FRONTEND_OVERRIDE_APU_DUTY))
-        apu_set_swap_duty_cycles(settings->apu_swap_duty_cycles);
-    valid = valid && ((settings->cli_overrides & FRONTEND_OVERRIDE_RAM_POWER)
-        || nes_set_ram_power_on_state(settings->ram_power_state));
-    if (!(settings->cli_overrides & FRONTEND_OVERRIDE_RANDOM_VBLANK))
-        nes_set_randomize_vblank(settings->randomize_vblank);
-    valid = valid && ((settings->cli_overrides & FRONTEND_OVERRIDE_PPU_REVISION)
-        || ppu_set_revision(settings->ppu_revision));
-    if (!(settings->cli_overrides & FRONTEND_OVERRIDE_PPU_OAM_ROW))
-        ppu_set_oam_row_corruption_worst_case(settings->ppu_oam_row_corruption);
-    if (!(settings->cli_overrides & FRONTEND_OVERRIDE_PPU_STARTUP))
-        ppu_set_startup_write_restriction(settings->ppu_startup_restriction);
-    if (!(settings->cli_overrides & FRONTEND_OVERRIDE_PPU_OAM_DECAY))
-        ppu_set_oam_decay(settings->ppu_oam_decay);
-    if (!(settings->cli_overrides & FRONTEND_OVERRIDE_PPU_SPRITE_WRAP))
-        ppu_set_sprite_eval_wrap_bug(settings->ppu_sprite_eval_wrap_bug);
-    if (!(settings->cli_overrides & FRONTEND_OVERRIDE_PPU_OAMDATA))
-        ppu_set_oamdata_read_disabled(settings->ppu_oamdata_read_disabled);
-    if (!(settings->cli_overrides & FRONTEND_OVERRIDE_PPU_PALETTE))
-        ppu_set_palette_readback_disabled(settings->ppu_palette_readback_disabled);
-    if (!(settings->cli_overrides & FRONTEND_OVERRIDE_PPU_RESET))
-        ppu_set_reset_suppression(settings->ppu_reset_suppression);
-    valid = valid && ((settings->cli_overrides & FRONTEND_OVERRIDE_MMC3_REVISION)
-        || cart_set_mmc3_revision_name(settings->mmc3_revision_a ? "a" : "standard"));
-    valid = valid && ((settings->cli_overrides & FRONTEND_OVERRIDE_CART_DIPS)
-        || cart_set_dip_switches(settings->cart_dips));
-    if (valid) {
-        uint8_t overrides = settings->saved_input_overrides;
-        if (settings->cli_overrides & FRONTEND_OVERRIDE_ADAPTER)
-            overrides |= NES_INPUT_OVERRIDE_ADAPTER;
-        if (settings->cli_overrides & FRONTEND_OVERRIDE_PORT1)
-            overrides |= NES_INPUT_OVERRIDE_PORT1;
-        if (settings->cli_overrides & FRONTEND_OVERRIDE_PORT2)
-            overrides |= NES_INPUT_OVERRIDE_PORT2;
-        if (settings->cli_overrides & FRONTEND_OVERRIDE_EXPANSION)
-            overrides |= NES_INPUT_OVERRIDE_EXPANSION;
-        joypad_set_configuration_overrides(overrides);
-        return true;
-    }
-    (void)nes_set_region_mode(previous_region);
-    (void)nes_set_console_model(previous_console);
-    (void)joypad_apply_configuration(&previous);
-    (void)joypad_set_zapper_radius(previous_radius);
-    joypad_set_configuration_overrides(previous_overrides);
-    (void)apu_set_cpu_revision(previous_cpu_revision);
-    apu_set_disable_noise_mode(previous_noise_mode);
-    apu_set_swap_duty_cycles(previous_duty_swap);
-    (void)nes_set_ram_power_on_state(previous_ram_power);
-    nes_set_randomize_vblank(previous_random_vblank);
-    (void)ppu_set_revision(previous_ppu_revision);
-    ppu_set_oam_row_corruption_worst_case(previous_oam_row);
-    ppu_set_startup_write_restriction(previous_ppu_startup);
-    ppu_set_oam_decay(previous_oam_decay);
-    ppu_set_sprite_eval_wrap_bug(previous_sprite_wrap);
-    ppu_set_oamdata_read_disabled(previous_oamdata);
-    ppu_set_palette_readback_disabled(previous_palette);
-    ppu_set_reset_suppression(previous_ppu_reset);
-    (void)cart_set_mmc3_revision_name(previous_mmc3_a ? "a" : "standard");
-    (void)cart_set_dip_switches(previous_cart_dips);
-    if (error && error_size)
-        snprintf(error, error_size, "Saved hardware or controller settings conflict");
-    return false;
 }

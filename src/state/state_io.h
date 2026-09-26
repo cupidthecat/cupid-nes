@@ -4,6 +4,7 @@
  * Author: @frankischilling
  *
  * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #ifndef CUPID_NES_STATE_IO_H
 #define CUPID_NES_STATE_IO_H

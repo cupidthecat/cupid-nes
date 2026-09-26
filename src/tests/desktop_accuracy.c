@@ -1,3 +1,9 @@
+/*
+ * desktop_accuracy.c
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* Desktop event, layout and device regression checks. SPDX-License-Identifier: GPL-3.0-or-later */
 #include "../apu/apu.h"
 #include "../cpu/cpu.h"
@@ -6,6 +12,7 @@
 #include "../rom/rom.h"
 #include "../ui/debug_frontend.h"
 #include "../ui/cheat_frontend.h"
+#include "../ui/game_genie_frontend.h"
 #include "../cheats/cheats.h"
 #include "../ui/platform_frontend.h"
 #include "../ui/machine_actions.h"
@@ -55,7 +62,13 @@ static void click_control(FrontendDesktopUi *ui, int kind, int index, int direct
     int width, height;
     SDL_GetWindowSize(ui->window, &width, &height);
     CHECK(rect.w > 0 && rect.h > 0 && rect.x >= 0 && rect.y >= 0);
-    CHECK((rect.x + rect.w) * ui->ui_scale <= width + 1 && (rect.y + rect.h) * ui->ui_scale <= height + 1);
+    bool within_window = (rect.x + rect.w) * ui->ui_scale <= width + 1 &&
+                         (rect.y + rect.h) * ui->ui_scale <= height + 1;
+    if (!within_window) {
+        fprintf(stderr, "Panel %u hit %d/%d bounds %.1f,%.1f %.1fx%.1f at scale %.1f in %dx%d\n",
+                ui->panel_id, kind, index, rect.x, rect.y, rect.w, rect.h, ui->ui_scale, width, height);
+    }
+    CHECK(within_window);
     SDL_Event event = {.type = SDL_MOUSEBUTTONDOWN};
     event.button.button = SDL_BUTTON_LEFT;
     event.button.x = (int)((rect.x + rect.w / 2) * ui->ui_scale);
@@ -67,6 +80,71 @@ static void render(FrontendDesktopUi *ui) {
     SDL_SetRenderDrawColor(ui->renderer, 14, 18, 27, 255);
     SDL_RenderClear(ui->renderer);
     frontend_desktop_render(ui, 256, 240, "Synthetic cartridge", "NTSC", "Paused");
+    CHECK(desktop_clay_error_count(ui->clay) == 0);
+}
+
+static void pixel_filter_choices(FrontendDesktopUi *ui) {
+    CHECK(frontend_command_invoke(FRONTEND_COMMAND_SETTINGS, NULL, 0));
+    render(ui);
+    click_control(ui, HIT_CATEGORY, 2, 0);
+    ui->settings_row = ui->settings_scroll = 20;
+    render(ui);
+    click_control(ui, HIT_SETTING, 20, 0);
+    CHECK(ui->choice_open && desktop_choice_count(ui) == NES_PIXEL_FILTER_COUNT);
+    render(ui);
+    click_control(ui, HIT_CHOICE_PAGE, 0, 1);
+    CHECK(ui->choice_page == 1);
+    render(ui);
+    click_control(ui, HIT_CHOICE, NES_PIXEL_FILTER_PRESCALE10, 0);
+    CHECK(!ui->choice_open && ui->staged.pixel_filter.kind == NES_PIXEL_FILTER_PRESCALE10);
+    render(ui);
+    click_control(ui, HIT_SETTING, 20, 0);
+    CHECK(ui->choice_page == 1 && ui->choice_index == NES_PIXEL_FILTER_PRESCALE10);
+    key(ui, SDL_SCANCODE_DOWN, KMOD_NONE);
+    CHECK(ui->choice_page == 0 && ui->choice_index == NES_PIXEL_FILTER_NONE);
+    key(ui, SDL_SCANCODE_UP, KMOD_NONE);
+    CHECK(ui->choice_page == 1 && ui->choice_index == NES_PIXEL_FILTER_PRESCALE10);
+    render(ui);
+    click_control(ui, HIT_CHOICE_PAGE, 0, -1);
+    CHECK(ui->choice_page == 0);
+    render(ui);
+    click_control(ui, HIT_CHOICE, NES_PIXEL_FILTER_HQ4X, 0);
+    CHECK(!ui->choice_open && ui->staged.pixel_filter.kind == NES_PIXEL_FILTER_HQ4X);
+    render(ui);
+    click_control(ui, HIT_SETTING, 20, 0);
+    render(ui);
+    if (ui->ui_scale == 2) {
+        screenshot(ui, "build/desktop-pixel-filters-2x.png");
+    }
+
+    key(ui, SDL_SCANCODE_ESCAPE, KMOD_NONE);
+    render(ui);
+    click_control(ui, HIT_SETTINGS_BUTTON, 2, 0);
+    CHECK(!ui->settings_open && ui->settings->pixel_filter.kind == NES_PIXEL_FILTER_NONE);
+}
+
+static void ntsc_picture_choices(FrontendDesktopUi *ui) {
+    CHECK(frontend_command_invoke(FRONTEND_COMMAND_SETTINGS, NULL, 0));
+    render(ui);
+    click_control(ui, HIT_CATEGORY, 2, 0);
+    ui->settings_row = ui->settings_scroll = 25;
+    render(ui);
+    click_control(ui, HIT_SETTING, 25, 0);
+    CHECK(ui->choice_open && desktop_choice_count(ui) == NTSC_PRESET_COUNT);
+    render(ui);
+    click_control(ui, HIT_CHOICE, 2, 0);
+    CHECK(!ui->choice_open && ntsc_composite_preset_index(&ui->staged.ntsc_picture) == 2);
+    ui->settings_row = ui->settings_scroll = 35;
+    render(ui);
+    click_control(ui, HIT_SETTING, 35, 0);
+    CHECK(ui->choice_open && desktop_choice_count(ui) == NTSC_FIELDS_COUNT);
+    render(ui);
+    click_control(ui, HIT_CHOICE, NTSC_FIELDS_FIXED, 0);
+    CHECK(!ui->choice_open && ui->staged.ntsc_picture.fields == NTSC_FIELDS_FIXED);
+    CHECK(ntsc_composite_preset_index(&ui->staged.ntsc_picture) == -1);
+    render(ui);
+    click_control(ui, HIT_SETTINGS_BUTTON, 2, 0);
+    CHECK(!ui->settings_open && ntsc_composite_preset_index(&ui->settings->ntsc_picture) == 0);
 }
 
 static void mouse_controls(FrontendDesktopUi *ui) {
@@ -91,6 +169,8 @@ static void mouse_controls(FrontendDesktopUi *ui) {
         render(ui);
         click_control(ui, HIT_SETTINGS_BUTTON, 2, 0);
         CHECK(!ui->settings_open);
+        pixel_filter_choices(ui);
+        ntsc_picture_choices(ui);
         render(ui);
         click_control(ui, HIT_MENU, 6, 0);
         CHECK(ui->open_menu == 6);
@@ -712,12 +792,43 @@ static void cheat_prompt(FrontendDesktopUi *ui) {
         frontend_set_file_chooser(NULL, NULL);
         desktop_close_windows(ui);
     }
+    menu_activate(ui, 5, CHEATS_GAME_GENIE_PANEL);
+    FrontendDesktopUi *genie = ui->tools;
+    CHECK(genie && genie->panel_id == CHEATS_GAME_GENIE_PANEL);
+    if (genie) {
+        render(genie);
+        click_control(genie, HIT_PANEL, 0, 0);
+        CHECK(genie->edit_text_active);
+        strcpy(genie->edit_text, "sx iopo");
+        key(genie, SDL_SCANCODE_RETURN, KMOD_NONE);
+        CHECK(genie->edit_text_active && genie->status[0]);
+        strcpy(genie->edit_text, "sxIOpo");
+        key(genie, SDL_SCANCODE_RETURN, KMOD_NONE);
+        CHECK(!genie->edit_text_active);
+        render(genie);
+        CHECK(desktop_clay_contains_text(genie->clay, "91D9"));
+        CHECK(desktop_clay_contains_text(genie->clay, "SXIOPO"));
+        screenshot(genie, "build/desktop-game-genie.png");
+        size_t before = cheats_count();
+        click_control(genie, HIT_PANEL, 5, 0);
+        CHECK(cheats_count() == before);
+        CHECK(ui->tools && ui->tools != genie && ui->tools->panel_id == CHEATS_FRONTEND_PANEL);
+        if (ui->tools && ui->tools != genie) {
+            render(ui->tools);
+            CHECK(desktop_clay_contains_text(ui->tools->clay, "SXIOPO"));
+        }
+
+        desktop_close_windows(ui);
+    }
+
     cheat_frontend_destroy(cheats);
     CHECK(cheats_clear() == CHEAT_OK);
     (void)nes_file_remove("build/ui-cheats.txt");
 }
 
 #include "desktop_ppu_accuracy.h"
+#include "desktop_memory_accuracy.h"
+#include "desktop_hex_accuracy.h"
 
 static void window_regressions(FrontendDesktopUi *ui) {
     uint8_t image[16 + 16384 + 8192] = {0};
@@ -767,6 +878,11 @@ static void window_regressions(FrontendDesktopUi *ui) {
     focus_event(ui, ui->window, false);
     focus_event(ui, tool->window, true);
     frontend_desktop_update_activity(ui);
+    CHECK(!frontend_execution_paused(&runtime));
+    frontend_execution_set_suspension(&runtime, 1u << 8);
+    frontend_desktop_update_activity(ui);
+    CHECK(runtime.suspend_reasons & (1u << 8));
+    frontend_execution_set_suspension(&runtime, runtime.suspend_reasons & ~(1u << 8));
     CHECK(!frontend_execution_paused(&runtime));
     CHECK(!frontend_desktop_input_captured(ui));
     SDL_SetWindowPosition(tool->window, 100, 120);
@@ -861,6 +977,9 @@ static void window_regressions(FrontendDesktopUi *ui) {
     ppu_windows(ui);
     lua_chooser(ui);
     cheat_prompt(ui);
+    memory_windows(ui);
+    watch_windows(ui, debug);
+    hex_windows(ui, debug);
     menu_coverage(ui);
     menu_activate(ui, 5, DEBUGGER_FRONTEND_PANEL);
     FrontendDesktopUi *debug_window = ui->tools;

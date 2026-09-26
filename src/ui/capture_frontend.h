@@ -11,6 +11,7 @@
 
 #include "../capture/capture_session.h"
 #include "platform_frontend.h"
+#include "../capture/movie_preferences.h"
 #include <SDL2/SDL.h>
 
 enum {
@@ -24,31 +25,38 @@ enum {
 
 typedef struct {
     bool (*has_image)(void *context);
-    bool (*get_frame)(void *context, bool displayed_output, NesCaptureFrame *frame,
-                       char *error, size_t error_size);
+    bool (*get_frame)(void *context, bool displayed_output, NesCaptureFrame *frame, char *error, size_t error_size);
     bool (*validate_path)(void *context, const char *path, char *error, size_t error_size);
     void *context;
 } NesCaptureFrontendHooks;
 
-typedef struct {
+typedef struct NesCaptureFrontend {
     NesCaptureSession session;
     NesCaptureOptions options;
     NesCaptureFrontendHooks hooks;
     char paths[3][CAPTURE_PATH_CAPACITY];
     void *ui;
+    void *tools;
+    char gif_path[CAPTURE_PATH_CAPACITY];
+    NesMoviePreferences preferences;
+    NesCaptureOverlayState overlay_state;
+    NesCaptureOverlay capture_overlay;
+    char effective_preferences[256];
+    void *overlay_context;
+    void (*refresh_overlay)(void *context, bool completed);
+    bool (*apply_preferences)(void *context, const NesMoviePreferences *preferences, char *error, size_t size);
 } NesCaptureFrontend;
 
 bool nes_capture_frontend_init(NesCaptureFrontend *frontend, const NesCaptureFrontendHooks *hooks);
 NesFileResult nes_capture_frontend_shutdown(NesCaptureFrontend *frontend);
 void nes_capture_frontend_refresh(NesCaptureFrontend *frontend);
-bool nes_capture_frontend_set_path(NesCaptureFrontend *frontend, FrontendSaveFileType type,
-                                    const char *path, char *error, size_t error_size);
-bool nes_capture_path_allowed(const char *path, const char *const *protected_paths, size_t count,
-                               char *error, size_t error_size);
+bool nes_capture_frontend_set_path(NesCaptureFrontend *frontend, FrontendSaveFileType type, const char *path,
+                                   char *error, size_t error_size);
+bool nes_capture_path_allowed(const char *path, const char *const *protected_paths, size_t count, char *error,
+                              size_t error_size);
 void nes_capture_frontend_begin_frame(NesCaptureFrontend *frontend);
 void nes_capture_frontend_end_frame(NesCaptureFrontend *frontend, bool completed);
-bool nes_capture_frontend_handle_shortcut(NesCaptureFrontend *frontend,
-                                          const SDL_KeyboardEvent *event,
-                                          char *error, size_t error_size);
+bool nes_capture_frontend_handle_shortcut(NesCaptureFrontend *frontend, const SDL_KeyboardEvent *event, char *error,
+                                          size_t error_size);
 
 #endif

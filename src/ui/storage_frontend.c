@@ -1,3 +1,9 @@
+/*
+ * storage_frontend.c
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* Storage location and database controls. SPDX-License-Identifier: GPL-3.0-or-later */
 #include "storage_frontend.h"
 #include "app_paths.h"

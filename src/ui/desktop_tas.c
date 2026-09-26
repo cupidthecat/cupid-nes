@@ -1,3 +1,9 @@
+/*
+ * desktop_tas.c
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* Desktop TAS piano-roll editor. SPDX-License-Identifier: GPL-3.0-or-later */
 #include "desktop_tas_internal.h"
 #include "host_input.h"
@@ -20,6 +26,24 @@ const char *desktop_tas_edit_title(unsigned control) {
         return "Store branch";
     case TAS_EDIT_INSERT:
         return "Insert frames";
+    case TAS_EDIT_CACHE_MB:
+        return "Cache budget in MiB (0 disables)";
+    case TAS_EDIT_CACHE_INTERVAL:
+        return "Checkpoint interval in frames";
+    case TAS_EDIT_NAVIGATION_ADD:
+        return "New bookmark name (up to 63 bytes)";
+    case TAS_EDIT_NAVIGATION_NAME:
+        return "Rename bookmark (up to 63 bytes)";
+    case TAS_EDIT_NAVIGATION_NOTE:
+        return "Bookmark note (up to 255 bytes)";
+    case TAS_EDIT_SPLICE_SOURCE_FIRST:
+        return "Source first frame (zero-based)";
+    case TAS_EDIT_SPLICE_SOURCE_COUNT:
+        return "Number of source frames";
+    case TAS_EDIT_SPLICE_DESTINATION_FIRST:
+        return "Destination first frame (zero-based)";
+    case TAS_EDIT_SPLICE_DESTINATION_COUNT:
+        return "Number of destination frames to replace";
     default:
         return "Edit value";
     }
@@ -314,6 +338,32 @@ bool desktop_tas_commit(FrontendDesktopUi *ui, const char *text, char *error, si
         desktop_tas_keep_cursor_visible(ui);
         return true;
     }
+    if (ui->edit_control >= TAS_EDIT_NAVIGATION_ADD && ui->edit_control <= TAS_EDIT_NAVIGATION_NOTE) {
+        return desktop_tas_navigation_commit(ui, text, error, size);
+    }
+    if (ui->edit_control >= TAS_EDIT_SPLICE_SOURCE_FIRST && ui->edit_control <= TAS_EDIT_SPLICE_DESTINATION_COUNT) {
+        return desktop_tas_splice_commit(ui, text, error, size);
+    }
+    if (ui->edit_control == TAS_EDIT_CACHE_MB || ui->edit_control == TAS_EDIT_CACHE_INTERVAL) {
+        size_t value;
+        bool budget = ui->edit_control == TAS_EDIT_CACHE_MB;
+        if (!nes_tas_session_active(session) || !tas_frontend_parse_frame(text, &value) ||
+            (budget ? value > 1024 : !value || value > 3600)) {
+            snprintf(error, size, "%s",
+                     budget ? "Enter a whole number from 0 to 1024 MiB."
+                            : "Enter a whole number from 1 to 3600 frames.");
+            return false;
+        }
+        NesTasCacheInfo cache;
+        nes_tas_session_cache_info(session, &cache);
+        NesMovieResult result = nes_tas_session_set_cache(session, budget ? value * 1024u * 1024u : cache.byte_limit,
+                                                          budget ? cache.interval : (unsigned)value);
+        if (result != NES_MOVIE_OK) {
+            snprintf(error, size, "%s", nes_tas_session_error(session));
+            return false;
+        }
+        return true;
+    }
     NesTasProject *project = desktop_tas_project_writable(ui, false);
     if (!project) {
         snprintf(error, size, "Pause playback and disable read-only/recording before editing.");
@@ -377,6 +427,7 @@ void desktop_tas_destroy(FrontendDesktopUi *ui) {
             nes_tas_edit_cancel(project);
         }
     }
+    nes_tas_project_destroy(ui->tas_editor->splice.source);
     free(ui->tas_editor);
     ui->tas_editor = NULL;
 }

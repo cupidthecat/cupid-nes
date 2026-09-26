@@ -1,3 +1,9 @@
+/*
+ * vrc7_audio.h - VRC7 FM audio integration
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 #ifndef VRC7_AUDIO_H
 #define VRC7_AUDIO_H
 

@@ -1,3 +1,9 @@
+/*
+ * tas_timeline.c
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* Movie cursor and bounded executable checkpoints. SPDX-License-Identifier: GPL-3.0-or-later */
 #include "tas_session_internal.h"
 #include "../joypad/joypad.h"
@@ -95,6 +101,87 @@ NesMovieResult nes_tas_session_set_cache(NesTasSession *session, size_t bytes, u
     while (session->checkpoint_count && session->checkpoint_bytes > bytes) {
         remove_checkpoint(session, 0);
     }
+    return tas_result(session, NES_MOVIE_OK, NULL);
+}
+
+static size_t cache_valid_through(const NesTasSession *session) {
+    NesTasChange change = nes_tas_project_change_since(session->project, session->seen_revision);
+    size_t frames = nes_tas_project_frame_count(session->project);
+    return change.first_changed_frame < frames ? change.first_changed_frame : frames;
+}
+
+void nes_tas_session_cache_info(const NesTasSession *session, NesTasCacheInfo *out) {
+    if (!out) {
+        return;
+    }
+    *out = (NesTasCacheInfo){0};
+    if (!session) {
+        return;
+    }
+    out->byte_limit = session->cache_limit;
+    out->interval = session->cache_interval;
+    if (!session->active) {
+        return;
+    }
+    out->initial_bytes = session->initial.size;
+    size_t valid_through = cache_valid_through(session);
+    for (size_t i = 0; i < session->checkpoint_count; ++i) {
+        const TasCheckpoint *entry = &session->checkpoints[i];
+        if (entry->frame <= valid_through) {
+            ++out->checkpoint_count;
+            out->checkpoint_bytes += entry->state.size;
+        }
+    }
+}
+
+bool nes_tas_session_cache_entry(const NesTasSession *session, size_t index, NesTasCacheEntry *out) {
+    if (out) {
+        *out = (NesTasCacheEntry){0};
+    }
+    if (!session || !session->active || !out) {
+        return false;
+    }
+    size_t valid_through = cache_valid_through(session);
+    for (size_t i = 0; i < session->checkpoint_count; ++i) {
+        const TasCheckpoint *entry = &session->checkpoints[i];
+        if (entry->frame > valid_through) {
+            continue;
+        }
+        if (index-- == 0) {
+            *out = (NesTasCacheEntry){entry->frame, entry->state.size, entry->lag_count, false};
+            return true;
+        }
+    }
+    return false;
+}
+
+bool nes_tas_session_cache_before(const NesTasSession *session, size_t frame, NesTasCacheEntry *out) {
+    if (out) {
+        *out = (NesTasCacheEntry){0};
+    }
+    if (!session || !session->active || !session->initial.data || !out ||
+        frame > nes_tas_project_frame_count(session->project)) {
+        return false;
+    }
+    *out = (NesTasCacheEntry){0, session->initial.size, 0, true};
+    size_t valid_through = cache_valid_through(session);
+    for (size_t i = 0; i < session->checkpoint_count; ++i) {
+        const TasCheckpoint *entry = &session->checkpoints[i];
+        if (entry->frame <= frame && entry->frame <= valid_through && entry->frame > out->frame) {
+            *out = (NesTasCacheEntry){entry->frame, entry->state.size, entry->lag_count, false};
+        }
+    }
+    return true;
+}
+
+NesMovieResult nes_tas_session_clear_cache(NesTasSession *session, size_t after_frame) {
+    if (!session || !session->active) {
+        return tas_result(session, NES_MOVIE_CONFLICT, NULL);
+    }
+    if (after_frame > nes_tas_project_frame_count(session->project)) {
+        return tas_result(session, NES_MOVIE_INVALID_ARGUMENT, "Frame is outside the movie timeline.");
+    }
+    tas_invalidate_after(session, after_frame);
     return tas_result(session, NES_MOVIE_OK, NULL);
 }
 

@@ -949,5 +949,6 @@ void cart_notify_vblank_start(void) {
 #include "mapper_factory.h"
 #include "mapper_state_impl.h"
 #include "mapper_debug.h"
+#include "mapper_memory.h"
 
 bool cart_has_chr_rom(void) { return C.chr && C.chr_sz && !C.chr_is_ram; }

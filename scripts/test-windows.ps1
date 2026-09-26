@@ -96,12 +96,17 @@ $coreSources += @('src/third_party/lua/lapi.c', 'src/third_party/lua/lauxlib.c',
                   'src/third_party/lua/lstring.c', 'src/third_party/lua/lstrlib.c', 'src/third_party/lua/ltable.c',
                   'src/third_party/lua/ltablib.c', 'src/third_party/lua/ltm.c', 'src/third_party/lua/lundump.c',
                   'src/third_party/lua/lutf8lib.c', 'src/third_party/lua/lvm.c', 'src/third_party/lua/lzio.c')
-$cppSources = @('src/apu/epsm.cpp', 'src/third_party/ymfm/ymfm_opn.cpp',
+$cppSources = @('src/video/pixel_filter.cpp', 'src/apu/epsm.cpp', 'src/third_party/ymfm/ymfm_opn.cpp',
                 'src/third_party/ymfm/ymfm_ssg.cpp', 'src/third_party/ymfm/ymfm_adpcm.cpp',
                 'src/rom/game_db.cpp', 'src/rom/boards/runtime.cpp', 'src/rom/boards/factory.cpp',
                 'src/rom/boards/state.cpp', 'src/hd/hd_assets.cpp', 'src/hd/hd_pack_loader.cpp',
                 'src/hd/hd_conditions.cpp', 'src/hd/hd_renderer.cpp', 'src/hd/hd_runtime.cpp',
                 'src/third_party/stb/stb_vorbis.cpp')
+$cppSources += @('src/video/pixel_scalers.cpp', 'src/third_party/xbrz/xbrz.cpp',
+                 'src/third_party/hqx/hq2x.cpp', 'src/third_party/hqx/hq3x.cpp',
+                 'src/third_party/hqx/hq4x.cpp', 'src/third_party/hqx/init.cpp',
+                 'src/third_party/scale2x/scale2x.cpp', 'src/third_party/scale2x/scale3x.cpp',
+                 'src/third_party/sai/2xSai.cpp', 'src/third_party/sai/Super2xSai.cpp', 'src/third_party/sai/SuperEagle.cpp')
 $coreSources += @('src/util/md5.c', 'src/replay/tas_startup.c', 'src/replay/tas_session.c',
                   'src/replay/tas_timeline.c', 'src/replay/tas_input.c', 'src/replay/tas_state.c', 'src/ui/tas_frontend.c')
 $coreSources += @('src/replay/fm2.c', 'src/replay/fm2_parse.c', 'src/replay/fm2_write.c', 'src/replay/tas_project.c',
@@ -149,11 +154,64 @@ $cppTestSources = @('src/tests/hd_pack_accuracy.cpp', 'src/tests/hd_renderer_acc
 $testSources += @('src/tests/tas_session_accuracy.c', 'src/tests/movie_runner.c')
 $coreSources += @('src/ui/desktop_tas_edit.c', 'src/ui/desktop_tas_layout.c')
 $coreSources += @('src/replay/tas_project_io.c', 'src/replay/tas_script.c')
+$coreSources += @('src/replay/tas_history.c')
+$coreSources += @('src/replay/tas_navigation.c', 'src/ui/desktop_tas_navigation.c')
+$coreSources += @('src/replay/tas_splice.c', 'src/replay/tas_splice_load.c')
+$coreSources += @('src/ui/desktop_tas_splice.c', 'src/ui/desktop_tas_splice_layout.c')
 $coreSources += @('src/replay/tas_project_fm3.c', 'src/replay/tas_project_fm3_read.c')
 $testSources += @('src/tests/tas_editor_input_accuracy.c')
 $testSources += @('src/tests/fm2_accuracy.c')
 $testSources += @('src/tests/tas_project_accuracy.c', 'src/tests/tas_script_accuracy.c')
+$testSources += @('src/tests/tas_history_accuracy.c')
+$testSources += @('src/tests/tas_navigation_accuracy.c')
+$testSources += @('src/tests/tas_splice_accuracy.c')
+$testSources += @('src/tests/video_runtime_accuracy.c', 'src/tests/pixel_filter_accuracy.c')
+$coreSources += @('src/video/ntsc_settings.c')
+$coreSources += @('src/replay/fcm.c', 'src/ui/fcm_frontend.c')
+$coreSources += @('src/ui/desktop_keyboard.c')
+$coreSources += @('src/ui/settings_core.c')
+$coreSources += @('src/ui/presentation_host.c')
+$coreSources += @('src/cheats/cheat_database.c', 'src/ui/cheat_database_frontend.c')
+$coreSources += @('src/media/header_editor.c', 'src/ui/header_editor_frontend.c')
+$coreSources += @('src/capture/capture_codec.c')
+$coreSources += @('src/capture/capture_gif.c', 'src/capture/capture_riff.c', 'src/capture/capture_overlay.c',
+                  'src/capture/movie_subtitles.c', 'src/capture/movie_backup.c', 'src/capture/movie_preferences.c')
+$coreSources += @('src/debugger/debug_analysis.c', 'src/debugger/debug_capture.c', 'src/debugger/debug_catalog.c')
+$coreSources += @('src/ui/debug_tools_frontend.c')
+$testSources += @('src/tests/fcm_accuracy.c')
+$coreSources += @('src/cheats/game_genie.c', 'src/ui/game_genie_frontend.c')
+$coreSources += @('src/debugger/memory_view.c', 'src/debugger/memory_search.c',
+                   'src/ui/memory_search_frontend.c', 'src/ui/desktop_memory.c')
+$coreSources += @('src/debugger/expression.c', 'src/debugger/memory_watch.c')
+$coreSources += @('src/debugger/memory_editor.c')
+$coreSources += @('src/ui/hex_frontend.c', 'src/ui/desktop_hex.c')
+$testSources += @('src/tests/memory_editor_accuracy.c', 'src/tests/hex_frontend_accuracy.c')
+$coreSources += @('src/debugger/assembler.c', 'src/ui/assembler_frontend.c')
+$testSources += @('src/tests/assembler_accuracy.c')
+$testSources += @('src/tests/ntsc_settings_accuracy.c')
+$testSources += @('src/tests/game_genie_accuracy.c')
+$testSources += @('src/tests/memory_search_accuracy.c', 'src/tests/memory_tools_accuracy.c')
+$testSources += @('src/tests/memory_watch_accuracy.c', 'src/tests/watch_frontend_accuracy.c')
+$coreSources += @('src/ui/watch_frontend.c')
 $application = Join-Path $outputDirectory 'cupid-nes.exe'
+$coreSources += @('src/ui/capture_tools.c', 'src/ui/recovery_store.c', 'src/ui/state_recorder.c',
+                  'src/ui/lifecycle_frontend.c', 'src/ui/game_config.c', 'src/ui/cli_options.c',
+                  'src/ui/cli_parse.c', 'src/ui/cli_help.c', 'src/ui/update_metadata.c',
+                  'src/ui/update_transport.c', 'src/ui/update_checker.c',
+                  'src/video/frame_timing.c', 'src/video/history_view.c', 'src/ui/timing_frontend.c',
+                  'src/ui/history_frontend.c', 'src/ui/presentation_tools.c')
+$coreSources += @('src/ui/overclock_frontend.c')
+$cppSources += @('src/hd/hd_builder.cpp', 'src/video/shader_parser.cpp', 'src/video/shader_preset.cpp')
+$testSources += @('src/tests/capture_extensions_accuracy.c', 'src/tests/frame_timing_accuracy.c')
+$testSources += @('src/tests/capture_frontend_extensions_accuracy.c')
+$testSources += @('src/tests/keyboard_accuracy.c')
+$testSources += @('src/tests/cheat_database_accuracy.c')
+$testSources += @('src/tests/lifecycle_accuracy.c', 'src/tests/update_cli_accuracy.c',
+                 'src/tests/debug_tools_accuracy.c', 'src/tests/presentation_frontend_accuracy.c')
+$testSources += @('src/tests/header_editor_accuracy.c')
+$testSources += @('src/tests/overclock_accuracy.c', 'src/tests/desktop_menu_accuracy.c')
+$testSources += @('src/tests/presentation_history_accuracy.c', 'src/tests/presentation_audio_accuracy.c')
+$cppTestSources += @('src/tests/hd_builder_accuracy.cpp', 'src/tests/shader_preset_accuracy.cpp')
 $testProgram = Join-Path $outputDirectory 'accuracy-tests.exe'
 $objectDirectory = Join-Path $outputDirectory 'objects'
 New-Item -ItemType Directory -Force -Path $objectDirectory | Out-Null
@@ -163,6 +221,20 @@ function Compile-Source([string]$Source, [string]$Driver, [string[]]$BuildFlags)
     & $Driver @BuildFlags '-c' $Source '-o' $object
     if ($LASTEXITCODE -ne 0) { throw "Compilation failed: $Source" }
     return $object
+}
+
+function Link-Program([string[]]$Objects, [string]$Output) {
+    # Object paths can exceed the Windows command-line limit in long checkouts.
+    $responseFile = "$Output.rsp"
+    $linkArguments = @($cppFlags) + @($Objects) + @($sdkLibrary, '-lshell32', '-lcomdlg32',
+                                                  '-lws2_32', '-lole32', '-lwinhttp', '-o', $Output)
+    $responseLines = foreach ($argument in $linkArguments) {
+        '"' + $argument.Replace('\', '/').Replace('"', '\"') + '"'
+    }
+    [System.IO.File]::WriteAllLines($responseFile, [string[]]$responseLines,
+                                   [System.Text.UTF8Encoding]::new($false))
+    & $CxxCompiler ("@" + $responseFile)
+    if ($LASTEXITCODE -ne 0) { throw "Link failed: $Output" }
 }
 
 Push-Location $projectRoot
@@ -176,10 +248,8 @@ try {
         foreach ($source in $testSources) { Compile-Source $source $Compiler $flags }
         foreach ($source in $cppTestSources) { Compile-Source $source $CxxCompiler $cppFlags }
     )
-    & $CxxCompiler @cppFlags @coreObjects $mainObject $sdkLibrary '-lshell32' '-lcomdlg32' '-lws2_32' '-lole32' '-o' $application
-    if ($LASTEXITCODE -ne 0) { throw 'Emulator build failed' }
-    & $CxxCompiler @cppFlags @coreObjects @testObjects $sdkLibrary '-lshell32' '-lcomdlg32' '-lws2_32' '-lole32' '-o' $testProgram
-    if ($LASTEXITCODE -ne 0) { throw 'Hardware test build failed' }
+    Link-Program ($coreObjects + @($mainObject)) $application
+    Link-Program ($coreObjects + $testObjects) $testProgram
     & $testProgram
     if ($LASTEXITCODE -ne 0) { throw 'Hardware regressions failed' }
     & python (Join-Path $projectRoot 'scripts/check-region-cli.py') $application

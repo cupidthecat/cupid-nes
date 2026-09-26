@@ -49,43 +49,6 @@ static bool parse_hex(const char *text, size_t length, uint32_t *value) {
     return true;
 }
 
-static int gg_nibble(int c) {
-    static const char alphabet[] = "APZLGITYEOXUKSVN";
-    c = toupper((unsigned char)c);
-    for (int i = 0; i < 16; ++i) if (alphabet[i] == c) return i;
-    return -1;
-}
-
-static uint32_t decode_bits(uint32_t raw, const uint8_t *bits, size_t count) {
-    uint32_t result = 0;
-    for (size_t i = 0; i < count; ++i) result = (result << 1) | ((raw >> bits[i]) & 1u);
-    return result;
-}
-
-static CheatResult parse_game_genie(const char *text, size_t length, CheatRecord *out) {
-    if (length != 6 && length != 8) return CHEAT_INVALID_CODE;
-    uint32_t raw = 0;
-    for (size_t i = 0; i < length; ++i) {
-        int nibble = gg_nibble((unsigned char)text[i]);
-        if (nibble < 0) return CHEAT_INVALID_CODE;
-        raw |= (uint32_t)nibble << (i * 4u);
-    }
-    static const uint8_t address_bits[15] = {
-        14, 13, 12, 19, 22, 21, 20, 7, 10, 9, 8, 15, 18, 17, 16
-    };
-    uint8_t value_bits[8] = {3, 6, 5, 4, 23, 2, 1, 0};
-    uint8_t compare_bits[8] = {27, 30, 29, 28, 23, 26, 25, 24};
-    if (length == 8) value_bits[4] = 31;
-    out->format = CHEAT_FORMAT_GAME_GENIE;
-    out->address = (uint16_t)(0x8000u + decode_bits(raw, address_bits, 15));
-    out->value = (uint8_t)decode_bits(raw, value_bits, 8);
-    out->has_compare = length == 8;
-    out->compare = out->has_compare ? (uint8_t)decode_bits(raw, compare_bits, 8) : 0;
-    for (size_t i = 0; i < length; ++i) out->code[i] = (char)toupper((unsigned char)text[i]);
-    out->code[length] = '\0';
-    return CHEAT_OK;
-}
-
 static CheatResult parse_par(const char *text, size_t length, CheatRecord *out) {
     if (length != 8) return CHEAT_INVALID_CODE;
     uint32_t encoded;
@@ -154,9 +117,9 @@ CheatResult cheats_parse(const char *text, CheatRecord *out) {
     if (!length || length >= sizeof(out->code)) return CHEAT_INVALID_CODE;
     memset(out, 0, sizeof(*out));
     CheatResult result;
-    if (length == 6) result = parse_game_genie(text, length, out);
+    if (length == 6) result = cheats_game_genie_decode(text, out);
     else if (length == 8) {
-        result = parse_game_genie(text, length, out);
+        result = cheats_game_genie_decode(text, out);
         if (result != CHEAT_OK) result = parse_par(text, length, out);
     } else if (length == 7 || length == 10) result = parse_raw(text, length, out);
     else result = CHEAT_INVALID_CODE;
@@ -176,6 +139,21 @@ CheatResult cheats_add(const char *code, const char *description, bool enabled,
     snprintf(parsed.description, sizeof(parsed.description), "%s", description ? description : "");
     records[record_count++] = parsed;
     if (id_out) *id_out = parsed.id;
+    return CHEAT_OK;
+}
+
+CheatResult cheats_add_group(const char *const *codes, size_t count, const char *description, bool enabled) {
+    if (deterministic_mutation_blocked()) return CHEAT_DETERMINISTIC_MODE;
+    if (!codes || !count || count > 16) return CHEAT_INVALID_ARGUMENT;
+    if (count > CHEAT_LIMIT - record_count) return CHEAT_LIMIT_REACHED;
+    CheatRecord parsed[16];
+    for (size_t i = 0; i < count; ++i) {
+        CheatResult result = cheats_parse(codes[i], &parsed[i]);
+        if (result != CHEAT_OK) return result;
+        parsed[i].enabled = enabled;
+        snprintf(parsed[i].description, sizeof(parsed[i].description), "%s", description ? description : "");
+    }
+    for (size_t i = 0; i < count; ++i) { parsed[i].id = next_id++; records[record_count++] = parsed[i]; }
     return CHEAT_OK;
 }
 

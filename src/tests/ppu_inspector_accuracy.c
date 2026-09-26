@@ -1,3 +1,9 @@
+/*
+ * ppu_inspector_accuracy.c
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* PPU viewer decoding and side-effect regressions. SPDX-License-Identifier: GPL-3.0-or-later */
 #include "board_tests.h"
 #include "../debugger/ppu_inspector.h"

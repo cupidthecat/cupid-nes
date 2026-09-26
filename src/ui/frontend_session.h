@@ -33,6 +33,8 @@ typedef struct {
 } FrontendImageRequest;
 
 typedef struct {
+    bool request_valid;
+    FrontendImageRequest opened_request;
     char title[FRONTEND_IMAGE_TITLE_MAX];
     char sha1[41];
     char save_identity[FRONTEND_IMAGE_PATH_MAX];

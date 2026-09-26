@@ -95,20 +95,41 @@ int test_nsf_accuracy(void);
 int test_nsf_player_accuracy(void);
 int test_capture_container_accuracy(void);
 int test_capture_session_accuracy(void);
+int test_capture_extensions_accuracy(void);
+int test_capture_frontend_extensions_accuracy(void);
+int run_frame_timing_accuracy_tests(void);
+int run_presentation_history_accuracy_tests(void);
+int run_presentation_audio_accuracy_tests(void);
+int run_hd_builder_accuracy_tests(void);
+int run_shader_preset_accuracy_tests(void);
+int run_native_audio_backend_tests(void);
+int run_shader_gpu_accuracy_tests(void);
 int test_video_trace_accuracy(void);
 int test_video_presentation_accuracy(void);
+int test_video_runtime_accuracy(void);
+int test_pixel_filter_accuracy(void);
+int test_ntsc_settings_accuracy(void);
 int test_audio_mix_accuracy(void);
 int test_input_accuracy(void);
 int test_vs_accuracy(void);
 int test_epsm_accuracy(void);
 int test_frontend_accuracy(void);
 int test_desktop_accuracy(void);
+int test_desktop_menu_accuracy(void);
 int test_board_state_accuracy(void);
 int test_state_accuracy(void);
 int test_state_ui_accuracy(void);
 int test_debugger_accuracy(void);
 int test_ppu_inspector_accuracy(void);
 int test_cheat_accuracy(void);
+int test_game_genie_accuracy(void);
+int test_memory_search_accuracy(void);
+int test_memory_tools_accuracy(void);
+int test_memory_watch_accuracy(void);
+int test_watch_frontend_accuracy(void);
+int test_memory_editor_accuracy(void);
+int test_hex_frontend_accuracy(void);
+int test_assembler_accuracy(void);
 int test_rewind_accuracy(void);
 int test_movie_accuracy(void);
 int test_movie_frontend_accuracy(void);
@@ -116,6 +137,18 @@ int test_tas_session_accuracy(void);
 int test_fm2_accuracy(void);
 int test_tas_editor_input_accuracy(void);
 int test_tas_project_accuracy(void);
+int test_tas_history_accuracy(void);
+int test_tas_navigation_accuracy(void);
+int test_tas_splice_accuracy(void);
+int test_fcm_accuracy(void);
+int test_keyboard_accuracy(void);
+int test_cheat_database_accuracy(void);
+int test_overclock_accuracy(void);
+int test_lifecycle_accuracy(void);
+int test_update_cli_accuracy(void);
+int run_debug_tools_accuracy_tests(void);
+int run_presentation_frontend_accuracy_tests(void);
+int run_header_editor_accuracy_tests(void);
 int test_tas_script_accuracy(void);
 int run_movie_rom(const char *rom, const char *movie, unsigned frames, const char *output);
 int run_movie_trace(const char *rom, const char *movie, unsigned frames, const char *prefix);
@@ -132,40 +165,106 @@ int run_accuracycoin_rom(const char *path, unsigned frames, const char *output);
 
 int test_netplay_peer(const char *role, unsigned port, const char *scenario);
 int benchmark_frontend(unsigned frames, const char *path);
+
 int main(int argc, char **argv) {
-    if (argc == 2 && !strcmp(argv[1], "--tas-session")) return test_tas_session_accuracy() ? 1 : 0;
-    if (argc == 2 && !strcmp(argv[1], "--fm2")) return test_fm2_accuracy() ? 1 : 0;
-    if (argc == 2 && !strcmp(argv[1], "--tas-editor-input")) return test_tas_editor_input_accuracy() ? 1 : 0;
-    if (argc == 2 && !strcmp(argv[1], "--tas-project")) return test_tas_project_accuracy() ? 1 : 0;
-    if (argc == 2 && !strcmp(argv[1], "--tas-script")) return test_tas_script_accuracy() ? 1 : 0;
-    if (((argc == 5 || argc == 6) && !strcmp(argv[1], "--movie")) ||
-        (argc == 6 && !strcmp(argv[1], "--movie-trace"))) {
+    if (argc == 2 && !strcmp(argv[1], "--native-audio")) return run_native_audio_backend_tests() ? 1 : 0;
+    if (argc == 2 && !strcmp(argv[1], "--shader-gpu")) return run_shader_gpu_accuracy_tests() ? 1 : 0;
+    if (argc == 2 && !strcmp(argv[1], "--keyboard")) {
+        return test_keyboard_accuracy() ? 1 : 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--debugger")) {
+        return (test_debugger_accuracy() + run_debug_tools_accuracy_tests()) ? 1 : 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--header-editor")) {
+        return run_header_editor_accuracy_tests() ? 1 : 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--assembler")) {
+        return test_assembler_accuracy() ? 1 : 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--memory-editor")) {
+        return (test_memory_editor_accuracy() + test_hex_frontend_accuracy()) ? 1 : 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--memory-watch")) {
+        return (test_memory_watch_accuracy() + test_watch_frontend_accuracy()) ? 1 : 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--memory-search")) {
+        return (test_memory_search_accuracy() + test_memory_tools_accuracy()) ? 1 : 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--game-genie")) {
+        return test_game_genie_accuracy() ? 1 : 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--video-runtime")) {
+        return test_video_runtime_accuracy() ? 1 : 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--pixel-filter")) {
+        return test_pixel_filter_accuracy() ? 1 : 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--ntsc-settings")) {
+        return test_ntsc_settings_accuracy() ? 1 : 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--tas-session")) {
+        return test_tas_session_accuracy() ? 1 : 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--fm2")) {
+        return test_fm2_accuracy() ? 1 : 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--tas-editor-input")) {
+        return test_tas_editor_input_accuracy() ? 1 : 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--tas-project")) {
+        return test_tas_project_accuracy() ? 1 : 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--tas-history")) {
+        return test_tas_history_accuracy() ? 1 : 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--tas-navigation")) {
+        return test_tas_navigation_accuracy() ? 1 : 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--tas-splice")) {
+        return test_tas_splice_accuracy() ? 1 : 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--fcm")) {
+        return test_fcm_accuracy() ? 1 : 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--tas-script")) {
+        return test_tas_script_accuracy() ? 1 : 0;
+    }
+    if (((argc == 5 || argc == 6) && !strcmp(argv[1], "--movie")) || (argc == 6 && !strcmp(argv[1], "--movie-trace"))) {
         char *end;
         unsigned long frames = strtoul(argv[2], &end, 10);
-        if (!*argv[2] || *argv[2] == '-' || *end || frames > 100000) return 2;
+        if (!*argv[2] || *argv[2] == '-' || *end || frames > 100000) {
+            return 2;
+        }
         return !strcmp(argv[1], "--movie-trace")
                    ? run_movie_trace(argv[3], argv[4], (unsigned)frames, argv[5])
                    : run_movie_rom(argv[3], argv[4], (unsigned)frames, argc == 6 ? argv[5] : NULL);
     }
-    if(argc==2 && !strcmp(argv[1],"--ppu-tools"))return test_ppu_inspector_accuracy()?1:0;
-    if(argc==2 && !strcmp(argv[1],"--desktop"))return test_desktop_accuracy()?1:0;
-    if(argc==4 && !strcmp(argv[1],"--benchmark-frontend")){
-        char *end=NULL;unsigned long frames=strtoul(argv[2],&end,10);
-        if(!frames||frames>100000||!end||*end)return 2;
-        return benchmark_frontend((unsigned)frames,argv[3]);
+    if (argc == 2 && !strcmp(argv[1], "--ppu-tools")) {
+        return test_ppu_inspector_accuracy() ? 1 : 0;
     }
-    if (argc == 5 && !strcmp(argv[1], "--netplay-peer"))
+    if (argc == 2 && !strcmp(argv[1], "--desktop")) {
+        return (test_desktop_accuracy() + test_desktop_menu_accuracy()) ? 1 : 0;
+    }
+    if (argc == 4 && !strcmp(argv[1], "--benchmark-frontend")) {
+        char *end = NULL;
+        unsigned long frames = strtoul(argv[2], &end, 10);
+        if (!frames || frames > 100000 || !end || *end) {
+            return 2;
+        }
+        return benchmark_frontend((unsigned)frames, argv[3]);
+    }
+    if (argc == 5 && !strcmp(argv[1], "--netplay-peer")) {
         return test_netplay_peer(argv[2], (unsigned)strtoul(argv[3], NULL, 10), argv[4]);
+    }
     if (argc > 1) {
         if (argc == 4 && strcmp(argv[1], "--trace") == 0) {
             int result = test_cpu_trace(argv[2], argv[3]);
             unload_rom();
             return result;
         }
-        if (argc >= 4 && (strcmp(argv[1], "--rom") == 0 || strcmp(argv[1], "--render") == 0
-            || strcmp(argv[1], "--accuracycoin") == 0
-            || strcmp(argv[1], "--mmc3-rom") == 0 || strcmp(argv[1], "--legacy-pal-rom") == 0
-            || strcmp(argv[1], "--legacy-rom") == 0)) {
+        if (argc >= 4 && (strcmp(argv[1], "--rom") == 0 || strcmp(argv[1], "--render") == 0 ||
+                          strcmp(argv[1], "--accuracycoin") == 0 || strcmp(argv[1], "--mmc3-rom") == 0 ||
+                          strcmp(argv[1], "--legacy-pal-rom") == 0 || strcmp(argv[1], "--legacy-rom") == 0)) {
             char *end;
             long frames = strtol(argv[2], &end, 10);
             if (*end || frames < 1 || frames > 100000) {
@@ -173,32 +272,39 @@ int main(int argc, char **argv) {
                 return 2;
             }
             if (strcmp(argv[1], "--render") == 0) {
-                if (argc != 5) return 2;
+                if (argc != 5) {
+                    return 2;
+                }
                 return render_diagnostic_rom(argv[3], (unsigned)frames, argv[4]);
             }
             if (strcmp(argv[1], "--accuracycoin") == 0) {
-                if (argc > 5) return 2;
+                if (argc > 5) {
+                    return 2;
+                }
                 return run_accuracycoin_rom(argv[3], (unsigned)frames, argc == 5 ? argv[4] : NULL);
             }
             int failed = 0;
             for (int i = 3; i < argc; ++i) {
-                int result = strcmp(argv[1], "--mmc3-rom") == 0
-                           ? run_mmc3_diagnostic_rom(argv[i], (unsigned)frames)
-                           : strcmp(argv[1], "--legacy-pal-rom") == 0
-                           ? run_legacy_pal_diagnostic_rom(argv[i], (unsigned)frames)
-                           : strcmp(argv[1], "--legacy-rom") == 0
-                           ? run_legacy_diagnostic_rom(argv[i], (unsigned)frames)
-                           : run_diagnostic_rom(argv[i], (unsigned)frames);
-                if (result != 0) failed++;
+                int result = strcmp(argv[1], "--mmc3-rom") == 0 ? run_mmc3_diagnostic_rom(argv[i], (unsigned)frames)
+                             : strcmp(argv[1], "--legacy-pal-rom") == 0
+                                 ? run_legacy_pal_diagnostic_rom(argv[i], (unsigned)frames)
+                             : strcmp(argv[1], "--legacy-rom") == 0
+                                 ? run_legacy_diagnostic_rom(argv[i], (unsigned)frames)
+                                 : run_diagnostic_rom(argv[i], (unsigned)frames);
+                if (result != 0) {
+                    failed++;
+                }
             }
             printf("Diagnostic ROMs: %d passed, %d failed or unfinished\n", argc - 3 - failed, failed);
             return failed ? 1 : 0;
         }
-        fprintf(stderr, "Usage: %s [--desktop | --fm2 | --tas-session | --tas-editor-input | "
-                        "--movie FRAMES ROM MOVIE [OUTPUT.ppm] | --movie-trace FRAMES ROM MOVIE PREFIX | "
-                        "--benchmark-frontend FRAMES ROM | --trace ROM LOG | --rom FRAMES ROM... | "
-                        "--mmc3-rom FRAMES ROM... | --legacy-pal-rom FRAMES ROM... | --legacy-rom FRAMES ROM... | "
-                        "--render FRAMES ROM OUTPUT.ppm | --accuracycoin FRAMES ROM [OUTPUT.ppm]]\n", argv[0]);
+        fprintf(stderr,
+                "Usage: %s [--desktop | --fm2 | --tas-session | --tas-editor-input | "
+                "--movie FRAMES ROM MOVIE [OUTPUT.ppm] | --movie-trace FRAMES ROM MOVIE PREFIX | "
+                "--benchmark-frontend FRAMES ROM | --trace ROM LOG | --rom FRAMES ROM... | "
+                "--mmc3-rom FRAMES ROM... | --legacy-pal-rom FRAMES ROM... | --legacy-rom FRAMES ROM... | "
+                "--render FRAMES ROM OUTPUT.ppm | --accuracycoin FRAMES ROM [OUTPUT.ppm]]\n",
+                argv[0]);
         return 2;
     }
     int failures = 0;
@@ -257,8 +363,18 @@ int main(int argc, char **argv) {
     failures += test_nsf_player_accuracy();
     failures += test_capture_container_accuracy();
     failures += test_capture_session_accuracy();
+    failures += test_capture_extensions_accuracy();
+    failures += test_capture_frontend_extensions_accuracy();
+    failures += run_frame_timing_accuracy_tests();
+    failures += run_presentation_history_accuracy_tests();
+    failures += run_presentation_audio_accuracy_tests();
+    failures += run_hd_builder_accuracy_tests();
+    failures += run_shader_preset_accuracy_tests();
     failures += test_video_trace_accuracy();
     failures += test_video_presentation_accuracy();
+    failures += test_video_runtime_accuracy();
+    failures += test_pixel_filter_accuracy();
+    failures += test_ntsc_settings_accuracy();
     failures += test_audio_mix_accuracy();
     failures += test_input_accuracy();
     failures += test_vs_accuracy();
@@ -273,6 +389,18 @@ int main(int argc, char **argv) {
     failures += test_fm2_accuracy();
     failures += test_tas_editor_input_accuracy();
     failures += test_tas_project_accuracy();
+    failures += test_tas_history_accuracy();
+    failures += test_tas_navigation_accuracy();
+    failures += test_tas_splice_accuracy();
+    failures += test_fcm_accuracy();
+    failures += test_keyboard_accuracy();
+    failures += test_cheat_database_accuracy();
+    failures += test_overclock_accuracy();
+    failures += test_lifecycle_accuracy();
+    failures += test_update_cli_accuracy();
+    failures += run_debug_tools_accuracy_tests();
+    failures += run_presentation_frontend_accuracy_tests();
+    failures += run_header_editor_accuracy_tests();
     failures += test_tas_script_accuracy();
     failures += test_region_accuracy();
     failures += test_file_io_accuracy();
@@ -285,8 +413,17 @@ int main(int argc, char **argv) {
     failures += test_debugger_accuracy();
     failures += test_ppu_inspector_accuracy();
     failures += test_cheat_accuracy();
+    failures += test_game_genie_accuracy();
+    failures += test_memory_search_accuracy();
+    failures += test_memory_tools_accuracy();
+    failures += test_memory_watch_accuracy();
+    failures += test_watch_frontend_accuracy();
+    failures += test_memory_editor_accuracy();
+    failures += test_hex_frontend_accuracy();
+    failures += test_assembler_accuracy();
     failures += test_frontend_accuracy();
     failures += test_desktop_accuracy();
+    failures += test_desktop_menu_accuracy();
     failures += test_hd_pack_accuracy();
     failures += test_hd_renderer_accuracy();
     failures += test_hd_runtime_accuracy();

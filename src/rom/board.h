@@ -21,6 +21,7 @@ extern "C" {
 #endif
 #include "rom.h"
 #include "replay_memory.h"
+#include "../system/memory_location.h"
 
 typedef struct CartridgeBoard CartridgeBoard;
 
@@ -48,6 +49,7 @@ void board_observe_cpu_write(CartridgeBoard *board, uint16_t address, uint8_t va
 uint8_t board_ppu_read(CartridgeBoard *board, uint16_t address, unsigned fetch_source);
 uint8_t board_ppu_peek(const CartridgeBoard *board, uint16_t address);
 bool board_debug_write_ppu(CartridgeBoard *board, uint16_t address, uint8_t value);
+bool board_debug_location(CartridgeBoard *board, bool cpu, uint16_t address, NesMemoryLocation *out);
 void board_ppu_write(CartridgeBoard *board, uint16_t address, uint8_t value);
 void board_clock_cpu(CartridgeBoard *board, bool write_cycle);
 void board_notify_ppu_address(CartridgeBoard *board, uint16_t address, uint64_t cycle);

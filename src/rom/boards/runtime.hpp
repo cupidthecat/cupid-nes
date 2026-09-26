@@ -116,6 +116,7 @@ protected:
     uint32_t GetPrgPageCount() const;
     uint32_t GetChrRomPageCount() const;
     uint32_t GetDipSwitches();
+    uint32_t GetDipSwitches(unsigned count) const;
     uint8_t GetPowerOnByte(uint8_t defaultValue = 0) const { return defaultValue; }
     uint8_t GetOpenBus(uint8_t mask = 0xFF) const { return _openBus & mask; }
     uint64_t CpuClock() const;
@@ -204,11 +205,12 @@ public:
     virtual bool ReadCpuRegister(uint16_t, uint8_t &) { return false; }
     virtual void ObserveCpuWrite(uint16_t, uint8_t) {}
     uint8_t ReadCpu(uint16_t addr, uint8_t openBus);
-    uint8_t PeekCpu(uint16_t addr, uint8_t openBus) const;
+    virtual uint8_t PeekCpu(uint16_t addr, uint8_t openBus) const;
     void WriteCpu(uint16_t addr, uint8_t value);
     uint8_t ReadPpu(uint16_t addr, unsigned fetchSource);
     uint8_t PeekPpu(uint16_t addr) const;
     bool DebugWritePpu(uint16_t addr, uint8_t value);
+    bool DebugLocation(bool cpu, uint16_t addr, NesMemoryLocation &out) const;
     void ClockCpu(bool writeCycle);
     void NotifyPpu(uint16_t addr, uint64_t cycle);
     bool PendingIrq() const { return _irq; }

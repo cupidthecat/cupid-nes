@@ -1,3 +1,9 @@
+/*
+ * tas_session_internal.h
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* Private TAS session state. SPDX-License-Identifier: GPL-3.0-or-later */
 #ifndef CUPID_TAS_SESSION_INTERNAL_H
 #define CUPID_TAS_SESSION_INTERNAL_H
@@ -43,6 +49,7 @@ struct NesTasSession {
     size_t selected_side;
     uint64_t seen_revision;
     uint64_t saved_revision;
+    uint64_t generation;
     uint64_t input_polls;
     unsigned record_players;
     NesTasRecordMode record_mode;

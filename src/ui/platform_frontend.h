@@ -24,7 +24,9 @@ typedef enum {
     FRONTEND_SAVE_CHEATS,
     FRONTEND_SAVE_DISK_OVERLAY,
     FRONTEND_SAVE_TAS_PROJECT,
-    FRONTEND_SAVE_TAS_MOVIE
+    FRONTEND_SAVE_TAS_MOVIE,
+    FRONTEND_SAVE_CSV,
+    FRONTEND_SAVE_MEMORY
 } FrontendSaveFileType;
 
 typedef enum {
@@ -39,7 +41,10 @@ typedef enum {
     FRONTEND_OPEN_HD_PACK,
     FRONTEND_OPEN_SCRIPT,
     FRONTEND_OPEN_CHEATS,
-    FRONTEND_OPEN_FOLDER
+    FRONTEND_OPEN_FOLDER,
+    FRONTEND_OPEN_MEMORY,
+    FRONTEND_OPEN_CHEAT_DATABASE,
+    FRONTEND_OPEN_LEGACY_MOVIE
 } FrontendOpenFileType;
 
 /* Optional host chooser; NULL restores the native platform dialog. */

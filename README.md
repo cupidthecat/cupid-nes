@@ -12,14 +12,45 @@ resizable windows, so you can keep the debugger open while a game runs.
 [Visual PPU tools](docs/debugging.md#visual-ppu-tools) show pattern tables,
 nametables, sprites, palettes, registers, and VRAM. You can paint writable tiles
 and edit RAM while the game is paused.
+[Debugger tools](docs/debugger-tools.md) add code coverage, CPU profiles,
+event traces, symbols, source lines, and text extraction.
+The [inline assembler](docs/debugging.md#inline-assembler) previews 6502
+instructions and applies their bytes to writable RAM during paused debugging.
+[Memory Search, Memory Watches, and the Hex / Memory Editor](docs/debugging.md#memory-search-and-cheat-finder)
+inspect live memory, compare snapshots, and edit writable bytes. Cheat Finder
+turns CPU-space search results into editable or testable cheats.
+Tools > Cheats > Game Genie converts codes to and from hexadecimal fields and
+sends the result to the cheat editor for review.
+The [cheat database](docs/cheat-database.md) matches PRG ROM checksums, previews
+named codes, and adds validated groups to the normal cheat list.
+The [cartridge header editor](docs/header-editor.md) previews iNES and NES 2.0
+metadata and writes a validated copy without changing the running game.
+The [presentation tools](docs/presentation-tools.md) include shader presets,
+HD draft previews, frame timing, history viewing, and native audio output choices.
+The optional [CPU overclock](docs/overclock.md) adds blank scanlines for more CPU
+time per frame, with separate post-render and vblank controls.
+[Session tools](docs/session-tools.md) cover unloading a game, automatic resume,
+state recording, game settings, and update checks.
 
 The [TAS editor](docs/tas.md) opens FCEUX FM2 movies and FM3 projects in a
 separate, resizable window. Its input grid sits beside branch, marker, and
 recording controls. Follow playback, jump between markers, insert several
 frames at once, or edit a button across selected rows from its column heading.
 The editor also has frame advance and back, recording and rerecording, ten
-branch slots, undo/redo, and Lua input editing. Save the complete editing
-session as CTAS or export an FM2/FM3 movie.
+branch slots, undo/redo, and Lua input editing. A checkpoint cache tab shows
+saved boundaries and replay distances, with memory, interval, and clear controls.
+The history tab lists retained edits and frame ranges and restores selected
+undo or redo positions. Named bookmarks save playback or editing positions with
+optional notes, including the end of the movie, without loading another branch.
+Save the complete editing session as CTAS or export an FM2/FM3 movie.
+The splicer appends, inserts, replaces, or extracts input ranges. A separate
+converter imports supported power-on FCM movies after checking the game identity.
+Movie preferences control playback endings, recording defaults, subtitles,
+input overlays, and retained backup copies. Capture supports raw or ZMBV AVI
+and animated GIF; display overlays and recorded overlays have separate settings.
+
+The [Family BASIC keyboard](docs/keyboard.md) accepts mouse, touch, and physical
+key input in a separate window, with pressed-key feedback and latchable keys.
 
 The menu bar and toolbar give you access to the main actions, with submenus
 keeping longer lists on screen. Settings use checkboxes, dropdowns, editable
@@ -27,6 +58,11 @@ numbers, and native file pickers. The audio output dropdown lists detected
 devices. SDL2 handles video, audio, and controllers; Clay handles desktop
 layouts, with cached TrueType text. The CPU and PPU core is written in C11.
 Cartridge board modules and the EPSM YMF288 sound engine use C++17.
+The [Video settings](docs/desktop.md#settings) include optional bilinear
+interpolation, pixel-art scalers, integer prescaling, and an LCD Grid filter
+with adjustable cell brightness. NTSC composite has picture presets, color
+and filter-width controls, gamma, scanlines, and carrier-phase handling.
+Direct output with nearest-neighbor sampling is the default.
 
 The [tested implementation](docs/accuracy-checkpoints.md#regional-timing-checkpoint)
 passes all 144 AccuracyCoin tests with none skipped or unfinished, all 91 ROMs
@@ -103,10 +139,10 @@ cd cupid-nes
 
 ### Linux
 
-Install C11 and C++17 compilers, Make, and the SDL2 development libraries. On Ubuntu:
+Install C11 and C++17 compilers, Make, and the SDL2 and libcurl development libraries. On Ubuntu:
 
 ```sh
-sudo apt install build-essential libsdl2-dev
+sudo apt install build-essential libsdl2-dev libcurl4-openssl-dev
 make
 ./cupid-nes path/to/game.nes
 ```

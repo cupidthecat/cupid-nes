@@ -1,3 +1,9 @@
+/*
+ * desktop_idle.c
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* Startup window and recoverable image selection. SPDX-License-Identifier: GPL-3.0-or-later */
 #include "desktop_ui.h"
 #include "frontend_commands.h"

@@ -24,7 +24,7 @@ void tas_project_test_reset_alloc_fail(void) {
     tas_allocations = 0;
 }
 
-static void *tas_edit_malloc(size_t size) {
+void *tas_edit_malloc(size_t size) {
     if (tas_allocations >= tas_fail_after) return NULL;
     tas_allocations++;
     return malloc(size ? size : 1);
@@ -82,6 +82,7 @@ NesTasResult tas_project_resize_insert(NesTasProject *project, size_t first, siz
     project->state.timeline.movie.frame_count = new_count;
     project->state.timeline.lag = lag;
     project->state.selection = selection;
+    tas_navigation_insert(&project->state, first, count);
     for (size_t i = 0; i < project->state.timeline.marker_count; ++i) {
         if (project->state.timeline.markers[i].frame >= first)
             project->state.timeline.markers[i].frame += count;
@@ -143,6 +144,7 @@ NesTasResult tas_project_resize_delete(NesTasProject *project, size_t first, siz
         project->state.timeline.markers[out++] = marker;
     }
     project->state.timeline.marker_count = out;
+    tas_navigation_delete(&project->state, first, count);
     return NES_TAS_OK;
 }
 

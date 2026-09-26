@@ -1,3 +1,9 @@
+/*
+ * desktop_internal.h
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* Desktop view model. SPDX-License-Identifier: GPL-3.0-or-later */
 #ifndef CUPID_DESKTOP_INTERNAL_H
 #define CUPID_DESKTOP_INTERNAL_H

@@ -1,3 +1,9 @@
+/*
+ * crc32_table.h
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* IEEE CRC32 slices for polynomial 0xEDB88320. SPDX-License-Identifier: GPL-3.0-or-later
  * Table 0 advances a byte through eight polynomial steps. Each subsequent table
  * advances the preceding entry by another byte: (entry >> 8) ^ table0[entry & 255].

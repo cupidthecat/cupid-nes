@@ -7,6 +7,7 @@
  * GNU General Public License, version 3 or any later version.
  */
 #include "movie.h"
+#include "../capture/movie_backup.h"
 #include "input_event.h"
 #include "rewind.h"
 #include "tas_session.h"
@@ -569,7 +570,7 @@ static NesMovieResult movie_write_file(NesMovieSession *movie) {
     size_t size = 0;
     uint8_t *data = nes_state_writer_release(&writer, &size);
     if (!data && size) return NES_MOVIE_OUT_OF_MEMORY;
-    NesFileResult file = nes_file_write_atomic(movie->path, data, size);
+    NesFileResult file = nes_movie_save_atomic(movie->path, data, size);
     free(data);
     if (file == NES_FILE_OUT_OF_MEMORY) return NES_MOVIE_OUT_OF_MEMORY;
     if (file == NES_FILE_TOO_LARGE) return NES_MOVIE_LIMIT_REACHED;

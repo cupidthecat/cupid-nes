@@ -7,6 +7,8 @@
  * GNU General Public License, version 3 or any later version.
  */
 #include "frontend_execution.h"
+#include "capture_runtime.h"
+#include "../joypad/family_basic.h"
 #include "output_guard.h"
 #include "platform_frontend.h"
 #include "frontend_commands.h"
@@ -263,6 +265,7 @@ static bool command_reload(void *userdata, char *error, size_t error_size) {
                   "The image could not be reloaded; the current session was kept");
         return false;
     }
+    debugger_invalidate_memory();
     frontend_execution_clear_timeline(runtime);
     if (rom_is_fds() && runtime->fds_side) {
         if (disk_inserted) {
@@ -548,6 +551,7 @@ bool frontend_execution_handle_shortcut_action(FrontendExecutionRuntime *runtime
 }
 
 void frontend_execution_release_host_input(FrontendExecutionRuntime *runtime) {
+    family_basic_release_host_keys();
     if (!runtime) return;
     if (runtime->rewind_held) {
         runtime->rewind_held = false;
@@ -621,17 +625,11 @@ bool frontend_execution_run_frame(FrontendExecutionRuntime *runtime) {
         unlock_audio_without_refresh(runtime);
         if (movie != NES_MOVIE_OK) {
             char error[192] = {0};
-            if (movie == NES_MOVIE_COMPLETE && tas_active(runtime)) {
-                execution_control_set_paused(&runtime->execution, true);
-                runtime->execution.frame_advance_pending = false;
-                frontend_command_set_checked(FRONTEND_COMMAND_PAUSE, true);
-                snprintf(runtime->movie_status, sizeof(runtime->movie_status),
-                         "End of movie. Seek, edit, or record to continue; Stop restores the previous game.");
+            NesMoviePreferences defaults;
+            nes_movie_preferences_defaults(&defaults);
+            const NesMoviePreferences *preferences = runtime->settings ? &runtime->settings->movie_preferences : &defaults;
+            if (movie == NES_MOVIE_COMPLETE && nes_capture_movie_end(runtime, preferences, error, sizeof(error))) {
                 update_audio_pause(runtime);
-            } else if (movie == NES_MOVIE_COMPLETE
-                && frontend_execution_movie_stop(runtime, error, sizeof(error))) {
-                snprintf(runtime->movie_status, sizeof(runtime->movie_status),
-                         "Playback completed. The previous session was restored.");
             } else {
                 if (movie != NES_MOVIE_COMPLETE)
                     (void)movie_result_ok(runtime, movie, "", error, sizeof(error));

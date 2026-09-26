@@ -1,3 +1,9 @@
+/*
+ * mapper_debug.h
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* Mapper-aware inspection without PPU bus activity. SPDX-License-Identifier: GPL-3.0-or-later */
 #ifndef CUPID_MAPPER_DEBUG_H
 #define CUPID_MAPPER_DEBUG_H

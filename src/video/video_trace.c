@@ -36,7 +36,7 @@ static void release_buffers(void) {
 }
 
 bool nes_video_trace_use(unsigned user, bool enabled) {
-    const unsigned known = NES_VIDEO_TRACE_HD | NES_VIDEO_TRACE_LAYERS | NES_VIDEO_TRACE_EXPORT;
+    const unsigned known = NES_VIDEO_TRACE_HD | NES_VIDEO_TRACE_LAYERS | NES_VIDEO_TRACE_EXPORT | NES_VIDEO_TRACE_BUILDER;
     if (!user || (user & ~known)) return false;
     unsigned requested = enabled ? users | user : users & ~user;
     if (requested && !users) {
