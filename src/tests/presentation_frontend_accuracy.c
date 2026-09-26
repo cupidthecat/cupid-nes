@@ -18,6 +18,7 @@
 int run_presentation_frontend_accuracy_tests(void) {
     char error[1024] = {0};
     CHECK(SDL_setenv("SDL_VIDEODRIVER", "dummy", 1) == 0);
+    CHECK(SDL_setenv("SDL_AUDIODRIVER", "dummy", 1) == 0);
     CHECK(SDL_InitSubSystem(SDL_INIT_VIDEO) == 0 && SDL_AudioInit("dummy") == 0);
     FrontendSettings settings;
     frontend_settings_defaults(&settings);
