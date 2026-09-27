@@ -11,6 +11,9 @@ Controls have no surrounding borders; keyboard focus stays visible in both theme
 The desktop paces emulation independently of expensive display updates. When
 presentation falls behind, it shows the latest frame while preserving audio,
 movie input, and captured frames. See [performance troubleshooting](docs/troubleshooting.md#slow-video-in-a-large-window).
+Frame waits use the high-resolution clock and service pending desktop paints
+between frames. Frame Timing Statistics reports emulation and GTK draw rates
+separately, with interval jitter to help diagnose uneven motion.
 
 ![Cupid desktop](docs/images/desktop-main.png)
 

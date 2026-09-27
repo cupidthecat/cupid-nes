@@ -35,6 +35,7 @@ typedef struct {
     NesHostMetric metrics[NES_FRAME_TIMING_METRICS];
     size_t count;
     double fps, audio_queue_ms;
+    double interval_jitter_ms;
     uint64_t audio_underruns;
     bool audio_available;
 } NesFrameTimingSummary;
@@ -45,6 +46,10 @@ void nes_frame_timing_reset(NesFrameTiming *timing);
 bool nes_frame_timing_push(NesFrameTiming *timing, const NesHostFrameSample *sample);
 bool nes_frame_timing_summary(const NesFrameTiming *timing, NesFrameTimingSummary *summary);
 double nes_frame_timing_elapsed(uint64_t begin, uint64_t end, uint64_t frequency);
+/* Sleep in short chunks, then finish the deadline with a bounded spin wait.
+ * The optional service callback keeps the host display clock running. */
+void nes_frame_timing_wait(double deadline, double frequency, void (*service)(void *), void *context);
+unsigned nes_frame_timing_sleep_ms(double remaining_ms);
 #ifdef __cplusplus
 }
 #endif

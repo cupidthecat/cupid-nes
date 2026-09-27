@@ -756,6 +756,8 @@ static int application_main(int argc, char *argv[]) {
     };
     if (!frontend_presentation_host_init(&presentation_host, &video_runtime, &audio_runtime,
                                          &execution_runtime, live_presentation_changed, &live)) running = false;
+    presentation_host.timing.draw_stats = frontend_desktop_draw_stats;
+    presentation_host.timing.draw_context = &desktop_ui;
     FrontendOverclock overclock_frontend = {.changed = live_overclock_changed, .userdata = &live};
     if (!frontend_overclock_register(&overclock_frontend)) running = false;
     execution_runtime.before_machine_change = live_before_machine_change;
@@ -1124,7 +1126,7 @@ static int application_main(int argc, char *argv[]) {
         frontend_desktop_update_activity(&desktop_ui);
         if (!frontend_session.active) {
             presentation_host.previous_end = 0;
-            nes_frame_timing_reset(&presentation_host.timing.timing);
+            frontend_timing_reset(&presentation_host.timing);
             if (audio_dev) SDL_PauseAudioDevice(audio_dev, 1);
             if (!desktop_ui.gtk) {
                 SDL_SetRenderDrawColor(renderer, 14, 18, 27, 255);
@@ -1215,7 +1217,8 @@ static int application_main(int argc, char *argv[]) {
             SDL_RenderCopy(renderer, frontend_video_runtime_texture(&video_runtime), NULL, &game_rect);
         }
 
-        double presentation_now = (double)SDL_GetPerformanceCounter();
+        uint64_t host_present_start = SDL_GetPerformanceCounter();
+        double presentation_now = (double)host_present_start;
         double next_deadline = frame_deadline + (double)frame_elapsed_cycles * performance_frequency
             / (nes_timing()->cpu_hz * frontend_execution_speed(&execution_runtime));
         if (!desktop_ui.gtk || !ran_frame || nes_frame_timing_present(presentation_now,
@@ -1230,7 +1233,6 @@ static int application_main(int argc, char *argv[]) {
                     : execution_runtime.rewind_held ? "Rewinding"
                     : frontend_execution_paused(&execution_runtime) ? "Paused" : "Running");
         }
-        uint64_t host_present_start = SDL_GetPerformanceCounter();
         if (!desktop_ui.gtk) {
             SDL_RenderPresent(renderer);
         }
@@ -1252,12 +1254,10 @@ static int application_main(int argc, char *argv[]) {
             frame_deadline = current_ticks;
             double rewind_wait = performance_frequency / nes_timing()->fps - (current_ticks - loop_now);
             if (execution_runtime.rewind_held) {
-                if (rewind_wait > 0) SDL_Delay((Uint32)(rewind_wait * 1000.0 / performance_frequency));
+                if (rewind_wait > 0) frontend_desktop_wait(&desktop_ui, current_ticks + rewind_wait, performance_frequency);
             } else SDL_Delay(8);
         } else if (frame_deadline > current_ticks) {
-            // Carry fractional milliseconds into the next deadline instead of
-            // running every frame early after truncating SDL's delay argument.
-            SDL_Delay((Uint32)((frame_deadline - current_ticks) * 1000.0 / performance_frequency));
+            frontend_desktop_wait(&desktop_ui, frame_deadline, performance_frequency);
         } else if (current_ticks - frame_deadline > performance_frequency * 0.050) {
             frame_deadline = current_ticks;
         }
@@ -1265,7 +1265,7 @@ static int application_main(int argc, char *argv[]) {
             host_render_start, host_present_start, host_present_end, SDL_GetPerformanceCounter());
         else {
             presentation_host.previous_end = 0;
-            nes_frame_timing_reset(&presentation_host.timing.timing);
+            frontend_timing_reset(&presentation_host.timing);
         }
     }
     (void)frontend_presentation_capture_settings(&video_runtime, &audio_runtime, &frontend_settings);

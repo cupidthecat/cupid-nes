@@ -8,6 +8,7 @@
 #include <gtk/gtk.h>
 #include "desktop_internal.h"
 #include "frontend_panels.h"
+#include "../video/frame_timing.h"
 typedef struct CupidGtkTool CupidGtkTool;
 
 typedef struct CupidGtkDesktop {
@@ -21,6 +22,8 @@ typedef struct CupidGtkDesktop {
     cairo_surface_t *frame;
     GdkTexture *frame_texture;
     unsigned frame_width, frame_height;
+    uint64_t submitted_frames, drawn_frame, drawn_frames, last_draw;
+    NesFrameTiming draw_timing;
     int mouse_x, mouse_y;
     uint32_t mouse_buttons, consumed_mouse_buttons;
 } CupidGtkDesktop;

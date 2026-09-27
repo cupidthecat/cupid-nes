@@ -140,6 +140,12 @@ int benchmark_gtk(const char *path) {
         double deadline = (double)begin;
         double last_present = 0;
         unsigned presented = 0;
+        NesFrameTiming pacing;
+        nes_frame_timing_reset(&pacing);
+        nes_frame_timing_reset(&ui.gtk->draw_timing);
+        ui.gtk->drawn_frames = 0;
+        ui.gtk->last_draw = 0;
+        uint64_t previous = begin;
         for (unsigned i = 0; i < frames; ++i) {
             SDL_Event event;
             while (SDL_PollEvent(&event)) {
@@ -157,13 +163,22 @@ int benchmark_gtk(const char *path) {
                 last_present = now;
                 ++presented;
             }
-            double remaining = deadline - SDL_GetPerformanceCounter();
-            if (remaining > 0) {
-                SDL_Delay((Uint32)(remaining * 1000 / frequency));
-            }
+            frontend_desktop_wait(&ui, deadline, frequency);
+            uint64_t end = SDL_GetPerformanceCounter();
+            NesHostFrameSample sample = {0};
+            sample.milliseconds[NES_HOST_INTERVAL] = nes_frame_timing_elapsed(previous, end, (uint64_t)frequency);
+            (void)nes_frame_timing_push(&pacing, &sample);
+            previous = end;
         }
         elapsed = (SDL_GetPerformanceCounter() - begin) / frequency;
         printf("GTK paced: %s, %.2f fps (target %.2f), %u/%u presentations\n", names[mode], frames / elapsed, nes_timing()->fps, presented, frames);
+        NesFrameTimingSummary paced, drawn;
+        (void)nes_frame_timing_summary(&pacing, &paced);
+        (void)nes_frame_timing_summary(&ui.gtk->draw_timing, &drawn);
+        printf("GTK cadence: %s, host jitter %.3f ms, p95 %.3f ms, max %.3f ms; %llu unique draws, draw jitter %.3f ms, p95 %.3f ms, max %.3f ms\n",
+            names[mode], paced.interval_jitter_ms, paced.metrics[NES_HOST_INTERVAL].p95,
+            paced.metrics[NES_HOST_INTERVAL].maximum, (unsigned long long)ui.gtk->drawn_frames,
+            drawn.interval_jitter_ms, drawn.metrics[NES_HOST_INTERVAL].p95, drawn.metrics[NES_HOST_INTERVAL].maximum);
         fflush(stdout);
         if (result) {
             break;

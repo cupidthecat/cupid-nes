@@ -42,9 +42,21 @@ The editor supports the runtime's tile, background, condition, addition, fallbac
 
 ## Frame Timing Statistics
 
-The statistics panel retains 240 completed host-frame samples. It shows recent, average, minimum, maximum, and nearest-rank 95th-percentile milliseconds for emulation, rendering, presentation/VSync, pacing delay, and the full frame interval. Effective FPS is 1,000 divided by the average interval in milliseconds.
+The statistics panel retains 240 completed host-frame samples. It shows recent, average, minimum, maximum, and nearest-rank 95th-percentile milliseconds for emulation, rendering, presentation/VSync, pacing delay, and the full frame interval. Emulation FPS is 1,000 divided by the average interval in milliseconds. Jitter is the standard deviation of those intervals: a lower value means more even spacing.
 
-These are host wall-clock measurements, not emulated CPU or PPU cycles. Idle/pause transitions reset the measurements. Callback audio does not expose trustworthy queue depth or underrun counters, so those fields are marked unavailable. **Reset measurements** clears the retained samples.
+The GTK draw row measures when the game widget draws a newly submitted image.
+It has its own FPS, jitter, p95, and maximum interval. Repainting the same image
+does not count twice. GTK can combine multiple submissions into one draw, so
+this rate can be lower than the emulation rate. These measurements do not report
+when the monitor displays the image. The SDL frontend marks draw timing unavailable.
+
+The desktop sleeps in short steps while servicing pending GTK work, then checks
+the high-resolution clock during the final part of the wait. This preserves
+fractional frame deadlines and lets the display update between emulated frames.
+GTK drawing that happens during a wait is included in pacing time; drawing
+during submission is included in presentation time.
+
+These are host wall-clock measurements, not emulated CPU or PPU cycles. Idle/pause transitions reset the measurements. Callback audio does not expose trustworthy queue depth or underrun counters, so those fields are marked unavailable. **Reset measurements** clears both sets of retained samples.
 
 ## Existing video controls
 

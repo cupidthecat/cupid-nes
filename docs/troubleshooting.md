@@ -52,6 +52,13 @@ Input and window events are serviced at least once every 50 ms between emulator
 frames. Audio, movie input, rewind history, and recording retain every emulated
 frame. A machine that cannot run the core fast enough can still fall behind.
 
+Open **Tools > Picture, sound and timing > Frame Timing Statistics** to compare
+the emulation rate with the GTK draw rate. High jitter or a large maximum frame
+interval can explain choppy motion even when average FPS is near the target.
+The draw row counts new images consumed by the game widget. It does not measure
+the monitor's refresh rate. Pending GTK work is serviced during frame waits;
+the high-resolution clock controls when the next emulated frame starts.
+
 Open Game Information and check the video renderer. `GskCairoRenderer` scales
 the game in software; its cost grows with window size. `GskGLRenderer` uses the
 GPU. Cupid lets GTK choose its supported renderer and compositor. GTK 4.24
@@ -69,7 +76,8 @@ for a software fallback. Restart Cupid after changing these variables.
 
 The [desktop benchmark](development.md#desktop-performance) compares a normal
 window, maximized view, fullscreen, and a live PPU viewer using a local ROM.
-It reports uncapped throughput, normal-speed FPS, and the number of display updates. ROM timing,
+It reports uncapped throughput, normal-speed FPS, submitted updates, unique GTK
+draws, and interval jitter. ROM timing,
 rewind, filters, other applications, and graphics drivers affect the result.
 
 ## Cartridge will not load

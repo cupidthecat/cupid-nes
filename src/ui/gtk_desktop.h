@@ -15,6 +15,8 @@ bool cupid_gtk_event(FrontendDesktopUi *ui, const SDL_Event *event);
 bool cupid_gtk_captured(const FrontendDesktopUi *ui);
 void cupid_gtk_activity(FrontendDesktopUi *ui);
 void cupid_gtk_save_size(FrontendDesktopUi *ui);
+void cupid_gtk_dispatch(void);
+bool cupid_gtk_draw_stats(FrontendDesktopUi *ui, NesFrameTimingSummary *summary, bool reset);
 uint32_t cupid_gtk_pointer(FrontendDesktopUi *ui, const SDL_Event *event, int *x, int *y);
 #endif
 #endif

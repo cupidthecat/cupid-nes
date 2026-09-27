@@ -26,6 +26,11 @@ def launch(binary: Path, project: Path, data_dir: Path, image: Path,
     return result
 
 
+def contains_output(output: str, expected: str) -> bool:
+    # A Windows application can join a path supplied by MSYS2 with backslashes.
+    return expected.replace("\\", "/") in output.replace("\\", "/")
+
+
 def check_loaded(result: subprocess.CompletedProcess[str], path: Path, outcome: str,
                  image_bytes: bytes, region: str, metadata: str) -> None:
     # A NROM cartridge cannot scan a Datach barcode. That checked error exits
@@ -36,7 +41,7 @@ def check_loaded(result: subprocess.CompletedProcess[str], path: Path, outcome: 
         f"Metadata source: {metadata}",
         f"File CRC32: {zlib.crc32(image_bytes):08X}",
     )
-    if (any(text not in result.stdout for text in expected)
+    if (any(not contains_output(result.stdout, text) for text in expected)
             or "Barcode input requires a Datach cartridge" not in result.stderr):
         raise RuntimeError(f"Missing expected loader output {expected}:\n{result.stdout}\n{result.stderr}")
 
@@ -112,7 +117,7 @@ def main() -> int:
         ):
             selected.write_text("invalid,row\n", encoding="utf-8")
             result = launch(binary, project, data_dir, fixture, options)
-            if (f"Game database: {selected}: Could not parse the game database" not in result.stderr
+            if (not contains_output(result.stderr, f"Game database: {selected}: Could not parse the game database")
                     or "Loading ROM:" in result.stdout or "Mapper:" in result.stdout):
                 raise RuntimeError(f"{label}:\n{result.stdout}\n{result.stderr}")
             print(f"PASS: {label} is rejected before loading an image")
@@ -120,7 +125,7 @@ def main() -> int:
 
         missing = data_dir / "missing.txt"
         result = launch(binary, project, data_dir, fixture, ["--game-db", str(missing)])
-        if (f"Game database: {missing}: File not found" not in result.stderr
+        if (not contains_output(result.stderr, f"Game database: {missing}: File not found")
                 or "Loading ROM:" in result.stdout or "Mapper:" in result.stdout):
             raise RuntimeError(f"Missing explicit path:\n{result.stdout}\n{result.stderr}")
         print("PASS: a missing explicit database never falls back silently")

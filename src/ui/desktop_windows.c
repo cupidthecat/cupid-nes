@@ -15,8 +15,34 @@
 #include "palette_tool.h"
 #include "netplay_frontend.h"
 #include "../system/timing.h"
+#include "../video/frame_timing.h"
 #include <stdlib.h>
 #include <string.h>
+
+static void desktop_service(void *context) {
+#ifdef CUPID_GTK
+    FrontendDesktopUi *ui = context;
+    if (ui && ui->gtk) cupid_gtk_dispatch();
+#else
+    (void)context;
+#endif
+}
+
+void frontend_desktop_wait(FrontendDesktopUi *ui, double deadline, double frequency) {
+    nes_frame_timing_wait(deadline, frequency, ui && ui->gtk ? desktop_service : NULL, ui);
+}
+
+bool frontend_desktop_draw_stats(void *context, NesFrameTimingSummary *summary, bool reset) {
+#ifdef CUPID_GTK
+    FrontendDesktopUi *ui = context;
+    if (ui && ui->gtk) return cupid_gtk_draw_stats(ui, summary, reset);
+#else
+    (void)context;
+    (void)summary;
+    (void)reset;
+#endif
+    return false;
+}
 
 void desktop_window_context(const FrontendDesktopUi *ui, const char **title, const char **region, const char **state) {
     const FrontendDesktopUi *root = ui->parent ? ui->parent : ui;

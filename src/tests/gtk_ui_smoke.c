@@ -128,7 +128,19 @@ static void count_property_change(GObject *object, GParamSpec *property, gpointe
     ++*(unsigned *)data;
 }
 
+static gboolean pacing_dispatch(gpointer data) {
+    ++*(unsigned *)data;
+    return G_SOURCE_REMOVE;
+}
+
 static bool game_window_interactions(FrontendDesktopUi *ui) {
+    unsigned dispatched = 0;
+    uint64_t submitted = ui->gtk->submitted_frames;
+    guint source = g_idle_add(pacing_dispatch, &dispatched);
+    double frequency = (double)SDL_GetPerformanceFrequency();
+    frontend_desktop_wait(ui, (double)SDL_GetPerformanceCounter() + frequency * 0.030, frequency);
+    if (!dispatched) g_source_remove(source);
+    CHECK(dispatched == 1 && ui->gtk->submitted_frames == submitted);
     frontend_desktop_render(ui, 256, 240, "Stable title", "NTSC", "Paused");
     unsigned changes = 0;
     gulong title = g_signal_connect(ui->gtk->window, "notify::title", G_CALLBACK(count_property_change), &changes);
@@ -211,6 +223,15 @@ static bool game_texture_interactions(FrontendDesktopUi *ui) {
         gsk_render_node_unref(node);
     }
     ui->settings->bilinear_interpolation = old_filter;
+    NesFrameTimingSummary drawn;
+    CHECK(frontend_desktop_draw_stats(ui, &drawn, false));
+    uint64_t count = d->drawn_frames;
+    GtkSnapshot *repeat = gtk_snapshot_new();
+    GTK_WIDGET_GET_CLASS(d->picture)->snapshot(d->picture, repeat);
+    g_object_unref(repeat);
+    CHECK(d->drawn_frames == count);
+    CHECK(frontend_desktop_draw_stats(ui, NULL, true));
+    CHECK(frontend_desktop_draw_stats(ui, &drawn, false) && drawn.count == 0 && d->last_draw == 0);
     puts("GTK game texture pixels, native resolution, scaling bounds and filters: PASS");
 #else
     (void)ui;
@@ -752,6 +773,8 @@ int main(int argc, char **argv) {
     REGISTER(frontend_devices_register(&devices));
     REGISTER(history);
     REGISTER(frontend_timing_register(&timing));
+    timing.draw_stats = frontend_desktop_draw_stats;
+    timing.draw_context = &ui;
     REGISTER(lifecycle_init(&lifecycle, &session_actions, &states, out, NULL, 0));
     REGISTER(lifecycle_register_ui(&lifecycle));
     REGISTER(frontend_storage_register(&storage, &session_actions, &execution, ""));

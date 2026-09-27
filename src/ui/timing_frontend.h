@@ -9,10 +9,13 @@
 
 typedef struct {
     NesFrameTiming timing;
-    char lines[7][192];
-    const char *items[7];
+    char lines[8][192];
+    const char *items[8];
+    bool (*draw_stats)(void *context, NesFrameTimingSummary *summary, bool reset);
+    void *draw_context;
 } FrontendTiming;
 
 bool frontend_timing_register(FrontendTiming *frontend);
 void frontend_timing_unregister(void);
+void frontend_timing_reset(FrontendTiming *frontend);
 #endif

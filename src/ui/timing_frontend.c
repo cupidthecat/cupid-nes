@@ -24,8 +24,8 @@ static bool snapshot(void *context, FrontendPanelModel *model, char *error, size
                  "%s: %.3f ms | avg %.3f | min %.3f | max %.3f | p95 %.3f", names[i], m->recent, m->average, m->minimum,
                  m->maximum, m->p95);
     }
-    snprintf(frontend->lines[5], sizeof(frontend->lines[5]), "Effective FPS: %.2f | %zu recent host frames",
-             summary.fps, summary.count);
+    snprintf(frontend->lines[5], sizeof(frontend->lines[5]), "Emulation FPS: %.2f | jitter %.3f ms | %zu host frames",
+             summary.fps, summary.interval_jitter_ms, summary.count);
     if (summary.audio_available) {
         snprintf(frontend->lines[6], sizeof(frontend->lines[6]), "Audio queue: %.2f ms | underruns: %llu",
                  summary.audio_queue_ms, (unsigned long long)summary.audio_underruns);
@@ -33,20 +33,29 @@ static bool snapshot(void *context, FrontendPanelModel *model, char *error, size
         snprintf(frontend->lines[6], sizeof(frontend->lines[6]),
                  "Audio queue / underruns: unavailable for callback output");
     }
-    for (size_t i = 0; i < 7; ++i) {
+    NesFrameTimingSummary draws;
+    if (frontend->draw_stats && frontend->draw_stats(frontend->draw_context, &draws, false)) {
+        snprintf(frontend->lines[7], sizeof(frontend->lines[7]),
+            "GTK draws: %.2f fps | jitter %.3f ms | p95 %.3f | max %.3f",
+            draws.fps, draws.interval_jitter_ms, draws.metrics[NES_HOST_INTERVAL].p95,
+            draws.metrics[NES_HOST_INTERVAL].maximum);
+    } else {
+        snprintf(frontend->lines[7], sizeof(frontend->lines[7]), "Display draw timing: unavailable on this frontend");
+    }
+    for (size_t i = 0; i < 8; ++i) {
         frontend->items[i] = frontend->lines[i];
     }
     model->controls[0] = (FrontendPanelControl){.id = 0x2721,
                                                 .type = FRONTEND_PANEL_LIST,
                                                 .label = "Host wall-clock time (milliseconds)",
                                                 .items = frontend->items,
-                                                .item_count = 7,
+                                                .item_count = 8,
                                                 .enabled = true,
                                                 .read_only = true};
     model->controls[1] = (FrontendPanelControl){
         .id = 0x2722, .type = FRONTEND_PANEL_ACTION, .label = "Reset measurements", .enabled = true};
     model->count = 2;
-    model->status = "Latest 240 samples; hardware CPU/PPU cycle timing is unchanged.";
+    model->status = "Latest 240 samples. GTK draws count new images; monitor scanout is not measured.";
     if (error && size) {
         error[0] = 0;
     }
@@ -59,7 +68,7 @@ static bool action(void *context, unsigned id, const char *value, int selected, 
     if (id != 0x2722) {
         return false;
     }
-    nes_frame_timing_reset(&((FrontendTiming *)context)->timing);
+    frontend_timing_reset(context);
     if (error && size) {
         error[0] = 0;
     }
@@ -77,4 +86,10 @@ bool frontend_timing_register(FrontendTiming *frontend) {
 
 void frontend_timing_unregister(void) {
     (void)frontend_panel_unregister(0x2720);
+}
+
+void frontend_timing_reset(FrontendTiming *frontend) {
+    if (!frontend) return;
+    nes_frame_timing_reset(&frontend->timing);
+    if (frontend->draw_stats) (void)frontend->draw_stats(frontend->draw_context, NULL, true);
 }

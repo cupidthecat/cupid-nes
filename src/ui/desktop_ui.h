@@ -20,6 +20,7 @@
 #include "video_runtime.h"
 #include "capture_frontend.h"
 #include "device_frontend.h"
+#include "../video/frame_timing.h"
 
 typedef enum {
     FRONTEND_IDLE_ERROR = -1,
@@ -125,6 +126,8 @@ void frontend_desktop_set_status(FrontendDesktopUi *ui, const char *message);
 void frontend_desktop_set_fps(FrontendDesktopUi *ui, double fps);
 void frontend_desktop_update_window_settings(FrontendDesktopUi *ui);
 void frontend_desktop_update_activity(FrontendDesktopUi *ui);
+void frontend_desktop_wait(FrontendDesktopUi *ui, double deadline, double frequency);
+bool frontend_desktop_draw_stats(void *context, NesFrameTimingSummary *summary, bool reset);
 void frontend_desktop_shutdown(FrontendDesktopUi *ui);
 
 #endif

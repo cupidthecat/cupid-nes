@@ -15,6 +15,15 @@
         }                                                                                                              \
     } while (0)
 
+static bool draw_stats(void *context, NesFrameTimingSummary *summary, bool reset) {
+    NesFrameTiming *timing = context;
+    if (reset) {
+        nes_frame_timing_reset(timing);
+        return true;
+    }
+    return nes_frame_timing_summary(timing, summary);
+}
+
 int run_presentation_frontend_accuracy_tests(void) {
     char error[1024] = {0};
     CHECK(SDL_setenv("SDL_VIDEODRIVER", "dummy", 1) == 0);
@@ -46,6 +55,15 @@ int run_presentation_frontend_accuracy_tests(void) {
     FrontendPanelModel model = {.controls = controls, .capacity = 16};
     CHECK(frontend_panel_snapshot(0x2780, &model, error, sizeof(error)) && model.count == 8);
     CHECK(frontend_panel_snapshot(0x2720, &model, error, sizeof(error)) && model.count == 2);
+    CHECK(controls[0].item_count == 8 && strstr(controls[0].items[7], "unavailable"));
+    NesFrameTiming draws = {0};
+    NesHostFrameSample sample = {{0, 0, 0, 0, 20}, 0, 0, false};
+    CHECK(nes_frame_timing_push(&draws, &sample));
+    host.timing.draw_stats = draw_stats;
+    host.timing.draw_context = &draws;
+    CHECK(frontend_panel_snapshot(0x2720, &model, error, sizeof(error)));
+    CHECK(strstr(controls[0].items[7], "50.00 fps"));
+    CHECK(frontend_panel_action(0x2720, 0x2722, NULL, 0, error, sizeof(error)) && draws.count == 0);
     CHECK(frontend_presentation_restore_settings(&video, &audio, &settings, error, sizeof(error)));
     snprintf(settings.shader_path, sizeof(settings.shader_path), "build/does-not-exist.glslp");
     settings.shader_enabled = true;
@@ -63,7 +81,7 @@ int run_presentation_frontend_accuracy_tests(void) {
     CHECK(nes_frame_timing_summary(&host.timing.timing, &summary) && summary.fps == 50 &&
           summary.metrics[NES_HOST_EMULATION].average == 10 && summary.metrics[NES_HOST_PRESENT].average == 1);
     frontend_presentation_host_reset(&host);
-    CHECK(host.previous_end == 0 && host.timing.timing.count == 0);
+    CHECK(host.previous_end == 0 && host.timing.timing.count == 0 && draws.count == 0);
     NesShaderPreset *shader = video.shader;
     frontend_video_runtime_unload_image(&video);
     CHECK(video.shader == shader && video.builder && !video.texture && !video.source_pixels && !video.builder_preview);

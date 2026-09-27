@@ -496,6 +496,29 @@ static void toolbar_action(GtkButton *button, gpointer data) {
     gtk_widget_grab_focus(d->picture);
 }
 
+static void record_game_draw(CupidGtkDesktop *d) {
+    if (d->drawn_frame == d->submitted_frames) return;
+    uint64_t now = SDL_GetPerformanceCounter();
+    if (d->last_draw) {
+        NesHostFrameSample sample = {0};
+        sample.milliseconds[NES_HOST_INTERVAL] = nes_frame_timing_elapsed(d->last_draw, now, SDL_GetPerformanceFrequency());
+        (void)nes_frame_timing_push(&d->draw_timing, &sample);
+    }
+    d->last_draw = now;
+    d->drawn_frame = d->submitted_frames;
+    ++d->drawn_frames;
+}
+
+bool cupid_gtk_draw_stats(FrontendDesktopUi *ui, NesFrameTimingSummary *summary, bool reset) {
+    CupidGtkDesktop *d = ui->gtk;
+    if (reset) {
+        nes_frame_timing_reset(&d->draw_timing);
+        d->last_draw = 0;
+        return true;
+    }
+    return nes_frame_timing_summary(&d->draw_timing, summary);
+}
+
 #if GTK_CHECK_VERSION(4, 10, 0)
 typedef struct {
     GtkWidget parent_instance;
@@ -515,6 +538,7 @@ static void game_snapshot(GtkWidget *widget, GtkSnapshot *snapshot) {
     if (!d->frame_texture || !d->session) {
         return;
     }
+    record_game_draw(d);
 
     unsigned vw, vh;
     frontend_video_runtime_display_size(d->ui->video, &vw, &vh);
@@ -584,6 +608,7 @@ static void draw_game(GtkDrawingArea *area, cairo_t *cr, int width, int height, 
     if (!d->frame || !d->session) {
         return;
     }
+    record_game_draw(d);
     unsigned vw, vh;
     frontend_video_runtime_display_size(d->ui->video, &vw, &vh);
     SDL_Rect r;
@@ -1000,6 +1025,7 @@ void cupid_gtk_render(FrontendDesktopUi *ui, const char *title, const char *regi
     const uint32_t *pixels;
     unsigned w, h, stride;
     if (session && ui->video && frontend_video_runtime_pixels(ui->video, true, &pixels, &w, &h, &stride)) {
+        ++d->submitted_frames;
         update_game(d, pixels, w, h, stride);
     }
     if (!session) {
@@ -1056,6 +1082,10 @@ void cupid_gtk_render(FrontendDesktopUi *ui, const char *title, const char *regi
             prompt_open(t);
         }
     }
+    cupid_gtk_dispatch();
+}
+
+void cupid_gtk_dispatch(void) {
     /* A busy source can remain ready forever. Bound dispatch by time as well
      * as count so resizing and tool refreshes cannot consume the frame budget. */
     gint64 dispatch_deadline = g_get_monotonic_time() + 1000;

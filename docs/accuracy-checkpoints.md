@@ -358,3 +358,32 @@ captures. The hardware suite passed with zero failures. AccuracyCoin passed
 144/144 with zero failures, skips, or unfinished entries in 4,182 frames.
 See [desktop performance](development.md#desktop-performance) to repeat the
 window-size measurements with a local ROM.
+
+## Frame delivery checkpoint
+
+A Windows software-renderer comparison used the local USA Rev 1 image of
+Super Mario Bros. 3, GTK 4.24.0, dummy audio, default video settings, and ten
+seconds of rewind. Each view ran 300 paced frames after warmup. The baseline
+used the previous whole-millisecond wait; both builds included the same draw
+instrumentation. Builds and other test suites were stopped during measurement.
+
+| View | Baseline unique draws | Current unique draws | Baseline draw jitter | Current draw jitter |
+| --- | --- | --- | --- | --- |
+| Window | 278 | 279 | 2.517 ms | 2.514 ms |
+| Maximized | 192 | 283 | 8.766 ms | 3.330 ms |
+| Fullscreen | 263 | 283 | 4.913 ms | 4.098 ms |
+| Maximized with PPU viewer | 244 | 272 | 6.278 ms | 3.693 ms |
+
+Current emulation rates were 60.10, 60.10, 60.08, and 60.10 FPS respectively,
+against a 60.10 FPS target. Unique draws count new images consumed by the GTK
+game widget. Jitter is the standard deviation of the most recent 240 draw
+intervals. These measurements do not track monitor scanout. Software rendering
+still missed frames, and repeated runs varied with host load.
+
+The hardware suite passed with zero failures, along with all 91 diagnostic
+ROMs, the 8,991-state CPU trace, and AccuracyCoin 144/144 with no skipped or
+unfinished entries in 4,182 frames. Native GTK checks passed settings and input
+regressions, timing reset and event dispatch, source pixels and scaling, and
+58 tool windows. The timing panel capture was visually checked. Region,
+network, and database discovery checks also passed; the database check accepts
+mixed Windows path separators in loader messages.

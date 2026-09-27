@@ -66,7 +66,7 @@ void frontend_presentation_host_reset(FrontendPresentationHost *host) {
         return;
     }
     frontend_history_close(host->history);
-    nes_frame_timing_reset(&host->timing.timing);
+    frontend_timing_reset(&host->timing);
     host->previous_end = 0;
 }
 

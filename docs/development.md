@@ -277,7 +277,11 @@ Audio uses the dummy driver for reproducible measurements.
 Each view gets 60 warmup frames, 300 uncapped frames, and 300 frames paced to
 the ROM's regional timing. The report includes the actual view dimensions,
 GTK renderer, emulation time, presentation time, paced FPS, and the number of
-submitted display updates. Late display updates can be skipped without skipping
+submitted display updates, unique GTK draws, interval jitter, p95, and maximum
+intervals. Jitter is the standard deviation over the most recent 240 intervals.
+Unique draws count new source images consumed by GTK's game widget, rather than
+requests to redraw it; they do not measure monitor scanout.
+Late display updates can be skipped without skipping
 emulation. Run timing measurements without a concurrent build or test suite;
 CPU contention changes both core and presentation costs. Windowed,
 maximized, fullscreen, and maximized with a live PPU viewer are measured.

@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "frame_timing.h"
+#include <SDL2/SDL.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -64,6 +65,12 @@ bool nes_frame_timing_summary(const NesFrameTiming *timing, NesFrameTimingSummar
                                               values[timing->count - 1], values[(timing->count * 95 + 99) / 100 - 1]};
     }
     double interval = summary->metrics[NES_HOST_INTERVAL].average;
+    double variance = 0;
+    for (size_t i = 0; i < timing->count; ++i) {
+        double delta = timing->samples[i].milliseconds[NES_HOST_INTERVAL] - interval;
+        variance += delta * delta / (double)timing->count;
+    }
+    summary->interval_jitter_ms = sqrt(variance);
     summary->fps = interval > 0 ? 1000.0 / interval : 0;
     summary->audio_available = timing->samples[recent].audio_available;
     summary->audio_queue_ms = timing->samples[recent].audio_queue_ms;
@@ -74,4 +81,32 @@ bool nes_frame_timing_summary(const NesFrameTiming *timing, NesFrameTimingSummar
 bool nes_frame_timing_present(double now, double deadline, double last_present, double frequency) {
     return frequency <= 0 || last_present <= 0 || now < last_present ||
         now <= deadline || now - last_present >= frequency * 0.050;
+}
+
+unsigned nes_frame_timing_sleep_ms(double remaining_ms) {
+    if (!isfinite(remaining_ms) || remaining_ms < 2) return 0;
+    return remaining_ms >= 5 ? 4 : (unsigned)(remaining_ms - 1);
+}
+
+void nes_frame_timing_wait(double deadline, double frequency, void (*service)(void *), void *context) {
+    if (!isfinite(deadline) || !isfinite(frequency) || frequency <= 0) return;
+    for (;;) {
+        double now = (double)SDL_GetPerformanceCounter();
+        if (now >= deadline) return;
+        /* Process pending paints before sleeping, including frames queued late
+         * in GTK's update phase. Never upload another image from this callback. */
+        if (service) service(context);
+        now = (double)SDL_GetPerformanceCounter();
+        double remaining = (deadline - now) * 1000.0 / frequency;
+        if (remaining <= 0) return;
+        unsigned delay = nes_frame_timing_sleep_ms(remaining);
+        if (service && delay > 1) delay = 1;
+        if (delay) SDL_Delay(delay);
+        else {
+            while ((double)SDL_GetPerformanceCounter() < deadline) {
+                SDL_CPUPauseInstruction();
+            }
+            return;
+        }
+    }
 }
