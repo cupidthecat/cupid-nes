@@ -628,15 +628,7 @@ static bool capture_tool(FrontendDesktopUi *ui, CupidGtkTool *tool, unsigned pan
         pump(ui);
         char path[4096];
         g_snprintf(path, sizeof(path), "%s/panel-%04x-%s.png", out, panel, size ? "small" : "large");
-        /* A remapped window can have an allocation before its first snapshot.
-         * Wait for a drawable frame rather than capturing an empty paintable. */
-        bool captured = false;
-        for (unsigned attempt = 0; attempt < 10 && !captured; ++attempt) {
-            gtk_widget_queue_draw(tool->window);
-            pump(ui);
-            captured = gtk_widget_get_mapped(tool->window) && capture(tool->window, path);
-        }
-        CHECK(captured);
+        CHECK(capture_ready(ui, tool->window, path));
     }
     gtk_widget_set_visible(tool->window, FALSE);
     return true;

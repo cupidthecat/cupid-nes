@@ -254,6 +254,8 @@ frames, undo, and read-only input. Column widths and the current scroll adjustme
 determine click positions so pending layout work cannot select a neighboring cell.
 Window captures also check that widgets have no surrounding borders. Keyboard
 focus uses a colored outline, and selected tabs use a background highlight.
+Resized-window captures request one paint and wait for its snapshot; they do
+not keep refreshing the tool model while waiting for the frame to finish.
 The Windows build script uses Cairo for automated widget checks, matching Linux
 CI and avoiding dependence on the runner's graphics driver. Cupid leaves
 compositor selection to GTK and preserves explicit environment overrides.
