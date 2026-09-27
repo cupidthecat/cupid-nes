@@ -370,7 +370,10 @@ bool Board::VisitState(BoardStateVisitor &state) {
 }
 
 uint32_t Board::GetDipSwitches() {
-    unsigned count = GetDipSwitchCount();
+    return GetDipSwitches(GetDipSwitchCount());
+}
+
+uint32_t Board::GetDipSwitches(unsigned count) const {
     uint32_t mask = count >= 32 ? UINT32_MAX : (uint32_t{1} << count) - 1;
     return cart_dip_switches() & mask;
 }
@@ -659,6 +662,40 @@ bool Board::SetReplaySaveRam(const uint8_t *bytes, size_t size) {
     return true;
 }
 
+bool Board::DebugLocation(bool cpu, uint16_t addr, NesMemoryLocation &out) const {
+    if (!cpu && addr >= 0x4000) return false;
+    /* Custom reads need mapper-specific observational resolution. A page
+     * pointer alone does not identify the storage supplying such a read. */
+    if (cpu ? (_customCpuRead || (_registerReads && (_registerAccess[addr] & Read))) : _customRead)
+        return false;
+    const Page &page = cpu ? _cpuPages[addr >> 8] : _ppuPages[addr >> 8];
+    if (!page.data || !(page.access & Read)) return false;
+    uintptr_t pointer = reinterpret_cast<uintptr_t>(page.data) + (addr & 0xFF);
+    auto identify = [&](uint8_t *base, size_t size, const char *name, bool ram) {
+        uintptr_t start = reinterpret_cast<uintptr_t>(base);
+        if (!base || pointer < start || pointer - start >= size) return false;
+        bool writable = ram && (page.access & Write);
+        if (cpu && (_registerAccess[addr] & Write)) writable = false;
+        return nes_memory_location(&out, base, size, pointer - start, name, writable, nullptr);
+    };
+    if (cpu) {
+        return identify(_prgRom, _prgSize, "PRG ROM", false)
+            || identify(_saveRam, _saveRamSize, "PRG NVRAM", true)
+            || identify(_workRam, _workRamSize, "PRG RAM", true)
+            || identify(_mapperRam, _mapperRamSize, "Mapper RAM", true);
+    }
+    if (identify(_chrRom, _chrRomSize, "CHR ROM", false)) return true;
+    if (identify(_chrRam, _chrRamSize, "CHR RAM", true)) {
+        if (_saveChrRamSize && out.offset >= _chrRamSize - _saveChrRamSize) {
+            out.backing = "CHR NVRAM";
+            out.offset -= _chrRamSize - _saveChrRamSize;
+        }
+        return true;
+    }
+    return identify(_mapperRam, _mapperRamSize, "Mapper RAM", true)
+        || identify(const_cast<uint8_t *>(_nametableStorage.data()), _nametableStorage.size(), "Nametable RAM", true);
+}
+
 void Board::ApplyTrainer(const uint8_t trainer[512]) {
     if (!trainer) return;
     uint8_t *bytes = _workRamSize >= 0x2000 ? _workRam : _saveRamSize >= 0x2000 ? _saveRam : nullptr;
@@ -806,6 +843,9 @@ uint8_t board_ppu_peek(const CartridgeBoard *board, uint16_t address) {
 }
 bool board_debug_write_ppu(CartridgeBoard *board, uint16_t address, uint8_t value) {
     return board && board->instance->DebugWritePpu(address, value);
+}
+bool board_debug_location(CartridgeBoard *board, bool cpu, uint16_t address, NesMemoryLocation *out) {
+    return board && out && board->instance->DebugLocation(cpu, address, *out);
 }
 void board_ppu_write(CartridgeBoard *board, uint16_t address, uint8_t value) {
     if (board) board->instance->MapperWriteVram(address & 0x3FFF, value);

@@ -1,3 +1,9 @@
+/*
+ * md5.h
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* Movie ROM identity. SPDX-License-Identifier: GPL-3.0-or-later */
 #ifndef CUPID_MD5_H
 #define CUPID_MD5_H

@@ -1,3 +1,9 @@
+/*
+ * settings_runtime.c
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* Validation and deferred machine configuration. SPDX-License-Identifier: GPL-3.0-or-later */
 #include "settings.h"
 #include "../cpu/cpu.h"

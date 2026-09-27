@@ -1,7 +1,17 @@
+/*
+ * desktop_menus.c
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* Hierarchical application menus. SPDX-License-Identifier: GPL-3.0-or-later */
 #include "desktop_internal.h"
 #include "frontend_commands.h"
 #include "state_frontend.h"
+#include "memory_search_frontend.h"
+#include "watch_frontend.h"
+#include "hex_frontend.h"
+#include "assembler_frontend.h"
 #include "../debugger/debugger.h"
 #include "../cheats/cheats.h"
 #include <stdio.h>
@@ -27,19 +37,45 @@ enum {
     GROUP_OTHER,
     GROUP_DEBUG_EXECUTION,
     GROUP_SCRIPT,
-    GROUP_PPU
+    GROUP_PPU,
+    GROUP_SESSION,
+    GROUP_INPUT,
+    GROUP_PRESENTATION,
+    GROUP_APPLICATION
 };
 
-static const char *const names[] = {
-    "",          "Save states",    "Recent games",  "Speed",     "Palette",      "Disk system",
-    "Tape",      "Barcode reader", "Arcade inputs", "Debugging", "Cheats",       "Rewind and movies",
-    "Netplay",   "Capture",        "HD graphics",   "Storage",   "Music player", "Other tools",
-    "Execution", "Scripts", "PPU tools"};
+static const char *const names[] = {"",
+                                    "Save states",
+                                    "Recent games",
+                                    "Speed",
+                                    "Palette",
+                                    "Disk system",
+                                    "Tape",
+                                    "Barcode reader",
+                                    "Arcade inputs",
+                                    "Debugging",
+                                    "Cheats",
+                                    "Rewind and movies",
+                                    "Netplay",
+                                    "Capture",
+                                    "HD graphics",
+                                    "Storage",
+                                    "Music player",
+                                    "Other tools",
+                                    "Execution",
+                                    "Scripts",
+                                    "PPU tools",
+                                    "Game and recovery",
+                                    "Input tools",
+                                    "Picture, sound and timing",
+                                    "Application"};
 
 static unsigned group(const DesktopMenuItem *item, int menu, unsigned parent) {
     unsigned id = item->id;
     if (parent == GROUP_DEBUG) {
-        if (desktop_ppu_panel(id)) return GROUP_PPU;
+        if (desktop_ppu_panel(id)) {
+            return GROUP_PPU;
+        }
         if (id == DEBUGGER_FRONTEND_COMMAND || (id >= DEBUGGER_STEP_INTO_COMMAND && id <= DEBUGGER_PAUSE_COMMAND)) {
             return GROUP_DEBUG_EXECUTION;
         }
@@ -81,27 +117,44 @@ static unsigned group(const DesktopMenuItem *item, int menu, unsigned parent) {
         }
     }
     if (menu == 5) {
+        if (id == 0x2600 || id == 0x26a0) {
+            return GROUP_SESSION;
+        }
+        if (id == 0x2a00) {
+            return GROUP_INPUT;
+        }
+        if (id == 0x2b00) {
+            return GROUP_STORAGE;
+        }
+        if (id == 0x2640 || id == 0x2680) {
+            return GROUP_APPLICATION;
+        }
+        if ((id >= 0x2700 && id < 0x2800 && id != 0x2700 && id != 0x2740) || id == 0x2c00) {
+            return GROUP_PRESENTATION;
+        }
         if (desktop_tas_panel(id)) {
             return 0;
         }
 
         if (id == CHEATS_FRONTEND_COMMAND || id == CHEATS_FRONTEND_PANEL || id == CHEATS_ADD_COMMAND ||
-            id == CHEATS_TOGGLE_COMMAND) {
+            id == CHEATS_TOGGLE_COMMAND || id == CHEATS_GAME_GENIE_PANEL || id == CHEAT_FINDER_PANEL || id == 0x2900) {
             return GROUP_CHEATS;
         }
-        if (desktop_ppu_panel(id) || (id >= 0x1340 && id <= 0x1382)) {
+        if (desktop_ppu_panel(id) || id == MEMORY_SEARCH_PANEL || id == WATCH_FRONTEND_PANEL ||
+            id == HEX_FRONTEND_PANEL || id == ASSEMBLER_FRONTEND_PANEL || (id >= 0x1340 && id <= 0x1382) ||
+            (id >= 0x2400 && id < 0x2500)) {
             return GROUP_DEBUG;
         }
-        if (id >= 0x1700 && id < 0x1800) {
+        if ((id >= 0x1700 && id < 0x1800) || id == 0x2700 || id == 0x2800 || id == 0x2501) {
             return GROUP_REPLAY;
         }
         if (id >= 0x1900 && id < 0x1A00) {
             return GROUP_NETPLAY;
         }
-        if (id >= 0x1600 && id < 0x1700) {
+        if ((id >= 0x1600 && id < 0x1700) || (id >= 0x2500 && id < 0x2600)) {
             return GROUP_CAPTURE;
         }
-        if (id >= 0x1800 && id < 0x1900) {
+        if ((id >= 0x1800 && id < 0x1900) || id == 0x2740) {
             return GROUP_GRAPHICS;
         }
         if ((id >= 0x1310 && id <= 0x1313) || (id >= 0x1C00 && id < 0x1D00)) {
@@ -116,6 +169,9 @@ static unsigned group(const DesktopMenuItem *item, int menu, unsigned parent) {
 }
 
 int desktop_menu_level(FrontendDesktopUi *ui, int depth, DesktopMenuItem out[128]) {
+    if (depth < 0 || depth > 4) {
+        return 0;
+    }
     DesktopMenuItem rows[128];
     int count = desktop_menu_all(ui, rows);
     unsigned parent = 0;
@@ -169,18 +225,38 @@ int desktop_menu_level(FrontendDesktopUi *ui, int depth, DesktopMenuItem out[128
         memmove(out, out + start, (size_t)length * sizeof(*out));
         used = length;
     }
-    if (used <= 10) {
+    int width = 900, height = 680;
+    if (ui->window) {
+        SDL_GetWindowSize(ui->window, &width, &height);
+    }
+    float scale = ui->ui_scale > 0 ? ui->ui_scale : 1;
+    int limit = (int)((height / scale - 74) / 32);
+    if (limit > 10) {
+        limit = 10;
+    }
+    if (limit < 4) {
+        limit = 4;
+    }
+    if (used <= limit) {
         return used;
     }
     /* Large recent/custom lists form small nested ranges, never tall scrolling menus. */
     memcpy(rows, out, (size_t)used * sizeof(*rows));
-    int span = used > 80 ? 16 : 8, pages = 0;
+    int span = (used + limit - 1) / limit, pages = 0;
+    if (span < limit) {
+        span = limit;
+    }
     for (int start = 0; start < used; start += span) {
         int length = used - start < span ? used - start : span;
         out[pages] = (DesktopMenuItem){
             .id = 0x80000000u | ((unsigned)start << 8) | (unsigned)length, .kind = 7, .enabled = true};
-        snprintf(out[pages++].label, sizeof(out[0].label), "%s %d–%d", parent ? names[parent] : "Items", start + 1,
-                 start + length);
+        if (!parent) {
+            snprintf(out[pages].label, sizeof(out[0].label), "%.48s / %.48s", rows[start].label,
+                     rows[start + length - 1].label);
+        } else {
+            snprintf(out[pages].label, sizeof(out[0].label), "%s %d-%d", names[parent], start + 1, start + length);
+        }
+        ++pages;
     }
     return pages;
 }

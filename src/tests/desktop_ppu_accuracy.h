@@ -1,3 +1,9 @@
+/*
+ * desktop_ppu_accuracy.h
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* Detached PPU tool interactions. Included after desktop test helpers. */
 #include "../debugger/ppu_inspector.h"
 

@@ -1,3 +1,9 @@
+/*
+ * tas_startup.h
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* Movie startup profile. SPDX-License-Identifier: GPL-3.0-or-later */
 #ifndef CUPID_TAS_STARTUP_H
 #define CUPID_TAS_STARTUP_H

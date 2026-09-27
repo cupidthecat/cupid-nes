@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Author: @frankischilling
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Run the canonical CPU trace and a fixed set of diagnostic ROMs."""
 
 import argparse

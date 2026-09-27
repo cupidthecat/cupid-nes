@@ -1,3 +1,9 @@
+/*
+ * desktop_internal.h
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* Desktop view model. SPDX-License-Identifier: GPL-3.0-or-later */
 #ifndef CUPID_DESKTOP_INTERNAL_H
 #define CUPID_DESKTOP_INTERNAL_H
@@ -21,6 +27,7 @@ int desktop_menu_items(FrontendDesktopUi *ui, DesktopMenuItem items[128]);
 void desktop_layout(FrontendDesktopUi *ui, const char *title, const char *region, const char *run_state);
 void desktop_copy_status(FrontendDesktopUi *ui, const char *text);
 bool desktop_invoke_command(FrontendDesktopUi *ui, unsigned id);
+bool desktop_shortcut_event(FrontendDesktopUi *ui, const SDL_Event *event, bool allow_press);
 void desktop_settings_open(FrontendDesktopUi *ui, bool open);
 void desktop_sync_scale(FrontendDesktopUi *ui);
 void desktop_adjust_setting(FrontendDesktopUi *ui, int row, int direction);
@@ -53,6 +60,7 @@ void desktop_setting_choice_text(FrontendDesktopUi *ui, int row, int option, cha
 void desktop_setting_choose(FrontendDesktopUi *ui, int row, int option);
 void desktop_browse_setting(FrontendDesktopUi *ui);
 void desktop_activate_setting(FrontendDesktopUi *ui, int row);
+bool desktop_setting_edit_text(FrontendDesktopUi *ui, int row, char *text, size_t size);
 bool desktop_setting_commit_number(FrontendDesktopUi *ui, int row, const char *text);
 int desktop_choice_count(FrontendDesktopUi *ui);
 void desktop_choice_text(FrontendDesktopUi *ui, int option, char *text, size_t size);

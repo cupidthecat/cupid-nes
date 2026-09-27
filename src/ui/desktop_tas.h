@@ -1,3 +1,9 @@
+/*
+ * desktop_tas.h
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* Desktop TAS piano-roll editor. SPDX-License-Identifier: GPL-3.0-or-later */
 #ifndef CUPID_DESKTOP_TAS_H
 #define CUPID_DESKTOP_TAS_H

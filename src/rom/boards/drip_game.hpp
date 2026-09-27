@@ -106,12 +106,7 @@ class DripGame final : public Board {
     }
 
     uint8_t ReadRegister(uint16_t address) override {
-        switch (address & 0x5800) {
-            case 0x4800: return (GetDipSwitches() ? 0x80 : 0) | 0x64;
-            case 0x5000: return _audio[0].Status();
-            case 0x5800: return _audio[1].Status();
-            default: return 0;
-        }
+        return PeekCpu(address, GetOpenBus());
     }
 
     void WriteRegister(uint16_t address, uint8_t value) override {
@@ -150,6 +145,17 @@ class DripGame final : public Board {
     }
 
 public:
+    uint8_t PeekCpu(uint16_t address, uint8_t openBus) const override {
+        if (address >= 0x4800 && address <= 0x5FFF) {
+            switch (address & 0x5800) {
+                case 0x4800: return (GetDipSwitches(1) ? 0x80 : 0) | 0x64;
+                case 0x5000: return _audio[0].Status();
+                case 0x5800: return _audio[1].Status();
+            }
+        }
+        return Board::PeekCpu(address, openBus);
+    }
+
     bool VisitState(BoardStateVisitor &state) override {
         return Board::VisitState(state)
             && _audio[0].VisitState(state)

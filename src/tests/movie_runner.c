@@ -1,3 +1,9 @@
+/*
+ * movie_runner.c
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* Production movie playback acceptance runner. SPDX-License-Identifier: GPL-3.0-or-later */
 #include "../replay/movie.h"
 #include "../replay/tas_session.h"

@@ -7,6 +7,8 @@
  * GNU General Public License, version 3 or any later version.
  */
 #include "cheat_frontend.h"
+#include "cheat_database_frontend.h"
+#include "game_genie_frontend.h"
 #include "frontend_commands.h"
 #include "frontend_panels.h"
 #include "platform_frontend.h"
@@ -30,6 +32,7 @@ struct CheatFrontend {
     char labels[CHEAT_UI_LIMIT + 1][144];
     const char *items[CHEAT_UI_LIMIT + 1];
     bool registered;
+    GameGenieFrontend *game_genie;
 };
 
 static bool fail(CheatFrontend *frontend, char *error, size_t error_size,
@@ -279,6 +282,11 @@ CheatFrontend *cheat_frontend_create(const char *storage_directory) {
         || strlen(storage_directory) >= NES_FILE_PATH_LIMIT) return NULL;
     CheatFrontend *frontend = calloc(1, sizeof(*frontend));
     if (!frontend) return NULL;
+    frontend->game_genie = game_genie_frontend_create(frontend);
+    if (!frontend->game_genie) {
+        free(frontend);
+        return NULL;
+    }
     strcpy(frontend->storage_directory, storage_directory);
     frontend->draft_enabled = true;
     cheats_init();
@@ -295,9 +303,11 @@ bool cheat_frontend_register_ui(CheatFrontend *frontend) {
         CHEATS_TOGGLE_COMMAND, "Toggle Selected Cheat", "Tools", "",
         FRONTEND_COMMAND_NEEDS_SESSION, toggle_cheat, frontend
     };
-    if (!frontend_command_register(&add) || !frontend_command_register(&toggle)) {
+    if (!frontend_command_register(&add)) {
+        return false;
+    }
+    if (!frontend_command_register(&toggle)) {
         (void)frontend_command_unregister(CHEATS_ADD_COMMAND);
-        (void)frontend_command_unregister(CHEATS_TOGGLE_COMMAND);
         return false;
     }
     FrontendPanelSpec panel = {
@@ -309,11 +319,45 @@ bool cheat_frontend_register_ui(CheatFrontend *frontend) {
         (void)frontend_command_unregister(CHEATS_TOGGLE_COMMAND);
         return false;
     }
+    if (!game_genie_frontend_register(frontend->game_genie)) {
+        (void)frontend_command_unregister(CHEATS_ADD_COMMAND);
+        (void)frontend_command_unregister(CHEATS_TOGGLE_COMMAND);
+        (void)frontend_panel_unregister(CHEATS_FRONTEND_PANEL);
+        return false;
+    }
     frontend->registered = true;
+    if (!cheat_database_frontend_register()) {
+        game_genie_frontend_destroy(frontend->game_genie);
+        frontend->game_genie = NULL;
+        (void)frontend_command_unregister(CHEATS_ADD_COMMAND);
+        (void)frontend_command_unregister(CHEATS_TOGGLE_COMMAND);
+        (void)frontend_panel_unregister(CHEATS_FRONTEND_PANEL);
+        frontend->registered = false;
+        return false;
+    }
     return true;
 }
 
+bool cheat_frontend_prepare(CheatFrontend *frontend, const char *code, const char *description,
+                            char *error, size_t error_size) {
+    CheatRecord parsed;
+    if (!frontend || !code || !description || strlen(description) >= sizeof(frontend->draft_description)) {
+        return fail(frontend, error, error_size, "Invalid cheat draft");
+    }
+
+    CheatResult result = cheats_parse(code, &parsed);
+    if (result != CHEAT_OK) {
+        return fail(frontend, error, error_size, cheats_result_message(result));
+    }
+
+    select_new(frontend);
+    strcpy(frontend->draft_code, parsed.code);
+    strcpy(frontend->draft_description, description);
+    return report(frontend, CHEAT_OK, "Review the draft and choose Add new cheat", error, error_size);
+}
+
 void cheat_frontend_image_changed(CheatFrontend *frontend, uint32_t game_identity) {
+    cheat_database_frontend_image_changed();
     if (!frontend) return;
     cheats_set_game_identity(game_identity);
     select_new(frontend);
@@ -335,7 +379,9 @@ void cheat_frontend_image_changed(CheatFrontend *frontend, uint32_t game_identit
 
 void cheat_frontend_destroy(CheatFrontend *frontend) {
     if (!frontend) return;
+    game_genie_frontend_destroy(frontend->game_genie);
     if (frontend->registered) {
+        cheat_database_frontend_unregister();
         (void)frontend_command_unregister(CHEATS_ADD_COMMAND);
         (void)frontend_command_unregister(CHEATS_TOGGLE_COMMAND);
         (void)frontend_panel_unregister(CHEATS_FRONTEND_PANEL);

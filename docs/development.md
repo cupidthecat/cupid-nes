@@ -246,6 +246,65 @@ Run the focused hardware regression first. After each implemented accuracy issue
 
 Do not lower pass requirements, substitute expected output, add cartridge-specific success paths, or skip a failing test to make the result green. A missing result protocol and a timeout remain unresolved results. Use [the contribution guide](../CONTRIBUTING.md) for review and reporting details.
 
+## Desktop performance
+
+The GTK interaction fixture disables animations and checks the target row and
+column before sending TAS clicks. It exercises horizontal scrolling, distant
+frames, undo, and read-only input. Column widths and the current scroll adjustment
+determine click positions so pending layout work cannot select a neighboring cell.
+Window captures also check that widgets have no surrounding borders. Keyboard
+focus uses a colored outline, and selected tabs use a background highlight.
+Resized-window captures request one paint and wait for its snapshot; they do
+not keep refreshing the tool model while waiting for the frame to finish.
+The Windows build script uses Cairo for automated widget checks, matching Linux
+CI and avoiding dependence on the runner's graphics driver. Cupid leaves
+compositor selection to GTK and preserves explicit environment overrides.
+Windows also runs `build/gtk-ui-smoke.exe --native-video-check` without renderer
+overrides. This exercises the accelerated child viewport at normal, maximized,
+and fullscreen sizes, including pixel readback, padded source rows, texture
+resizing, filtering, integer scaling, unload/reload, device reset, and software
+fallback. Bounds checks also cover small, wide, and tall windows, restoring from
+fullscreen, and 200% scaling. They compare the native child against the GTK
+allocation with the window's decoration inset. Readback captures are written
+to `build/gtk-native-video/`. Both paths
+check that Game Information refreshes after reopening, live replacement, and unload.
+
+The GTK fixture sends key-press and key-release signals through the desktop event
+dispatcher for every configurable shortcut. Command counters check save, load,
+reset, and open without showing file dialogs. Hold actions use the execution
+runtime. Checks cover key repeat, remapping, releasing a modifier first, losing
+focus, and the fixed Settings, fullscreen, and palette keys.
+The startup check rejects changes to `GDK_DEBUG`. Also run the fixture without
+`GSK_RENDERER` to exercise the default renderer on a desktop display. Widget
+snapshots do not capture the native window's transparent margins; inspect those
+on screen when checking for black borders.
+
+Build the GTK smoke executable with `make GTK=1 gtk-smoke`, then run:
+
+```sh
+SDL_AUDIODRIVER=dummy build/gtk-ui-smoke --benchmark /path/to/game.nes
+```
+
+On Windows, run the same command in the UCRT64 shell with
+`build/gtk-ui-smoke.exe`. Use a real desktop display. This mode opens windows
+and runs the supplied ROM through the production execution, rewind, video,
+and GTK presentation paths. It does not download or bundle commercial ROMs.
+Audio uses the dummy driver for reproducible measurements.
+
+Each view gets 60 warmup frames, 300 uncapped frames, and 300 frames paced to
+the ROM's regional timing. The report includes the actual view dimensions,
+game renderer, emulation time, presentation time, paced FPS, and the number of
+submitted display updates, unique display draws, interval jitter, p95, and maximum
+intervals. Jitter is the standard deviation over the most recent 240 intervals.
+Unique draws count new source images drawn by the game viewport, rather than
+requests to redraw it; they do not measure monitor scanout.
+Late display updates can be skipped without skipping
+emulation. Run timing measurements without a concurrent build or test suite;
+CPU contention changes both core and presentation costs. Windowed,
+maximized, fullscreen, and maximized with a live PPU viewer are measured.
+Uncapped throughput measures spare capacity; it is not the game's playback
+speed. The test reports measurements without a machine-dependent pass threshold.
+
 ## Documentation-only changes
 
 Check relative links and heading anchors, compare CLI examples with [main.c](../src/main.c), and confirm that build paths and test pins match the scripts. Review tables against their source constants and explain any unsupported path explicitly. A prose edit does not need a new C unit test. The existing CI workflow still runs the hardware suite, diagnostic collection, and pinned AccuracyCoin check on pushes and pull requests.

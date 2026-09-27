@@ -1,11 +1,23 @@
+/*
+ * desktop_layout.c
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* Desktop interface built with Clay. SPDX-License-Identifier: GPL-3.0-or-later */
 #include "../rom/fds.h"
 #include "../rom/rom.h"
 #include "../system/hardware.h"
 #include "../system/timing.h"
 #include "desktop_internal.h"
+#include "desktop_keyboard.h"
 #include "frontend_commands.h"
 #include "frontend_panels.h"
+#include "desktop_memory.h"
+#include "memory_search_frontend.h"
+#include "watch_frontend.h"
+#include "hex_frontend.h"
+#include "desktop_hex.h"
 #include "palette_tool.h"
 #include <stdio.h>
 #include <string.h>
@@ -89,6 +101,9 @@ static void scroll_footer(FrontendDesktopUi *ui, int count, int start) {
                  start + ui->visible_rows < count ? start + ui->visible_rows : count, count);
         label(ui, text, 12, muted);
         spacer();
+        if (ui->settings_open && desktop_setting_kind(ui, ui->settings_row) == SETTING_FILE) {
+            button(ui, "Clear", HIT_CLEAR_SETTING, 0, 0, false, true);
+        }
         button(ui, "↑", HIT_SCROLL, 0, -1, false, start > 0);
         button(ui, "↓", HIT_SCROLL, 0, 1, false, start + ui->visible_rows < count);
     }
@@ -167,17 +182,25 @@ static void selected_detail(FrontendDesktopUi *ui, const char *text) {
     }
 }
 
+static float menu_width(FrontendDesktopUi *ui, int index) {
+    int width, height;
+    SDL_GetWindowSize(ui->window, &width, &height);
+    float scale = ui->ui_scale > 0 ? ui->ui_scale : 1;
+    float available = width / scale - 32;
+    return menu_widths[index] * (available < 510 ? available / 510 : 1);
+}
+
 static void bar_item(FrontendDesktopUi *ui, const char *text, int kind, int index, bool active, bool enabled) {
     Clay_ElementId id = desktop_clay_hit(ui->clay, enabled ? kind : HIT_NONE, index, 0);
-    CLAY(id,
-         {.layout = {.sizing = {.width = kind == HIT_MENU ? CLAY_SIZING_FIXED(menu_widths[index]) : CLAY_SIZING_FIT(),
-                                .height = CLAY_SIZING_GROW()},
-                     .padding = {12, 12, 0, 0},
-                     .childAlignment = {.y = CLAY_ALIGN_Y_CENTER}},
-          .backgroundColor = active                            ? selected
-                             : Clay_PointerOver(id) && enabled ? control_fill
-                                                               : (Clay_Color){0},
-          .border = {.color = active ? accent : (Clay_Color){0}, .width = {.bottom = 2}}}) {
+    CLAY(id, {.layout = {.sizing = {.width =
+                                        kind == HIT_MENU ? CLAY_SIZING_FIXED(menu_width(ui, index)) : CLAY_SIZING_FIT(),
+                                    .height = CLAY_SIZING_GROW()},
+                         .padding = {5, 5, 0, 0},
+                         .childAlignment = {.y = CLAY_ALIGN_Y_CENTER}},
+              .backgroundColor = active                            ? selected
+                                 : Clay_PointerOver(id) && enabled ? control_fill
+                                                                   : (Clay_Color){0},
+              .border = {.color = active ? accent : (Clay_Color){0}, .width = {.bottom = 2}}}) {
         line(ui, text, 14, enabled ? ink : muted);
     }
 }
@@ -185,7 +208,7 @@ static void bar_item(FrontendDesktopUi *ui, const char *text, int kind, int inde
 static void menu_popup(FrontendDesktopUi *ui, float w, float h) {
     float x = 10, y = 32, width = w < 720 ? 280 : 330;
     for (int i = 0; i < ui->open_menu; ++i) {
-        x += menu_widths[i] + 2;
+        x += menu_width(ui, i) + 2;
     }
     for (int depth = 0; depth <= ui->menu_depth; ++depth) {
         DesktopMenuItem items[128];
@@ -238,6 +261,8 @@ static void choice_popup(FrontendDesktopUi *ui, float w, float h) {
         shown = 20;
     }
     int columns = shown > 10 ? 2 : 1;
+    bool compact = h < 420;
+    float row_height = compact ? 18 : 28;
     char title[96] = "Choose an option", value[256];
     if (!ui->choice_panel) {
         desktop_setting_text(ui, ui->choice_row, title, sizeof(title), value, sizeof(value));
@@ -269,12 +294,12 @@ static void choice_popup(FrontendDesktopUi *ui, float w, float h) {
                         for (int i = start + col * 10; i < count && i < start + (col + 1) * 10; ++i) {
                             desktop_choice_text(ui, i, value, sizeof(value));
                             Clay_ElementId id = desktop_clay_hit(ui->clay, HIT_CHOICE, i, 0);
-                            CLAY(id,
-                                 {.layout = {.sizing = {.width = CLAY_SIZING_GROW(), .height = CLAY_SIZING_FIXED(28)},
-                                             .padding = {8, 8, 5, 5}},
-                                  .backgroundColor =
-                                      ui->choice_index == i || Clay_PointerOver(id) ? selected : control_fill,
-                                  .clip = {.horizontal = true, .vertical = true}}) {
+                            CLAY(id, {.layout = {.sizing = {.width = CLAY_SIZING_GROW(),
+                                                            .height = CLAY_SIZING_FIXED(row_height)},
+                                                 .padding = {8, 8, compact ? 1 : 5, compact ? 1 : 5}},
+                                      .backgroundColor =
+                                          ui->choice_index == i || Clay_PointerOver(id) ? selected : control_fill,
+                                      .clip = {.horizontal = true, .vertical = true}}) {
                                 line(ui, value, 13, ink);
                             }
                         }
@@ -297,19 +322,21 @@ static void choice_popup(FrontendDesktopUi *ui, float w, float h) {
 }
 
 static void settings(FrontendDesktopUi *ui, float height) {
-    heading(ui, "Settings", "Changes take effect when you choose Apply or OK.");
+    bool compact = height < 400;
+    heading(ui, "Settings", compact ? NULL : "Changes take effect when you choose Apply or OK.");
     ui->visible_rows = (int)((height - 280) / 44);
-    if (ui->visible_rows < 2) {
-        ui->visible_rows = 2;
+    if (ui->visible_rows < (compact ? 1 : 2)) {
+        ui->visible_rows = compact ? 1 : 2;
     }
     CLAY_AUTO_ID({.layout = {.sizing = {.width = CLAY_SIZING_GROW(), .height = CLAY_SIZING_GROW()}, .childGap = 16}}) {
         CLAY_AUTO_ID({.layout = {.sizing = {.width = CLAY_SIZING_FIXED(140), .height = CLAY_SIZING_GROW()},
                                  .layoutDirection = CLAY_TOP_TO_BOTTOM,
-                                 .childGap = 4}}) {
+                                 .childGap = compact ? 2 : 4}}) {
             for (int i = 0; i < 8; ++i) {
                 Clay_ElementId id = desktop_clay_hit(ui->clay, HIT_CATEGORY, i, 0);
-                CLAY(id, {.layout = {.sizing = {.width = CLAY_SIZING_GROW(), .height = CLAY_SIZING_FIXED(26)},
-                                     .padding = {8, 8, 5, 5}},
+                CLAY(id, {.layout = {.sizing = {.width = CLAY_SIZING_GROW(),
+                                                .height = CLAY_SIZING_FIXED(compact ? 16 : 26)},
+                                     .padding = {8, 8, compact ? 0 : 5, compact ? 0 : 5}},
                           .backgroundColor = i == ui->settings_category ? selected : surface,
                           .cornerRadius = CLAY_CORNER_RADIUS(5)}) {
                     line(ui, categories[i], 12, i == ui->settings_category ? accent : muted);
@@ -362,14 +389,12 @@ static void settings(FrontendDesktopUi *ui, float height) {
             desktop_setting_text(ui, ui->settings_row, name, sizeof(name), value, sizeof(value));
             snprintf(detail, sizeof(detail), "%s: %s", name, value);
             selected_detail(ui, detail);
-            CLAY_AUTO_ID({.layout = {.sizing = {.width = CLAY_SIZING_GROW()},
-                                     .childGap = 6,
-                                     .childAlignment = {.y = CLAY_ALIGN_Y_CENTER}}}) {
-                label(ui, "Enter opens • Ctrl+Tab changes category", 11, muted);
-                spacer();
-                bool browse = desktop_setting_kind(ui, ui->settings_row) == SETTING_FILE;
-                if (browse) {
-                    button(ui, "Clear", HIT_CLEAR_SETTING, 0, 0, false, true);
+            if (!compact) {
+                CLAY_AUTO_ID({.layout = {.sizing = {.width = CLAY_SIZING_GROW()},
+                                         .childGap = 6,
+                                         .childAlignment = {.y = CLAY_ALIGN_Y_CENTER}}}) {
+                    label(ui, "Enter opens • Ctrl+Tab changes category", 11, muted);
+                    spacer();
                 }
             }
         }
@@ -397,10 +422,17 @@ static void panel(FrontendDesktopUi *ui, float height) {
     }
     frontend_panel_get(ui->panel_id, &info);
     heading(ui, info.title, info.category);
+    if (memory_tools_panel(ui->panel_id) || ui->panel_id == WATCH_FRONTEND_PANEL ||
+        ui->panel_id == HEX_FRONTEND_PANEL) {
+        desktop_memory_focus(ui, &model, 0);
+    }
+
     if (ui->panel_row >= (int)model.count) {
         ui->panel_row = model.count ? (int)model.count - 1 : 0;
     }
-    ui->visible_rows = (int)((height - 240) / 44);
+    bool watch_panel = ui->panel_id == WATCH_FRONTEND_PANEL;
+    float detail_height = watch_panel ? 88 : 50;
+    ui->visible_rows = (int)((height - 240 - (detail_height - 50)) / 44);
     if (ui->visible_rows < 2) {
         ui->visible_rows = 2;
     }
@@ -423,8 +455,33 @@ static void panel(FrontendDesktopUi *ui, float height) {
                     if (c->type == FRONTEND_PANEL_CHECKBOX) {
                         value = c->selected ? "On" : "Off";
                     }
+
+                    bool watch_result = ui->panel_id == WATCH_FRONTEND_PANEL && c->id >= WATCH_ROW &&
+                                        c->id < WATCH_ROW + WATCH_PAGE_SIZE && c->item_count == 5;
+                    bool memory_result =
+                        watch_result || (memory_tools_panel(ui->panel_id) && c->id >= MEMORY_SEARCH_ROW &&
+                                         c->id < MEMORY_SEARCH_ROW + MEMORY_SEARCH_PAGE_SIZE && c->item_count == 5);
+                    bool hex_result =
+                        ui->panel_id == HEX_FRONTEND_PANEL && c->id >= HEX_ROW && c->id < HEX_ROW + HEX_ROWS;
+                    char sample[256] = "", history[160] = "";
+                    if (memory_result) {
+                        snprintf(sample, sizeof(sample),
+                                 watch_result ? "%s   Current %s   Previous %s" : "$%s   Current %s   Last sample %s",
+                                 c->items[0], c->items[1], c->items[2]);
+                        snprintf(history, sizeof(history),
+                                 watch_result ? "Changes %s   Label %s" : "Initial %s   Changes %s", c->items[3],
+                                 c->items[4]);
+                    }
+
                     if (i == ui->panel_row) {
-                        snprintf(detail, sizeof(detail), "%s: %s", c->label, value);
+                        if (watch_result) {
+                            snprintf(detail, sizeof(detail), "%s\nCurrent %s\nPrevious %s\n%s", c->items[0],
+                                     c->items[1], c->items[2], history);
+                        } else if (memory_result) {
+                            snprintf(detail, sizeof(detail), "%s\n%s", sample, history);
+                        } else {
+                            snprintf(detail, sizeof(detail), "%s: %s", c->label, value);
+                        }
                     }
                     Clay_ElementId id = desktop_clay_hit(ui->clay, HIT_PANEL, i, 0);
                     CLAY(id, {.layout = {.sizing = {.width = CLAY_SIZING_GROW(), .height = CLAY_SIZING_FIXED(38)},
@@ -435,12 +492,23 @@ static void panel(FrontendDesktopUi *ui, float height) {
                               .cornerRadius = CLAY_CORNER_RADIUS(4)}) {
                         CLAY_AUTO_ID(
                             {.layout = {.sizing = {.width = CLAY_SIZING_GROW(), .height = CLAY_SIZING_FIXED(32)},
+                                        .layoutDirection =
+                                            memory_result || hex_result ? CLAY_TOP_TO_BOTTOM : CLAY_LEFT_TO_RIGHT,
                                         .childAlignment = {.y = CLAY_ALIGN_Y_CENTER}},
                              .clip = {.horizontal = true, .vertical = true}}) {
-                            line(ui, c->label, 14, c->enabled ? ink : muted);
+                            if (memory_result) {
+                                line(ui, sample, 12, c->enabled ? ink : muted);
+                                line(ui, history, 12, muted);
+                            } else if (hex_result) {
+                                line(ui, c->label, 11, muted);
+                                line(ui, value, 11, c->enabled ? ink : muted);
+                            } else {
+                                line(ui, c->label, 14, c->enabled ? ink : muted);
+                            }
                         }
                         if (c->type == FRONTEND_PANEL_ACTION) {
-                            button(ui, "Run", HIT_PANEL, i, 0, false, c->enabled && !c->read_only);
+                            button(ui, memory_result || hex_result ? "Select" : "Run", HIT_PANEL, i, 0, false,
+                                   c->enabled && !c->read_only);
                         } else if (c->type == FRONTEND_PANEL_CHECKBOX) {
                             toggle_control(ui, c->selected != 0, HIT_PANEL, i, c->enabled && !c->read_only);
                         } else {
@@ -461,12 +529,14 @@ static void panel(FrontendDesktopUi *ui, float height) {
             scrollbar(ui, 1, (int)model.count, start);
         }
         scroll_footer(ui, (int)model.count, start);
-        CLAY_AUTO_ID({.layout = {.sizing = {.width = CLAY_SIZING_GROW(), .height = CLAY_SIZING_FIXED(50)},
+        CLAY_AUTO_ID({.layout = {.sizing = {.width = CLAY_SIZING_GROW(), .height = CLAY_SIZING_FIXED(detail_height)},
                                  .padding = CLAY_PADDING_ALL(8)},
                       .backgroundColor = raised,
                       .cornerRadius = CLAY_CORNER_RADIUS(5),
                       .clip = {.horizontal = true, .vertical = true}}) {
-            label(ui, detail, 13, accent);
+            CLAY_AUTO_ID({.layout = {.sizing = {.width = CLAY_SIZING_PERCENT(1)}}}) {
+                label(ui, detail, 13, accent);
+            }
         }
     }
     label(ui, model.status ? model.status : "Arrows move or adjust • Enter selects • Escape closes", 13, muted);
@@ -723,9 +793,25 @@ void desktop_layout(FrontendDesktopUi *ui, const char *title, const char *region
                     if (ui->settings_open) {
                         settings(ui, mh);
                     } else if (ui->panel_open) {
-                        if (desktop_ppu_panel(ui->panel_id)) desktop_ppu_layout(ui, mw - 40, mh - 40);
-                        else if (desktop_tas_panel(ui->panel_id)) desktop_tas_layout(ui, mw - 40, mh - 40);
-                        else panel(ui, mh);
+                        if (desktop_ppu_panel(ui->panel_id)) {
+                            desktop_ppu_layout(ui, mw - 40, mh - 40);
+                        } else if (ui->panel_id == DESKTOP_KEYBOARD_PANEL) {
+                            desktop_keyboard_layout(ui, mw - 40, mh - 40);
+                        } else if (desktop_tas_panel(ui->panel_id)) {
+                            desktop_tas_layout(ui, mw - 40, mh - 40);
+                        } else if (memory_tools_panel(ui->panel_id) && desktop_memory_layout(ui, mw - 40, mh - 40)) {
+                        } else if (ui->panel_id == WATCH_FRONTEND_PANEL && desktop_watch_layout(ui, mw - 40, mh - 40)) {
+                        } else if (ui->panel_id == HEX_FRONTEND_PANEL && desktop_hex_layout(ui, mw - 40, mh - 40)) {
+                        } else {
+                            /* A clipped parent otherwise lets grow containers expand to
+                             * the longest value, moving actions beyond the window. */
+                            CLAY_AUTO_ID({.layout = {.sizing = {.width = CLAY_SIZING_FIXED(mw - 40),
+                                                                .height = CLAY_SIZING_FIXED(mh - 40)},
+                                                     .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                                                     .childGap = 14}}) {
+                                panel(ui, mh);
+                            }
+                        }
                     } else if (ui->info_open) {
                         information(ui, mh);
                     } else {
@@ -751,11 +837,10 @@ void desktop_layout(FrontendDesktopUi *ui, const char *title, const char *region
                               .backgroundColor = surface,
                               .cornerRadius = CLAY_CORNER_RADIUS(10)}) {
                     label(ui,
-                          ui->capture_binding  ? "Set binding"
-                          : ui->prompt_command ? "Add cheat"
-                          : ui->panel_open && desktop_tas_panel(ui->panel_id)
-                              ? desktop_tas_edit_title(ui->edit_control)
-                                               : "Edit value",
+                          ui->capture_binding                                 ? "Set binding"
+                          : ui->prompt_command                                ? "Add cheat"
+                          : ui->panel_open && desktop_tas_panel(ui->panel_id) ? desktop_tas_edit_title(ui->edit_control)
+                                                                              : "Edit value",
                           24, ink);
                     label(ui,
                           ui->capture_binding ? ui->capture_gamepad

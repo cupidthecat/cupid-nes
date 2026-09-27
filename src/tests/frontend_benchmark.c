@@ -1,3 +1,9 @@
+/*
+ * frontend_benchmark.c
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* Production frontend throughput diagnostic. SPDX-License-Identifier: GPL-3.0-or-later */
 #include "../apu/apu.h"
 #include "../cpu/cpu.h"

@@ -1,3 +1,9 @@
+/*
+ * tas_project_v1_fixture.h
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* Synthetic CTAS v1 save from 932a99cf771d79798c5a6a2275cf238343a10cc4.
  * Four blank frames, branch 0 at frame 1, frame 1 A press, marker at frame 2,
  * then frame 2 B press undone. Both undo and redo stacks are populated.

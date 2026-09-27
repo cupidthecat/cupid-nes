@@ -97,7 +97,8 @@ bool nes_video_presentation_render(const NesVideoPresentationSource *source,
                         current.show_background, current.show_sprites);
                 signal = layer_signal;
             }
-            ntsc_composite_filter_frame(signal, source->phases[side], composed[side]);
+            if (!ntsc_composite_filter_frame_settings(signal, source->phases[side], composed[side],
+                                                      source->ntsc_settings, error, error_size)) return false;
         } else {
             for (unsigned y = 0; y < 240; ++y) {
                 for (unsigned x = 0; x < 256; ++x) {

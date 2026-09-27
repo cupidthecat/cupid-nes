@@ -28,13 +28,14 @@
 
 static unsigned debugger_checks;
 
-#define CHECK(condition) do { \
-    ++debugger_checks; \
-    if (!(condition)) { \
-        fprintf(stderr, "%s:%d: %s\n", __func__, __LINE__, #condition); \
-        return 1; \
-    } \
-} while (0)
+#define CHECK(condition)                                                                                               \
+    do {                                                                                                               \
+        ++debugger_checks;                                                                                             \
+        if (!(condition)) {                                                                                            \
+            fprintf(stderr, "%s:%d: %s\n", __func__, __LINE__, #condition);                                            \
+            return 1;                                                                                                  \
+        }                                                                                                              \
+    } while (0)
 
 static uint8_t image[16 + 0x8000 + 0x2000];
 
@@ -53,22 +54,34 @@ static void build_debug_nrom(void) {
         0x4C, 0x09, 0x80  /* $8009 JMP $8009 */
     };
     memcpy(prg, program, sizeof(program));
-    prg[0x10] = 0xE6; prg[0x11] = 0x10; /* INC $10 */
-    prg[0x12] = 0x60;                     /* RTS */
-    prg[0x7FFA] = 0x10; prg[0x7FFB] = 0x80;
-    prg[0x7FFC] = 0x00; prg[0x7FFD] = 0x80;
-    prg[0x7FFE] = 0x00; prg[0x7FFF] = 0x80;
+    prg[0x10] = 0xE6;
+    prg[0x11] = 0x10; /* INC $10 */
+    prg[0x12] = 0x60; /* RTS */
+    prg[0x7FFA] = 0x10;
+    prg[0x7FFB] = 0x80;
+    prg[0x7FFC] = 0x00;
+    prg[0x7FFD] = 0x80;
+    prg[0x7FFE] = 0x00;
+    prg[0x7FFF] = 0x80;
 }
 
 static int start_debug_machine(void) {
-    if (!unload_rom()) return -1;
-    if (!nes_set_region_mode(NES_REGION_MODE_NTSC)) return -1;
+    if (!unload_rom()) {
+        return -1;
+    }
+    if (!nes_set_region_mode(NES_REGION_MODE_NTSC)) {
+        return -1;
+    }
     build_debug_nrom();
-    if (load_rom_memory(image, sizeof(image)) != 0) return -1;
+    if (load_rom_memory(image, sizeof(image)) != 0) {
+        return -1;
+    }
     ppu_power_on(&ppu);
     apu_power_on(&apu);
     cpu_total_cycles = 0;
-    if (!cpu_power_on(&cpu)) return -1;
+    if (!cpu_power_on(&cpu)) {
+        return -1;
+    }
     debugger_init();
     return 0;
 }
@@ -83,7 +96,9 @@ static int breakpoints_and_steps(void) {
     CHECK(stop.reason == DEBUG_STOP_BREAKPOINT && stop.address == 0x8004);
 
     CHECK(debugger_step_over());
-    for (unsigned i = 0; i < 8 && !debugger_is_paused(); ++i) (void)cpu_step(&cpu);
+    for (unsigned i = 0; i < 8 && !debugger_is_paused(); ++i) {
+        (void)cpu_step(&cpu);
+    }
     CHECK(debugger_is_paused() && cpu.pc == 0x8007);
     CHECK(cpu_peek_internal_ram(0x10) == 0x12);
     CHECK(debugger_last_stop().reason == DEBUG_STOP_STEP);
@@ -98,7 +113,9 @@ static int breakpoints_and_steps(void) {
     CHECK(debugger_run_until_break(&cpu, 8));
     CHECK(cpu.pc == 0x8010 && debugger_is_paused());
     CHECK(debugger_step_out());
-    for (unsigned i = 0; i < 8 && !debugger_is_paused(); ++i) (void)cpu_step(&cpu);
+    for (unsigned i = 0; i < 8 && !debugger_is_paused(); ++i) {
+        (void)cpu_step(&cpu);
+    }
     CHECK(debugger_is_paused() && cpu.pc == 0x8007);
 
     CHECK(start_debug_machine() == 0);
@@ -121,7 +138,9 @@ static int breakpoints_and_steps(void) {
 
     CHECK(start_debug_machine() == 0);
     CHECK(debugger_add_breakpoint(DEBUG_BREAK_READ, 0x0200, 0x0200) != 0);
-    for (unsigned i = 0; i < 256; ++i) write_mem((uint16_t)(0x0200u + i), (uint8_t)i);
+    for (unsigned i = 0; i < 256; ++i) {
+        write_mem((uint16_t)(0x0200u + i), (uint8_t)i);
+    }
     write_mem(0x4014, 0x02);
     CHECK(cpu_step(&cpu) > 0);
     stop = debugger_last_stop();
@@ -143,21 +162,32 @@ static int bank_switch_breakpoint(void) {
     CHECK(unload_rom());
     memset(debug_uxrom, 0, sizeof(debug_uxrom));
     memcpy(debug_uxrom, "NES\x1A", 4);
-    debug_uxrom[4] = 4; debug_uxrom[5] = 1; debug_uxrom[6] = 0x20;
+    debug_uxrom[4] = 4;
+    debug_uxrom[5] = 1;
+    debug_uxrom[6] = 0x20;
     uint8_t *prg = debug_uxrom + 16;
     memset(prg + 0x0000, 0x11, 0x4000);
     memset(prg + 0x4000, 0x22, 0x4000);
     memset(prg + 0x8000, 0x33, 0x4000);
     memset(prg + 0xC000, 0x44, 0x4000);
-    prg[0xC000] = 0xA9; prg[0xC001] = 0x01;             /* LDA #1 */
-    prg[0xC002] = 0x8D; prg[0xC003] = 0x00; prg[0xC004] = 0x80; /* STA $8000 */
+    prg[0xC000] = 0xA9;
+    prg[0xC001] = 0x01; /* LDA #1 */
+    prg[0xC002] = 0x8D;
+    prg[0xC003] = 0x00;
+    prg[0xC004] = 0x80; /* STA $8000 */
     prg[0xC005] = 0xEA;
-    prg[0xFFFA] = 0x00; prg[0xFFFB] = 0xC0;
-    prg[0xFFFC] = 0x00; prg[0xFFFD] = 0xC0;
-    prg[0xFFFE] = 0x00; prg[0xFFFF] = 0xC0;
+    prg[0xFFFA] = 0x00;
+    prg[0xFFFB] = 0xC0;
+    prg[0xFFFC] = 0x00;
+    prg[0xFFFD] = 0xC0;
+    prg[0xFFFE] = 0x00;
+    prg[0xFFFF] = 0xC0;
     CHECK(load_rom_memory(debug_uxrom, sizeof(debug_uxrom)) == 0);
-    ppu_power_on(&ppu); apu_power_on(&apu); cpu_total_cycles = 0;
-    CHECK(cpu_power_on(&cpu)); debugger_init();
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    cpu_total_cycles = 0;
+    CHECK(cpu_power_on(&cpu));
+    debugger_init();
     CHECK(cart_cpu_peek_bus(0x8000, 0xFF) == 0x11);
     CHECK(debugger_add_breakpoint(DEBUG_BREAK_WRITE, 0x8000, 0x8000) != 0);
     CHECK(cpu_step(&cpu) > 0);
@@ -182,33 +212,42 @@ static int inspection_trace_and_watches(void) {
     CHECK(disassembly.length == 3 && disassembly.bytes[0] == JSR_OPCODE);
     CHECK(strstr(disassembly.text, "JSR") != NULL);
 
-    write_mem(0x0020, 0x34); write_mem(0x0021, 0x12);
+    write_mem(0x0020, 0x34);
+    write_mem(0x0021, 0x12);
     uint32_t watch = debugger_add_watch(0x0020, 2, "word");
     CHECK(watch != 0 && debugger_watch_count() == 1);
-    DebugWatch info; uint32_t value = 0;
+    DebugWatch info;
+    uint32_t value = 0;
     CHECK(debugger_watch_at(0, &info, &value));
     CHECK(info.id == watch && value == 0x1234);
 
-    ppu.status = 0xE0; ppu.w = 1; ppu.open_bus = 0x1F;
+    ppu.status = 0xE0;
+    ppu.w = 1;
+    ppu.open_bus = 0x1F;
     uint8_t status = ppu.status, write_toggle = ppu.w, open_bus = ppu.open_bus;
     (void)debugger_peek_cpu(0x2002);
     CHECK(ppu.status == status && ppu.w == write_toggle && ppu.open_bus == open_bus);
 
     APU *active = apu_active_state();
-    active->frame_irq = true; active->frame_irq_source = true; active->frame_irq_clear_delay = 0;
+    active->frame_irq = true;
+    active->frame_irq_source = true;
+    active->frame_irq_clear_delay = 0;
     (void)debugger_peek_cpu(0x4015);
     CHECK(active->frame_irq && active->frame_irq_source && active->frame_irq_clear_delay == 0);
 
     CHECK(joypad_set_adapter(NES_ADAPTER_NONE));
     CHECK(joypad_set_port_device(0, NES_PORT_GAMEPAD));
     CHECK(joypad_set_expansion_device(NES_EXPANSION_NONE));
-    pad1.strobe = 0; pad1.shift = 0x5A;
+    pad1.strobe = 0;
+    pad1.shift = 0x5A;
     uint8_t shift = pad1.shift;
     (void)debugger_peek_cpu(0x4016);
     CHECK(pad1.shift == shift);
 
     uint8_t nametable[0x400], pattern[0x1000], palette[32], oam[256];
-    ppu_vram[0] = 0x6C; ppu_palette[1] = 0x21; ppu.oam[3] = 0x77;
+    ppu_vram[0] = 0x6C;
+    ppu_palette[1] = 0x21;
+    ppu.oam[3] = 0x77;
     debugger_copy_nametable(0, nametable);
     debugger_copy_pattern_table(0, pattern);
     debugger_copy_palette(palette);
@@ -220,19 +259,18 @@ static int inspection_trace_and_watches(void) {
 
 static int disassembly_formats_and_lengths(void) {
     CHECK(start_debug_machine() == 0);
+
     static const struct {
         uint8_t opcode;
         const char *instruction;
-    } formats[] = {
-        {0x1A,"NOP"}, {0x1B,"SLO $0544,Y"}, {0x04,"NOP $44"}, {0x0C,"NOP $0544"},
-        {0x09,"ORA #$44"}, {0x01,"ORA ($44,X)"}, {0x11,"ORA ($44),Y"},
-        {0x25,"AND $44"}, {0x35,"AND $44,X"}, {0x39,"AND $0544,Y"},
-        {0x0A,"ASL A"}, {0x2A,"ROL A"}, {0x46,"LSR $44"}, {0x7E,"ROR $0544,X"},
-        {0x96,"STX $44,Y"}, {0xB6,"LDX $44,Y"}, {0x6C,"JMP ($0544)"},
-        {0xD0,"BNE $0646"}, {0x3D,"AND $0544,X"}, {0x7D,"ADC $0544,X"},
-        {0xD1,"CMP ($44),Y"}, {0x5D,"EOR $0544,X"}, {0x48,"PHA"}, {0xBA,"TSX"},
-        {0x8B,"ANE #$44"}, {0x93,"SHA ($44),Y"}, {0xEB,"SBC #$44"}
-    };
+    } formats[] = {{0x1A, "NOP"},         {0x1B, "SLO $0544,Y"}, {0x04, "NOP $44"},     {0x0C, "NOP $0544"},
+                   {0x09, "ORA #$44"},    {0x01, "ORA ($44,X)"}, {0x11, "ORA ($44),Y"}, {0x25, "AND $44"},
+                   {0x35, "AND $44,X"},   {0x39, "AND $0544,Y"}, {0x0A, "ASL A"},       {0x2A, "ROL A"},
+                   {0x46, "LSR $44"},     {0x7E, "ROR $0544,X"}, {0x96, "STX $44,Y"},   {0xB6, "LDX $44,Y"},
+                   {0x6C, "JMP ($0544)"}, {0xD0, "BNE $0646"},   {0x3D, "AND $0544,X"}, {0x7D, "ADC $0544,X"},
+                   {0xD1, "CMP ($44),Y"}, {0x5D, "EOR $0544,X"}, {0x48, "PHA"},         {0xBA, "TSX"},
+                   {0x8B, "ANE #$44"},    {0x93, "SHA ($44),Y"}, {0xEB, "SBC #$44"}};
+
     for (size_t i = 0; i < sizeof(formats) / sizeof(formats[0]); ++i) {
         write_mem(0x0600, formats[i].opcode);
         write_mem(0x0601, 0x44);
@@ -262,22 +300,33 @@ static int disassembly_formats_and_lengths(void) {
         cpu.x = cpu.y = 1;
         cpu.status = 0x24;
         switch (opcode) {
-            case 0x10: cpu.status |= 0x80; break;
-            case 0x50: cpu.status |= 0x40; break;
-            case 0x90: cpu.status |= 0x01; break;
-            case 0xD0: cpu.status |= 0x02; break;
-            default: break;
+        case 0x10:
+            cpu.status |= 0x80;
+            break;
+        case 0x50:
+            cpu.status |= 0x40;
+            break;
+        case 0x90:
+            cpu.status |= 0x01;
+            break;
+        case 0xD0:
+            cpu.status |= 0x02;
+            break;
+        default:
+            break;
         }
         DebugDisassembly result;
         CHECK(debugger_disassemble(0x0600, &result));
         CHECK(result.length >= 1 && result.length <= 3 && !strstr(result.text, "???"));
         CHECK(result.bytes[0] == opcode);
-        if (opcode == 0x00 || opcode == 0x20 || opcode == 0x40 || opcode == 0x60
-            || opcode == 0x4C || opcode == 0x6C || strstr(result.text, "STP")) continue;
+        if (opcode == 0x00 || opcode == 0x20 || opcode == 0x40 || opcode == 0x60 || opcode == 0x4C || opcode == 0x6C ||
+            strstr(result.text, "STP")) {
+            continue;
+        }
         CHECK(cpu_step(&cpu) > 0);
         if (cpu.pc != 0x0600u + result.length) {
-            fprintf(stderr, "Opcode %02X: PC %04X disagrees with %s (%u bytes)\n",
-                    opcode, (unsigned)cpu.pc, result.text, (unsigned)result.length);
+            fprintf(stderr, "Opcode %02X: PC %04X disagrees with %s (%u bytes)\n", opcode, (unsigned)cpu.pc,
+                    result.text, (unsigned)result.length);
             return 1;
         }
     }
@@ -371,7 +420,9 @@ static int dual_debugger_pause(void) {
     debugger_init();
     uint32_t breakpoint = debugger_add_breakpoint(DEBUG_BREAK_EXECUTE, 0x9000, 0x9000);
     CHECK(breakpoint);
-    for (unsigned i = 0; i < 10 && !debugger_is_paused(); ++i) (void)vs_cpu_step();
+    for (unsigned i = 0; i < 10 && !debugger_is_paused(); ++i) {
+        (void)vs_cpu_step();
+    }
     CHECK(debugger_is_paused() && debugger_last_stop().address == 0x9000);
     CHECK(vs_active_side() == 0);
     uint64_t main_cycles = cpu_total_cycles, second_cycles = vs_side_cpu_cycles(1);
@@ -388,10 +439,9 @@ static int dual_debugger_pause(void) {
 
 static int lua_callbacks_errors_and_overlay(void) {
     CHECK(start_debug_machine() == 0);
-    static const char script[] =
-        "emu.addMemoryCallback('read',0x10,function(a,v) return 0x66 end)\n"
-        "emu.addMemoryCallback('exec',0x8007,function(a) emu.log('exec') "
-        "emu.drawPixel(1,2,0xFF00FF00) end)\n";
+    static const char script[] = "emu.addMemoryCallback('read',0x10,function(a,v) return 0x66 end)\n"
+                                 "emu.addMemoryCallback('exec',0x8007,function(a) emu.log('exec') "
+                                 "emu.drawPixel(1,2,0xFF00FF00) end)\n";
     CHECK(debugger_lua_load("callbacks", script));
     write_mem(0x0010, 0x22);
     cpu.pc = 0x8007;
@@ -400,6 +450,16 @@ static int lua_callbacks_errors_and_overlay(void) {
     CHECK(strstr(debugger_lua_log(), "exec") != NULL);
     CHECK(debugger_lua_overlay()[2 * DEBUG_LUA_OVERLAY_WIDTH + 1] == 0xFF00FF00u);
 
+    debugger_lua_unload();
+    write_mem(0x20, 0x34);
+    write_mem(0x21, 0x12);
+    CHECK(debugger_lua_load("read helpers", "local bytes=emu.readRange(0x20,2)\n"
+                                            "assert(#bytes==2 and bytes[1]==0x34 and bytes[2]==0x12)\n"
+                                            "assert(emu.readWord(0x20)==0x1234)\n"
+                                            "assert(emu.getFrameCount()>=0 and type(emu.getRegion())=='string')"));
+    debugger_lua_unload();
+    CHECK(!debugger_lua_load("invalid range", "emu.readRange(0xffff,2)"));
+    CHECK(debugger_lua_faulted() && strstr(debugger_lua_error(), "range") != NULL);
     debugger_lua_unload();
     CHECK(!debugger_lua_loaded());
     CHECK(!debugger_lua_load("error", "error('boom')"));
@@ -410,12 +470,10 @@ static int lua_callbacks_errors_and_overlay(void) {
     CHECK(debugger_lua_faulted());
     CHECK(strstr(debugger_lua_error(), "instruction budget") != NULL);
 
-    CHECK(!debugger_lua_load("bounds",
-        "emu.drawRectangle(0,0,1000000000,1000000000,0xFFFFFFFF,true)"));
+    CHECK(!debugger_lua_load("bounds", "emu.drawRectangle(0,0,1000000000,1000000000,0xFFFFFFFF,true)"));
     CHECK(debugger_lua_faulted());
-    CHECK(debugger_lua_load("clipped",
-        "emu.drawRectangle(-20,-20,40,40,0x11223344,true); "
-        "emu.drawLine(-256,120,512,120,0xAABBCCDD)"));
+    CHECK(debugger_lua_load("clipped", "emu.drawRectangle(-20,-20,40,40,0x11223344,true); "
+                                       "emu.drawLine(-256,120,512,120,0xAABBCCDD)"));
     const uint32_t *overlay = debugger_lua_overlay();
     CHECK(overlay[0] == 0x11223344u);
     CHECK(overlay[120 * DEBUG_LUA_OVERLAY_WIDTH] == 0xAABBCCDDu);
@@ -425,25 +483,37 @@ static int lua_callbacks_errors_and_overlay(void) {
 
 static void make_fds_bios(uint8_t bios[0x2000]) {
     memset(bios, 0xEA, 0x2000);
-    bios[0x1FFA] = 0x00; bios[0x1FFB] = 0xE0;
-    bios[0x1FFC] = 0x00; bios[0x1FFD] = 0xE0;
-    bios[0x1FFE] = 0x00; bios[0x1FFF] = 0xE0;
+    bios[0x1FFA] = 0x00;
+    bios[0x1FFB] = 0xE0;
+    bios[0x1FFC] = 0x00;
+    bios[0x1FFD] = 0xE0;
+    bios[0x1FFE] = 0x00;
+    bios[0x1FFF] = 0xE0;
 }
 
 static int fds_peek_side_effects(void) {
     CHECK(unload_rom());
     CHECK(nes_set_region_mode(NES_REGION_MODE_NTSC));
-    uint8_t bios[0x2000]; make_fds_bios(bios);
+    uint8_t bios[0x2000];
+    make_fds_bios(bios);
     const size_t disk_size = 16u + 65500u;
     uint8_t *disk = calloc(1, disk_size);
     CHECK(disk != NULL);
-    memcpy(disk, "FDS\x1A", 4); disk[4] = 1; disk[16] = 1; disk[17] = 0x2A;
+    memcpy(disk, "FDS\x1A", 4);
+    disk[4] = 1;
+    disk[16] = 1;
+    disk[17] = 0x2A;
     CHECK(load_fds_memory(disk, disk_size, bios, sizeof(bios), NULL, false) == 0);
     free(disk);
-    ppu_power_on(&ppu); apu_power_on(&apu); cpu_total_cycles = 0;
-    CHECK(cpu_power_on(&cpu)); debugger_init();
+    ppu_power_on(&ppu);
+    apu_power_on(&apu);
+    cpu_total_cycles = 0;
+    CHECK(cpu_power_on(&cpu));
+    debugger_init();
 
-    cart_cpu_write(0x4020, 1); cart_cpu_write(0x4021, 0); cart_cpu_write(0x4022, 3);
+    cart_cpu_write(0x4020, 1);
+    cart_cpu_write(0x4021, 0);
+    cart_cpu_write(0x4022, 3);
     fds_clock_cpu(2);
     CHECK(fds_irq_pending());
     uint8_t first = debugger_peek_cpu(0x4030);

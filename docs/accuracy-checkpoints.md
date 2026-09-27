@@ -331,3 +331,91 @@ diagnostic ROMs, the 8,991-state CPU trace, and AccuracyCoin 144/144 with no
 skipped or unfinished results in 4,182 frames. Region, Unicode-path, and seven
 network scenarios also passed. These are automated checks; they do not replace
 manual native-window, physical-controller, or audio-device acceptance.
+
+## Windows presentation checkpoint
+
+The SMB3 presentation check used the local USA Rev 1 image, GTK 4.24.0,
+default video settings, ten seconds of rewind, and dummy audio. Each view ran
+300 uncapped frames after warmup and then 300 frames at normal speed.
+
+| View | Game area | Uncapped FPS | Normal-speed FPS |
+| --- | --- | --- | --- |
+| Window | 768 by 478 | 102.7 | 60.10 |
+| Maximized | 1920 by 858 | 125.8 | 60.10 |
+| Fullscreen | 1920 by 963 | 128.9 | 60.10 |
+| Maximized with PPU viewer | 1920 by 858 | 119.5 | 60.10 |
+
+All four runs selected `GskGLRenderer`. The initial software-rendered run
+spent 8.18 ms per fullscreen presentation; the accelerated run spent 0.49 ms.
+These are local measurements, not minimum requirements or guarantees for
+other machines. The benchmark advances through the game's opening sequence;
+it is not a complete gameplay or physical-audio acceptance test.
+
+Native GTK checks passed caption notification and saved-window-size
+regressions, texture pixel and scaling checks, keyboard and pointer tests,
+assembler and TAS interactions, settings transactions, and tool-window
+captures. The hardware suite passed with zero failures. AccuracyCoin passed
+144/144 with zero failures, skips, or unfinished entries in 4,182 frames.
+See [desktop performance](development.md#desktop-performance) to repeat the
+window-size measurements with a local ROM.
+
+## Frame delivery checkpoint
+
+A Windows software-renderer comparison used the local USA Rev 1 image of
+Super Mario Bros. 3, GTK 4.24.0, dummy audio, default video settings, and ten
+seconds of rewind. Each view ran 300 paced frames after warmup. The baseline
+used the previous whole-millisecond wait; both builds included the same draw
+instrumentation. Builds and other test suites were stopped during measurement.
+
+| View | Baseline unique draws | Precise-wait unique draws | Baseline draw jitter | Precise-wait draw jitter |
+| --- | --- | --- | --- | --- |
+| Window | 278 | 279 | 2.517 ms | 2.514 ms |
+| Maximized | 192 | 283 | 8.766 ms | 3.330 ms |
+| Fullscreen | 263 | 283 | 4.913 ms | 4.098 ms |
+| Maximized with PPU viewer | 244 | 272 | 6.278 ms | 3.693 ms |
+
+Precise-wait emulation rates were 60.10, 60.10, 60.08, and 60.10 FPS respectively,
+against a 60.10 FPS target. Unique draws count new images consumed by the GTK
+game widget. Jitter is the standard deviation of the most recent 240 draw
+intervals. These measurements do not track monitor scanout. Software rendering
+still missed frames, and repeated runs varied with host load.
+
+The hardware suite passed with zero failures, along with all 91 diagnostic
+ROMs, the 8,991-state CPU trace, and AccuracyCoin 144/144 with no skipped or
+unfinished entries in 4,182 frames. Native GTK checks passed settings and input
+regressions, timing reset and event dispatch, source pixels and scaling, and
+58 tool windows. The timing panel capture was visually checked. Region,
+network, and database discovery checks also passed; the database check accepts
+mixed Windows path separators in loader messages.
+
+## Accelerated Windows viewport checkpoint
+
+The follow-up uses an SDL Direct3D 11 child viewport for the game while GTK
+continues to use Cairo for desktop widgets. It avoids scaling the game through
+the software compositor. The same local game, rewind setting, dummy audio,
+and 300-frame benchmark measured:
+
+| View | Unique draws | Emulation FPS | Draw jitter | Presentation time per frame |
+| --- | --- | --- | --- | --- |
+| Window | 298/300 | 60.10 | 2.605 ms | 0.45 ms |
+| Maximized | 300/300 | 60.05 | 1.168 ms | 0.48 ms |
+| Fullscreen | 299/300 | 60.10 | 1.717 ms | 0.59 ms |
+| Maximized with PPU viewer | 300/300 | 60.10 | 1.108 ms | 0.78 ms |
+
+Presentation time is the uncapped phase's average; FPS and draw intervals are
+from the paced phase. Native draw counts record completed presentation calls,
+not monitor scanout. Host scheduling can still cause stalls: the windowed run
+had a 50.755 ms maximum draw interval. No concurrent build or test suite ran
+during this measurement.
+
+The native viewport checks cover readback colors and letterboxing, zero-alpha
+source pixels, filtering, integer scaling, padded rows, texture resizing,
+maximized/fullscreen transitions, small/wide/tall window bounds at 100% and 200%
+scaling, hide/show on session changes, device reset,
+and software fallback. Game Information checks cover reopening after replacement,
+replacement while visible, and unloading. The software widget checks remain in
+the Windows and Linux jobs alongside the accelerated Windows check.
+
+The bounds check catches an initial viewport offset that covered the toolbar
+in a restored window. The native child now includes GTK's decoration inset.
+Maximized and fullscreen windows have no inset, which had hidden that error.

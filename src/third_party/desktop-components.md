@@ -1,7 +1,11 @@
 # Desktop components
 
-The desktop uses [Clay](https://github.com/nicbarker/clay) for layout and SDL2 for
-rendering and input. `clay/clay.h` is pinned to
+The desktop uses GTK4 for windows, menus, controls, and text editing. Release
+packages include GTK and its runtime dependencies, schemas, icons, and license
+notices. SDL2 supplies the emulation video pipeline, audio, and controller input.
+
+The headless regression frontend retains [Clay](https://github.com/nicbarker/clay).
+`clay/clay.h` is pinned to
 `e6cc36941ab2af5d81107617039d6f527a1c660b`. Its
 [zlib/libpng license](clay/LICENSE.md) is retained. `clay.c` enables the
 implementation and suppresses warnings in the upstream implementation only.

@@ -16,6 +16,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+/* Observe remapped pad buttons without clocking the controller shift registers. */
+bool vs_input_overlay_buttons(unsigned player, uint8_t *buttons);
 #include "../apu/apu.h"
 #include "../ppu/ppu.h"
 #include "../rom/rom.h"

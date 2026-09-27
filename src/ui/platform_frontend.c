@@ -29,7 +29,7 @@ typedef struct {
 static const FileDialog open_dialogs[] = {
     {"Open Game", "Supported images", "*.nes;*.unf;*.unif;*.fds;*.qd;*.nsf;*.nsfe;*.stbx;*.bin;*.zip;*.7z", NULL, false, false},
     {"Play Input Movie", "Input movies and TAS projects", "*.cmv;*.movie;*.fm2;*.fm3;*.ctas", "fm2", false, false},
-    {"Load State", "Save states", "*.cst;*.state", "cst", false, false},
+    {"Load State", "Save states", "*.cst;*.cstate;*.state", "cst", false, false},
     {"Load Palette", "Palette files", "*.pal", "pal", false, false},
     {"Apply Patch", "IPS, UPS or BPS patches", "*.ips;*.ups;*.bps", NULL, false, false},
     {"Load Tape", "Family BASIC tapes", "*.tap", "tap", false, false},
@@ -38,7 +38,10 @@ static const FileDialog open_dialogs[] = {
     {"Install HD Pack", "HD pack archives", "*.zip", "zip", false, false},
     {"Load Lua Script", "Lua scripts", "*.lua", "lua", false, false},
     {"Load Cheats", "Cheat files", "*.txt;*.cht", "txt", false, false},
-    {"Choose a Folder", "Folders", "*", NULL, false, true}
+    {"Choose a Folder", "Folders", "*", NULL, false, true},
+    {"Import Memory", "Binary memory dumps", "*.bin;*.dump", "bin", false, false},
+    {"Load Cheat Database", "Tab-separated cheat catalogs", "*.tsv;*.txt", "tsv", false, false},
+    {"Convert Legacy Movie", "FCM input movies", "*.fcm", "fcm", false, false}
 };
 
 static const FileDialog save_dialogs[] = {
@@ -46,13 +49,15 @@ static const FileDialog save_dialogs[] = {
     {"Record Audio", "Wave audio", "*.wav", "wav", true, false},
     {"Record Video", "AVI video", "*.avi", "avi", true, false},
     {"Record Input Movie", "Input movies and TAS projects", "*.cmv;*.movie;*.fm2;*.fm3;*.ctas", "fm2", true, false},
-    {"Save State", "Save states", "*.cst;*.state", "cst", true, false},
+    {"Save State", "Save states", "*.cst;*.cstate;*.state", "cst", true, false},
     {"Save Tape", "Family BASIC tapes", "*.tap", "tap", true, false},
     {"Export HD Pack", "HD pack archives", "*.zip", "zip", true, false},
     {"Save Cheats", "Cheat files", "*.txt;*.cht", "txt", true, false},
     {"Choose Disk Overlay", "Disk overlays", "*.ips", "ips", true, false},
     {"Save TAS Project", "Editable TAS projects", "*.ctas", "ctas", true, false},
-    {"Export TAS Movie", "FCEUX movies and projects", "*.fm2;*.fm3", "fm2", true, false}
+    {"Export TAS Movie", "FCEUX movies and projects", "*.fm2;*.fm3", "fm2", true, false},
+    {"Export Table", "CSV tables", "*.csv", "csv", true, false},
+    {"Export Memory", "Binary memory dumps", "*.bin;*.dump", "bin", true, false}
 };
 
 static FrontendFileChooser file_chooser;

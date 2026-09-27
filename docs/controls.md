@@ -22,10 +22,15 @@ Select emulated input hardware in **Settings > Controllers and shortcuts**, or u
 | Ctrl+F | Fast-forward while held |
 | Ctrl+Shift+F | Toggle fast-forward |
 | Ctrl+1 / Ctrl+2 / Ctrl+3 | Half / normal / double speed |
-| F5 / F7 | Quick save / quick load the selected state slot |
-| Ctrl+F5 / Ctrl+F7 | Save / load a state file |
+| F5 / F6 | Quick save / quick load the selected state slot |
+| Ctrl+F5 / Ctrl+F6 | Save / load a state file |
+| Ctrl+Backspace, held | Rewind through retained history |
+| Ctrl+Shift+A | Cycle run-ahead frames |
+| Ctrl+M | Toggle mute |
+| Ctrl+, | Open Settings |
+| Alt+Enter | Toggle fullscreen |
+| F7 | Open the palette editor |
 | M, held | Original Famicom controller 2 microphone signal; Bandai Karaoke microphone when mapper 188 is loaded |
-| F6 | Restore the built-in palette |
 | Page Up / Page Down | Next / previous NSF or NSFe track |
 | Ctrl+Space | Play / pause NSF or NSFe music |
 | Ctrl+End / Ctrl+Home | Stop / restart the selected music track |
@@ -40,6 +45,13 @@ Mapper 188 Bandai Karaoke cartridges also use player-one A/B as their cartridge-
 With `--ppu-reset-suppression`, soft reset preserves PPU registers, scroll latches, raster position, and rendering state while the other reset paths still run. The setting also applies to the second PPU in a dual VS system. NSF and NSFe playback always reset their clock-only PPU state. The setting does not change hard power-on behavior.
 
 Keyboard peripherals are handled before the normal application shortcuts. Family BASIC consumes every keyboard event while selected. Subor, Party Tap, Exciting Boxing, Jissen Mahjong, and mat handlers consume the keys they map, so an overlapping key acts on the selected peripheral instead of the later shortcut. For example, R is a mat key and a Subor letter key, and the number keys used by Party Tap or Boxing take priority over VS coin shortcuts.
+
+Application shortcuts use the active input profile. Change them in **Settings >
+Controllers and shortcuts**. Click the game view to return keyboard focus after
+using a tool. Editors and menus keep their own keyboard input. Releasing the
+rewind or fast-forward key ends the held action even if its modifier was released
+first; moving focus away also releases held input. Rewind needs retained history
+and a nonzero rewind duration in the emulation settings.
 
 ## Game controllers and player slots
 

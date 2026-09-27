@@ -1,8 +1,15 @@
+/*
+ * desktop_tas_layout.c
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* TAS timeline and playback controls. SPDX-License-Identifier: GPL-3.0-or-later */
 #include "desktop_tas_internal.h"
 #include "../system/vs_system.h"
 #include <limits.h>
 #include <stdio.h>
+#include <string.h>
 
 static const Clay_Color ink = {232, 237, 247, 255};
 static const Clay_Color muted = {153, 168, 192, 255};
@@ -42,6 +49,7 @@ static void file_toolbar(FrontendDesktopUi *ui, const NesTasProgress *progress, 
         button(ui, "Save as", TAS_ACTION_SAVE_AS, false, progress->active && !progress->frame_in_progress);
         button(ui, "Export", TAS_ACTION_EXPORT, false, progress->active && !progress->frame_in_progress);
         button(ui, "Script", TAS_ACTION_SCRIPT, false, writable);
+        button(ui, "Splicer", TAS_ACTION_SPLICE_OPEN, ui->tas_editor->sidebar_tab == 6, progress->active);
         button(ui, "Stop", TAS_ACTION_STOP, false, progress->active);
         button(ui, "Discard edits", TAS_ACTION_DISCARD, false, progress->active && progress->dirty);
         spacer();
@@ -148,6 +156,11 @@ static void sidebar_tabs(FrontendDesktopUi *ui) {
         button(ui, "Branches", TAS_ACTION_SIDEBAR_BRANCHES, tab == 0, true);
         button(ui, "Markers", TAS_ACTION_SIDEBAR_MARKERS, tab == 1, true);
         button(ui, "Input", TAS_ACTION_SIDEBAR_INPUT, tab == 2, true);
+    }
+    CLAY_AUTO_ID({.layout = {.childGap = 4}}) {
+        button(ui, "Cache", TAS_ACTION_SIDEBAR_CACHE, tab == 3, true);
+        button(ui, "History", TAS_ACTION_SIDEBAR_HISTORY, tab == 4, true);
+        button(ui, "Bookmarks", TAS_ACTION_SIDEBAR_NAVIGATION, tab == 5, true);
     }
 }
 
@@ -331,10 +344,246 @@ static void input_sidebar(FrontendDesktopUi *ui, const NesTasProject *project, c
     }
 }
 
+static void cache_sidebar(FrontendDesktopUi *ui, const NesTasProgress *progress) {
+    NesTasSession *session = desktop_tas_session(ui);
+    NesTasCacheInfo cache;
+    nes_tas_session_cache_info(session, &cache);
+    char label[128];
+    CLAY_AUTO_ID({.layout = {.layoutDirection = CLAY_TOP_TO_BOTTOM, .childGap = 4}}) {
+        text(ui, "C = cached boundary; S = startup", 11, muted);
+        text(ui, "Other boundaries need replay.", 11, muted);
+        snprintf(label, sizeof(label), "%zu states / %.2f MiB + startup", cache.checkpoint_count,
+                 (double)cache.checkpoint_bytes / (1024.0 * 1024.0));
+        text(ui, label, 11, ink);
+        CLAY_AUTO_ID({.layout = {.childGap = 4}}) {
+            snprintf(label, sizeof(label), "Budget %zu MiB", cache.byte_limit / (1024u * 1024u));
+            button(ui, label, TAS_ACTION_CACHE_MB, false, progress->active);
+            snprintf(label, sizeof(label), "Every %u", cache.interval);
+            button(ui, label, TAS_ACTION_CACHE_INTERVAL, false, progress->active);
+        }
+        CLAY_AUTO_ID({.layout = {.childGap = 4}}) {
+            button(ui, "Clear all", TAS_ACTION_CACHE_CLEAR, false, progress->active);
+            button(ui, "Clear after cursor", TAS_ACTION_CACHE_CLEAR_AFTER, false, progress->active);
+        }
+        CLAY_AUTO_ID({.layout = {.childGap = 4}}) {
+            button(ui, "Previous state", TAS_ACTION_CACHE_PREV, false, progress->active);
+            button(ui, "Next state", TAS_ACTION_CACHE_NEXT, false, progress->active);
+        }
+        NesTasCacheEntry nearest;
+        if (nes_tas_session_cache_before(session, ui->tas_editor->cursor, &nearest)) {
+            snprintf(label, sizeof(label), "Cursor %zu: restore %zu", ui->tas_editor->cursor, nearest.frame);
+            text(ui, label, 11, ink);
+            snprintf(label, sizeof(label), "Then replay %zu frames", ui->tas_editor->cursor - nearest.frame);
+            text(ui, label, 11, muted);
+            snprintf(label, sizeof(label), "State %zu KiB / lag %zu", nearest.bytes / 1024u, nearest.lag_count);
+            text(ui, label, 11, muted);
+        }
+        text(ui, "Recent states (capture order)", 11, muted);
+        size_t first = cache.checkpoint_count > 8 ? cache.checkpoint_count - 8 : 0;
+        for (size_t i = first; i < cache.checkpoint_count; ++i) {
+            NesTasCacheEntry entry;
+            if (nes_tas_session_cache_entry(session, i, &entry)) {
+                snprintf(label, sizeof(label), "C %zu / %zu KiB / lag %zu", entry.frame, entry.bytes / 1024u,
+                         entry.lag_count);
+                text(ui, label, 11, (Clay_Color){131, 219, 165, 255});
+            }
+        }
+    }
+}
+
+static void history_sidebar(FrontendDesktopUi *ui, const NesTasProject *project, bool writable, float width) {
+    DesktopTasEditor *editor = ui->tas_editor;
+    NesTasHistoryInfo info;
+    nes_tas_project_history_info(project, &info);
+    uint64_t revision = nes_tas_project_revision(project);
+    if (!editor->history_initialized || editor->history_project != project || editor->history_revision != revision ||
+        editor->history_snapshot.operations != info.operations || editor->history_snapshot.position != info.position) {
+        editor->history_selection = info.position;
+        editor->history_scroll = (info.position / TAS_HISTORY_VISIBLE) * TAS_HISTORY_VISIBLE;
+    }
+    editor->history_initialized = true;
+    editor->history_project = project;
+    editor->history_revision = revision;
+    editor->history_snapshot = info;
+    char label[192];
+    CLAY_AUTO_ID({.layout = {.layoutDirection = CLAY_TOP_TO_BOTTOM, .childGap = 4}}) {
+        snprintf(label, sizeof(label), "Position %zu of %zu retained edits", info.position, info.operations);
+        text(ui, label, 11, ink);
+        snprintf(label, sizeof(label), "Snapshots %.2f / %.2f MiB", (double)info.bytes / (1024.0 * 1024.0),
+                 (double)info.byte_limit / (1024.0 * 1024.0));
+        text(ui, label, 11, muted);
+        CLAY_AUTO_ID({.layout = {.childGap = 4}}) {
+            button(ui, "Older", TAS_ACTION_HISTORY_OLDER, false, project && editor->history_scroll != 0);
+            button(ui, "Newer", TAS_ACTION_HISTORY_NEWER, false,
+                   project && info.operations - editor->history_scroll >= TAS_HISTORY_VISIBLE);
+            button(ui, "Current", TAS_ACTION_HISTORY_CURRENT, false, project != NULL);
+        }
+        for (unsigned row = 0; project && row < TAS_HISTORY_VISIBLE; ++row) {
+            size_t position = editor->history_scroll + row;
+            NesTasHistoryView view;
+            if (!nes_tas_project_history_entry(project, position, &view)) {
+                break;
+            }
+            snprintf(label, sizeof(label), "%s%zu %s",
+                     view.current   ? "> "
+                     : view.applied ? "  "
+                                    : "+ ",
+                     position, view.description);
+            wide_button(ui, label, TAS_ACTION_HISTORY_SELECT_BASE + row, editor->history_selection == position, true,
+                        width);
+        }
+        NesTasHistoryView selected_view;
+        if (project && nes_tas_project_history_entry(project, editor->history_selection, &selected_view)) {
+            /* A wrapping detail label keeps long grouped descriptions readable. */
+            CLAY_TEXT(desktop_clay_string(ui->clay, selected_view.description),
+                      CLAY_TEXT_CONFIG({.fontSize = 11, .textColor = ink, .wrapMode = CLAY_TEXT_WRAP_WORDS}));
+            if (selected_view.first_frame == SIZE_MAX) {
+                text(ui, "No affected frame range", 11, muted);
+            } else {
+                snprintf(label, sizeof(label), "Frames %zu to %zu", selected_view.first_frame,
+                         selected_view.last_frame);
+                text(ui, label, 11, muted);
+            }
+        }
+        button(ui, "Restore selected position", TAS_ACTION_HISTORY_RESTORE, false,
+               writable && !info.edit_active && editor->history_selection != info.position);
+        if (info.edit_active) {
+            text(ui, "Finish the current take or edit first.", 11, muted);
+        }
+    }
+}
+
+static void navigation_details(FrontendDesktopUi *ui, const NesTasNavigationView *entry, float width) {
+    DesktopTasEditor *editor = ui->tas_editor;
+    char details[NES_TAS_BOOKMARK_NAME_MAX + NES_TAS_NAVIGATION_NOTE_MAX + 32];
+    snprintf(details, sizeof(details), "Name:\n%s\nNote:\n%s", entry->name, *entry->note ? entry->note : "(empty)");
+    size_t starts[sizeof(details)], lengths[sizeof(details)];
+    size_t lines = 0, offset = 0;
+    for (;;) {
+        size_t remaining = strcspn(details + offset, "\n");
+        size_t take = desktop_clay_text_fit(ui->clay, details + offset, remaining, 11, width - 4);
+        if (remaining && !take) {
+            text(ui, "Widen the window to view details.", 11, muted);
+            return;
+        }
+        if (take < remaining) {
+            /* Keep words together when possible, and preserve every byte when
+             * a long token needs a break at a measured UTF-8 boundary. */
+            for (size_t at = take; at; --at) {
+                if (details[offset + at - 1] == ' ') {
+                    take = at;
+                    break;
+                }
+            }
+        }
+        starts[lines] = offset;
+        lengths[lines++] = take;
+        offset += take;
+        if (take == remaining) {
+            if (!details[offset]) {
+                break;
+            }
+            ++offset;
+        }
+    }
+    editor->navigation_detail_pages = (lines + TAS_NAVIGATION_DETAIL_LINES - 1) / TAS_NAVIGATION_DETAIL_LINES;
+    if (editor->navigation_detail_page >= editor->navigation_detail_pages) {
+        editor->navigation_detail_page = editor->navigation_detail_pages - 1;
+    }
+    char label[96];
+    CLAY_AUTO_ID({.layout = {.sizing = {.width = CLAY_SIZING_FIXED(width)},
+                             .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                             .childGap = 4}}) {
+        CLAY_AUTO_ID({.layout = {.childGap = 4}}) {
+            button(ui, "List", TAS_ACTION_NAVIGATION_LIST, false, true);
+            button(ui, "Earlier", TAS_ACTION_NAVIGATION_DETAIL_PREV, false, editor->navigation_detail_page != 0);
+            button(ui, "Later", TAS_ACTION_NAVIGATION_DETAIL_NEXT, false,
+                   editor->navigation_detail_page + 1 < editor->navigation_detail_pages);
+        }
+        snprintf(label, sizeof(label), "Boundary %zu", entry->frame);
+        text(ui, label, 11, accent);
+        snprintf(label, sizeof(label), "Details page %zu / %zu", editor->navigation_detail_page + 1,
+                 editor->navigation_detail_pages);
+        text(ui, label, 11, muted);
+        size_t first = editor->navigation_detail_page * TAS_NAVIGATION_DETAIL_LINES;
+        for (size_t row = first; row < lines && row - first < TAS_NAVIGATION_DETAIL_LINES; ++row) {
+            char line[sizeof(details)];
+            memcpy(line, details + starts[row], lengths[row]);
+            line[lengths[row]] = '\0';
+            CLAY_AUTO_ID({.layout = {.sizing = {.width = CLAY_SIZING_FIXED(width), .height = CLAY_SIZING_FIXED(15)}}}) {
+                text(ui, line, 11, ink);
+            }
+        }
+    }
+}
+
+static void navigation_sidebar(FrontendDesktopUi *ui, const NesTasProject *project, const NesTasProgress *progress,
+                               bool writable, float width) {
+    DesktopTasEditor *editor = ui->tas_editor;
+    desktop_tas_navigation_observe(ui);
+    bool ready = progress->active && !progress->recording && !progress->frame_in_progress && !progress->seeking &&
+                 !nes_tas_edit_active(project);
+    bool editing = ready && writable;
+    bool adding = editing && editor->navigation_count < NES_TAS_NAVIGATION_LIMIT;
+    NesTasNavigationView selected_entry;
+    bool has_selection = nes_tas_navigation(project, editor->navigation_selection, &selected_entry);
+    if (has_selection && editor->navigation_details) {
+        navigation_details(ui, &selected_entry, width);
+        return;
+    }
+    size_t neighbor;
+    char label[160];
+    CLAY_AUTO_ID({.layout = {.layoutDirection = CLAY_TOP_TO_BOTTOM, .childGap = 4}}) {
+        snprintf(label, sizeof(label), "%zu bookmarks / playback %zu", editor->navigation_count, progress->frame);
+        text(ui, label, 11, ink);
+        CLAY_AUTO_ID({.layout = {.childGap = 4}}) {
+            button(ui, "At cursor", TAS_ACTION_NAVIGATION_CURSOR, false, adding);
+            button(ui, "At playback", TAS_ACTION_NAVIGATION_PLAYBACK, false, adding);
+            button(ui, "Details", TAS_ACTION_NAVIGATION_DETAILS, false, has_selection);
+        }
+        CLAY_AUTO_ID({.layout = {.childGap = 4}}) {
+            button(ui, "Rename", TAS_ACTION_NAVIGATION_NAME, false, editing && has_selection);
+            button(ui, "Note", TAS_ACTION_NAVIGATION_NOTE, false, editing && has_selection);
+            button(ui, "Delete", TAS_ACTION_NAVIGATION_REMOVE, false, editing && has_selection);
+        }
+        CLAY_AUTO_ID({.layout = {.childGap = 4}}) {
+            button(ui, "Previous", TAS_ACTION_NAVIGATION_PREV, false,
+                   ready && nes_tas_navigation_neighbor(project, progress->frame, false, &neighbor));
+            button(ui, "Next", TAS_ACTION_NAVIGATION_NEXT, false,
+                   ready && nes_tas_navigation_neighbor(project, progress->frame, true, &neighbor));
+            button(ui, "Go to", TAS_ACTION_NAVIGATION_GOTO, false, ready && has_selection);
+        }
+        CLAY_AUTO_ID({.layout = {.childGap = 4}}) {
+            button(ui, "Earlier page", TAS_ACTION_NAVIGATION_OLDER, false, editor->navigation_scroll != 0);
+            button(ui, "Later page", TAS_ACTION_NAVIGATION_NEWER, false,
+                   editor->navigation_scroll + TAS_NAVIGATION_VISIBLE < editor->navigation_count);
+        }
+        for (unsigned row = 0; row < TAS_NAVIGATION_VISIBLE; ++row) {
+            size_t index = editor->navigation_scroll + row;
+            NesTasNavigationView entry;
+            if (!nes_tas_navigation(project, index, &entry)) {
+                break;
+            }
+            snprintf(label, sizeof(label), "%zu  %s", entry.frame, entry.name);
+            wide_button(ui, label, TAS_ACTION_NAVIGATION_SELECT_BASE + row, editor->navigation_selection == index, true,
+                        width);
+        }
+        if (has_selection) {
+            snprintf(label, sizeof(label), "Boundary %zu%s", selected_entry.frame,
+                     selected_entry.frame == nes_tas_project_frame_count(project) ? " (end of movie)" : "");
+            text(ui, label, 11, accent);
+            text(ui, "Details shows the full name and note.", 11, muted);
+        } else {
+            text(ui, editor->navigation_count ? "Select a bookmark to view its note." : "No bookmarks in this project.",
+                 11, muted);
+        }
+    }
+}
+
 static void sidebar(FrontendDesktopUi *ui, const NesTasProject *project, const NesTasProgress *progress, bool writable,
                     float width) {
     DesktopTasEditor *editor = ui->tas_editor;
-    if (editor->sidebar_tab > 2) {
+    if (editor->sidebar_tab > 6) {
         editor->sidebar_tab = 0;
     }
     float content_width = width - 12;
@@ -350,6 +599,14 @@ static void sidebar(FrontendDesktopUi *ui, const NesTasProject *project, const N
             markers_sidebar(ui, project, writable, content_width);
         } else if (editor->sidebar_tab == 2) {
             input_sidebar(ui, project, progress, writable);
+        } else if (editor->sidebar_tab == 3) {
+            cache_sidebar(ui, progress);
+        } else if (editor->sidebar_tab == 4) {
+            history_sidebar(ui, project, writable, content_width);
+        } else if (editor->sidebar_tab == 5) {
+            navigation_sidebar(ui, project, progress, writable, content_width);
+        } else if (editor->sidebar_tab == 6) {
+            desktop_tas_splice_layout(ui, progress, writable, content_width);
         } else {
             branches_sidebar(ui, project, writable, content_width);
         }
@@ -373,7 +630,7 @@ static void timeline(FrontendDesktopUi *ui, const NesTasProject *project, const 
     unsigned first_player = movie->fourscore ? (editor->edit_player / 2) * 2 : 0;
     static const char *const pad_names[] = {"A", "B", "Se", "St", "U", "D", "L", "R"};
     static const char *const commands[] = {"R", "P", "I", "S", "C1", "C2", "Sv"};
-    const float frame_width = 65, cell_width = 22, lag_width = 25;
+    const float frame_width = 82, cell_width = 22, lag_width = 25;
     unsigned command_count = 0;
     for (unsigned command = 0; command < 7; ++command) {
         if (command_visible(movie, command)) {
@@ -448,8 +705,15 @@ static void timeline(FrontendDesktopUi *ui, const NesTasProject *project, const 
                                              .padding = {5, 5, 0, 0},
                                              .childAlignment = {.y = CLAY_ALIGN_Y_CENTER}},
                                   .backgroundColor = editor->cursor == index ? selected : (Clay_Color){0}}) {
-                            snprintf(value, sizeof(value), "%s%zu", progress->frame == index ? "> " : "", index);
-                            text(ui, value, 11, progress->frame == index ? accent : ink);
+                            NesTasCacheEntry cached;
+                            bool saved = nes_tas_session_cache_before(desktop_tas_session(ui), index, &cached) &&
+                                         cached.frame == index;
+                            snprintf(value, sizeof(value), "%s%s%zu", progress->frame == index ? ">" : "",
+                                     saved ? cached.initial ? "S " : "C " : "", index);
+                            text(ui, value, 11,
+                                 progress->frame == index ? accent
+                                 : saved                  ? (Clay_Color){131, 219, 165, 255}
+                                                          : ink);
                         }
                         NesTasLagState lag = nes_tas_lag(project, index);
                         cell(ui, (int)row, TAS_GRID_LAG,

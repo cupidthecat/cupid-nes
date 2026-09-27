@@ -1,14 +1,22 @@
+/*
+ * clay_backend.h
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* Clay layout and SDL rendering. SPDX-License-Identifier: GPL-3.0-or-later */
 #ifndef CUPID_CLAY_BACKEND_H
 #define CUPID_CLAY_BACKEND_H
 #include "../third_party/clay/clay.h"
 #include <SDL2/SDL.h>
 typedef struct DesktopClay DesktopClay;
+
 typedef struct {
     Clay_ElementId id;
     int kind, index, direction;
     Clay_BoundingBox bounds;
 } DesktopHit;
+
 enum {
     HIT_NONE,
     HIT_MENU,
@@ -25,18 +33,38 @@ enum {
     HIT_BROWSE,
     HIT_EDIT_OK,
     HIT_EDIT_CANCEL,
-    HIT_SCROLL, HIT_SCROLLBAR, HIT_CHOICE, HIT_LOG, HIT_CHOICE_PAGE, HIT_CLEAR_SETTING, HIT_PPU_ACTION, HIT_PPU_CANVAS, HIT_PPU_BYTE, HIT_PPU_SCROLL,
-    HIT_TAS_ACTION, HIT_TAS_CELL, HIT_TAS_ROW, HIT_TAS_SCROLL
+    HIT_SCROLL,
+    HIT_SCROLLBAR,
+    HIT_CHOICE,
+    HIT_LOG,
+    HIT_CHOICE_PAGE,
+    HIT_CLEAR_SETTING,
+    HIT_PPU_ACTION,
+    HIT_PPU_CANVAS,
+    HIT_PPU_BYTE,
+    HIT_PPU_SCROLL,
+    HIT_TAS_ACTION,
+    HIT_TAS_CELL,
+    HIT_TAS_ROW,
+    HIT_TAS_SCROLL,
+    HIT_HEX_BYTE,
+    HIT_KEYBOARD_KEY
 };
+
 DesktopClay *desktop_clay_create(SDL_Renderer *renderer);
 void desktop_clay_destroy(DesktopClay *clay);
 void desktop_clay_begin(DesktopClay *clay, float width, float height, float scale);
 void desktop_clay_end(DesktopClay *clay);
 Clay_String desktop_clay_string(DesktopClay *clay, const char *text);
+/* Return the longest complete UTF-8 prefix within the supplied text width. */
+size_t desktop_clay_text_fit(const DesktopClay *clay, const char *text, size_t length, float size, float width);
 Clay_ElementId desktop_clay_hit(DesktopClay *clay, int kind, int index, int direction);
 void desktop_clay_block(DesktopClay *clay);
 const DesktopHit *desktop_clay_at(DesktopClay *clay, float x, float y);
 bool desktop_clay_bounds(DesktopClay *clay, int kind, int index, int direction, SDL_FRect *bounds);
 /* Inspect text submitted by the most recent layout for render regression checks. */
 bool desktop_clay_contains_text(const DesktopClay *clay, const char *text);
+/* Inspect a complete substring in a rendered text line within its clipping bounds. */
+bool desktop_clay_text_visible(const DesktopClay *clay, const char *text);
+unsigned desktop_clay_error_count(const DesktopClay *clay);
 #endif

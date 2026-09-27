@@ -1,3 +1,9 @@
+/*
+ * tas_session.h
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* TAS playback and recording. SPDX-License-Identifier: GPL-3.0-or-later */
 #ifndef CUPID_REPLAY_TAS_SESSION_H
 #define CUPID_REPLAY_TAS_SESSION_H
@@ -37,7 +43,24 @@ typedef struct {
     NesTasRecordMode record_mode;
     const char *path;
     const char *error;
+    /* Process-local activation identity for views and dialogs. Not serialized. */
+    uint64_t generation;
 } NesTasProgress;
+
+typedef struct {
+    size_t checkpoint_count;
+    size_t checkpoint_bytes;
+    size_t initial_bytes;
+    size_t byte_limit;
+    unsigned interval;
+} NesTasCacheInfo;
+
+typedef struct {
+    size_t frame;
+    size_t bytes;
+    size_t lag_count;
+    bool initial;
+} NesTasCacheEntry;
 
 NesTasSession *nes_tas_session_create(void);
 void nes_tas_session_destroy(NesTasSession *session);
@@ -65,6 +88,15 @@ void nes_tas_session_cancel_seek(NesTasSession *session);
 bool nes_tas_session_seeking(const NesTasSession *session);
 NesMovieResult nes_tas_session_reconcile(NesTasSession *session);
 NesMovieResult nes_tas_session_set_cache(NesTasSession *session, size_t bytes, unsigned interval);
+/* These observational views exclude invalid checkpoints even before reconcile.
+ * They never restore state, advance playback, or expose owned state buffers.
+ * Entries are in capture order; the startup state is reported separately. */
+void nes_tas_session_cache_info(const NesTasSession *session, NesTasCacheInfo *out);
+bool nes_tas_session_cache_entry(const NesTasSession *session, size_t index, NesTasCacheEntry *out);
+bool nes_tas_session_cache_before(const NesTasSession *session, size_t frame, NesTasCacheEntry *out);
+/* Drop checkpoints strictly after this input boundary. Zero clears the entire
+ * optional cache; the session's required startup state always remains owned. */
+NesMovieResult nes_tas_session_clear_cache(NesTasSession *session, size_t after_frame);
 
 NesTasProject *nes_tas_session_project(NesTasSession *session);
 const NesTasProject *nes_tas_session_project_const(const NesTasSession *session);

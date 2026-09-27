@@ -112,6 +112,11 @@ bool debugger_is_paused(void);
 /* Changes whenever debugger pause/resume or initialization changes its state.
  * Frontends poll this token instead of retaining callbacks to their storage. */
 uint64_t debugger_pause_revision(void);
+/* Changes on debugger lifecycle and committed machine discontinuities. */
+uint64_t debugger_session_revision(void);
+/* Invalidates memory snapshots without changing pause, stepping, or tracing.
+ * Speculative execution does not replace the visible memory session. */
+void debugger_invalidate_memory(void);
 DebugStopInfo debugger_last_stop(void);
 
 bool debugger_step_into(void);
@@ -120,6 +125,9 @@ bool debugger_step_out(void);
 bool debugger_run_until_break(CPU *target, uint64_t instruction_limit);
 
 uint32_t debugger_add_breakpoint(DebugBreakpointType type, uint16_t first, uint16_t last);
+/* key is a physical PRG offset, or DEBUG_KEY_CPU + first for CPU memory. */
+uint32_t debugger_add_mapped_breakpoint(DebugBreakpointType type, uint16_t first, uint16_t last, uint64_t key);
+void debugger_clear_mapped_breakpoints(void);
 bool debugger_update_breakpoint(uint32_t id, DebugBreakpointType type,
                                 uint16_t first, uint16_t last, bool enabled);
 bool debugger_remove_breakpoint(uint32_t id);
@@ -152,6 +160,9 @@ bool debugger_trace_at(size_t index, DebugTraceEntry *out);
 
 /* Core hooks. CPU bus code calls these only for real emulated accesses. */
 bool debugger_before_instruction(CPU *state);
+void debugger_after_instruction(const CPU *state);
+/* Called with the actual fetched byte, immediately before CPU execute. */
+void debugger_on_opcode(uint8_t opcode);
 void debugger_on_cpu_read(uint16_t address, uint8_t *value);
 void debugger_on_cpu_write(uint16_t address, uint8_t value);
 

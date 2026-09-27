@@ -88,7 +88,7 @@ static bool tas_timeline_equal(const TasTimeline *left, const TasTimeline *right
     return true;
 }
 
-static bool tas_bookmark_equal(const TasBookmark *left, const TasBookmark *right) {
+bool tas_bookmark_equal(const TasBookmark *left, const TasBookmark *right) {
     if (left->occupied != right->occupied) {
         return false;
     }
@@ -102,7 +102,7 @@ static bool tas_bookmark_equal(const TasBookmark *left, const TasBookmark *right
 
 static bool tas_state_equal(const TasProjectState *left, const TasProjectState *right) {
     if (!tas_timeline_equal(&left->timeline, &right->timeline) || left->current_branch != right->current_branch ||
-        left->current_branch_changed != right->current_branch_changed) {
+        left->current_branch_changed != right->current_branch_changed || !tas_navigation_equal(left, right)) {
         return false;
     }
     if (left->timeline.movie.frame_count &&
@@ -285,6 +285,7 @@ void tas_state_free(TasProjectState *state) {
         tas_bookmark_free(&state->bookmarks[i]);
     }
     free(state->selection);
+    free(state->navigation);
     tas_state_init(state);
 }
 
@@ -309,6 +310,16 @@ NesTasResult tas_state_clone(const TasProjectState *source, TasProjectState *out
     }
     replacement.current_branch = source->current_branch;
     replacement.current_branch_changed = source->current_branch_changed;
+    if (source->navigation_count) {
+        replacement.navigation = tas_edit_malloc(source->navigation_count * sizeof(*replacement.navigation));
+        if (!replacement.navigation) {
+            result = NES_TAS_OUT_OF_MEMORY;
+            goto fail;
+        }
+        memcpy(replacement.navigation, source->navigation,
+               source->navigation_count * sizeof(*replacement.navigation));
+        replacement.navigation_count = replacement.navigation_capacity = source->navigation_count;
+    }
     for (unsigned i = 0; i < NES_TAS_BOOKMARK_COUNT; ++i) {
         result = tas_bookmark_clone(&source->bookmarks[i], &replacement.bookmarks[i]);
         if (result != NES_TAS_OK) {
@@ -350,6 +361,7 @@ size_t tas_state_estimated_bytes(const TasProjectState *state) {
         return 0;
     }
     size_t total = sizeof(*state) + state->timeline.movie.frame_count;
+    total += state->navigation_capacity * sizeof(*state->navigation);
     size_t timeline = tas_timeline_estimated_bytes(&state->timeline);
     if (total <= SIZE_MAX - timeline) {
         total += timeline;
@@ -516,6 +528,9 @@ static void tas_history_push_undo(NesTasProject *project, TasHistoryEntry *entry
     }
     tas_history_clear_redo(project);
     if (!project->max_history_entries || !project->max_history_bytes || entry->bytes > project->max_history_bytes) {
+        /* Dropping the newest transition breaks the chain to every older
+         * snapshot. Keep the edited project, but start a new history boundary. */
+        tas_history_list_clear(&project->undo, &project->undo_count, &project->history_bytes);
         tas_history_entry_free(entry);
         return;
     }
@@ -747,6 +762,7 @@ NesTasResult nes_tas_edit_end(NesTasProject *project) {
     project->edit_active = false;
     if (project->edit_changed && !tas_state_equal(&entry->state, &project->state)) {
         entry->first_changed = project->edit_first_changed;
+        tas_history_describe(&entry->state, &project->state, entry->first_changed, &entry->summary);
         tas_history_push_undo(project, entry);
     } else {
         if (project->edit_changed) {
@@ -799,27 +815,11 @@ bool nes_tas_project_can_redo(const NesTasProject *project) {
     return project && !project->edit_active && project->redo != NULL;
 }
 
-static NesTasResult tas_history_jump(NesTasProject *project, bool undo) {
-    if (!project || project->edit_active) {
-        return NES_TAS_INVALID_ARGUMENT;
-    }
+static size_t tas_history_move(NesTasProject *project, bool undo) {
     TasHistoryEntry **source = undo ? &project->undo : &project->redo;
     TasHistoryEntry **target = undo ? &project->redo : &project->undo;
     size_t *source_count = undo ? &project->undo_count : &project->redo_count;
     size_t *target_count = undo ? &project->redo_count : &project->undo_count;
-    if (!*source) {
-        return NES_TAS_RANGE_ERROR;
-    }
-
-    TasHistoryEntry *current = (TasHistoryEntry *)calloc(1, sizeof(*current));
-    if (!current) {
-        return NES_TAS_OUT_OF_MEMORY;
-    }
-    tas_state_init(&current->state);
-    current->state = project->state;
-    tas_state_init(&project->state);
-    current->bytes = tas_state_estimated_bytes(&current->state);
-
     TasHistoryEntry *entry = *source;
     *source = entry->next;
     (*source_count)--;
@@ -829,15 +829,38 @@ static NesTasResult tas_history_jump(NesTasProject *project, bool undo) {
         project->history_bytes = 0;
     }
 
+    TasProjectState current = project->state;
     project->state = entry->state;
-    tas_state_init(&entry->state);
-    current->first_changed = entry->first_changed;
-    current->next = *target;
-    *target = current;
+    entry->state = current;
+    entry->bytes = tas_state_estimated_bytes(&entry->state);
+    entry->next = *target;
+    *target = entry;
     (*target_count)++;
-    project->history_bytes += current->bytes;
-    size_t first_changed = entry->first_changed;
-    tas_history_entry_free(entry);
+    project->history_bytes += entry->bytes;
+    return entry->first_changed;
+}
+
+NesTasResult nes_tas_project_history_seek(NesTasProject *project, size_t position) {
+    if (!project || project->edit_active) {
+        return NES_TAS_INVALID_ARGUMENT;
+    }
+    if (project->redo_count > SIZE_MAX - project->undo_count ||
+        position > project->undo_count + project->redo_count) {
+        return NES_TAS_RANGE_ERROR;
+    }
+    if (position == project->undo_count) {
+        return NES_TAS_OK;
+    }
+    size_t first_changed = SIZE_MAX;
+    while (project->undo_count != position) {
+        size_t changed = tas_history_move(project, project->undo_count > position);
+        if (changed < first_changed) {
+            first_changed = changed;
+        }
+    }
+    /* All nodes already exist. Defer eviction until every requested move has
+     * completed so a smaller destination state cannot evict an intermediate
+     * target or leave a multi-entry restore partly applied. */
     project->fm3_dirty_modules |= TAS_FM3_ALL_MODULES;
     if (first_changed != SIZE_MAX) {
         nes_fm2_invalidate_project_timeline(&project->state.timeline.movie);
@@ -848,11 +871,17 @@ static NesTasResult tas_history_jump(NesTasProject *project, bool undo) {
 }
 
 NesTasResult nes_tas_project_undo(NesTasProject *project) {
-    return tas_history_jump(project, true);
+    if (!project || project->edit_active) {
+        return NES_TAS_INVALID_ARGUMENT;
+    }
+    return project->undo_count ? nes_tas_project_history_seek(project, project->undo_count - 1) : NES_TAS_RANGE_ERROR;
 }
 
 NesTasResult nes_tas_project_redo(NesTasProject *project) {
-    return tas_history_jump(project, false);
+    if (!project || project->edit_active) {
+        return NES_TAS_INVALID_ARGUMENT;
+    }
+    return project->redo_count ? nes_tas_project_history_seek(project, project->undo_count + 1) : NES_TAS_RANGE_ERROR;
 }
 
 void nes_tas_selection_clear(NesTasProject *project) {
@@ -980,6 +1009,31 @@ NesTasResult nes_tas_set_lag(NesTasProject *project, size_t frame, NesTasLagStat
         project->edit_changed = true;
     }
     return NES_TAS_OK;
+}
+
+NesTasResult nes_tas_annotate_lag(NesTasProject *project, size_t frame, NesTasLagState state) {
+    if (!project || state < NES_TAS_LAG_UNKNOWN || state > NES_TAS_LAG_YES) {
+        return NES_TAS_INVALID_ARGUMENT;
+    }
+    if (frame >= nes_tas_project_frame_count(project)) {
+        return NES_TAS_RANGE_ERROR;
+    }
+    if (nes_tas_lag(project, frame) == state) {
+        return NES_TAS_OK;
+    }
+    bool owned = false;
+    NesTasResult result = tas_project_auto_begin(project, &owned);
+    if (result != NES_TAS_OK) {
+        return result;
+    }
+    result = nes_tas_set_lag(project, frame, state);
+    if (result == NES_TAS_OK) {
+        if (frame < project->edit_first_changed) {
+            project->edit_first_changed = frame;
+        }
+        tas_revision_event(project, frame);
+    }
+    return tas_project_auto_finish(project, owned, result);
 }
 
 void nes_tas_invalidate_lag(NesTasProject *project, size_t first) {

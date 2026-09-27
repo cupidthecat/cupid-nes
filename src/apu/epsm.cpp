@@ -6,6 +6,7 @@
  * This file is part of Cupid NES Emulator, licensed under the GNU General
  * Public License, version 3 or any later version. The chip engine retains
  * its own BSD 3-Clause license in src/third_party/ymfm.
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "epsm.h"
 #include "../third_party/ymfm/ymfm_opn.h"

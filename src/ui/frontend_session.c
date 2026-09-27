@@ -149,7 +149,7 @@ bool frontend_session_record_success(FrontendSession *session,
                                      const FrontendImageRequest *request,
                                      const FrontendImageResult *result) {
     if (!session || !request || !request->path[0]) return false;
-    FrontendImageRequest current = *request;
+    FrontendImageRequest current = result && result->request_valid ? result->opened_request : *request;
     FrontendImageResult loaded = {0};
     if (result) loaded = *result;
     if (loaded.save_identity[0]

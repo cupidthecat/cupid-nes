@@ -1,3 +1,9 @@
+/*
+ * sha1.c
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* SHA-1 image identity. SPDX-License-Identifier: GPL-3.0-or-later */
 #include "sha1.h"
 #include <stdint.h>

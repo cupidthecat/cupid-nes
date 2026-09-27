@@ -21,7 +21,8 @@ enum {
     CHEATS_FRONTEND_COMMAND = 0x1343,
     CHEATS_FRONTEND_PANEL = 0x1383,
     CHEATS_ADD_COMMAND = 0x1370,
-    CHEATS_TOGGLE_COMMAND = 0x1371
+    CHEATS_TOGGLE_COMMAND = 0x1371,
+    CHEATS_GAME_GENIE_PANEL = 0x1384
 };
 
 typedef enum {
@@ -55,8 +56,15 @@ typedef enum {
 void cheats_init(void);
 CheatResult cheats_clear(void);
 CheatResult cheats_parse(const char *text, CheatRecord *out);
+/* Pure conversions. Invalid input leaves the output unchanged. Compare -1
+ * selects the six-letter form; 0..255 selects the eight-letter form. */
+CheatResult cheats_game_genie_decode(const char *text, CheatRecord *out);
+CheatResult cheats_game_genie_encode(uint32_t address, uint32_t value, int compare,
+                                    char *out, size_t capacity);
 CheatResult cheats_add(const char *code, const char *description, bool enabled,
                        uint32_t *id_out);
+/* Validate the complete group before adding any member. */
+CheatResult cheats_add_group(const char *const *codes, size_t count, const char *description, bool enabled);
 CheatResult cheats_edit(uint32_t id, const char *code, const char *description,
                         bool enabled);
 CheatResult cheats_remove(uint32_t id);

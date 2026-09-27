@@ -1,3 +1,9 @@
+/*
+ * desktop_tas_edit.c
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* Desktop TAS editor actions and gestures. SPDX-License-Identifier: GPL-3.0-or-later */
 #include "desktop_tas_internal.h"
 #include "state_frontend.h"
@@ -83,6 +89,9 @@ static void choose_open(FrontendDesktopUi *ui, bool create) {
         ui->tas_editor->cursor = ui->tas_editor->scroll = 0;
         ui->tas_editor->anchor_valid = false;
         ui->tas_editor->follow_initialized = false;
+        ui->tas_editor->history_initialized = false;
+        ui->tas_editor->navigation_initialized = false;
+        ui->tas_editor->navigation_edit_control = 0;
     }
 }
 
@@ -409,8 +418,7 @@ static void select_all(FrontendDesktopUi *ui, bool selected) {
 }
 
 static bool pad_player_available(const NesFm2Movie *movie, unsigned player) {
-    return movie && player < 4 &&
-           (movie->fourscore || (player < 2 && movie->ports[player] == NES_FM2_PORT_GAMEPAD));
+    return movie && player < 4 && (movie->fourscore || (player < 2 && movie->ports[player] == NES_FM2_PORT_GAMEPAD));
 }
 
 static bool command_available(const NesFm2Movie *movie, int column) {
@@ -508,12 +516,101 @@ static void run_script(FrontendDesktopUi *ui) {
     }
 }
 
+static void cache_action(FrontendDesktopUi *ui, unsigned action) {
+    NesTasSession *session = desktop_tas_session(ui);
+    DesktopTasEditor *editor = ui->tas_editor;
+    if (!session || !nes_tas_session_active(session) || !editor) {
+        return;
+    }
+    NesTasCacheInfo cache;
+    nes_tas_session_cache_info(session, &cache);
+    if (action == TAS_ACTION_CACHE_CLEAR || action == TAS_ACTION_CACHE_CLEAR_AFTER) {
+        NesMovieResult result =
+            nes_tas_session_clear_cache(session, action == TAS_ACTION_CACHE_CLEAR ? 0 : editor->cursor);
+        desktop_tas_status(ui, result != NES_MOVIE_OK             ? nes_tas_session_error(session)
+                               : action == TAS_ACTION_CACHE_CLEAR ? "Checkpoint cache cleared; startup state retained."
+                                                                  : "Checkpoints after the cursor cleared.");
+    } else if (action == TAS_ACTION_CACHE_MB || action == TAS_ACTION_CACHE_INTERVAL) {
+        char value[32];
+        bool budget = action == TAS_ACTION_CACHE_MB;
+        snprintf(value, sizeof(value), "%zu", budget ? cache.byte_limit / (1024u * 1024u) : cache.interval);
+        desktop_start_text_edit(ui, budget ? TAS_EDIT_CACHE_MB : TAS_EDIT_CACHE_INTERVAL, value);
+    } else {
+        size_t target = action == TAS_ACTION_CACHE_PREV ? 0 : SIZE_MAX;
+        for (size_t i = 0; i < cache.checkpoint_count; ++i) {
+            NesTasCacheEntry entry;
+            if (!nes_tas_session_cache_entry(session, i, &entry)) {
+                continue;
+            }
+            if (action == TAS_ACTION_CACHE_PREV && entry.frame < editor->cursor && entry.frame > target) {
+                target = entry.frame;
+            } else if (action == TAS_ACTION_CACHE_NEXT && entry.frame > editor->cursor && entry.frame < target) {
+                target = entry.frame;
+            }
+        }
+        if (target != SIZE_MAX) {
+            cursor_to_frame(ui, target);
+        } else {
+            desktop_tas_status(ui, "No later checkpoint is cached.");
+        }
+    }
+}
+
+static void history_action(FrontendDesktopUi *ui, unsigned action) {
+    DesktopTasEditor *editor = ui->tas_editor;
+    const NesTasProject *project = desktop_tas_project_const(ui);
+    NesTasHistoryInfo info;
+    nes_tas_project_history_info(project, &info);
+    if (!project || !editor->history_initialized || editor->history_project != project ||
+        editor->history_revision != nes_tas_project_revision(project) ||
+        editor->history_snapshot.operations != info.operations || editor->history_snapshot.position != info.position) {
+        desktop_tas_status(ui, "History changed. Select a position from the refreshed list.");
+        return;
+    }
+    if (action >= TAS_ACTION_HISTORY_SELECT_BASE && action < TAS_ACTION_HISTORY_SELECT_BASE + TAS_HISTORY_VISIBLE) {
+        size_t position = editor->history_scroll + action - TAS_ACTION_HISTORY_SELECT_BASE;
+        if (position <= info.operations) {
+            editor->history_selection = position;
+        }
+    } else if (action == TAS_ACTION_HISTORY_OLDER) {
+        editor->history_scroll =
+            editor->history_scroll >= TAS_HISTORY_VISIBLE ? editor->history_scroll - TAS_HISTORY_VISIBLE : 0;
+    } else if (action == TAS_ACTION_HISTORY_NEWER) {
+        if (info.operations - editor->history_scroll >= TAS_HISTORY_VISIBLE) {
+            editor->history_scroll += TAS_HISTORY_VISIBLE;
+        }
+    } else if (action == TAS_ACTION_HISTORY_CURRENT) {
+        editor->history_selection = info.position;
+        editor->history_scroll = (info.position / TAS_HISTORY_VISIBLE) * TAS_HISTORY_VISIBLE;
+    } else if (action == TAS_ACTION_HISTORY_RESTORE) {
+        NesTasProject *writable = desktop_tas_project_writable(ui, true);
+        if (writable) {
+            NesTasResult result = nes_tas_project_history_seek(writable, editor->history_selection);
+            desktop_tas_after_model_edit(ui, result, "Selected history position restored.");
+        }
+    }
+}
+
 void desktop_tas_action(FrontendDesktopUi *ui, unsigned action) {
     desktop_tas_finish_paint(ui);
     DesktopTasEditor *editor = desktop_tas_editor(ui);
     NesTasProgress progress = {0};
     bool active = session_progress(ui, &progress);
     if (!editor) {
+        return;
+    }
+    if (action >= TAS_ACTION_SPLICE_OPEN && action <= TAS_ACTION_SPLICE_EXTRACT) {
+        desktop_tas_splice_action(ui, action);
+        return;
+    }
+    if (action >= TAS_ACTION_HISTORY_SELECT_BASE && action < TAS_ACTION_HISTORY_SELECT_BASE + TAS_HISTORY_VISIBLE) {
+        history_action(ui, action);
+        return;
+    }
+    if ((action >= TAS_ACTION_SIDEBAR_NAVIGATION && action <= TAS_ACTION_NAVIGATION_DETAIL_NEXT) ||
+        (action >= TAS_ACTION_NAVIGATION_SELECT_BASE &&
+         action < TAS_ACTION_NAVIGATION_SELECT_BASE + TAS_NAVIGATION_VISIBLE)) {
+        desktop_tas_navigation_action(ui, action);
         return;
     }
     if (action >= TAS_ACTION_HEADER_BASE && action < TAS_ACTION_HEADER_BASE + 4 * TAS_GRID_PAD_COLUMNS) {
@@ -609,6 +706,26 @@ void desktop_tas_action(FrontendDesktopUi *ui, unsigned action) {
     case TAS_ACTION_SIDEBAR_MARKERS:
     case TAS_ACTION_SIDEBAR_INPUT:
         editor->sidebar_tab = action - TAS_ACTION_SIDEBAR_BRANCHES;
+        break;
+    case TAS_ACTION_SIDEBAR_CACHE:
+        editor->sidebar_tab = 3;
+        break;
+    case TAS_ACTION_SIDEBAR_HISTORY:
+        editor->sidebar_tab = 4;
+        break;
+    case TAS_ACTION_HISTORY_OLDER:
+    case TAS_ACTION_HISTORY_NEWER:
+    case TAS_ACTION_HISTORY_CURRENT:
+    case TAS_ACTION_HISTORY_RESTORE:
+        history_action(ui, action);
+        break;
+    case TAS_ACTION_CACHE_CLEAR:
+    case TAS_ACTION_CACHE_CLEAR_AFTER:
+    case TAS_ACTION_CACHE_MB:
+    case TAS_ACTION_CACHE_INTERVAL:
+    case TAS_ACTION_CACHE_PREV:
+    case TAS_ACTION_CACHE_NEXT:
+        cache_action(ui, action);
         break;
     case TAS_ACTION_MARKER_REMOVE: {
         NesTasProject *project = desktop_tas_project_writable(ui, true);
@@ -828,8 +945,8 @@ void desktop_tas_cell_down(FrontendDesktopUi *ui, size_t row, int column) {
         state = state == NES_TAS_LAG_UNKNOWN ? NES_TAS_LAG_NO
                 : state == NES_TAS_LAG_NO    ? NES_TAS_LAG_YES
                                              : NES_TAS_LAG_UNKNOWN;
-        NesTasResult result = nes_tas_set_lag(project, row, state);
-        desktop_tas_status(ui, result == NES_TAS_OK ? "Lag annotation updated." : nes_tas_result_string(result));
+        NesTasResult result = nes_tas_annotate_lag(project, row, state);
+        desktop_tas_after_model_edit(ui, result, "Lag annotation updated.");
         return;
     }
     uint8_t command = command_mask(column);

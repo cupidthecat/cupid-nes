@@ -1,3 +1,9 @@
+/*
+ * tas_frontend.h
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* Desktop TAS actions. SPDX-License-Identifier: GPL-3.0-or-later */
 #ifndef CUPID_TAS_FRONTEND_H
 #define CUPID_TAS_FRONTEND_H

@@ -1,3 +1,5 @@
+-- Author: @frankischilling
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- Reference movie trace through FCEUX's public Lua API.
 local movie_path = assert(os.getenv("CUPID_REFERENCE_MOVIE"))
 local prefix = assert(os.getenv("CUPID_REFERENCE_PREFIX"))

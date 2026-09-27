@@ -1,3 +1,9 @@
+/*
+ * netplay_accuracy.c
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* Two-process netplay regression fixture. SPDX-License-Identifier: GPL-3.0-or-later */
 #include "../replay/netplay.h"
 #include "../replay/netplay_hash.h"

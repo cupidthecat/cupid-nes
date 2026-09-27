@@ -41,7 +41,51 @@ The application accepts one image path and startup options. Values must be separ
 ./cupid-nes --port2 zapper "game.nes"
 ```
 
-`--port2=zapper`, an unknown switch, or a second image path reaches the `Unexpected argument` error. The full application option list is in [configuration](configuration.md). `cupid-nes` has no `--help` switch; launching it without an image prints the usage line and returns status 1.
+Use separate option values, such as `--port2 zapper`. Unknown switches and extra image paths are rejected. The full application option list is in [configuration](configuration.md). Run `cupid-nes --help` to print the options, or open Command Line Help from the Help menu. Launching without an image opens the startup screen.
+
+## Slow video in a large window
+
+Cupid keeps emulation on its regional clock. If drawing takes too long, the
+GTK desktop skips a display update so emulation can catch up. The status-bar
+FPS counts emulated frames; a busy software renderer can display fewer frames.
+Input and window events are serviced at least once every 50 ms between emulator
+frames. Audio, movie input, rewind history, and recording retain every emulated
+frame. A machine that cannot run the core fast enough can still fall behind.
+
+Open **Tools > Picture, sound and timing > Frame Timing Statistics** to compare
+the emulation rate with the display draw rate. High jitter or a large maximum frame
+interval can explain choppy motion even when average FPS is near the target.
+The draw row counts new images drawn by the game viewport. It does not measure
+the monitor's refresh rate. Pending GTK work is serviced during frame waits;
+the high-resolution clock controls when the next emulated frame starts.
+
+Open Game Information and check **Video renderer**. On Windows, Cupid uses an
+accelerated SDL game viewport, preferring Direct3D 11. GTK can continue to use
+`GskCairoRenderer` for desktop widgets; that appears separately under **Desktop
+compositor**. The GPU scales the game image at maximized and fullscreen sizes.
+Game Information refreshes while open and whenever reopened, including after
+loading another game or returning to the start screen.
+
+If **Video renderer** itself says `GskCairoRenderer`, the game is using software
+rendering and large windows can cost more time. An explicit Cairo override or
+failure to create the accelerated viewport selects this fallback. Cupid leaves
+GTK's compositor selection intact. Its experimental DirectComposition path can
+produce black borders around windows with GL or Vulkan, so Cupid does not
+enable it automatically.
+
+Existing `GDK_DEBUG` and `GSK_RENDERER` environment overrides are preserved.
+If windows have thick black outer margins, remove `dcomp` from `GDK_DEBUG`
+and restart Cupid. This affects the native window surface, so changing widget
+border styles does not fix it.
+Remove an old `GSK_RENDERER=cairo` override when testing normal performance.
+If accelerated output causes a driver problem, start with `GSK_RENDERER=cairo`
+for a software fallback. Restart Cupid after changing these variables.
+
+The [desktop benchmark](development.md#desktop-performance) compares a normal
+window, maximized view, fullscreen, and a live PPU viewer using a local ROM.
+It reports uncapped throughput, normal-speed FPS, submitted updates, unique display
+draws, and interval jitter. ROM timing,
+rewind, filters, other applications, and graphics drivers affect the result.
 
 ## Cartridge will not load
 
@@ -106,6 +150,12 @@ The frontend opens devices SDL recognizes as GameControllers. Raw joysticks with
 Controllers fill player slots in discovery order, and a hot-plugged controller takes the first free slot. Player 3 and player 4 therefore require the third and fourth recognized controllers when a Four Score or dual VS setup needs them. [Controls](controls.md) lists the full routing.
 
 ## Keyboard shortcut does something else
+
+Click the game view and check the active profile in **Settings > Controllers and
+shortcuts**. The default rewind binding is **Ctrl+Backspace**, held down. Rewind
+also needs a nonzero history duration and frames recorded since loading the game.
+Native editors and menus keep keyboard input while focused. Custom bindings take
+effect when the settings are applied.
 
 Special peripherals get their keyboard input before the normal application shortcuts. With Family BASIC selected, R, F6, F7, function keys, letters, and punctuation belong to the BASIC keyboard. With a mat selected, `1 2 3 4`, `Q W E R`, and `A S D F` are mat positions; R therefore does not reset while that mat key is being handled.
 

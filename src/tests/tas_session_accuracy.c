@@ -1,3 +1,9 @@
+/*
+ * tas_session_accuracy.c
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* TAS execution, editing and live-session restoration. SPDX-License-Identifier: GPL-3.0-or-later */
 #include "board_tests.h"
 #include "../apu/apu.h"
@@ -171,6 +177,124 @@ cleanup:
     (void)unload_rom();
     board_image_free(&image);
     (void)nes_file_remove(path);
+    return failures;
+}
+
+static int cache_views_and_invalidation(void) {
+    int failures = 0;
+    const char *path = "build/tas-cache.fm2", *state_path = "build/tas-cache.state";
+    BoardImage image = {0};
+    NesTasSession *session = NULL;
+    NesStateBlob live = {0}, original = {0}, bound = {0}, partial = {0};
+    NesTasCacheInfo cache;
+    NesTasCacheEntry entry;
+    const size_t budget = 64u * 1024u * 1024u;
+    CHECK(fixture(&image) && write_movie(path, 120));
+    CHECK(nes_state_capture(&live) == NES_STATE_OK);
+    session = nes_tas_session_create();
+    CHECK(session && nes_tas_session_set_cache(session, budget, 10) == NES_MOVIE_OK);
+    CHECK(!nes_tas_session_cache_before(session, 0, &entry));
+    CHECK(nes_tas_session_clear_cache(session, 0) == NES_MOVIE_CONFLICT);
+    CHECK(nes_tas_session_open(session, path) == NES_MOVIE_OK);
+    CHECK(seek(session, 40));
+    CHECK(nes_tas_session_capture_state(session, &bound) == NES_STATE_OK);
+    CHECK(nes_file_write_atomic(state_path, bound.data, bound.size) == NES_FILE_OK);
+    CHECK(seek(session, 95));
+    CHECK(nes_state_capture(&original) == NES_STATE_OK);
+    nes_tas_session_cache_info(session, &cache);
+    CHECK(cache.checkpoint_count == 9 && cache.initial_bytes > 0 && cache.byte_limit == budget && cache.interval == 10);
+    CHECK(nes_tas_session_cache_entry(session, 0, &entry) && entry.frame == 10 && entry.bytes > 0 && !entry.initial);
+    size_t state_bytes = entry.bytes;
+    CHECK(!nes_tas_session_cache_entry(session, 9, &entry));
+    CHECK(!nes_tas_session_cache_entry(session, SIZE_MAX, &entry));
+    CHECK(!nes_tas_session_cache_before(session, 121, &entry));
+    CHECK(!nes_tas_session_cache_before(session, 1, NULL));
+    for (size_t frame = 0; frame <= 120; ++frame) {
+        CHECK(nes_tas_session_cache_before(session, frame, &entry));
+        CHECK(entry.frame == (frame < 90 ? frame / 10 * 10 : 90));
+        CHECK(entry.initial == (frame < 10));
+    }
+    CHECK(same_state(&original));
+    CHECK(nes_tas_session_clear_cache(session, 121) == NES_MOVIE_INVALID_ARGUMENT);
+    CHECK(nes_tas_session_clear_cache(session, 60) == NES_MOVIE_OK);
+    nes_tas_session_cache_info(session, &cache);
+    CHECK(cache.checkpoint_count == 6);
+    CHECK(nes_tas_session_cache_before(session, 95, &entry) && entry.frame == 60);
+    CHECK(same_state(&original));
+    CHECK(seek(session, 0) && seek(session, 95) && same_state(&original));
+    CHECK(nes_tas_session_set_cache(session, state_bytes * 2, 10) == NES_MOVIE_OK);
+    nes_tas_session_cache_info(session, &cache);
+    CHECK(cache.checkpoint_count <= 2 && cache.checkpoint_bytes <= state_bytes * 2);
+    CHECK(same_state(&original));
+    CHECK(nes_tas_session_set_cache(session, budget, 0) == NES_MOVIE_INVALID_ARGUMENT);
+    CHECK(nes_tas_session_set_cache(session, budget, 3601) == NES_MOVIE_INVALID_ARGUMENT);
+    CHECK(nes_tas_session_set_cache(session, (size_t)1024 * 1024 * 1024 + 1, 10) == NES_MOVIE_INVALID_ARGUMENT);
+    CHECK(nes_tas_session_set_cache(session, budget, 10) == NES_MOVIE_OK);
+    CHECK(seek(session, 0) && seek(session, 95) && same_state(&original));
+    nes_tas_session_cache_info(session, &cache);
+    CHECK(cache.checkpoint_count == 2);
+    /* Seeking reuses the later states retained by the smaller budget. Clear
+       them so the edit below starts with checkpoints at every ten frames. */
+    CHECK(nes_tas_session_clear_cache(session, 0) == NES_MOVIE_OK);
+    CHECK(seek(session, 0) && seek(session, 95) && same_state(&original));
+    nes_tas_session_cache_info(session, &cache);
+    CHECK(cache.checkpoint_count == 9);
+
+    CHECK(nes_tas_session_set_read_only(session, false) == NES_MOVIE_OK);
+    NesTasProject *project = nes_tas_session_project(session);
+    CHECK(project != NULL);
+    NesFm2Frame input = *nes_tas_project_frame(project, 20);
+    input.pads[0] ^= 1;
+    CHECK(nes_tas_set_frame(project, 20, &input) == NES_TAS_OK);
+    /* Reading the view must hide stale states without reconciling execution. */
+    nes_tas_session_cache_info(session, &cache);
+    CHECK(cache.checkpoint_count == 2 && session->checkpoint_count == 9);
+    CHECK(nes_tas_session_cache_before(session, 95, &entry) && entry.frame == 20);
+    NesTasProgress progress;
+    nes_tas_session_progress(session, &progress);
+    CHECK(progress.frame == 95 && progress.checkpoint_count == 3 && same_state(&original));
+    CHECK(nes_tas_session_reconcile(session) == NES_MOVIE_OK);
+    CHECK(seek(session, 95));
+    CHECK(nes_tas_project_undo(project) == NES_TAS_OK);
+    CHECK(nes_tas_session_cache_before(session, 95, &entry) && entry.frame == 20);
+    CHECK(seek(session, 95) && same_state(&original));
+
+    NesTasLagState previous_lag = nes_tas_lag(project, 30);
+    uint64_t revision = nes_tas_project_revision(project);
+    CHECK(nes_tas_annotate_lag(project, 30, previous_lag == NES_TAS_LAG_YES ? NES_TAS_LAG_NO : NES_TAS_LAG_YES) == NES_TAS_OK);
+    CHECK(nes_tas_project_revision(project) > revision);
+    CHECK(nes_tas_session_cache_before(session, 95, &entry) && entry.frame == 30);
+    CHECK(same_state(&original));
+    CHECK(nes_tas_project_undo(project) == NES_TAS_OK && nes_tas_lag(project, 30) == previous_lag);
+    CHECK(seek(session, 95) && same_state(&original));
+
+    CHECK(nes_tas_session_load_state(session, state_path) == NES_STATE_OK);
+    CHECK(nes_tas_session_cache_before(session, 95, &entry) && entry.frame == 30);
+    CHECK(seek(session, 95) && same_state(&original));
+    CHECK(nes_tas_session_clear_cache(session, 0) == NES_MOVIE_OK);
+    nes_tas_session_cache_info(session, &cache);
+    CHECK(!cache.checkpoint_count && !cache.checkpoint_bytes && cache.initial_bytes > 0);
+    CHECK(same_state(&original));
+    CHECK(nes_tas_session_set_cache(session, 0, 10) == NES_MOVIE_OK);
+    CHECK(seek(session, 0) && seek(session, 95) && same_state(&original));
+    nes_tas_session_cache_info(session, &cache);
+    CHECK(!cache.checkpoint_count && !cache.byte_limit);
+    CHECK(nes_tas_session_frame_boundary(session) == NES_MOVIE_OK);
+    CHECK(nes_state_capture(&partial) == NES_STATE_OK);
+    CHECK(nes_tas_session_clear_cache(session, 0) == NES_MOVIE_OK && same_state(&partial));
+    CHECK(step(session));
+    CHECK(nes_tas_session_discard(session) == NES_MOVIE_OK && same_state(&live));
+cleanup:
+    nes_tas_session_destroy(session);
+    nes_state_blob_free(&live);
+    nes_state_blob_free(&original);
+    nes_state_blob_free(&bound);
+    nes_state_blob_free(&partial);
+    (void)nes_execution_set_policy(NES_EXECUTION_LIVE);
+    (void)unload_rom();
+    board_image_free(&image);
+    (void)nes_file_remove(path);
+    (void)nes_file_remove(state_path);
     return failures;
 }
 
@@ -647,11 +771,11 @@ cleanup:
 }
 
 int test_tas_session_accuracy(void) {
-    int failures = md5_vectors() + playback_seek_and_restore() + edits_recording_and_branches() +
+    int failures = md5_vectors() + playback_seek_and_restore() + cache_views_and_invalidation() + edits_recording_and_branches() +
                    frontend_end_and_partial_recording() + rejected_file_preserves_machine() +
                    startup_checkpoint_and_bound_state() + movie_profile_restores_live_options() +
                    recorded_commands_and_cancelled_queue() + zapper_recorded_trigger_pulse() +
                    bound_states_and_dirty_close() + recording_retry_after_allocation_failure();
-    printf("TAS session: 11 groups, %d failures\n", failures);
+    printf("TAS session: 12 groups, %d failures\n", failures);
     return failures;
 }

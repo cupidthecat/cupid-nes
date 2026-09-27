@@ -1,3 +1,9 @@
+/*
+ * ppu_inspector.h
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* PPU inspector snapshots and pixel decoding. SPDX-License-Identifier: GPL-3.0-or-later */
 #ifndef CUPID_PPU_INSPECTOR_H
 #define CUPID_PPU_INSPECTOR_H
@@ -29,7 +35,6 @@ typedef struct {
     bool flip_x, flip_y, behind;
 } DebugPpuSelection;
 
-uint64_t debugger_session_revision(void);
 void debug_ppu_capture(DebugPpuImage *image, bool nametables);
 uint8_t debug_ppu_pixel(const uint8_t *planes, unsigned x, unsigned y);
 uint32_t debug_ppu_color(const DebugPpuImage *image, unsigned palette, unsigned pixel, bool sprite);

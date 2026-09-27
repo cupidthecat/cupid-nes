@@ -24,10 +24,12 @@
  */
 
 #include "ppu.h"
+#include "../debugger/debug_analysis.h"
 #include "../rom/rom.h"
 #include "../../include/globals.h"
 #include "../rom/mapper.h"
 #include "../cpu/cpu.h"
+#include "../apu/apu.h"
 #include "../system/hardware.h"
 #include "../system/execution_policy.h"
 #include "../system/timing.h"
@@ -181,7 +183,8 @@ void ppu_set_sprite_eval_wrap_bug(bool enabled) {
 }
 
 static bool rendering_line(void) {
-    return ppu.scanline < 240 || ppu.scanline == (int)nes_timing()->scanlines - 1;
+    return !nes_overclock_extra_active()
+        && (ppu.scanline < 240 || ppu.scanline == (int)nes_timing()->scanlines - 1);
 }
 
 static bool rendering_active(void) {
@@ -389,6 +392,33 @@ bool ppu_debug_write(uint16_t addr, uint8_t value) {
     return cart_debug_write_ppu(addr, value, active_ppu_vram);
 }
 
+void ppu_debug_copy_oam(uint8_t out[256]) {
+    if (out) memcpy(out, ppu.oam, sizeof(ppu.oam));
+}
+
+bool ppu_debug_oam_location(uint16_t addr, NesMemoryLocation *out) {
+    if (!nes_memory_location(out, ppu.oam, sizeof(ppu.oam), addr, "Sprite OAM", true, NULL)) return false;
+    if ((addr & 3) == 2) out->mask = 0xE3;
+    if (oam_decay) {
+        out->refresh = &ppu.oam_decay_cycles[addr >> 3];
+        out->refresh_cycle = cpu_get_bus_cycle();
+    }
+    return true;
+}
+
+bool ppu_debug_memory_location(uint16_t addr, NesMemoryLocation *out) {
+    if (!out || addr >= 0x4000) return false;
+    if (addr >= 0x3F00) {
+        unsigned offset = addr & 0x1F;
+        if ((offset & 3) == 0) offset &= 0x0F;
+        if (!nes_memory_location(out, active_ppu_palette, 32, offset, "Palette RAM", true, NULL)) return false;
+        out->mask = 0x3F;
+        if ((offset & 3) == 0) out->mirror = active_ppu_palette + (offset | 0x10);
+        return true;
+    }
+    return cart_debug_ppu_location(addr, active_ppu_vram, out);
+}
+
 uint8_t ppu_debug_peek_register(uint16_t reg) {
     switch (reg & 7u) {
         case 0: return ppu.ctrl;
@@ -574,6 +604,7 @@ void ppu_reg_write_cpu(uint16_t reg, uint8_t value, uint8_t cpu_open_bus) {
                 // PAL refresh also clocks this address latch late in vblank.
                 int previous_dot = (ppu.dot + 340) % 341;
                 bool refresh = nes_timing()->region == NES_REGION_PAL
+                            && !nes_overclock_extra_active()
                             && ppu.scanline >= 265 && !rendering_line();
                 if (!refresh || ((previous_dot & 1) && previous_dot != 339))
                     ppu.oam_addr++;
@@ -671,13 +702,17 @@ void ppu_oam_dma(uint8_t page) {
 }
 
 void ppu_begin_vblank(void) {
+    bool was_set = (ppu.status & 0x80) != 0;
     if (!ppu.suppress_vblank) ppu.status |= 0x80;
+    if (!was_set && (ppu.status & 0x80)) debug_analysis_event(DEBUG_EVENT_VBLANK, 0x2002, 1);
     ppu.suppress_vblank = false;
     ppu_eval_nmi();
 }
 
 void ppu_end_vblank(void) {
+    bool was_set = (ppu.status & 0x80) != 0;
     ppu.status &= ~0x80;
+    if (was_set) debug_analysis_event(DEBUG_EVENT_VBLANK, 0x2002, 0);
     ppu_eval_nmi();
 }
 
@@ -715,6 +750,7 @@ bool ppu_begin_tas_timing(void) {
 }
 
 void ppu_power_on(PPU *state) {
+    nes_overclock_begin_frame(!vs_enabled() && !cart_nsf_active(), false);
     nes_video_snapshot_reset(vs_active_side());
     if (nes_video_trace_active) nes_video_trace_reset_side(vs_active_side());
     memset(state, 0, sizeof(*state));
@@ -756,6 +792,7 @@ void ppu_soft_reset(PPU *state) {
     state->cpu_clock_phase = 0;
     memset(state->oam_decay_cycles, 0, sizeof(state->oam_decay_cycles));
     if (reset_suppression && !nsf_full_reset) return;
+    nes_overclock_begin_frame(!vs_enabled() && !nsf_full_reset, false);
 
     uint8_t oam[PPU_OAM_SIZE];
     uint8_t secondary_oam[32];
@@ -1139,6 +1176,19 @@ void ppu_step_dots(int ppu_cycles) {
         return;
     }
     for (int i = 0; i < ppu_cycles; ++i) {
+        if (nes_overclock_extra_active()) {
+            /* Blank extension: the bus and delayed register accesses still run. */
+            ppu.bus_ale_this_dot = ppu.bus_read_this_dot = false;
+            ppu.oam_read_latch = ppu.oam_bus;
+            ppu.fetches_enabled = ppu.rendering_enabled;
+            ppu.rendering_enabled = (ppu.mask & 0x18) != 0;
+            ppu_complete_register_accesses(0);
+            if (oam_decay && nes_overclock_extra_dots() % 341u == 0)
+                ppu_refresh_oam_row(ppu.oam_addr >> 3);
+            ++ppu.total_cycles;
+            nes_overclock_step_dot();
+            continue;
+        }
         int line = ppu.scanline;
         int dot = ppu.dot;
         bool rendering = ppu.fetches_enabled;
@@ -1150,7 +1200,10 @@ void ppu_step_dots(int ppu_cycles) {
 
         if (ppu.sprite_status_pending) {
             ppu.status |= ppu.sprite_status_pending;
-            if (ppu.sprite_status_pending & 0x40) ppu.sprite_zero_hit = true;
+            if (ppu.sprite_status_pending & 0x40) {
+                if (!ppu.sprite_zero_hit) debug_analysis_event(DEBUG_EVENT_SPRITE0, 0x2002, 1);
+                ppu.sprite_zero_hit = true;
+            }
             ppu.sprite_status_pending = 0;
         }
 
@@ -1285,11 +1338,18 @@ void ppu_step_dots(int ppu_cycles) {
             ppu.dot = 0;
             if (++ppu.scanline == (int)nes_timing()->scanlines) {
                 ppu.scanline = 0;
+                const DMC *dmc = &apu_active_state()->dmc;
+                nes_overclock_begin_frame(!vs_enabled() && !cart_nsf_active(),
+                    dmc->bytes_remaining || dmc->dma_pending || !dmc->silence);
                 ppu.completed_video_phase = ppu.frame_video_phase;
                 ppu.frame_video_phase = (uint8_t)(ppu.total_cycles % 3u);
                 ppu.odd_frame = !ppu.odd_frame;
                 if (!ppu.tas_postrender_boundary) ppu_complete_frame();
             }
+            if (ppu.scanline == (int)nes_timing()->vblank_scanline)
+                nes_overclock_begin_extra(true);
+            else if (ppu.scanline == (int)nes_timing()->scanlines - 1)
+                nes_overclock_begin_extra(false);
             if (ppu.tas_postrender_boundary && ppu.scanline == 240) ppu_complete_frame();
             if (ppu.startup_writes_restricted
                 && ppu.scanline == (int)nes_timing()->scanlines - 1)

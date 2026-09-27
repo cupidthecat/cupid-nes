@@ -22,8 +22,10 @@ enum {
     NES_TAS_BOOKMARK_COUNT = 10,
     NES_TAS_MARKER_NOTE_MAX = 99,
     NES_TAS_BOOKMARK_NAME_MAX = 63,
+    NES_TAS_NAVIGATION_LIMIT = 4096,
+    NES_TAS_NAVIGATION_NOTE_MAX = 255,
     NES_CTAS_MAGIC_SIZE = 8,
-    NES_CTAS_VERSION = 2
+    NES_CTAS_VERSION = 3
 };
 
 #define NES_CTAS_MAGIC "CUPIDTAS"
@@ -70,6 +72,30 @@ typedef struct {
     int parent_slot;
 } NesTasBookmarkView;
 
+typedef struct {
+    size_t frame;
+    const char *name;
+    const char *note;
+} NesTasNavigationView;
+
+typedef struct {
+    size_t position;
+    size_t operations;
+    size_t bytes;
+    size_t entry_limit;
+    size_t byte_limit;
+    bool edit_active;
+} NesTasHistoryInfo;
+
+typedef struct {
+    size_t position;
+    size_t first_frame;
+    size_t last_frame;
+    bool applied;
+    bool current;
+    char description[128];
+} NesTasHistoryView;
+
 typedef struct NesTasProject NesTasProject;
 
 /* Creation takes an immutable source and deep-copies all movie-owned data. */
@@ -104,6 +130,16 @@ bool nes_tas_project_can_undo(const NesTasProject *project);
 bool nes_tas_project_can_redo(const NesTasProject *project);
 NesTasResult nes_tas_project_undo(NesTasProject *project);
 NesTasResult nes_tas_project_redo(NesTasProject *project);
+
+/* Positions run from 0 (the earliest retained state) through operations.
+ * first_frame/last_frame are inclusive; SIZE_MAX means no frame range.
+ * Descriptions summarize the retained snapshots, including grouped edits.
+ * Observing history never commits an in-progress edit or changes playback. */
+void nes_tas_project_history_info(const NesTasProject *project, NesTasHistoryInfo *out);
+bool nes_tas_project_history_entry(const NesTasProject *project, size_t position, NesTasHistoryView *out);
+/* Restore a retained position atomically, without allocating. Invalid positions
+ * and active edit transactions leave the entire project unchanged. */
+NesTasResult nes_tas_project_history_seek(NesTasProject *project, size_t position);
 
 void nes_tas_selection_clear(NesTasProject *project);
 NesTasResult nes_tas_selection_set(NesTasProject *project, size_t frame, bool selected);
@@ -143,6 +179,9 @@ NesTasResult nes_tas_apply_pattern(NesTasProject *project, size_t first, size_t 
 
 NesTasLagState nes_tas_lag(const NesTasProject *project, size_t frame);
 NesTasResult nes_tas_set_lag(NesTasProject *project, size_t frame, NesTasLagState state);
+/* User annotations are undoable and invalidate later executable checkpoints.
+ * Playback uses set_lag to record observations without creating edits. */
+NesTasResult nes_tas_annotate_lag(NesTasProject *project, size_t frame, NesTasLagState state);
 void nes_tas_invalidate_lag(NesTasProject *project, size_t first);
 
 size_t nes_tas_marker_count(const NesTasProject *project);
@@ -160,6 +199,23 @@ NesTasResult nes_tas_bookmark_clear(NesTasProject *project, unsigned slot);
 NesTasResult nes_tas_bookmark_deploy(NesTasProject *project, unsigned slot);
 int nes_tas_current_branch(const NesTasProject *project);
 
+/* Lightweight navigation bookmarks are independent of markers and branches.
+ * Positions are pre-input boundaries from 0 through frame_count, inclusive.
+ * Entries are ordered by frame, retaining insertion order at the same frame.
+ * Insertions shift positions at/after the insertion; deletion clamps positions
+ * inside the deleted range to its start. Branch deployment preserves names and
+ * notes and clamps positions beyond the new end. All mutations are undoable.
+ * View strings remain valid only until the next project mutation. */
+size_t nes_tas_navigation_count(const NesTasProject *project);
+bool nes_tas_navigation(const NesTasProject *project, size_t index, NesTasNavigationView *out);
+NesTasResult nes_tas_navigation_add(NesTasProject *project, size_t frame, const char *name,
+                                     const char *note, size_t *index);
+NesTasResult nes_tas_navigation_rename(NesTasProject *project, size_t index, const char *name,
+                                        const char *note);
+NesTasResult nes_tas_navigation_remove(NesTasProject *project, size_t index);
+/* Find the nearest strictly earlier/later frame; no wrap. Failure retains out. */
+bool nes_tas_navigation_neighbor(const NesTasProject *project, size_t frame, bool next, size_t *index);
+
 uint64_t nes_tas_rerecord_count(const NesTasProject *project);
 NesTasResult nes_tas_increment_rerecord(NesTasProject *project);
 
@@ -167,7 +223,7 @@ NesTasResult nes_tas_project_save(const NesTasProject *project, const char *path
 NesTasResult nes_tas_project_load(const char *path, NesTasProject **out);
 
 /* CTAS files start with exactly eight ASCII bytes "CUPIDTAS", followed by a
- * little-endian uint32 version (currently 2). CTAS retains editable project
+ * little-endian uint32 version (currently 3). CTAS retains editable project
  * history. FM3 export rebuilds safe editable modules and preserves untouched
  * source modules byte-for-byte; stale machine-state modules are emitted using
  * their standard skip records instead of foreign executable state. */

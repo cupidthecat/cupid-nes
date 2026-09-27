@@ -52,6 +52,25 @@ typedef struct {
 
 const NesTiming *nes_timing(void);
 const NesTiming *nes_timing_for_region(NesRegion region);
+enum { NES_OVERCLOCK_MAX_SCANLINES = 1000 };
+typedef struct {
+    bool enabled;
+    uint16_t postrender_scanlines;
+    uint16_t vblank_scanlines;
+    bool dmc_compatibility;
+} NesOverclockConfig;
+
+/* Emulation-thread API. Changes latch at the next frame boundary or reset. */
+NesOverclockConfig nes_overclock_config(void);
+NesOverclockConfig nes_overclock_active_config(void);
+bool nes_set_overclock_config(const NesOverclockConfig *config);
+bool nes_overclock_extra_active(void);
+unsigned nes_overclock_extra_dots(void);
+/* Hardware hooks; serialized by the TIME component. */
+void nes_overclock_begin_frame(bool supported, bool dmc_active);
+void nes_overclock_begin_extra(bool before_nmi);
+void nes_overclock_step_dot(void);
+void nes_overclock_note_pcm_write(void);
 // Select the region before powering on or resetting the emulated hardware.
 void nes_set_region(NesRegion region);
 

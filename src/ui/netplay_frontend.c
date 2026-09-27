@@ -1,3 +1,9 @@
+/*
+ * netplay_frontend.c
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* Desktop network sessions. SPDX-License-Identifier: GPL-3.0-or-later */
 #include "netplay_frontend.h"
 #include "frontend_execution.h"

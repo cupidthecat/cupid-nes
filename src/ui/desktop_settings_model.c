@@ -1,3 +1,9 @@
+/*
+ * desktop_settings_model.c
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* Typed settings controls and validated numeric entry. SPDX-License-Identifier: GPL-3.0-or-later */
 #include "desktop_internal.h"
 #include "frontend_panels.h"
@@ -49,7 +55,16 @@ static Number number(FrontendDesktopUi *ui, int row) {
         }
         break;
     case 2:
-        if (row >= 7) {
+        if (row >= 26 && row < 35) {
+            unsigned id = (unsigned)(row - 26);
+            const NtscCompositeControl *control = ntsc_composite_control_info(id);
+            return (Number){ntsc_composite_control_value(&s->ntsc_picture, id), NUMBER_SIGNED, control->minimum,
+                            control->maximum};
+        }
+        if (row >= 21 && row < 25) {
+            return (Number){&s->pixel_filter.lcd_brightness[row - 21], NUMBER_UNSIGNED, 0, 100};
+        }
+        if (row >= 7 && row < 19) {
             NesVideoOverscan *o = &s->presentation.overscan[(row - 7) / 4];
             unsigned *edges[] = {&o->left, &o->right, &o->top, &o->bottom};
             return (Number){edges[(row - 7) % 4], NUMBER_UNSIGNED, 0, (row - 7) % 4 < 2 ? 255 : 239};
@@ -127,7 +142,9 @@ DesktopSettingKind desktop_setting_kind(const FrontendDesktopUi *ui, int row) {
     case 1:
         return row == 0 || row == 4 ? SETTING_CHOICE : SETTING_NUMBER;
     case 2:
-        return row == 3 ? SETTING_CHOICE : row < 7 ? SETTING_TOGGLE : SETTING_NUMBER;
+        return row == 3 || row == 20 || row == 25 || row == 35 ? SETTING_CHOICE
+               : row < 7 || row == 19                          ? SETTING_TOGGLE
+                                                               : SETTING_NUMBER;
     case 3:
         return row == 0 ? SETTING_TOGGLE : row == 2 ? SETTING_CHOICE : SETTING_NUMBER;
     case 4:
@@ -164,6 +181,21 @@ int desktop_setting_choices(FrontendDesktopUi *ui, int row, int *selected) {
         }
         break;
     case 2:
+        if (row == 25) {
+            *selected = ntsc_composite_preset_index(&s->ntsc_picture);
+            if (*selected < 0) {
+                *selected = 0;
+            }
+            return NTSC_PRESET_COUNT;
+        }
+        if (row == 35) {
+            *selected = s->ntsc_picture.fields;
+            return NTSC_FIELDS_COUNT;
+        }
+        if (row == 20) {
+            *selected = s->pixel_filter.kind;
+            return NES_PIXEL_FILTER_COUNT;
+        }
         if (row == 3) {
             *selected = s->aspect_mode;
             return 2;
@@ -253,6 +285,10 @@ void desktop_setting_choose(FrontendDesktopUi *ui, int row, int option) {
     if (option < 0 || option >= count) {
         return;
     }
+    if (ui->settings_category == 2 && row == 25) {
+        (void)ntsc_composite_preset(&ui->staged.ntsc_picture, (unsigned)option);
+        return;
+    }
     if (ui->settings_category == 3 && row == 2) {
         const char *name = option ? SDL_GetAudioDeviceName(option - 1, 0) : "";
         if (!name || strlen(name) >= sizeof(ui->staged.audio_device)) {
@@ -269,6 +305,10 @@ void desktop_setting_choose(FrontendDesktopUi *ui, int row, int option) {
 }
 
 void desktop_setting_choice_text(FrontendDesktopUi *ui, int row, int option, char *text, size_t size) {
+    if (ui->settings_category == 2 && row == 25) {
+        snprintf(text, size, "%s", ntsc_composite_preset_name((unsigned)option));
+        return;
+    }
     if (ui->settings_category == 3 && row == 2) {
         const char *name = option ? SDL_GetAudioDeviceName(option - 1, 0) : "System default";
         snprintf(text, size, "%s", name ? name : "Unavailable device");
@@ -296,6 +336,30 @@ static double number_value(Number n) {
         return *(float *)n.value;
     }
     return 0;
+}
+
+/* Read editable staged text without entering edit mode or changing capture state. */
+bool desktop_setting_edit_text(FrontendDesktopUi *ui, int row, char *text, size_t size) {
+    if (!ui || !text || !size || row < 0 || row >= desktop_setting_rows(ui)) return false;
+    Number n = number(ui, row);
+    if (n.value) {
+        int length = snprintf(text, size, "%.10g", number_value(n));
+        return length >= 0 && (size_t)length < size;
+    }
+    const FrontendSettings *s = &ui->staged;
+    const char *value = NULL;
+    if (ui->settings_category == 4 && row == 7 && ui->settings_player < NES_INPUT_PLAYERS)
+        value = s->device_guid[ui->settings_player];
+    else if (ui->settings_category == 5 && ((row >= 0 && row <= 4) || row == 9 || row == 10)) {
+        const char *paths[] = {s->fds_bios_path, s->studybox_bios_path, s->epsm_adpcm_path,
+            s->fcns_kanji_path, s->disk_overlay_path, s->tape_play_path, s->tape_record_path};
+        value = paths[row <= 4 ? row : row - 4];
+    } else if (ui->settings_category == 6 && row >= 1 && row <= 4)
+        value = row == 1 ? s->state_file_path : s->capture_paths[row - 2];
+    text[0] = 0;
+    if (!value) return false;
+    int length = snprintf(text, size, "%s", value);
+    return length >= 0 && (size_t)length < size;
 }
 
 bool desktop_setting_commit_number(FrontendDesktopUi *ui, int row, const char *text) {

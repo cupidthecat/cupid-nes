@@ -8,6 +8,7 @@
  * its tone, noise, and envelope counters.
  *
  * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 #include <string.h>

@@ -20,6 +20,7 @@
 #include "video_runtime.h"
 #include "capture_frontend.h"
 #include "device_frontend.h"
+#include "../video/frame_timing.h"
 
 typedef enum {
     FRONTEND_IDLE_ERROR = -1,
@@ -28,6 +29,7 @@ typedef enum {
 } FrontendIdleResult;
 
 typedef struct FrontendDesktopUi {
+    struct CupidGtkDesktop *gtk;
     struct FrontendDesktopUi *parent, *tools, *next;
     bool native_windows, focused, palette_window;
     uint32_t tool_rendered;
@@ -72,6 +74,7 @@ typedef struct FrontendDesktopUi {
     bool choice_open, choice_panel, edit_number;
     int choice_row, choice_index, choice_page;
     int dragging_scroll;
+    bool hex_selecting;
     int panel_row;
     int panel_scroll;
     int settings_focus;
@@ -123,6 +126,8 @@ void frontend_desktop_set_status(FrontendDesktopUi *ui, const char *message);
 void frontend_desktop_set_fps(FrontendDesktopUi *ui, double fps);
 void frontend_desktop_update_window_settings(FrontendDesktopUi *ui);
 void frontend_desktop_update_activity(FrontendDesktopUi *ui);
+void frontend_desktop_wait(FrontendDesktopUi *ui, double deadline, double frequency);
+bool frontend_desktop_draw_stats(void *context, NesFrameTimingSummary *summary, bool reset);
 void frontend_desktop_shutdown(FrontendDesktopUi *ui);
 
 #endif

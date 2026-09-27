@@ -10,6 +10,7 @@
 #define CHEAT_FRONTEND_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 typedef struct CheatFrontend CheatFrontend;
@@ -32,6 +33,8 @@ enum {
 
 CheatFrontend *cheat_frontend_create(const char *storage_directory);
 bool cheat_frontend_register_ui(CheatFrontend *frontend);
+bool cheat_frontend_prepare(CheatFrontend *frontend, const char *code, const char *description,
+                            char *error, size_t error_size);
 void cheat_frontend_image_changed(CheatFrontend *frontend, uint32_t game_identity);
 void cheat_frontend_destroy(CheatFrontend *frontend);
 

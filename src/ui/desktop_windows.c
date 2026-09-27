@@ -1,11 +1,48 @@
+/*
+ * desktop_windows.c
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* Independent desktop tool windows. SPDX-License-Identifier: GPL-3.0-or-later */
 #include "desktop_internal.h"
+#include "gtk_desktop.h"
+#include "desktop_keyboard.h"
 #include "frontend_panels.h"
+#include "memory_search_frontend.h"
+#include "watch_frontend.h"
+#include "hex_frontend.h"
 #include "palette_tool.h"
 #include "netplay_frontend.h"
 #include "../system/timing.h"
+#include "../video/frame_timing.h"
 #include <stdlib.h>
 #include <string.h>
+
+static void desktop_service(void *context) {
+#ifdef CUPID_GTK
+    FrontendDesktopUi *ui = context;
+    if (ui && ui->gtk) cupid_gtk_dispatch();
+#else
+    (void)context;
+#endif
+}
+
+void frontend_desktop_wait(FrontendDesktopUi *ui, double deadline, double frequency) {
+    nes_frame_timing_wait(deadline, frequency, ui && ui->gtk ? desktop_service : NULL, ui);
+}
+
+bool frontend_desktop_draw_stats(void *context, NesFrameTimingSummary *summary, bool reset) {
+#ifdef CUPID_GTK
+    FrontendDesktopUi *ui = context;
+    if (ui && ui->gtk) return cupid_gtk_draw_stats(ui, summary, reset);
+#else
+    (void)context;
+    (void)summary;
+    (void)reset;
+#endif
+    return false;
+}
 
 void desktop_window_context(const FrontendDesktopUi *ui, const char **title, const char **region, const char **state) {
     const FrontendDesktopUi *root = ui->parent ? ui->parent : ui;
@@ -30,6 +67,9 @@ void desktop_window_context(const FrontendDesktopUi *ui, const char **title, con
 }
 
 FrontendDesktopUi *desktop_open_window(FrontendDesktopUi *ui, int kind, unsigned id) {
+#ifdef CUPID_GTK
+    if (ui->gtk) return cupid_gtk_open(ui, kind, id);
+#endif
     FrontendDesktopUi *root = ui->parent ? ui->parent : ui;
     for (FrontendDesktopUi *tool = root->tools; tool; tool = tool->next) {
         if ((kind == 0 && tool->settings_open) || (kind == 1 && tool->panel_open && tool->panel_id == id) ||
@@ -47,7 +87,8 @@ FrontendDesktopUi *desktop_open_window(FrontendDesktopUi *ui, int kind, unsigned
         title = info.title;
     }
     FrontendDesktopUi *tool = calloc(1, sizeof(*tool));
-    int height = kind == 1 && desktop_tas_panel(id) ? 760 : 680;
+    int height = kind == 1 && (memory_tools_panel(id) || id == WATCH_FRONTEND_PANEL || id == HEX_FRONTEND_PANEL) ? 820 :
+                 kind == 1 && desktop_tas_panel(id) ? 760 : 680;
     SDL_Window *window = SDL_CreateWindow(title, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 900, height,
                                           SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
     SDL_Renderer *renderer = window ? SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED) : NULL;
@@ -153,12 +194,17 @@ static Uint32 event_window(const SDL_Event *event) {
         return event->wheel.windowID;
     case SDL_DROPFILE:
         return event->drop.windowID;
+    case SDL_FINGERDOWN:
+    case SDL_FINGERUP:
+    case SDL_FINGERMOTION:
+        return event->tfinger.windowID;
     default:
         return 0;
     }
 }
 
 static void destroy_tool(FrontendDesktopUi *tool) {
+    desktop_keyboard_release(tool);
     if (tool->edit_text_active) {
         SDL_StopTextInput();
     }
@@ -198,6 +244,9 @@ bool desktop_route_window(FrontendDesktopUi *ui, const SDL_Event *event) {
 }
 
 void frontend_desktop_update_activity(FrontendDesktopUi *ui) {
+#ifdef CUPID_GTK
+    if (ui && ui->gtk) { cupid_gtk_activity(ui); return; }
+#endif
     if (!ui || ui->parent || !ui->execution || !ui->settings) {
         return;
     }
@@ -209,7 +258,10 @@ void frontend_desktop_update_activity(FrontendDesktopUi *ui) {
         /* Inspection tools are modeless, including their editable controls. */
         modal |= tool->settings_open;
     }
-    unsigned reasons = modal && ui->settings->pause_on_ui ? FRONTEND_SUSPEND_UI : 0;
+    unsigned reasons = ui->execution->suspend_reasons & ~(FRONTEND_SUSPEND_UI | FRONTEND_SUSPEND_FOCUS);
+    if (modal && ui->settings->pause_on_ui) {
+        reasons |= FRONTEND_SUSPEND_UI;
+    }
     if (!focused && ui->settings->pause_on_focus_loss) {
         reasons |= FRONTEND_SUSPEND_FOCUS;
     }

@@ -27,6 +27,7 @@ void frontend_audio_runtime_bind(FrontendAudioRuntime *runtime,
     memset(runtime, 0, sizeof(*runtime));
     runtime->device = device;
     runtime->have = have;
+    snprintf(runtime->backend, sizeof(runtime->backend), "default");
 }
 
 void frontend_audio_runtime_set_execution(FrontendAudioRuntime *runtime,
@@ -131,4 +132,88 @@ void frontend_audio_runtime_shutdown(FrontendAudioRuntime *runtime) {
     }
     if (runtime->have) memset(runtime->have, 0, sizeof(*runtime->have));
     runtime->execution = NULL;
+}
+
+bool frontend_audio_backend_available(const char *backend) {
+    if (!backend) return false;
+    if (!strcmp(backend, "default")) return true;
+    if (strcmp(backend, "wasapi") && strcmp(backend, "directsound")) return false;
+    for (int i = 0; i < SDL_GetNumAudioDrivers(); ++i) {
+        const char *driver = SDL_GetAudioDriver(i);
+        if (driver && !strcmp(driver, backend)) return true;
+    }
+    return false;
+}
+
+const char *frontend_audio_runtime_backend(const FrontendAudioRuntime *runtime) {
+    return runtime && runtime->backend[0] ? runtime->backend : "default";
+}
+
+static bool restart_driver(FrontendAudioRuntime *runtime, const FrontendSettings *settings,
+                           const char *driver, char *error, size_t error_size) {
+    if (*runtime->device) {
+        SDL_PauseAudioDevice(*runtime->device, 1);
+        SDL_CloseAudioDevice(*runtime->device);
+        *runtime->device = 0;
+    }
+    SDL_AudioQuit();
+    memset(runtime->have, 0, sizeof(*runtime->have));
+    if (SDL_AudioInit(driver && strcmp(driver, "default") ? driver : NULL) != 0)
+        return fail(error, error_size, SDL_GetError());
+    return frontend_audio_runtime_apply(runtime, settings, true, error, error_size);
+}
+
+bool frontend_audio_runtime_select_backend(FrontendAudioRuntime *runtime,
+    const FrontendSettings *settings, const char *backend, char *error, size_t error_size) {
+    if (!runtime || !runtime->device || !runtime->have || !settings)
+        return fail(error, error_size, "Audio runtime is incomplete");
+    if (!frontend_audio_backend_available(backend))
+        return fail(error, error_size, "Requested native audio driver is not included in this SDL build");
+    if (settings->audio_sample_rate < 8000 || settings->audio_sample_rate > 192000 ||
+        settings->audio_buffer_samples < 64 || settings->audio_buffer_samples > 8192)
+        return fail(error, error_size, "Audio rate or buffer size is outside the supported range");
+    if (!strcmp(frontend_audio_runtime_backend(runtime), backend) && *runtime->device)
+        return frontend_audio_runtime_apply(runtime, settings, false, error, error_size);
+
+    FrontendSettings previous = *settings;
+    if (runtime->sample_rate) previous.audio_sample_rate = runtime->sample_rate;
+    if (runtime->buffer_samples) previous.audio_buffer_samples = runtime->buffer_samples;
+    snprintf(previous.audio_device, sizeof(previous.audio_device), "%s", runtime->device_name);
+    char old_backend[32], old_driver[32], failure[256];
+    snprintf(old_backend, sizeof(old_backend), "%s", frontend_audio_runtime_backend(runtime));
+    const char *active = SDL_GetCurrentAudioDriver();
+    snprintf(old_driver, sizeof(old_driver), "%s", active ? active : "default");
+    if (restart_driver(runtime, settings, backend, failure, sizeof(failure))) {
+        snprintf(runtime->backend, sizeof(runtime->backend), "%s", backend);
+        if (error && error_size) error[0] = 0;
+        return true;
+    }
+    char recovery[256];
+    bool restored = restart_driver(runtime, &previous, old_driver, recovery, sizeof(recovery));
+    if (!restored) {
+        previous.audio_device[0] = 0;
+        restored = restart_driver(runtime, &previous, "default", recovery, sizeof(recovery));
+        snprintf(runtime->backend, sizeof(runtime->backend), "default");
+    } else {
+        snprintf(runtime->backend, sizeof(runtime->backend), "%s", old_backend);
+    }
+    char message[640];
+    snprintf(message, sizeof(message), "%s. %s", failure,
+             restored ? "Previous or default audio output restored" : "Audio unavailable; select another output to retry");
+    return fail(error, error_size, message);
+}
+
+bool frontend_audio_runtime_handle_device_event(FrontendAudioRuntime *runtime,
+    const FrontendSettings *settings, const SDL_AudioDeviceEvent *event,
+    char *error, size_t error_size) {
+    if (!runtime || !runtime->device || !settings || !event)
+        return fail(error, error_size, "Audio device event is incomplete");
+    if (event->iscapture || event->type != SDL_AUDIODEVICEREMOVED || event->which != *runtime->device)
+        return true;
+    SDL_CloseAudioDevice(*runtime->device);
+    *runtime->device = 0;
+    FrontendSettings fallback = *settings;
+    fallback.audio_device[0] = 0;
+    if (frontend_audio_runtime_apply(runtime, &fallback, true, error, error_size)) return true;
+    return frontend_audio_runtime_select_backend(runtime, &fallback, "default", error, error_size);
 }

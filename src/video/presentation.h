@@ -10,6 +10,7 @@
 #define CUPID_VIDEO_PRESENTATION_H
 
 #include "video_trace.h"
+#include "ntsc_composite.h"
 #include "../system/timing.h"
 
 #ifdef __cplusplus
@@ -35,6 +36,7 @@ typedef struct {
     NesRegion region;
     bool vs_system;
     bool composite;
+    const NtscCompositeSettings *ntsc_settings;
 } NesVideoPresentationSource;
 
 typedef struct {

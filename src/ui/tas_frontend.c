@@ -1,5 +1,12 @@
+/*
+ * tas_frontend.c
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* Desktop TAS actions. SPDX-License-Identifier: GPL-3.0-or-later */
 #include "tas_frontend.h"
+#include "fcm_frontend.h"
 #include "frontend_commands.h"
 #include "frontend_panels.h"
 #include "platform_frontend.h"
@@ -324,10 +331,16 @@ bool tas_frontend_register(FrontendExecutionRuntime *runtime) {
         frontend_panel_unregister(TAS_PANEL);
         return false;
     }
+    if (!fcm_frontend_register(runtime)) {
+        frontend_panel_unregister(TAS_PANEL);
+        frontend_command_unregister(TAS_COMMAND_FRAME_BACK);
+        return false;
+    }
     return true;
 }
 
 void tas_frontend_unregister(void) {
+    fcm_frontend_unregister();
     frontend_panel_unregister(TAS_PANEL);
     frontend_command_unregister(TAS_COMMAND_FRAME_BACK);
 }

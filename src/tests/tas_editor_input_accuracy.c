@@ -1,3 +1,9 @@
+/*
+ * tas_editor_input_accuracy.c
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* TAS editor gesture and display-scale regressions. SPDX-License-Identifier: GPL-3.0-or-later */
 #include "board_tests.h"
 #include "../apu/apu.h"
@@ -58,7 +64,7 @@ static bool send_key(FrontendDesktopUi *ui, SDL_Scancode key, SDL_Keymod modifie
     event.key.windowID = SDL_GetWindowID(ui->window);
     event.key.keysym.scancode = key;
     event.key.keysym.mod = modifiers;
-    return frontend_desktop_handle_event(ui, &event);
+    return frontend_desktop_handle_event(ui->parent ? ui->parent : ui, &event);
 }
 
 static bool click_action(FrontendDesktopUi *ui, unsigned action) {
@@ -72,7 +78,7 @@ static bool click_action(FrontendDesktopUi *ui, unsigned action) {
     event.button.button = SDL_BUTTON_LEFT;
     event.button.x = (int)((bounds.x + bounds.w / 2) * scale);
     event.button.y = (int)((bounds.y + bounds.h / 2) * scale);
-    return frontend_desktop_handle_event(ui, &event);
+    return frontend_desktop_handle_event(ui->parent ? ui->parent : ui, &event);
 }
 
 static bool click_row(FrontendDesktopUi *ui, unsigned row, SDL_Keymod modifiers) {
@@ -129,6 +135,24 @@ static bool state_command(void *userdata, char *error, size_t error_size) {
     (void)error_size;
     (*(unsigned *)userdata)++;
     return true;
+}
+
+static bool resize_editor(FrontendDesktopUi *ui, int width, int height, float scale) {
+    SDL_SetWindowSize(ui->window, width, height);
+    SDL_Event event = {.type = SDL_WINDOWEVENT};
+    event.window.windowID = SDL_GetWindowID(ui->window);
+    event.window.event = SDL_WINDOWEVENT_SIZE_CHANGED;
+    event.window.data1 = width;
+    event.window.data2 = height;
+    (void)frontend_desktop_handle_event(ui->parent ? ui->parent : ui, &event);
+    int logical_width, logical_height, actual_width, actual_height;
+    SDL_RenderGetLogicalSize(ui->renderer, &logical_width, &logical_height);
+    SDL_GetWindowSize(ui->window, &actual_width, &actual_height);
+    /* The resize event updates SDL's logical size before a simulated display
+     * scale is applied. Otherwise SDL and
+     * the UI both enlarge the layout. */
+    ui->ui_scale = scale;
+    return logical_width == width && logical_height == height && actual_width == width && actual_height == height;
 }
 
 static void render_editor(FrontendDesktopUi *ui) {
@@ -204,6 +228,9 @@ static void focus(FrontendDesktopUi *ui, bool gained) {
     event.window.event = gained ? SDL_WINDOWEVENT_FOCUS_GAINED : SDL_WINDOWEVENT_FOCUS_LOST;
     (void)frontend_desktop_handle_event(ui, &event);
 }
+
+#include "tas_navigation_input.h"
+#include "tas_splice_input.h"
 
 int test_tas_editor_input_accuracy(void) {
     int failures = 0;
@@ -285,7 +312,8 @@ int test_tas_editor_input_accuracy(void) {
     CHECK(save_file_calls == 1 && load_file_calls == 1);
 
     /* Insert-count editing accepts one bounded positive count and leaves the
-     * timeline/cursor untouched for malformed or oversized values. */
+     * timeline/cursor untouched for
+     * malformed or oversized values. */
     editor->cursor = 6;
     size_t insert_frames_before = nes_tas_project_frame_count(project);
     size_t insert_cursor_before = editor->cursor;
@@ -312,6 +340,122 @@ int test_tas_editor_input_accuracy(void) {
     CHECK(hit_inside_window(&ui, HIT_TAS_ROW, 0, 0));
     CHECK(hit_inside_window(&ui, HIT_TAS_CELL, 0, TAS_GRID_PAD_BASE + 15));
     CHECK(hit_inside_window(&ui, HIT_TAS_SCROLL, 0, 0));
+    CHECK(hit_inside_window(&ui, HIT_TAS_ACTION, TAS_ACTION_SIDEBAR_CACHE, 0));
+    CHECK(click_action(&ui, TAS_ACTION_SIDEBAR_CACHE));
+    render_editor(&ui);
+    CHECK(editor->sidebar_tab == 3);
+    CHECK(hit_inside_window(&ui, HIT_TAS_ACTION, TAS_ACTION_CACHE_CLEAR_AFTER, 0));
+    CHECK(hit_inside_window(&ui, HIT_TAS_ACTION, TAS_ACTION_CACHE_NEXT, 0));
+    uint64_t cache_revision = nes_tas_project_revision(project);
+    NesTasCacheInfo cache_before, cache_after;
+    nes_tas_session_cache_info(session, &cache_before);
+    ui.edit_control = TAS_EDIT_CACHE_MB;
+    CHECK(!desktop_tas_commit(&ui, "1025", error, sizeof(error)));
+    CHECK(!desktop_tas_commit(&ui, "-1", error, sizeof(error)));
+    ui.edit_control = TAS_EDIT_CACHE_INTERVAL;
+    CHECK(!desktop_tas_commit(&ui, "0", error, sizeof(error)));
+    CHECK(!desktop_tas_commit(&ui, "3601", error, sizeof(error)));
+    nes_tas_session_cache_info(session, &cache_after);
+    CHECK(cache_before.byte_limit == cache_after.byte_limit && cache_before.interval == cache_after.interval);
+    CHECK(desktop_tas_commit(&ui, "15", error, sizeof(error)));
+    ui.edit_control = TAS_EDIT_CACHE_MB;
+    CHECK(desktop_tas_commit(&ui, "8", error, sizeof(error)));
+    nes_tas_session_cache_info(session, &cache_after);
+    CHECK(cache_after.byte_limit == 8u * 1024u * 1024u && cache_after.interval == 15);
+    CHECK(click_action(&ui, TAS_ACTION_CACHE_CLEAR));
+    CHECK(nes_tas_project_revision(project) == cache_revision);
+
+    /* History rows are navigable without editing. Restoring a selected state
+     * uses the same guards and
+     * reconciliation as ordinary undo/redo. */
+    NesTasHistoryInfo history_before, history_after;
+    nes_tas_project_history_info(project, &history_before);
+    NesFm2Frame history_frame = *nes_tas_project_frame(project, 9);
+    CHECK(nes_tas_edit_begin(project) == NES_TAS_OK);
+    CHECK(nes_tas_selection_set(project, 9, true) == NES_TAS_OK);
+    NesFm2Frame changed_history_frame = history_frame;
+    changed_history_frame.pads[0] ^= 0x10;
+    CHECK(nes_tas_set_frame(project, 9, &changed_history_frame) == NES_TAS_OK);
+    CHECK(nes_tas_marker_set(project, 9, "history start") == NES_TAS_OK);
+    CHECK(nes_tas_edit_end(project) == NES_TAS_OK);
+    for (unsigned i = 0; i < 11; ++i) {
+        char note[48];
+        snprintf(note, sizeof(note), "history step %u", i);
+        CHECK(nes_tas_marker_set(project, 9, note) == NES_TAS_OK);
+    }
+    CHECK(tas_frontend_changed(&runtime, error, sizeof(error)));
+    nes_tas_project_history_info(project, &history_after);
+    CHECK(history_after.position == history_before.position + 12);
+    size_t history_latest = history_after.position;
+    render_editor(&ui);
+    CHECK(hit_inside_window(&ui, HIT_TAS_ACTION, TAS_ACTION_SIDEBAR_HISTORY, 0));
+    CHECK(click_action(&ui, TAS_ACTION_SIDEBAR_HISTORY));
+    render_editor(&ui);
+    CHECK(editor->sidebar_tab == 4 && editor->history_selection == history_latest);
+    while (editor->history_scroll > history_before.position) {
+        CHECK(click_action(&ui, TAS_ACTION_HISTORY_OLDER));
+        render_editor(&ui);
+    }
+    CHECK(click_action(&ui,
+                       TAS_ACTION_HISTORY_SELECT_BASE + (unsigned)(history_before.position - editor->history_scroll)));
+    CHECK(editor->history_selection == history_before.position);
+    uint64_t history_revision = nes_tas_project_revision(project);
+    CHECK(nes_tas_session_set_read_only(session, true) == NES_MOVIE_OK);
+    render_editor(&ui);
+    desktop_tas_action(&ui, TAS_ACTION_HISTORY_RESTORE);
+    CHECK(nes_tas_project_revision(project) == history_revision);
+    CHECK(nes_tas_session_set_read_only(session, false) == NES_MOVIE_OK);
+    CHECK(nes_tas_session_set_recording(session, true, NES_TAS_RECORD_OVERWRITE, 1) == NES_MOVIE_OK);
+    render_editor(&ui);
+    desktop_tas_action(&ui, TAS_ACTION_HISTORY_RESTORE);
+    CHECK(nes_tas_project_revision(project) == history_revision);
+    CHECK(nes_tas_session_set_recording(session, false, NES_TAS_RECORD_OVERWRITE, 1) == NES_MOVIE_OK);
+    CHECK(nes_tas_edit_begin(project) == NES_TAS_OK);
+    render_editor(&ui);
+    desktop_tas_action(&ui, TAS_ACTION_HISTORY_RESTORE);
+    CHECK(nes_tas_edit_active(project) && nes_tas_project_revision(project) == history_revision);
+    nes_tas_edit_cancel(project);
+    render_editor(&ui);
+    CHECK(hit_inside_window(&ui, HIT_TAS_ACTION, TAS_ACTION_HISTORY_RESTORE, 0));
+    CHECK(click_action(&ui, TAS_ACTION_HISTORY_RESTORE));
+    CHECK(nes_tas_project_revision(project) == history_revision + 1);
+    CHECK(nes_tas_marker_count(project) == 0 && nes_tas_selection_count(project) == 0);
+    CHECK(nes_tas_project_frame(project, 9)->pads[0] == history_frame.pads[0]);
+    render_editor(&ui);
+    while (editor->history_scroll + TAS_HISTORY_VISIBLE <= history_latest) {
+        CHECK(click_action(&ui, TAS_ACTION_HISTORY_NEWER));
+        render_editor(&ui);
+    }
+    CHECK(click_action(&ui, TAS_ACTION_HISTORY_SELECT_BASE + (unsigned)(history_latest - editor->history_scroll)));
+    render_editor(&ui);
+    CHECK(click_action(&ui, TAS_ACTION_HISTORY_RESTORE));
+    CHECK(nes_tas_marker_count(project) == 1 && nes_tas_selection_contains(project, 9));
+    CHECK(nes_tas_project_frame(project, 9)->pads[0] == changed_history_frame.pads[0]);
+    render_editor(&ui);
+    while (editor->history_scroll > history_before.position) {
+        CHECK(click_action(&ui, TAS_ACTION_HISTORY_OLDER));
+        render_editor(&ui);
+    }
+    CHECK(click_action(&ui,
+                       TAS_ACTION_HISTORY_SELECT_BASE + (unsigned)(history_before.position - editor->history_scroll)));
+    CHECK(nes_tas_marker_set(project, 9, "changed after display") == NES_TAS_OK);
+    history_revision = nes_tas_project_revision(project);
+    desktop_tas_action(&ui, TAS_ACTION_HISTORY_RESTORE);
+    CHECK(nes_tas_project_revision(project) == history_revision && nes_tas_marker_count(project) == 1);
+    render_editor(&ui);
+    while (editor->history_scroll > history_before.position) {
+        CHECK(click_action(&ui, TAS_ACTION_HISTORY_OLDER));
+        render_editor(&ui);
+    }
+    CHECK(click_action(&ui,
+                       TAS_ACTION_HISTORY_SELECT_BASE + (unsigned)(history_before.position - editor->history_scroll)));
+    render_editor(&ui);
+    CHECK(click_action(&ui, TAS_ACTION_HISTORY_RESTORE));
+    CHECK(nes_tas_marker_count(project) == 0 && nes_tas_selection_count(project) == 0);
+    CHECK(nes_tas_project_frame(project, 9)->pads[0] == history_frame.pads[0]);
+    render_editor(&ui);
+    CHECK(click_action(&ui, TAS_ACTION_SIDEBAR_BRANCHES));
+    render_editor(&ui);
     CHECK(click_row(&ui, 1, KMOD_NONE));
     CHECK(click_row(&ui, 3, KMOD_CTRL));
     CHECK(nes_tas_selection_count(project) == 2);
@@ -346,7 +490,8 @@ int test_tas_editor_input_accuracy(void) {
     CHECK(nes_tas_marker_set(project, 20, "later") == NES_TAS_OK);
 
     /* Marker jumps remain navigation in read-only mode and clamp to timeline
-     * boundaries when there is no marker in the requested direction. */
+     * boundaries when there is no marker
+     * in the requested direction. */
     CHECK(nes_tas_session_set_read_only(session, true) == NES_MOVIE_OK);
     uint64_t marker_navigation_revision = nes_tas_project_revision(project);
     editor->cursor = 0;
@@ -373,7 +518,8 @@ int test_tas_editor_input_accuracy(void) {
     CHECK(nes_tas_selection_contains(project, 20));
 
     /* A header click follows FCEUX column-set behavior across a sparse
-     * selection and records the entire change as one undo item. */
+     * selection and records the entire change
+     * as one undo item. */
     desktop_tas_action(&ui, TAS_ACTION_SELECT_NONE);
     CHECK(nes_tas_selection_set(project, 1, true) == NES_TAS_OK);
     CHECK(nes_tas_selection_set(project, 3, true) == NES_TAS_OK);
@@ -397,7 +543,8 @@ int test_tas_editor_input_accuracy(void) {
     nes_tas_edit_cancel(project);
 
     /* Sidebar button selection chooses the Hold/Auto target without editing
-     * movie input. It remains available while editing itself is locked out. */
+     * movie input. It remains available
+     * while editing itself is locked out. */
     uint8_t selector_pad = nes_tas_project_frame(project, 1)->pads[0];
     CHECK(nes_tas_session_set_read_only(session, true) == NES_MOVIE_OK);
     uint64_t selector_revision = nes_tas_project_revision(project);
@@ -419,7 +566,8 @@ int test_tas_editor_input_accuracy(void) {
     CHECK(nes_tas_session_set_recording(session, false, NES_TAS_RECORD_OVERWRITE, 1) == NES_MOVIE_OK);
 
     /* Follow scrolls only after playback advances. It never moves the grid
-     * cursor or selection, and painting suppresses the follow adjustment. */
+     * cursor or selection, and painting
+     * suppresses the follow adjustment. */
     size_t follow_selection = nes_tas_selection_count(project);
     editor->visible_rows = 5;
     editor->scroll = 0;
@@ -446,12 +594,25 @@ int test_tas_editor_input_accuracy(void) {
     desktop_tas_action(&ui, TAS_ACTION_SELECT_NONE);
 
     /* A single drag is one undo item even when the mouse skips intervening rows.
-     * Events use physical window coordinates at fractional and integer scales. */
+     * Events use physical window
+     * coordinates at fractional and integer scales. */
     const float scales[] = {1, 1.5f, 2};
     for (unsigned i = 0; i < sizeof(scales) / sizeof(scales[0]); ++i) {
-        SDL_SetWindowSize(window, (int)(900 * scales[i]), (int)(760 * scales[i]));
-        ui.ui_scale = scales[i];
+        CHECK(resize_editor(&ui, (int)(900 * scales[i]), (int)(760 * scales[i]), scales[i]));
         editor->scroll = 0;
+        render_editor(&ui);
+        CHECK(click_action(&ui, TAS_ACTION_SIDEBAR_HISTORY));
+        render_editor(&ui);
+        while (editor->history_scroll) {
+            CHECK(click_action(&ui, TAS_ACTION_HISTORY_OLDER));
+            render_editor(&ui);
+        }
+        CHECK(hit_inside_window(&ui, HIT_TAS_ACTION, TAS_ACTION_HISTORY_SELECT_BASE + TAS_HISTORY_VISIBLE - 1, 0));
+        CHECK(click_action(&ui, TAS_ACTION_HISTORY_SELECT_BASE));
+        render_editor(&ui);
+        CHECK(hit_inside_window(&ui, HIT_TAS_ACTION, TAS_ACTION_HISTORY_RESTORE, 0));
+        CHECK(click_action(&ui, TAS_ACTION_HISTORY_CURRENT));
+        CHECK(click_action(&ui, TAS_ACTION_SIDEBAR_INPUT));
         render_editor(&ui);
         CHECK(cell_event(&ui, SDL_MOUSEBUTTONDOWN, 1, TAS_GRID_PAD_BASE));
         CHECK(cell_event(&ui, SDL_MOUSEMOTION, 3, TAS_GRID_PAD_BASE));
@@ -484,7 +645,7 @@ int test_tas_editor_input_accuracy(void) {
     CHECK(!desktop_clay_bounds(ui.clay, HIT_NONE, 2048, 0, &(SDL_FRect){0}));
     editor->edit_player = 0;
     editor->column = TAS_GRID_PAD_BASE;
-    SDL_SetWindowSize(window, 900, 760);
+    CHECK(resize_editor(&ui, 900, 760, 1));
 
     render_editor(&ui);
     CHECK(cell_event(&ui, SDL_MOUSEBUTTONDOWN, 1, TAS_GRID_PAD_BASE));
@@ -532,10 +693,10 @@ int test_tas_editor_input_accuracy(void) {
     SDL_SetWindowPosition(tool->window, 113, 127);
     SDL_GetWindowPosition(tool->window, &x, &y);
     CHECK(x == 113 && y == 127);
-    SDL_SetWindowSize(tool->window, 1080, 860);
+    CHECK(resize_editor(tool, 1080, 860, 1));
     render_editor(tool);
     CHECK(tool->tas_editor->visible_rows > rows_before_resize);
-    SDL_SetWindowSize(tool->window, 900, 640);
+    CHECK(resize_editor(tool, 900, 640, 1));
     tool->tas_editor->cursor = 4;
     desktop_tas_action(tool, TAS_ACTION_SIDEBAR_BRANCHES);
     render_editor(tool);
@@ -585,6 +746,8 @@ int test_tas_editor_input_accuracy(void) {
     CHECK(nes_tas_project_frame(project, 0)->pads[0] == (uint8_t)(before_native_edit ^ 1));
     CHECK(frontend_desktop_open_panel(&ui, TAS_PANEL));
     CHECK(ui.tools && !ui.tools->next && nes_tas_session_project(session) == project);
+    CHECK(navigation_gestures(ui.tools) == 0);
+    CHECK(splice_gestures(ui.tools) == 0);
     close.window.windowID = SDL_GetWindowID(ui.tools->window);
     CHECK(frontend_desktop_handle_event(&ui, &close));
     CHECK(!ui.tools && nes_tas_session_active(session));
@@ -621,6 +784,7 @@ cleanup:
     (void)joypad_set_adapter(old_adapter);
     (void)nes_file_remove(path);
     (void)nes_file_remove(lua_path);
-    printf("TAS editor input: keyboard, drag, scale, native window, focus and read-only checks, %d failures\n", failures);
+    printf("TAS editor input: keyboard, drag, scale, native window, focus and read-only checks, %d failures\n",
+           failures);
     return failures;
 }

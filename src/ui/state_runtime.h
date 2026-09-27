@@ -26,13 +26,16 @@ typedef struct {
     size_t protected_path_count;
 } StateRuntime;
 
-void state_runtime_init(StateRuntime *runtime, FrontendSettings *settings,
-                        const char *slot_directory, FrontendExecutionRuntime *execution);
-void state_runtime_set_restored(StateRuntime *runtime, StateRuntimeRestored restored,
-                                void *context);
-void state_runtime_set_protected_paths(StateRuntime *runtime,
-                                       const char *const *paths, size_t count);
+void state_runtime_init(StateRuntime *runtime, FrontendSettings *settings, const char *slot_directory,
+                        FrontendExecutionRuntime *execution);
+void state_runtime_set_restored(StateRuntime *runtime, StateRuntimeRestored restored, void *context);
+void state_runtime_set_protected_paths(StateRuntime *runtime, const char *const *paths, size_t count);
 bool state_runtime_register_ui(StateRuntime *runtime);
 void state_runtime_shutdown(StateRuntime *runtime);
+/* Recovery snapshots use the same audio guard and restore notifications as slots. */
+bool state_runtime_save_path(StateRuntime *runtime, const char *path, char *error, size_t error_size);
+bool state_runtime_load_path(StateRuntime *runtime, const char *path, char *error, size_t error_size);
+bool state_runtime_capture(StateRuntime *runtime, const char *destination, NesStateBlob *blob, char *error,
+                           size_t error_size);
 
 #endif

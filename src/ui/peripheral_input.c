@@ -150,11 +150,11 @@ bool family_basic_key_event(const SDL_KeyboardEvent *event,
     } else if (event->keysym.scancode == SDL_SCANCODE_F11 && down && !event->repeat) {
         finish_tape_capture(record_path);
     } else if (event->keysym.scancode == SDL_SCANCODE_BACKSPACE) {
-        family_basic_set_key(FB_KEY_DELETE, down);
+        family_basic_set_host_key(FB_KEY_DELETE, down, false);
     } else {
         for (unsigned key = 0; key < FB_KEY_COUNT; ++key) {
             if (event->keysym.scancode == keys[key]) {
-                family_basic_set_key((FamilyBasicKey)key, down);
+                family_basic_set_host_key((FamilyBasicKey)key, down, false);
                 break;
             }
         }

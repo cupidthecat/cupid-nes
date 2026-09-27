@@ -671,6 +671,7 @@ void apu_write(uint16_t addr, uint8_t v){
         if (!apu.dmc.irq_enable) apu.dmc.irq_flag = false;
     }
     else if (addr == 0x4011) {
+        nes_overclock_note_pcm_write();
         apu.dmc.output_level = v & 0x7F;
     }
     else if (addr == 0x4012) {
@@ -892,6 +893,14 @@ void apu_step(APU *a, int cpu_cycles){
         }
         if (a->dmc.start_delay && --a->dmc.start_delay == 0)
             dmc_request_buffer(a);
+        /* DMA start/stop handshakes above follow CPU bus cycles even while
+         * synthesis is paused. Keep the pulse divider on the CPU's parity. */
+        if (nes_overclock_extra_active()) {
+            a->cpu_cycle_odd = !a->cpu_cycle_odd;
+            /* The DMC divider resumes on the same CPU get/put phase. */
+            a->dmc.timer ^= 1u;
+            continue;
+        }
         // Half-frame events also clock the quarter-frame units.
         a->cycle_in_seq++;
         unsigned frame_mode = a->five_step ? 1u : 0u;

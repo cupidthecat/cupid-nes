@@ -4,6 +4,7 @@
  * Author: @frankischilling
  *
  * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #ifndef CUPID_NES_STATE_IO_H
 #define CUPID_NES_STATE_IO_H
@@ -41,6 +42,8 @@ bool nes_state_write_bytes(NesStateWriter *writer, const void *data, size_t size
 bool nes_state_write_u8(NesStateWriter *writer, uint8_t value);
 bool nes_state_write_u16(NesStateWriter *writer, uint16_t value);
 bool nes_state_write_u32(NesStateWriter *writer, uint32_t value);
+bool nes_state_write_u16_array(NesStateWriter *writer, const uint16_t *values, size_t count);
+bool nes_state_write_u32_array(NesStateWriter *writer, const uint32_t *values, size_t count);
 bool nes_state_write_u64(NesStateWriter *writer, uint64_t value);
 bool nes_state_write_bool(NesStateWriter *writer, bool value);
 bool nes_state_write_f32(NesStateWriter *writer, float value);

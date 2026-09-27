@@ -1,0 +1,86 @@
+# gtk-desktop.yml - Validate GTK and stage Linux and Windows preview artifacts.
+# Author: @frankischilling
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: GTK desktop and preview packages
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  linux-gtk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install GTK development dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential libgtk-4-dev libsdl2-dev libcurl4-openssl-dev xvfb
+      - name: Build production GTK desktop
+        run: make -j2 GTK=1 BUILD_REVISION=${{ github.sha }} all gtk-smoke
+      - name: Validate GTK settings transactions under Xvfb
+        run: xvfb-run -a env GSK_RENDERER=cairo G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-settings-test
+      - name: Exercise GTK desktop under Xvfb
+        run: xvfb-run -a env GSK_RENDERER=cairo G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke build/gtk-smoke
+      - name: Package Linux preview
+        run: python3 scripts/package-gtk-linux.py --executable cupid-nes --revision '${{ github.sha }}'
+      - name: Verify extracted Linux desktop
+        run: |
+          (cd build/release && sha256sum --check cupid-linux-x64.tar.gz.sha256)
+          mkdir -p build/linux-package-check
+          tar -xzf build/release/cupid-linux-x64.tar.gz -C build/linux-package-check
+          xvfb-run -a env GSK_RENDERER=cairo G_DEBUG=fatal-criticals python3 scripts/check-gtk-launch.py build/linux-package-check/cupid-linux-x64/cupid-nes
+      - name: Upload Linux preview
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cupid-linux-x64-${{ github.sha }}
+          path: |
+            build/release/cupid-linux-x64.tar.gz
+            build/release/cupid-linux-x64.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload GTK window captures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: gtk-window-captures-${{ github.sha }}
+          path: build/gtk-smoke/
+          if-no-files-found: warn
+          retention-days: 14
+  windows-gtk:
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install isolated UCRT64 GTK toolchain
+        shell: pwsh
+        run: ./scripts/setup-gtk-windows.ps1
+      - name: Build GTK preview and run hardware regressions
+        shell: pwsh
+        run: ./scripts/build-gtk-windows.ps1 -Jobs 4 -BuildRevision '${{ github.sha }}' -Test -Package
+      - name: Verify packaged desktop without toolchain PATH
+        shell: pwsh
+        run: ./scripts/check-gtk-package.ps1
+      - name: Upload Windows GTK window captures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: gtk-windows-captures-${{ github.sha }}
+          path: |
+            build/gtk-smoke-windows/
+            build/gtk-native-video/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Upload preview for review
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cupid-windows-x64-${{ github.sha }}
+          path: |
+            build/release/cupid-windows-x64.zip
+            build/release/cupid-windows-x64.zip.sha256
+          if-no-files-found: error
+          retention-days: 14

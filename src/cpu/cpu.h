@@ -123,6 +123,8 @@ void cpu_select_machine(CpuMachineContext *context);
 uint8_t read_mem(uint16_t addr);
 void write_mem(uint16_t addr, uint8_t value);
 uint8_t cpu_peek_internal_ram(uint16_t addr);
+#include "../system/memory_location.h"
+bool cpu_debug_memory_location(uint16_t addr, NesMemoryLocation *out);
 uint8_t cpu_debug_peek(uint16_t addr);
 // Timestamp of the current CPU bus cycle.
 uint64_t cpu_get_bus_cycle(void);

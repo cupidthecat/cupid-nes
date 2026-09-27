@@ -1,3 +1,9 @@
+/*
+ * tas_project_internal.h
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* Internal helpers shared by the TAS project implementation. */
 #ifndef CUPID_TAS_PROJECT_INTERNAL_H
 #define CUPID_TAS_PROJECT_INTERNAL_H
@@ -35,11 +41,20 @@ typedef struct {
 } TasBookmark;
 
 typedef struct {
+    size_t frame;
+    char name[NES_TAS_BOOKMARK_NAME_MAX + 1];
+    char note[NES_TAS_NAVIGATION_NOTE_MAX + 1];
+} TasNavigationBookmark;
+
+typedef struct {
     TasTimeline timeline;
     TasBookmark bookmarks[NES_TAS_BOOKMARK_COUNT];
     int current_branch;
     bool current_branch_changed;
     uint8_t *selection;
+    TasNavigationBookmark *navigation;
+    size_t navigation_count;
+    size_t navigation_capacity;
 } TasProjectState;
 
 typedef struct {
@@ -53,6 +68,7 @@ typedef struct TasHistoryEntry {
     TasProjectState state;
     size_t first_changed;
     size_t bytes;
+    NesTasHistoryView summary;
     struct TasHistoryEntry *next;
 } TasHistoryEntry;
 
@@ -93,6 +109,14 @@ struct NesTasProject {
 
 char *tas_strdup_limit(const char *text, size_t max_length);
 bool tas_frame_equal(const NesFm2Frame *left, const NesFm2Frame *right);
+bool tas_bookmark_equal(const TasBookmark *left, const TasBookmark *right);
+bool tas_navigation_equal(const TasProjectState *left, const TasProjectState *right);
+void tas_navigation_insert(TasProjectState *state, size_t first, size_t count);
+void tas_navigation_delete(TasProjectState *state, size_t first, size_t count);
+void tas_navigation_clamp(TasProjectState *state);
+void tas_history_describe(const TasProjectState *before, const TasProjectState *after,
+                          size_t first_changed, NesTasHistoryView *out);
+void tas_history_describe_all(NesTasProject *project);
 
 void tas_timeline_init(TasTimeline *timeline);
 void tas_timeline_free(TasTimeline *timeline);
@@ -125,6 +149,7 @@ NesTasResult tas_project_resize_delete(NesTasProject *project, size_t first, siz
 /* Allocation fault injection used only by the focused model regression binary. */
 void tas_project_test_fail_alloc_after(size_t successful_allocations);
 void tas_project_test_reset_alloc_fail(void);
+void *tas_edit_malloc(size_t size);
 
 NesTasResult tas_import_fm3_metadata(NesTasProject *project,
                                      const NesFm2Movie *source);

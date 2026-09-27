@@ -10,16 +10,23 @@
 #define NES_CAPTURE_SESSION_H
 
 #include "capture_writer.h"
+#include "capture_overlay.h"
 
 typedef struct {
     uint32_t numerator;
     uint32_t denominator;
 } NesCaptureFrameRate;
 
+typedef enum { NES_CAPTURE_FORMAT_AVI, NES_CAPTURE_FORMAT_GIF } NesCaptureFormat;
+
 typedef struct {
     unsigned sample_rate;
     uint64_t byte_limit;
     bool displayed_output;
+    NesCaptureCodec codec;
+    unsigned compression_level;
+    NesCaptureFormat format;
+    unsigned gif_scale;
 } NesCaptureOptions;
 
 typedef struct {
@@ -42,16 +49,14 @@ typedef struct {
 
 void nes_capture_options_defaults(NesCaptureOptions *options);
 NesCaptureFrameRate nes_capture_frame_rate(void);
-NesFileResult nes_capture_session_start(NesCaptureSession *session, const char *path,
-                                        bool video, const NesCaptureFrame *frame,
-                                        const NesCaptureOptions *options);
+NesFileResult nes_capture_session_start(NesCaptureSession *session, const char *path, bool video,
+                                        const NesCaptureFrame *frame, const NesCaptureOptions *options);
 // Call before running a real frame. A debugger pause may leave that frame open;
 // repeated begin calls retain it until a complete frame is presented.
 bool nes_capture_session_begin_frame(NesCaptureSession *session);
 // Call once per completed real frame, before drawing UI overlays. The frame is
 // the chosen raw or displayed output; it can be NULL for an audio recording.
-NesFileResult nes_capture_session_end_frame(NesCaptureSession *session,
-                                            const NesCaptureFrame *frame);
+NesFileResult nes_capture_session_end_frame(NesCaptureSession *session, const NesCaptureFrame *frame);
 // Stop before an explicit state load, rewind, power cycle, or image switch.
 // Finalization retains all complete frames; partial emulation is not appended.
 NesFileResult nes_capture_session_stop(NesCaptureSession *session);

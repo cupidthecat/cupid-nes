@@ -47,6 +47,10 @@ enum { FAMILY_BASIC_TAPE_SAMPLE_CYCLES = 88 };
 void family_basic_reset(void);
 void family_basic_shutdown(void);
 bool family_basic_set_key(FamilyBasicKey key, bool pressed);
+bool family_basic_key_pressed(FamilyBasicKey key);
+/* Physical and virtual host keys share a matrix without releasing each other. */
+bool family_basic_set_host_key(FamilyBasicKey key, bool pressed, bool virtual_key);
+void family_basic_release_host_keys(void);
 void family_basic_write(uint8_t value, uint64_t cpu_cycles);
 uint8_t family_basic_read(unsigned port, uint64_t cpu_cycles);
 

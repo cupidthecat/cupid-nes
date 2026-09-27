@@ -1,3 +1,9 @@
+/*
+ * tas_project_accuracy.c
+ * Author: @frankischilling
+ * This file is part of Cupid NES Emulator.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 /* TAS project model, CTAS persistence and FM3 metadata regressions. SPDX-License-Identifier: GPL-3.0-or-later */
 #include "../replay/tas_project.h"
 #include "../replay/tas_project_internal.h"
@@ -125,13 +131,20 @@ static uint8_t *fm3_bookmark_changes_byte(NesFm2Movie *movie) {
 }
 
 /* Version 1 encoded the same state but had no branch-divergence byte. This
- * helper downgrades a history-free v2 fixture so the compatibility decoder is
+ * helper downgrades a history-free current fixture so the compatibility decoder is
  * exercised without carrying a binary fixture in the repository. */
 static bool downgrade_history_free_ctas_to_v1(uint8_t *data, size_t *size) {
     if (!data || !size || *size < NES_CTAS_MAGIC_SIZE + 4 + 4 ||
-        memcmp(data, NES_CTAS_MAGIC, NES_CTAS_MAGIC_SIZE) != 0 || test_read_u32le(data + NES_CTAS_MAGIC_SIZE) != 2) {
+        memcmp(data, NES_CTAS_MAGIC, NES_CTAS_MAGIC_SIZE) != 0 || test_read_u32le(data + NES_CTAS_MAGIC_SIZE) != 3) {
         return false;
     }
+    /* These fixtures have no navigation bookmarks or retained history. */
+    if (*size < 44 || test_read_u64le(data + *size - 12) ||
+        test_read_u64le(data + *size - 20) || test_read_u64le(data + *size - 28)) {
+        return false;
+    }
+    memmove(data + *size - 12, data + *size - 4, 4);
+    *size -= 8;
     size_t payload_size = *size - 4;
     size_t offset = NES_CTAS_MAGIC_SIZE + 4 + 8 + 8;
     if (offset > payload_size || payload_size - offset < 13) {
@@ -523,7 +536,7 @@ static bool test_ctas_malformed_strings_and_counts(void) {
     CHECK(nes_tas_project_save(project, path) == NES_TAS_OK);
     CHECK(nes_file_read_all(path, 16u * 1024u * 1024u, &data, &size) == NES_FILE_OK);
     CHECK(size >= 20);
-    size_t undo_count = size - 4 - 16;
+    size_t undo_count = size - 4 - 8 - 16;
     uint64_t claimed = 1000000;
     for (unsigned i = 0; i < 8; ++i) {
         data[undo_count + i] = (uint8_t)(claimed >> (i * 8));
