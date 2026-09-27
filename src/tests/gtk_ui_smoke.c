@@ -58,19 +58,16 @@ static void pump(FrontendDesktopUi *ui) {
     }
 }
 
-static bool thin_control_borders(GtkWidget *widget) {
-    if (GTK_IS_BUTTON(widget) || GTK_IS_ENTRY(widget) || GTK_IS_SPIN_BUTTON(widget) ||
-        GTK_IS_FRAME(widget) || GTK_IS_NOTEBOOK(widget) || GTK_IS_DROP_DOWN(widget)) {
-        GtkBorder border;
-        gtk_style_context_get_border(gtk_widget_get_style_context(widget), &border);
-        if (border.left > 1 || border.right > 1 || border.top > 1 || border.bottom > 1) {
-            fprintf(stderr, "Thick control border: %s (%d,%d,%d,%d)\n", G_OBJECT_TYPE_NAME(widget),
-                    border.left, border.right, border.top, border.bottom);
-            return false;
-        }
+static bool borderless_controls(GtkWidget *widget) {
+    GtkBorder border;
+    gtk_style_context_get_border(gtk_widget_get_style_context(widget), &border);
+    if (border.left || border.right || border.top || border.bottom) {
+        fprintf(stderr, "Unexpected control border: %s (%d,%d,%d,%d)\n", G_OBJECT_TYPE_NAME(widget),
+                border.left, border.right, border.top, border.bottom);
+        return false;
     }
     for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child)) {
-        if (!thin_control_borders(child)) {
+        if (!borderless_controls(child)) {
             return false;
         }
     }
@@ -78,7 +75,7 @@ static bool thin_control_borders(GtkWidget *widget) {
 }
 
 static bool capture(GtkWidget *widget, const char *path) {
-    if (!thin_control_borders(widget)) {
+    if (!borderless_controls(widget)) {
         return false;
     }
     int w = gtk_widget_get_width(widget), h = gtk_widget_get_height(widget);
@@ -397,13 +394,9 @@ static GtkEventController *find_controller(GtkWidget *widget, const char *name) 
     return found;
 }
 
-static bool click_cell(FrontendDesktopUi *ui, GtkWidget *tree, size_t frame, GtkTreeViewColumn *column) {
-    GtkTreePath *path = gtk_tree_path_new_from_indices((int)frame, -1);
-    gtk_tree_view_scroll_to_cell(GTK_TREE_VIEW(tree), path, column, TRUE, 0, 0);
-    pump(ui);
+static bool cell_position(GtkWidget *tree, GtkTreePath *path, GtkTreeViewColumn *column, int *x, int *y) {
     GdkRectangle area;
     gtk_tree_view_get_cell_area(GTK_TREE_VIEW(tree), path, column, &area);
-    gtk_tree_path_free(path);
     /* Column allocations can lag a scroll adjustment until the next layout.
      * Build the bin-window position from widths, as GTK's hit test does. */
     int column_x = 0;
@@ -417,19 +410,41 @@ static bool click_cell(FrontendDesktopUi *ui, GtkWidget *tree, size_t frame, Gtk
         }
     }
     g_list_free(columns);
-    int x, y;
     gtk_tree_view_convert_bin_window_to_widget_coords(GTK_TREE_VIEW(tree),
                                                      column_x + gtk_tree_view_column_get_width(column) / 2,
-                                                     area.y + area.height / 2, &x, &y);
-    CHECK(x >= 0 && x < gtk_widget_get_width(tree));
-    CHECK(y >= 0 && y < gtk_widget_get_height(tree));
+                                                     area.y + area.height / 2, x, y);
+    if (area.height <= 0 || *x < 0 || *x >= gtk_widget_get_width(tree) ||
+        *y < 0 || *y >= gtk_widget_get_height(tree)) {
+        return false;
+    }
     int bx, by;
-    gtk_tree_view_convert_widget_to_bin_window_coords(GTK_TREE_VIEW(tree), x, y, &bx, &by);
+    gtk_tree_view_convert_widget_to_bin_window_coords(GTK_TREE_VIEW(tree), *x, *y, &bx, &by);
     GtkTreePath *hit = NULL;
     GtkTreeViewColumn *hit_column = NULL;
-    CHECK(gtk_tree_view_get_path_at_pos(GTK_TREE_VIEW(tree), bx, by, &hit, &hit_column, NULL, NULL));
-    bool target = gtk_tree_path_get_indices(hit)[0] == (int)frame && hit_column == column;
+    if (!gtk_tree_view_get_path_at_pos(GTK_TREE_VIEW(tree), bx, by, &hit, &hit_column, NULL, NULL)) {
+        return false;
+    }
+    bool target = gtk_tree_path_compare(hit, path) == 0 && hit_column == column;
     gtk_tree_path_free(hit);
+    return target;
+}
+
+static bool click_cell(FrontendDesktopUi *ui, GtkWidget *tree, size_t frame, GtkTreeViewColumn *column) {
+    GtkTreePath *path = gtk_tree_path_new_from_indices((int)frame, -1);
+    int x = 0, y = 0;
+    bool target = false;
+    /* GTK can defer scrolling while it measures newly visible rows. Wait for
+     * the requested cell, never retry the input mutation itself. */
+    for (unsigned attempt = 0; attempt < 25 && !target; ++attempt) {
+        gtk_tree_view_scroll_to_cell(GTK_TREE_VIEW(tree), path, column, TRUE, 0, 0);
+        pump(ui);
+        target = cell_position(tree, path, column, &x, &y);
+    }
+    gtk_tree_path_free(path);
+    if (!target) {
+        fprintf(stderr, "TAS frame %zu did not become visible: (%d,%d), viewport %dx%d\n",
+                frame, x, y, gtk_widget_get_width(tree), gtk_widget_get_height(tree));
+    }
     CHECK(target);
     GtkEventController *click = find_controller(tree, "cupid-tas-input");
     CHECK(click);

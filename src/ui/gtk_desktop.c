@@ -690,7 +690,7 @@ bool cupid_gtk_init(FrontendDesktopUi *ui) {
     /* Recent Win32 GTK renderers require DirectComposition for GPU output.
      * Without this opt-in they silently fall back to scaling with Cairo.
      * Keep explicit diagnostic overrides and GTK's device-failure fallback. */
-    if (gtk_check_version(4, 24, 0) == NULL) {
+    if (gtk_check_version(4, 24, 0) == NULL && g_strcmp0(g_getenv("GSK_RENDERER"), "cairo") != 0) {
         g_setenv("GDK_DEBUG", "dcomp", FALSE);
     }
 #endif
@@ -773,24 +773,23 @@ bool cupid_gtk_init(FrontendDesktopUi *ui) {
         css,
         ".game-view { background: #08090b; } .monospace { font-family: monospace; }"
         ".cupid-desktop { font-size: 12px; }"
+        ".cupid-desktop, .cupid-desktop * { border-style: none; box-shadow: none; }"
         ".cupid-desktop button { min-height: 22px; padding: 3px 8px; border-radius: 3px; }"
-        ".cupid-desktop button, .cupid-desktop entry, .cupid-desktop spinbutton,"
-        ".cupid-desktop checkbutton check, .cupid-desktop checkbutton radio {"
-        " border: 1px solid alpha(currentColor, 0.22); box-shadow: none; }"
-        ".cupid-desktop dropdown, .cupid-desktop spinbutton entry { border: none; box-shadow: none; }"
-        ".cupid-desktop button:focus-visible, .cupid-desktop entry:focus-within,"
-        ".cupid-desktop spinbutton:focus-within { outline: 1px solid @theme_selected_bg_color; outline-offset: -2px; }"
+        ".cupid-desktop button, .cupid-desktop entry, .cupid-desktop spinbutton {"
+        " background-image: none; background-color: alpha(currentColor, 0.07); }"
+        ".cupid-desktop button:hover { background-color: alpha(currentColor, 0.12); }"
+        ".cupid-desktop button:checked, .cupid-desktop notebook > header tab:checked {"
+        " background-color: alpha(@theme_selected_bg_color, 0.22); }"
+        ".cupid-desktop spinbutton entry { background-color: transparent; }"
+        ".cupid-desktop *:focus-visible { outline: 1px solid @theme_selected_bg_color; outline-offset: -2px; }"
         ".cupid-desktop entry { min-height: 24px; padding: 2px 6px; border-radius: 2px; }"
         ".cupid-desktop dropdown button { min-height: 24px; }"
         ".cupid-desktop notebook > header tab { min-height: 24px; padding: 3px 9px; }"
-        ".cupid-desktop notebook { border: none; box-shadow: none; }"
-        ".cupid-desktop notebook > header { border-color: alpha(currentColor, 0.18); box-shadow: none; }"
-        ".cupid-desktop scrolledwindow.frame { border: 1px solid alpha(currentColor, 0.18); box-shadow: none; }"
-        ".cupid-desktop frame { border: none; border-radius: 2px; box-shadow: none; }"
+        ".cupid-desktop frame { border-radius: 2px; }"
         ".cupid-desktop frame > label { margin: 2px 8px; font-weight: bold; }"
         ".cupid-desktop flowboxchild { padding: 0; }"
         ".cupid-desktop .toolbar button { padding: 4px 7px; }"
-        ".tool-status { padding: 4px 8px; border-top: 1px solid alpha(currentColor, 0.18); }",
+        ".tool-status { padding: 4px 8px; }",
         -1);
     gtk_style_context_add_provider_for_display(gtk_widget_get_display(d->window), GTK_STYLE_PROVIDER(css),
                                                GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
