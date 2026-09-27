@@ -99,13 +99,17 @@ static bool capture(GtkWidget *widget, const char *path) {
 }
 
 static bool capture_ready(FrontendDesktopUi *ui, GtkWidget *widget, const char *path) {
-    for (unsigned attempt = 0; attempt < 10; ++attempt) {
-        gtk_widget_queue_draw(widget);
-        pump(ui);
-        if (gtk_widget_get_mapped(widget) && capture(widget, path)) {
-            return true;
-        }
-    }
+    frontend_desktop_render(ui, 256, 240, "UI regression fixture", "NTSC", "Paused");
+    gtk_widget_queue_draw(widget);
+    /* Let the requested frame finish. Repeated render calls can invalidate
+     * its paintable again before the frame clock has produced a snapshot. */
+    gint64 deadline = g_get_monotonic_time() + 2000000;
+    do {
+        for (unsigned i = 0; i < 64 && g_main_context_pending(NULL); ++i)
+            g_main_context_iteration(NULL, FALSE);
+        if (gtk_widget_get_mapped(widget) && capture(widget, path)) return true;
+        SDL_Delay(10);
+    } while (g_get_monotonic_time() < deadline);
     fprintf(stderr, "Window capture failed: %s\n", path);
     return false;
 }
@@ -850,16 +854,7 @@ int main(int argc, char **argv) {
     gtk_window_present(GTK_WINDOW(ui.gtk->window));
     pump(&ui);
     g_snprintf(path, sizeof(path), "%s/desktop.png", out);
-    bool desktop_captured = false;
-    for (unsigned attempt = 0; attempt < 10 && !desktop_captured; ++attempt) {
-        gtk_widget_queue_draw(ui.gtk->window);
-        pump(&ui);
-        desktop_captured = capture(ui.gtk->window, path);
-    }
-    if (!desktop_captured) {
-        fprintf(stderr, "Main desktop capture failed\n");
-    }
-    ok = desktop_captured && ok;
+    ok = capture_ready(&ui, ui.gtk->window, path) && ok;
     frontend_desktop_shutdown(&ui);
     frontend_history_destroy(history);
     frontend_timing_unregister();
