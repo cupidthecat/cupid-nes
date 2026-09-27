@@ -6,9 +6,13 @@
 #include "debug_analysis.h"
 #include "debug_catalog.h"
 #include "opcodes.h"
+#include "../apu/apu.h"
+#include "../apu/epsm.h"
+#include "../rom/mapper.h"
 #include "../rom/rom.h"
 #include "../ppu/ppu.h"
 #include "../system/execution_policy.h"
+#include "../system/vs_system.h"
 #include "../util/file_io.h"
 #include "../util/sha1.h"
 #include <inttypes.h>
@@ -83,6 +87,11 @@ void debug_analysis_discontinuity(void) {
     analysis.pending = false;
     analysis.depth = 0;
     debug_events_clear();
+    bool mapper_irq = cart_irq_pending();
+    analysis.nmi = ppu.nmi_out;
+    analysis.mapper_irq = mapper_irq;
+    analysis.irq = (!cart_nsf_active() && apu_irq_pending(apu_active_state())) || mapper_irq || epsm_irq_pending()
+        || vs_external_irq_pending();
 }
 
 void debug_cdl_enable(bool enabled) {

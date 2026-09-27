@@ -10,6 +10,7 @@
 #include "../ppu/ppu.h"
 #include "../rom/rom.h"
 #include "../rom/mapper.h"
+#include "../state/state.h"
 #include "../system/execution_policy.h"
 #include "../system/timing.h"
 #include "../ui/debug_tools_frontend.h"
@@ -285,6 +286,50 @@ static int event_and_text_capture(void) {
     return 0;
 }
 
+static int restored_event_baseline(void) {
+    CHECK(machine(false) == 0);
+    debug_events_enable(false);
+    debug_events_clear();
+
+    ppu.startup_writes_restricted = false;
+    ppu.status |= 0x80;
+    ppu_reg_write_cpu(0x2000, 0x80, 0);
+    CHECK(ppu.nmi_out);
+    cpu_soft_reset(&cpu);
+    CHECK(ppu.nmi_out);
+    apu.frame_irq_source = true;
+    apu.irq_inhibit = false;
+    NesStateBlob asserted = {0};
+    CHECK(nes_state_capture(&asserted) == NES_STATE_OK);
+
+    ppu_reg_write_cpu(0x2000, 0, 0);
+    apu.frame_irq_source = false;
+    CHECK(cpu_step(&cpu) > 0);
+    debug_events_enable(true);
+    debug_events_clear();
+    CHECK(nes_state_restore(asserted.data, asserted.size) == NES_STATE_OK);
+    nes_state_blob_free(&asserted);
+    CHECK(ppu.nmi_out && apu_irq_pending(&apu));
+    debugger_reset_session();
+
+    uint64_t frame = ppu.frame_count;
+    CHECK(cpu_step(&cpu) > 0);
+    ppu.frame_count = frame + 1;
+    debug_analysis_event(DEBUG_EVENT_READ, 0, 0);
+    CHECK(debug_events_count(DEBUG_EVENT_NMI) == 0 && debug_events_count(DEBUG_EVENT_IRQ) == 0);
+
+    ppu_reg_write_cpu(0x2000, 0, 0);
+    apu.frame_irq_source = false;
+    CHECK(cpu_step(&cpu) > 0);
+    ++ppu.frame_count;
+    debug_analysis_event(DEBUG_EVENT_READ, 0, 0);
+    CHECK(debug_events_count(DEBUG_EVENT_NMI) == 1 && debug_events_count(DEBUG_EVENT_IRQ) == 1);
+    DebugNesEvent edge;
+    CHECK(debug_events_at(0, DEBUG_EVENT_NMI, &edge) && edge.value == 0);
+    CHECK(debug_events_at(0, DEBUG_EVENT_IRQ, &edge) && edge.value == 0);
+    return 0;
+}
+
 static uint8_t observed_memory[65536];
 static unsigned observed_reads, observed_writes;
 
@@ -368,8 +413,8 @@ static int native_panels(void) {
 int run_debug_tools_accuracy_tests(void) {
     checks = 0;
     int failures = uxrom_physical_mapping() + coverage_profile_stack_trace() +
-                   bank_identity_symbols_source_references() + event_and_text_capture() + observational_bus() +
-                   native_panels();
+                   bank_identity_symbols_source_references() + event_and_text_capture() + restored_event_baseline() +
+                   observational_bus() + native_panels();
     debugger_shutdown();
     (void)unload_rom();
     printf("Debugger tools: %s (%u checks, %d failing groups)\n", failures ? "FAIL" : "PASS", checks, failures);
