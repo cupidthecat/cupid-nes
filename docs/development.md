@@ -255,9 +255,12 @@ determine click positions so pending layout work cannot select a neighboring cel
 Window captures also check that widgets have no surrounding borders. Keyboard
 focus uses a colored outline, and selected tabs use a background highlight.
 The Windows build script uses Cairo for automated widget checks, matching Linux
-CI and avoiding dependence on the runner's graphics driver. An explicit Cairo
-renderer does not automatically enable DirectComposition. Use the benchmark below
-to check the default accelerated renderer on a desktop display.
+CI and avoiding dependence on the runner's graphics driver. Cupid leaves
+compositor selection to GTK and preserves explicit environment overrides.
+The startup check rejects changes to `GDK_DEBUG`. Also run the fixture without
+`GSK_RENDERER` to exercise the default renderer on a desktop display. Widget
+snapshots do not capture the native window's transparent margins; inspect those
+on screen when checking for black borders.
 
 Build the GTK smoke executable with `make GTK=1 gtk-smoke`, then run:
 

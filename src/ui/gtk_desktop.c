@@ -686,14 +686,8 @@ static gboolean dropped(GtkDropTarget *target, const GValue *value, double x, do
 
 bool cupid_gtk_init(FrontendDesktopUi *ui) {
     const char *driver = SDL_GetCurrentVideoDriver();
-#ifdef _WIN32
-    /* Recent Win32 GTK renderers require DirectComposition for GPU output.
-     * Without this opt-in they silently fall back to scaling with Cairo.
-     * Keep explicit diagnostic overrides and GTK's device-failure fallback. */
-    if (gtk_check_version(4, 24, 0) == NULL && g_strcmp0(g_getenv("GSK_RENDERER"), "cairo") != 0) {
-        g_setenv("GDK_DEBUG", "dcomp", FALSE);
-    }
-#endif
+    /* Leave compositor selection to GTK. Its experimental Win32 DirectComposition
+     * path can render transparent window margins black with GL and Vulkan. */
     if (!ui->window || !driver || !strcmp(driver, "dummy") || !gtk_init_check()) {
         return false;
     }

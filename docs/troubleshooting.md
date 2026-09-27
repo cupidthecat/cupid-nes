@@ -47,11 +47,15 @@ Use separate option values, such as `--port2 zapper`. Unknown switches and extra
 
 Open Game Information and check the video renderer. `GskCairoRenderer` scales
 the game in software; its cost grows with window size. `GskGLRenderer` uses the
-GPU. On Windows with GTK 4.24 or newer, Cupid enables DirectComposition before
-opening the display so GTK can select an accelerated renderer. GTK can still
-fall back to software if the graphics driver cannot initialize it.
+GPU. Cupid lets GTK choose its supported renderer and compositor. GTK 4.24
+on Windows may select software rendering by default. Its experimental
+DirectComposition path can produce black borders around windows with GL or
+Vulkan, so Cupid does not enable it automatically.
 
 Existing `GDK_DEBUG` and `GSK_RENDERER` environment overrides are preserved.
+If windows have thick black outer margins, remove `dcomp` from `GDK_DEBUG`
+and restart Cupid. This affects the native window surface, so changing widget
+border styles does not fix it.
 Remove an old `GSK_RENDERER=cairo` override when testing normal performance.
 If accelerated output causes a driver problem, start with `GSK_RENDERER=cairo`
 for a software fallback. Restart Cupid after changing these variables.

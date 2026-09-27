@@ -606,7 +606,8 @@ int main(int argc, char **argv) {
     if (argc == 3 && !strcmp(argv[1], "--benchmark")) {
         return benchmark_gtk(argv[2]);
     }
-    const char *out = argc > 1 ? argv[1] : "build/gtk-smoke";
+    bool startup_check = argc == 2 && !strcmp(argv[1], "--startup-check");
+    const char *out = startup_check ? "build/gtk-startup-check" : argc > 1 ? argv[1] : "build/gtk-smoke";
     g_mkdir_with_parents(out, 0755);
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_TIMER) != 0) {
         return 1;
@@ -648,11 +649,28 @@ int main(int argc, char **argv) {
     SDL_Window *window = SDL_CreateWindow("GTK rendering fixture", 0, 0, 900, 700, SDL_WINDOW_HIDDEN);
     SDL_Renderer *renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
     FrontendDesktopUi ui;
+    char *debug_override = g_strdup(g_getenv("GDK_DEBUG"));
     frontend_desktop_init(&ui, window, renderer, &settings, &execution, NULL, NULL);
+    bool compositor_unchanged = g_strcmp0(debug_override, g_getenv("GDK_DEBUG")) == 0;
+    g_free(debug_override);
+    if (!compositor_unchanged) {
+        fprintf(stderr, "Desktop startup changed the GTK compositor override\n");
+        return 1;
+    }
     ui.native_windows = true;
     if (!ui.gtk || ui.clay) {
         fprintf(stderr, "GTK host was not selected\n");
         return 1;
+    }
+    if (startup_check) {
+        frontend_desktop_shutdown(&ui);
+        frontend_execution_shutdown(&execution);
+        unload_rom();
+        SDL_DestroyRenderer(renderer);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        puts("GTK default compositor selection: PASS");
+        return 0;
     }
     g_object_set(gtk_settings_get_default(), "gtk-enable-animations", FALSE, NULL);
     FrontendVideoRuntime video = {0};
