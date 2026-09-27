@@ -58,7 +58,29 @@ static void pump(FrontendDesktopUi *ui) {
     }
 }
 
+static bool thin_control_borders(GtkWidget *widget) {
+    if (GTK_IS_BUTTON(widget) || GTK_IS_ENTRY(widget) || GTK_IS_SPIN_BUTTON(widget) ||
+        GTK_IS_FRAME(widget) || GTK_IS_NOTEBOOK(widget) || GTK_IS_DROP_DOWN(widget)) {
+        GtkBorder border;
+        gtk_style_context_get_border(gtk_widget_get_style_context(widget), &border);
+        if (border.left > 1 || border.right > 1 || border.top > 1 || border.bottom > 1) {
+            fprintf(stderr, "Thick control border: %s (%d,%d,%d,%d)\n", G_OBJECT_TYPE_NAME(widget),
+                    border.left, border.right, border.top, border.bottom);
+            return false;
+        }
+    }
+    for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child)) {
+        if (!thin_control_borders(child)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static bool capture(GtkWidget *widget, const char *path) {
+    if (!thin_control_borders(widget)) {
+        return false;
+    }
     int w = gtk_widget_get_width(widget), h = gtk_widget_get_height(widget);
     if (w <= 0 || h <= 0) {
         return false;
@@ -382,14 +404,37 @@ static bool click_cell(FrontendDesktopUi *ui, GtkWidget *tree, size_t frame, Gtk
     GdkRectangle area;
     gtk_tree_view_get_cell_area(GTK_TREE_VIEW(tree), path, column, &area);
     gtk_tree_path_free(path);
-    int ignored, y;
-    /* GTK 4 reports cell-area x already adjusted for horizontal scrolling.
-     * Only the vertical header offset needs conversion for controller signals. */
-    gtk_tree_view_convert_bin_window_to_widget_coords(GTK_TREE_VIEW(tree), 0, area.y + area.height / 2, &ignored, &y);
+    /* Column allocations can lag a scroll adjustment until the next layout.
+     * Build the bin-window position from widths, as GTK's hit test does. */
+    int column_x = 0;
+    GList *columns = gtk_tree_view_get_columns(GTK_TREE_VIEW(tree));
+    for (GList *item = columns; item; item = item->next) {
+        if (item->data == column) {
+            break;
+        }
+        if (gtk_tree_view_column_get_visible(item->data)) {
+            column_x += gtk_tree_view_column_get_width(item->data);
+        }
+    }
+    g_list_free(columns);
+    int x, y;
+    gtk_tree_view_convert_bin_window_to_widget_coords(GTK_TREE_VIEW(tree),
+                                                     column_x + gtk_tree_view_column_get_width(column) / 2,
+                                                     area.y + area.height / 2, &x, &y);
+    CHECK(x >= 0 && x < gtk_widget_get_width(tree));
+    CHECK(y >= 0 && y < gtk_widget_get_height(tree));
+    int bx, by;
+    gtk_tree_view_convert_widget_to_bin_window_coords(GTK_TREE_VIEW(tree), x, y, &bx, &by);
+    GtkTreePath *hit = NULL;
+    GtkTreeViewColumn *hit_column = NULL;
+    CHECK(gtk_tree_view_get_path_at_pos(GTK_TREE_VIEW(tree), bx, by, &hit, &hit_column, NULL, NULL));
+    bool target = gtk_tree_path_get_indices(hit)[0] == (int)frame && hit_column == column;
+    gtk_tree_path_free(hit);
+    CHECK(target);
     GtkEventController *click = find_controller(tree, "cupid-tas-input");
     CHECK(click);
-    g_signal_emit_by_name(click, "pressed", 1, (double)(area.x + area.width / 2), (double)y);
-    g_signal_emit_by_name(click, "released", 1, (double)(area.x + area.width / 2), (double)y);
+    g_signal_emit_by_name(click, "pressed", 1, (double)x, (double)y);
+    g_signal_emit_by_name(click, "released", 1, (double)x, (double)y);
     g_object_unref(click);
     return true;
 }
@@ -451,6 +496,16 @@ static bool tas_interactions(FrontendDesktopUi *ui) {
     CHECK(nes_tas_project_frame(project, 0)->pads[0] == before);
     CHECK(tas_action(tool, TAS_ACTION_REDO));
     CHECK(nes_tas_project_frame(project, 0)->pads[0] == (before ^ 0x80));
+    tool->ui.tas_editor->follow_playback = false;
+    const size_t distant_frames[] = {100, 9999};
+    for (size_t i = 0; i < G_N_ELEMENTS(distant_frames); ++i) {
+        size_t frame = distant_frames[i];
+        uint8_t previous = nes_tas_project_frame(project, frame)->pads[0];
+        CHECK(click_cell(ui, tree, frame, input));
+        CHECK(nes_tas_project_frame(project, frame)->pads[0] == (previous ^ 0x80));
+        CHECK(tas_action(tool, TAS_ACTION_UNDO));
+        CHECK(nes_tas_project_frame(project, frame)->pads[0] == previous);
+    }
     CHECK(click_cell(ui, tree, 0, gtk_tree_view_get_column(GTK_TREE_VIEW(tree), 0)));
     GtkEventController *keys = find_controller(tree, "cupid-tas-keys");
     CHECK(keys);
@@ -584,6 +639,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "GTK host was not selected\n");
         return 1;
     }
+    g_object_set(gtk_settings_get_default(), "gtk-enable-animations", FALSE, NULL);
     FrontendVideoRuntime video = {0};
     video.settings = &settings;
     video.frame.pixels = framebuffer;

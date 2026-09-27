@@ -248,6 +248,12 @@ Do not lower pass requirements, substitute expected output, add cartridge-specif
 
 ## Desktop performance
 
+The GTK interaction fixture disables animations and checks the target row and
+column before sending TAS clicks. It exercises horizontal scrolling, distant
+frames, undo, and read-only input. Column widths and the current scroll adjustment
+determine click positions so pending layout work cannot select a neighboring cell.
+Window captures also check that control borders stay at most one pixel wide.
+
 Build the GTK smoke executable with `make GTK=1 gtk-smoke`, then run:
 
 ```sh
