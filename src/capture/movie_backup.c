@@ -46,19 +46,29 @@ NesFileResult nes_movie_backup_path(const char *path, const NesMovieBackupOption
     return length >= 0 && (size_t)length < capacity ? NES_FILE_OK : NES_FILE_TOO_LARGE;
 }
 
+static NesFileResult stage_copy(const char *path, const uint8_t *bytes, size_t size, NesFileTransaction **copy) {
+    NesFileResult result = nes_file_transaction_begin(path, size, copy);
+    if (result == NES_FILE_OK) {
+        result = nes_file_transaction_write(*copy, bytes, size);
+    }
+    return result;
+}
+
 static NesFileResult rotate(const char *path, const NesMovieBackupOptions *options, const uint8_t *previous,
                             size_t previous_size, bool *prune) {
     char source[NES_FILE_PATH_LIMIT], destination[NES_FILE_PATH_LIMIT];
-    /* Copy oldest first. Every slot is replaced atomically, and the active
-     * destination is untouched until all required recovery copies exist. */
+    NesFileTransaction *copies[NES_MOVIE_BACKUP_MAX + 1] = {NULL};
+    NesFileResult result = NES_FILE_OK;
+    /* Stage every copy before replacing history, so a failed source read or
+     * temporary-file write leaves all existing generations available. */
     for (unsigned i = options->retained; i > 1; --i) {
-        NesFileResult result = nes_movie_backup_path(path, options, i - 1u, source, sizeof(source));
+        result = nes_movie_backup_path(path, options, i - 1u, source, sizeof(source));
         if (result != NES_FILE_OK) {
-            return result;
+            goto cleanup;
         }
         result = nes_movie_backup_path(path, options, i, destination, sizeof(destination));
         if (result != NES_FILE_OK) {
-            return result;
+            goto cleanup;
         }
         uint8_t *bytes = NULL;
         size_t size = 0;
@@ -68,16 +78,25 @@ static NesFileResult rotate(const char *path, const NesMovieBackupOptions *optio
             continue;
         }
         if (result == NES_FILE_OK) {
-            result = nes_file_write_atomic(destination, bytes, size);
+            result = stage_copy(destination, bytes, size, &copies[i]);
         }
         free(bytes);
         if (result != NES_FILE_OK) {
-            return result;
+            goto cleanup;
         }
     }
-    NesFileResult result = nes_movie_backup_path(path, options, 1, destination, sizeof(destination));
+    result = nes_movie_backup_path(path, options, 1, destination, sizeof(destination));
     if (result == NES_FILE_OK) {
-        result = nes_file_write_atomic(destination, previous, previous_size);
+        result = stage_copy(destination, previous, previous_size, &copies[1]);
+    }
+    for (unsigned i = options->retained; i && result == NES_FILE_OK; --i) {
+        if (copies[i]) {
+            result = nes_file_transaction_commit(&copies[i]);
+        }
+    }
+cleanup:
+    for (unsigned i = 1; i <= options->retained; ++i) {
+        nes_file_transaction_abort(&copies[i]);
     }
     return result;
 }

@@ -240,6 +240,8 @@ static bool save_settings(FrontendDesktopUi *ui) {
         previous.input = (NesInputConfiguration){
             joypad_adapter(), {joypad_port_device(0), joypad_port_device(1)}, joypad_expansion_device()};
         previous.saved_input_overrides = joypad_configuration_overrides();
+        game_config_preserve_input_overrides(ui->sessions ? ui->sessions->game_config : NULL, &ui->staged, &previous);
+        core_settings = ui->staged;
         /* Preserve this game's automatic devices without saving them as defaults. */
         uint8_t overrides = core_settings.saved_input_overrides;
         if (!(overrides & NES_INPUT_OVERRIDE_ADAPTER)) {

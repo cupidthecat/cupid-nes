@@ -6,6 +6,7 @@
 #include "../ui/lifecycle_frontend.h"
 #include "../ui/recovery_store.h"
 #include "../ui/game_config.h"
+#include "../ui/desktop_internal.h"
 #include "../ui/image_open.h"
 #include "../ui/frontend_commands.h"
 #include "../ui/frontend_panels.h"
@@ -345,10 +346,36 @@ static int configuration_activation(const char *directory) {
     CHECK(game_config_save_globals(configuration, settings_path, &effective, &report));
     CHECK(global.region_mode == NES_REGION_MODE_AUTO && global.audio_mix.master_volume == 100);
     CHECK(global.saved_input_overrides == 0);
+    for (unsigned reset = 0; reset < 2; ++reset) {
+        FrontendDesktopUi ui = {.settings = &effective,
+                                .staged = effective,
+                                .sessions = &actions,
+                                .settings_path = settings_path,
+                                .settings_category = 4};
+        if (reset) {
+            /* A saved game override remains active until the next image load. */
+            game_config_reset(&configuration->config, (size_t)game_config_find_field("port2"));
+            desktop_settings_button(&ui, 4);
+            desktop_settings_button(&ui, 4);
+        } else {
+            desktop_settings_button(&ui, 3);
+        }
+        CHECK(ui.staged.saved_input_overrides == 0);
+        desktop_settings_button(&ui, 0);
+        CHECK(joypad_port_device(1) == NES_PORT_ZAPPER);
+        CHECK(joypad_configuration_overrides() & NES_INPUT_OVERRIDE_PORT2);
+        CHECK(effective.input.ports[1] == NES_PORT_ZAPPER);
+        CHECK(effective.saved_input_overrides & NES_INPUT_OVERRIDE_PORT2);
+        CHECK(global.saved_input_overrides == 0);
+        CHECK(frontend_session_action_reload(&actions, error, sizeof(error)));
+        CHECK(joypad_port_device(1) == NES_PORT_ZAPPER);
+        CHECK(joypad_configuration_overrides() & NES_INPUT_OVERRIDE_PORT2);
+    }
     CHECK(frontend_session_action_open_path(&actions, other, error, sizeof(error)));
     CHECK(recovery_game_key(&session, other_key) && strcmp(key, other_key));
     CHECK(nes_region_mode() == NES_REGION_MODE_AUTO && effective.audio_mix.master_volume == 100);
     CHECK(joypad_port_device(0) == NES_PORT_SNES_CONTROLLER && joypad_port_device(1) == NES_PORT_SNES_CONTROLLER);
+    CHECK(configuration->applied_input_overrides == 0);
     CHECK(game_config_set(&configuration->config, (size_t)game_config_find_field("fds_bios"), "missing-firmware.bin"));
     CHECK(game_config_save(directory, other_key, &configuration->config, error, sizeof(error)));
     CHECK(frontend_session_action_open_path(&actions, image, error, sizeof(error)));
@@ -356,6 +383,7 @@ static int configuration_activation(const char *directory) {
     CHECK(!frontend_session_action_open_path(&actions, other, error, sizeof(error)));
     CHECK(session.active && !strcmp(session.current.path, image) && read_mem(23) == 73);
     CHECK(effective.region_mode == NES_REGION_MODE_PAL && !strcmp(configuration->key, key));
+    CHECK(configuration->applied_input_overrides == NES_INPUT_OVERRIDE_PORT2);
     CHECK(game_config_register_ui(configuration, &global, directory));
     CHECK(nes_execution_set_policy(NES_EXECUTION_MOVIE_PLAYBACK));
     CHECK(!frontend_panel_action(GAME_CONFIG_PANEL, 4, NULL, 0, error, sizeof(error)));

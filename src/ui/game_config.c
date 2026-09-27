@@ -323,7 +323,13 @@ bool game_config_prepare(GameConfigFrontend *frontend, const FrontendImageResult
               game_config_resolve(frontend->global, config, frontend->cli_fields, effective, cheat_path, cheat_capacity,
                                   error, error_size);
     if (ok) {
+        frontend->applied_input_overrides = 0;
         for (size_t i = 0; i < game_config_field_count(); ++i) {
+            uint64_t bit = UINT64_C(1) << i;
+            if ((config->present & bit) && !(frontend->cli_fields & bit) &&
+                !(frontend->global->cli_overrides & fields[i].cli)) {
+                frontend->applied_input_overrides |= input_override(&fields[i]);
+            }
             if ((frontend->cli_fields & (UINT64_C(1) << i)) && fields[i].type != FIELD_CHEAT) {
                 memcpy((char *)effective + fields[i].offset, (char *)&frontend->launch + fields[i].offset,
                        fields[i].size);
@@ -451,6 +457,20 @@ bool game_config_init(GameConfigFrontend *r, FrontendSettings *global, const cha
     return true;
 }
 
+void game_config_preserve_input_overrides(const GameConfigFrontend *r, FrontendSettings *settings,
+                                          const FrontendSettings *previous) {
+    if (!r || !settings || !previous) {
+        return;
+    }
+    uint8_t restore = r->applied_input_overrides & (uint8_t)~settings->saved_input_overrides;
+    for (size_t i = 0; i < game_config_field_count(); ++i) {
+        if (restore & input_override(&fields[i])) {
+            memcpy((char *)settings + fields[i].offset, (const char *)previous + fields[i].offset, fields[i].size);
+        }
+    }
+    settings->saved_input_overrides |= restore;
+}
+
 bool game_config_register_ui(GameConfigFrontend *r, FrontendSettings *global, const char *directory) {
     if (!r || !global || !directory) {
         return false;
@@ -474,10 +494,10 @@ bool game_config_save_globals(GameConfigFrontend *r, const char *path, const Fro
         if (fields[i].type == FIELD_CHEAT) {
             continue;
         }
-        if ((r->config.present & (UINT64_C(1) << i)) || (r->cli_fields & (UINT64_C(1) << i)) ||
-            (effective->cli_overrides & fields[i].cli)) {
+        uint8_t input = input_override(&fields[i]);
+        if ((r->config.present & (UINT64_C(1) << i)) || (r->applied_input_overrides & input) ||
+            (r->cli_fields & (UINT64_C(1) << i)) || (effective->cli_overrides & fields[i].cli)) {
             memcpy((char *)&global + fields[i].offset, (char *)r->global + fields[i].offset, fields[i].size);
-            uint8_t input = input_override(&fields[i]);
             global.saved_input_overrides =
                 (global.saved_input_overrides & (uint8_t)~input) | (r->global->saved_input_overrides & input);
         }

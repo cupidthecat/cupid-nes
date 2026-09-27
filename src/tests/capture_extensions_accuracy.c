@@ -372,6 +372,16 @@ static int test_backup(const char *directory) {
     REQUIRE(nes_movie_backup_write(gap_path, "two", 3, &gap_options) == NES_FILE_OK);
     REQUIRE(nes_movie_backup_write(gap_path, "three", 5, &gap_options) == NES_FILE_OK);
     REQUIRE(nes_movie_backup_write(gap_path, "four", 4, &gap_options) == NES_FILE_OK);
+    REQUIRE(nes_movie_backup_path(gap_path, &gap_options, 1, blocked, sizeof(blocked)) == NES_FILE_OK);
+    REQUIRE(nes_file_remove(blocked) == NES_FILE_OK && mkdir_test(blocked) == 0);
+    gap_blocked = true;
+    REQUIRE(nes_movie_backup_write(gap_path, "failed", 6, &gap_options) != NES_FILE_OK);
+    REQUIRE(file_text(gap_path, "four"));
+    REQUIRE(nes_movie_backup_path(gap_path, &gap_options, 3, backup, sizeof(backup)) == NES_FILE_OK);
+    REQUIRE(file_text(backup, "one"));
+    REQUIRE(rmdir_test(blocked) == 0);
+    gap_blocked = false;
+    REQUIRE(nes_file_write_atomic(blocked, "three", 5) == NES_FILE_OK);
     REQUIRE(nes_movie_backup_path(gap_path, &gap_options, 2, backup, sizeof(backup)) == NES_FILE_OK);
     REQUIRE(nes_file_remove(backup) == NES_FILE_OK);
     REQUIRE(nes_movie_backup_path(gap_path, &gap_options, 1, blocked, sizeof(blocked)) == NES_FILE_OK);
