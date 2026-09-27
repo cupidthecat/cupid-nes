@@ -65,6 +65,9 @@ ROM, RAM, and console fields; format, mirroring, and region use named choices.
 | Edit cartridge metadata | [iNES and NES 2.0 header editor](docs/header-editor.md) |
 | Use expansion input | [Controllers and peripherals](docs/controls.md), [Family BASIC keyboard](docs/keyboard.md) |
 
+The cheat editor supports up to 256 codes per game. Saved lists preserve UTF-8
+descriptions, and a rejected catalog import keeps the previous catalog available.
+
 The TAS editor opens FM2 movies and FM3 projects. Its input grid sits beside a
 resizable game preview and editing tabs. Save the full editing session as CTAS
 or export a movie. The converter handles supported power-on FCM movies after

@@ -60,8 +60,10 @@ track changes retain the recording timeline while restarting the track timer.
 Reset, power cycle, image replacement, and state changes finalize the current
 recording before changing the machine. Rewind and speculative run-ahead frames
 are excluded. A change in video dimensions, region, or machine identity also
-stops recording. A partially executed frame is discarded when recording stops;
-previous complete frames remain in the file.
+stops recording. Capture checks these conditions again before writing each
+completed frame, so a session change during a frame cannot add it to the output.
+A partially executed frame is discarded when recording stops; previous complete
+frames remain in the file.
 
 ## File limits and failures
 
