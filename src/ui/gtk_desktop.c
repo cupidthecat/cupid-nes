@@ -496,7 +496,7 @@ static void toolbar_action(GtkButton *button, gpointer data) {
     gtk_widget_grab_focus(d->picture);
 }
 
-static void record_game_draw(CupidGtkDesktop *d) {
+void cupid_gtk_record_draw(CupidGtkDesktop *d) {
     if (d->drawn_frame == d->submitted_frames) return;
     uint64_t now = SDL_GetPerformanceCounter();
     if (d->last_draw) {
@@ -538,7 +538,7 @@ static void game_snapshot(GtkWidget *widget, GtkSnapshot *snapshot) {
     if (!d->frame_texture || !d->session) {
         return;
     }
-    record_game_draw(d);
+    if (!d->native_video) cupid_gtk_record_draw(d);
 
     unsigned vw, vh;
     frontend_video_runtime_display_size(d->ui->video, &vw, &vh);
@@ -596,7 +596,7 @@ static void update_game(CupidGtkDesktop *d, const uint32_t *pixels, unsigned w, 
     cairo_surface_mark_dirty(d->frame);
     d->frame_width = w;
     d->frame_height = h;
-    gtk_widget_queue_draw(d->picture);
+    if (!d->native_video) gtk_widget_queue_draw(d->picture);
 }
 #else
 /* GTK 4.8 lacks texture scaling filters; retain its pixel-exact Cairo path. */
@@ -608,7 +608,7 @@ static void draw_game(GtkDrawingArea *area, cairo_t *cr, int width, int height, 
     if (!d->frame || !d->session) {
         return;
     }
-    record_game_draw(d);
+    if (!d->native_video) cupid_gtk_record_draw(d);
     unsigned vw, vh;
     frontend_video_runtime_display_size(d->ui->video, &vw, &vh);
     SDL_Rect r;
@@ -637,7 +637,7 @@ static void update_game(CupidGtkDesktop *d, const uint32_t *pixels, unsigned w, 
         memcpy(out + (size_t)y * pitch, pixels + (size_t)y * stride, w * sizeof(uint32_t));
     }
     cairo_surface_mark_dirty(d->frame);
-    gtk_widget_queue_draw(d->picture);
+    if (!d->native_video) gtk_widget_queue_draw(d->picture);
 }
 #endif
 
@@ -894,10 +894,37 @@ static void prompt_open(CupidGtkTool *t) {
     gtk_window_present(GTK_WINDOW(t->prompt));
 }
 
+static void refresh_information(CupidGtkTool *t) {
+    if (!t->info_view) return;
+    FrontendDesktopUi *ui = t->desktop->ui;
+    GString *text = g_string_new("");
+    if (t->id) {
+        for (unsigned i = 0; i < ui->log_count; ++i) g_string_append_printf(text, "%s\n", ui->log_lines[i]);
+    } else {
+        const char *game, *region, *state;
+        desktop_window_context(ui, &game, &region, &state);
+        g_string_append_printf(text, "%s\n%s | %s", game ? game : "No game loaded", region, state);
+        GskRenderer *renderer = gtk_native_get_renderer(GTK_NATIVE(t->desktop->window));
+        const char *native = cupid_gtk_native_video_name(t->desktop);
+        g_string_append_printf(text, "\nGTK %u.%u.%u\nVideo renderer: %s\nDesktop compositor: %s",
+            gtk_get_major_version(), gtk_get_minor_version(), gtk_get_micro_version(),
+            native ? native : renderer ? G_OBJECT_TYPE_NAME(renderer) : "Unavailable",
+            renderer ? G_OBJECT_TYPE_NAME(renderer) : "Unavailable");
+    }
+    GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(t->info_view));
+    GtkTextIter start, end;
+    gtk_text_buffer_get_bounds(buffer, &start, &end);
+    char *old = gtk_text_buffer_get_text(buffer, &start, &end, FALSE);
+    if (strcmp(old, text->str)) gtk_text_buffer_set_text(buffer, text->str, -1);
+    g_free(old);
+    g_string_free(text, TRUE);
+}
+
 FrontendDesktopUi *cupid_gtk_open(FrontendDesktopUi *ui, int kind, unsigned id) {
     CupidGtkDesktop *d = ui->gtk;
     for (CupidGtkTool *t = d->tools; t; t = t->next) {
         if (t->kind == kind && (t->id == id || kind == 3)) {
+            if (kind == 2) refresh_information(t);
             if (kind == 0 && !gtk_widget_get_visible(t->window)) {
                 t->ui.settings_open = false;
                 desktop_settings_open(&t->ui, true);
@@ -966,29 +993,15 @@ FrontendDesktopUi *cupid_gtk_open(FrontendDesktopUi *ui, int kind, unsigned id) 
     } else if (kind == 1) {
         t->content = cupid_gtk_panel_new(t);
     } else {
-        GString *text = g_string_new("");
-        if (id) {
-            for (unsigned i = 0; i < ui->log_count; i++) {
-                g_string_append_printf(text, "%s\n", ui->log_lines[i]);
-            }
-        } else {
-            const char *game, *region, *state;
-            desktop_window_context(ui, &game, &region, &state);
-            g_string_append_printf(text, "%s\n%s | %s", game ? game : "No game loaded", region, state);
-            GskRenderer *renderer = gtk_native_get_renderer(GTK_NATIVE(d->window));
-            g_string_append_printf(text, "\nGTK %u.%u.%u\nVideo renderer: %s", gtk_get_major_version(),
-                                   gtk_get_minor_version(), gtk_get_micro_version(),
-                                   renderer ? G_OBJECT_TYPE_NAME(renderer) : "Unavailable");
-        }
         GtkWidget *view = gtk_text_view_new();
+        t->info_view = view;
         gtk_text_view_set_editable(GTK_TEXT_VIEW(view), FALSE);
         gtk_text_view_set_monospace(GTK_TEXT_VIEW(view), id != 0);
         gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(view), GTK_WRAP_WORD_CHAR);
         gtk_text_view_set_left_margin(GTK_TEXT_VIEW(view), 14);
         gtk_text_view_set_top_margin(GTK_TEXT_VIEW(view), 14);
-        gtk_text_buffer_set_text(gtk_text_view_get_buffer(GTK_TEXT_VIEW(view)), text->str, -1);
+        refresh_information(t);
         t->content = cupid_gtk_scroll(view);
-        g_string_free(text, TRUE);
     }
     gtk_widget_set_vexpand(t->content, TRUE);
     gtk_box_append(GTK_BOX(box), t->content);
@@ -1026,9 +1039,11 @@ void cupid_gtk_render(FrontendDesktopUi *ui, const char *title, const char *regi
     unsigned w, h, stride;
     if (session && ui->video && frontend_video_runtime_pixels(ui->video, true, &pixels, &w, &h, &stride)) {
         ++d->submitted_frames;
+        (void)cupid_gtk_native_video_present(d, pixels, w, h, stride);
         update_game(d, pixels, w, h, stride);
     }
     if (!session) {
+        cupid_gtk_native_video_hide(d);
         gtk_widget_queue_draw(d->picture);
     }
     gtk_widget_set_visible(d->empty, !session);
@@ -1075,6 +1090,8 @@ void cupid_gtk_render(FrontendDesktopUi *ui, const char *title, const char *regi
                 cupid_gtk_tas_refresh(t->content);
             } else if (t->kind == 1) {
                 cupid_gtk_panel_refresh(t->content);
+            } else if (t->kind == 2) {
+                refresh_information(t);
             }
             if (t->ui.status[0]) {
                 gtk_label_set_text(GTK_LABEL(t->status), t->ui.status);
@@ -1134,6 +1151,12 @@ bool cupid_gtk_event(FrontendDesktopUi *ui, const SDL_Event *event) {
     if (!event) {
         return false;
     }
+    if (event->type == SDL_RENDER_DEVICE_RESET || event->type == SDL_RENDER_TARGETS_RESET) {
+        cupid_gtk_native_video_destroy(ui->gtk);
+        ui->gtk->native_video_failed = false;
+        gtk_widget_queue_draw(ui->gtk->picture);
+        return true;
+    }
     if (event->type == SDL_WINDOWEVENT) {
         return true;
     }
@@ -1160,6 +1183,7 @@ void cupid_gtk_save_size(FrontendDesktopUi *ui) {
 
 void cupid_gtk_shutdown(FrontendDesktopUi *ui) {
     CupidGtkDesktop *d = ui->gtk;
+    cupid_gtk_native_video_destroy(d);
     if (ui->video) ui->video->pixels_only = false;
     cupid_gtk_files_shutdown();
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, d->joystick_background ? "1" : "0");

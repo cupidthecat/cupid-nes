@@ -53,18 +53,25 @@ frames. Audio, movie input, rewind history, and recording retain every emulated
 frame. A machine that cannot run the core fast enough can still fall behind.
 
 Open **Tools > Picture, sound and timing > Frame Timing Statistics** to compare
-the emulation rate with the GTK draw rate. High jitter or a large maximum frame
+the emulation rate with the display draw rate. High jitter or a large maximum frame
 interval can explain choppy motion even when average FPS is near the target.
-The draw row counts new images consumed by the game widget. It does not measure
+The draw row counts new images drawn by the game viewport. It does not measure
 the monitor's refresh rate. Pending GTK work is serviced during frame waits;
 the high-resolution clock controls when the next emulated frame starts.
 
-Open Game Information and check the video renderer. `GskCairoRenderer` scales
-the game in software; its cost grows with window size. `GskGLRenderer` uses the
-GPU. Cupid lets GTK choose its supported renderer and compositor. GTK 4.24
-on Windows may select software rendering by default. Its experimental
-DirectComposition path can produce black borders around windows with GL or
-Vulkan, so Cupid does not enable it automatically.
+Open Game Information and check **Video renderer**. On Windows, Cupid uses an
+accelerated SDL game viewport, preferring Direct3D 11. GTK can continue to use
+`GskCairoRenderer` for desktop widgets; that appears separately under **Desktop
+compositor**. The GPU scales the game image at maximized and fullscreen sizes.
+Game Information refreshes while open and whenever reopened, including after
+loading another game or returning to the start screen.
+
+If **Video renderer** itself says `GskCairoRenderer`, the game is using software
+rendering and large windows can cost more time. An explicit Cairo override or
+failure to create the accelerated viewport selects this fallback. Cupid leaves
+GTK's compositor selection intact. Its experimental DirectComposition path can
+produce black borders around windows with GL or Vulkan, so Cupid does not
+enable it automatically.
 
 Existing `GDK_DEBUG` and `GSK_RENDERER` environment overrides are preserved.
 If windows have thick black outer margins, remove `dcomp` from `GDK_DEBUG`
@@ -76,7 +83,7 @@ for a software fallback. Restart Cupid after changing these variables.
 
 The [desktop benchmark](development.md#desktop-performance) compares a normal
 window, maximized view, fullscreen, and a live PPU viewer using a local ROM.
-It reports uncapped throughput, normal-speed FPS, submitted updates, unique GTK
+It reports uncapped throughput, normal-speed FPS, submitted updates, unique display
 draws, and interval jitter. ROM timing,
 rewind, filters, other applications, and graphics drivers affect the result.
 

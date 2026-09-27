@@ -257,6 +257,15 @@ focus uses a colored outline, and selected tabs use a background highlight.
 The Windows build script uses Cairo for automated widget checks, matching Linux
 CI and avoiding dependence on the runner's graphics driver. Cupid leaves
 compositor selection to GTK and preserves explicit environment overrides.
+Windows also runs `build/gtk-ui-smoke.exe --native-video-check` without renderer
+overrides. This exercises the accelerated child viewport at normal, maximized,
+and fullscreen sizes, including pixel readback, padded source rows, texture
+resizing, filtering, integer scaling, unload/reload, device reset, and software
+fallback. Bounds checks also cover small, wide, and tall windows, restoring from
+fullscreen, and 200% scaling. They compare the native child against the GTK
+allocation with the window's decoration inset. Readback captures are written
+to `build/gtk-native-video/`. Both paths
+check that Game Information refreshes after reopening, live replacement, and unload.
 The startup check rejects changes to `GDK_DEBUG`. Also run the fixture without
 `GSK_RENDERER` to exercise the default renderer on a desktop display. Widget
 snapshots do not capture the native window's transparent margins; inspect those
@@ -276,10 +285,10 @@ Audio uses the dummy driver for reproducible measurements.
 
 Each view gets 60 warmup frames, 300 uncapped frames, and 300 frames paced to
 the ROM's regional timing. The report includes the actual view dimensions,
-GTK renderer, emulation time, presentation time, paced FPS, and the number of
-submitted display updates, unique GTK draws, interval jitter, p95, and maximum
+game renderer, emulation time, presentation time, paced FPS, and the number of
+submitted display updates, unique display draws, interval jitter, p95, and maximum
 intervals. Jitter is the standard deviation over the most recent 240 intervals.
-Unique draws count new source images consumed by GTK's game widget, rather than
+Unique draws count new source images drawn by the game viewport, rather than
 requests to redraw it; they do not measure monitor scanout.
 Late display updates can be skipped without skipping
 emulation. Run timing measurements without a concurrent build or test suite;

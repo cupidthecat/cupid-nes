@@ -130,8 +130,9 @@ int benchmark_gtk(const char *path) {
         }
         double elapsed = (SDL_GetPerformanceCounter() - begin) / frequency;
         GskRenderer *gsk = gtk_native_get_renderer(GTK_NATIVE(ui.gtk->window));
+        const char *game_renderer = cupid_gtk_native_video_name(ui.gtk);
         printf("GTK benchmark: %s %dx%d, %s, %u frames, %.1f fps, core %.2f ms, presentation %.2f ms\n", names[mode],
-               gtk_widget_get_width(ui.gtk->picture), gtk_widget_get_height(ui.gtk->picture), G_OBJECT_TYPE_NAME(gsk),
+               gtk_widget_get_width(ui.gtk->picture), gtk_widget_get_height(ui.gtk->picture), game_renderer ? game_renderer : G_OBJECT_TYPE_NAME(gsk),
                frames, frames / elapsed, core * 1000 / frames, presentation * 1000 / frames);
         fflush(stdout);
         /* Repeat with the production deadline calculation. Throughput above

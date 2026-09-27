@@ -367,14 +367,14 @@ seconds of rewind. Each view ran 300 paced frames after warmup. The baseline
 used the previous whole-millisecond wait; both builds included the same draw
 instrumentation. Builds and other test suites were stopped during measurement.
 
-| View | Baseline unique draws | Current unique draws | Baseline draw jitter | Current draw jitter |
+| View | Baseline unique draws | Precise-wait unique draws | Baseline draw jitter | Precise-wait draw jitter |
 | --- | --- | --- | --- | --- |
 | Window | 278 | 279 | 2.517 ms | 2.514 ms |
 | Maximized | 192 | 283 | 8.766 ms | 3.330 ms |
 | Fullscreen | 263 | 283 | 4.913 ms | 4.098 ms |
 | Maximized with PPU viewer | 244 | 272 | 6.278 ms | 3.693 ms |
 
-Current emulation rates were 60.10, 60.10, 60.08, and 60.10 FPS respectively,
+Precise-wait emulation rates were 60.10, 60.10, 60.08, and 60.10 FPS respectively,
 against a 60.10 FPS target. Unique draws count new images consumed by the GTK
 game widget. Jitter is the standard deviation of the most recent 240 draw
 intervals. These measurements do not track monitor scanout. Software rendering
@@ -387,3 +387,35 @@ regressions, timing reset and event dispatch, source pixels and scaling, and
 58 tool windows. The timing panel capture was visually checked. Region,
 network, and database discovery checks also passed; the database check accepts
 mixed Windows path separators in loader messages.
+
+## Accelerated Windows viewport checkpoint
+
+The follow-up uses an SDL Direct3D 11 child viewport for the game while GTK
+continues to use Cairo for desktop widgets. It avoids scaling the game through
+the software compositor. The same local game, rewind setting, dummy audio,
+and 300-frame benchmark measured:
+
+| View | Unique draws | Emulation FPS | Draw jitter | Presentation time per frame |
+| --- | --- | --- | --- | --- |
+| Window | 298/300 | 60.10 | 2.605 ms | 0.45 ms |
+| Maximized | 300/300 | 60.05 | 1.168 ms | 0.48 ms |
+| Fullscreen | 299/300 | 60.10 | 1.717 ms | 0.59 ms |
+| Maximized with PPU viewer | 300/300 | 60.10 | 1.108 ms | 0.78 ms |
+
+Presentation time is the uncapped phase's average; FPS and draw intervals are
+from the paced phase. Native draw counts record completed presentation calls,
+not monitor scanout. Host scheduling can still cause stalls: the windowed run
+had a 50.755 ms maximum draw interval. No concurrent build or test suite ran
+during this measurement.
+
+The native viewport checks cover readback colors and letterboxing, zero-alpha
+source pixels, filtering, integer scaling, padded rows, texture resizing,
+maximized/fullscreen transitions, small/wide/tall window bounds at 100% and 200%
+scaling, hide/show on session changes, device reset,
+and software fallback. Game Information checks cover reopening after replacement,
+replacement while visible, and unloading. The software widget checks remain in
+the Windows and Linux jobs alongside the accelerated Windows check.
+
+The bounds check catches an initial viewport offset that covered the toolbar
+in a restored window. The native child now includes GTK's decoration inset.
+Maximized and fullscreen windows have no inset, which had hidden that error.

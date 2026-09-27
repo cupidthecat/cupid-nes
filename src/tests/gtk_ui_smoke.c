@@ -50,6 +50,8 @@ Joypad pad1 = {0}, pad2 = {0};
 
 bool test_gtk_input_accuracy(FrontendDesktopUi *ui);
 int benchmark_gtk(const char *path);
+bool test_gtk_native_video(FrontendDesktopUi *ui, const char *out);
+bool test_gtk_information(FrontendDesktopUi *ui);
 
 static void pump(FrontendDesktopUi *ui) {
     for (unsigned i = 0; i < 20; i++) {
@@ -644,7 +646,8 @@ int main(int argc, char **argv) {
         return benchmark_gtk(argv[2]);
     }
     bool startup_check = argc == 2 && !strcmp(argv[1], "--startup-check");
-    const char *out = startup_check ? "build/gtk-startup-check" : argc > 1 ? argv[1] : "build/gtk-smoke";
+    bool native_check = argc == 2 && !strcmp(argv[1], "--native-video-check");
+    const char *out = native_check ? "build/gtk-native-video" : startup_check ? "build/gtk-startup-check" : argc > 1 ? argv[1] : "build/gtk-smoke";
     g_mkdir_with_parents(out, 0755);
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_TIMER) != 0) {
         return 1;
@@ -718,6 +721,19 @@ int main(int argc, char **argv) {
     video.frame.screens = 1;
     ui.video = &video;
     preview_pattern();
+    if (native_check) {
+        frontend_panel_set_session_active(true);
+        frontend_command_set_session_active(true);
+        bool passed = test_gtk_native_video(&ui, out) && test_gtk_information(&ui);
+        frontend_desktop_shutdown(&ui);
+        frontend_execution_shutdown(&execution);
+        unload_rom();
+        SDL_DestroyRenderer(renderer);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        puts(passed ? "GTK accelerated game view: PASS" : "GTK accelerated game view: FAIL");
+        return passed ? 0 : 1;
+    }
     DebugFrontend *debug = debug_frontend_create(&execution);
     CheatFrontend *cheats = cheat_frontend_create(out);
     MemoryToolsFrontend *memory = memory_tools_create(cheats);
@@ -787,7 +803,8 @@ int main(int argc, char **argv) {
     frontend_command_set_session_active(true);
     pump(&ui);
     if (ok) {
-        ok = game_window_interactions(&ui) && game_texture_interactions(&ui) && test_gtk_input_accuracy(&ui);
+        ok = game_window_interactions(&ui) && game_texture_interactions(&ui) && test_gtk_input_accuracy(&ui) &&
+             test_gtk_information(&ui);
     }
     if (ok) {
         ok = file_dialog_interactions(&ui) && register_interactions(&ui);

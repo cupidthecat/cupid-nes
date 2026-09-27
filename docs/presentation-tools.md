@@ -44,9 +44,10 @@ The editor supports the runtime's tile, background, condition, addition, fallbac
 
 The statistics panel retains 240 completed host-frame samples. It shows recent, average, minimum, maximum, and nearest-rank 95th-percentile milliseconds for emulation, rendering, presentation/VSync, pacing delay, and the full frame interval. Emulation FPS is 1,000 divided by the average interval in milliseconds. Jitter is the standard deviation of those intervals: a lower value means more even spacing.
 
-The GTK draw row measures when the game widget draws a newly submitted image.
+The Display draws row measures when the game viewport draws a newly submitted image.
 It has its own FPS, jitter, p95, and maximum interval. Repainting the same image
-does not count twice. GTK can combine multiple submissions into one draw, so
+does not count twice. On Windows the accelerated viewport records completed SDL
+presentation calls. The GTK widget path can combine multiple submissions into one draw, so
 this rate can be lower than the emulation rate. These measurements do not report
 when the monitor displays the image. The SDL frontend marks draw timing unavailable.
 

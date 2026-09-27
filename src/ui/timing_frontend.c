@@ -36,7 +36,7 @@ static bool snapshot(void *context, FrontendPanelModel *model, char *error, size
     NesFrameTimingSummary draws;
     if (frontend->draw_stats && frontend->draw_stats(frontend->draw_context, &draws, false)) {
         snprintf(frontend->lines[7], sizeof(frontend->lines[7]),
-            "GTK draws: %.2f fps | jitter %.3f ms | p95 %.3f | max %.3f",
+            "Display draws: %.2f fps | jitter %.3f ms | p95 %.3f | max %.3f",
             draws.fps, draws.interval_jitter_ms, draws.metrics[NES_HOST_INTERVAL].p95,
             draws.metrics[NES_HOST_INTERVAL].maximum);
     } else {
@@ -55,7 +55,7 @@ static bool snapshot(void *context, FrontendPanelModel *model, char *error, size
     model->controls[1] = (FrontendPanelControl){
         .id = 0x2722, .type = FRONTEND_PANEL_ACTION, .label = "Reset measurements", .enabled = true};
     model->count = 2;
-    model->status = "Latest 240 samples. GTK draws count new images; monitor scanout is not measured.";
+    model->status = "Latest 240 samples. Display draws count new images; monitor scanout is not measured.";
     if (error && size) {
         error[0] = 0;
     }

@@ -12,7 +12,10 @@ The desktop paces emulation independently of expensive display updates. When
 presentation falls behind, it shows the latest frame while preserving audio,
 movie input, and captured frames. See [performance troubleshooting](docs/troubleshooting.md#slow-video-in-a-large-window).
 Frame waits use the high-resolution clock and service pending desktop paints
-between frames. Frame Timing Statistics reports emulation and GTK draw rates
+between frames. Windows uses an accelerated SDL game viewport even when GTK
+uses Cairo for desktop widgets. Game Information shows the game renderer and
+refreshes when a game is replaced or unloaded.
+Frame Timing Statistics reports emulation and display draw rates
 separately, with interval jitter to help diagnose uneven motion.
 
 ![Cupid desktop](docs/images/desktop-main.png)

@@ -21,6 +21,8 @@ typedef struct CupidGtkDesktop {
     uint32_t refreshed, theme_checked;
     cairo_surface_t *frame;
     GdkTexture *frame_texture;
+    struct CupidGtkNativeVideo *native_video;
+    bool native_video_failed;
     unsigned frame_width, frame_height;
     uint64_t submitted_frames, drawn_frame, drawn_frames, last_draw;
     NesFrameTiming draw_timing;
@@ -32,7 +34,7 @@ struct CupidGtkTool {
     CupidGtkDesktop *desktop;
     CupidGtkTool *next;
     FrontendDesktopUi ui;
-    GtkWidget *window, *content, *status, *prompt, *prompt_entry;
+    GtkWidget *window, *content, *status, *prompt, *prompt_entry, *info_view;
     int kind;
     unsigned id;
 };
@@ -64,4 +66,11 @@ SDL_Keymod cupid_gtk_modifiers(GdkModifierType state);
 /* Install after main window creation; shut down before destroying that window. */
 void cupid_gtk_files_install(GtkWindow *parent);
 void cupid_gtk_files_shutdown(void);
+bool cupid_gtk_native_video_present(CupidGtkDesktop *desktop, const uint32_t *pixels,
+                                   unsigned width, unsigned height, unsigned stride);
+void cupid_gtk_native_video_hide(CupidGtkDesktop *desktop);
+void cupid_gtk_native_video_destroy(CupidGtkDesktop *desktop);
+const char *cupid_gtk_native_video_name(CupidGtkDesktop *desktop);
+bool cupid_gtk_native_video_read(CupidGtkDesktop *desktop, uint32_t **pixels, unsigned *width, unsigned *height);
+void cupid_gtk_record_draw(CupidGtkDesktop *desktop);
 #endif
