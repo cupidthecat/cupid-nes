@@ -41,7 +41,25 @@ The application accepts one image path and startup options. Values must be separ
 ./cupid-nes --port2 zapper "game.nes"
 ```
 
-`--port2=zapper`, an unknown switch, or a second image path reaches the `Unexpected argument` error. The full application option list is in [configuration](configuration.md). `cupid-nes` has no `--help` switch; launching it without an image prints the usage line and returns status 1.
+Use separate option values, such as `--port2 zapper`. Unknown switches and extra image paths are rejected. The full application option list is in [configuration](configuration.md). Run `cupid-nes --help` to print the options, or open Command Line Help from the Help menu. Launching without an image opens the startup screen.
+
+## Slow video in a large window
+
+Open Game Information and check the video renderer. `GskCairoRenderer` scales
+the game in software; its cost grows with window size. `GskGLRenderer` uses the
+GPU. On Windows with GTK 4.24 or newer, Cupid enables DirectComposition before
+opening the display so GTK can select an accelerated renderer. GTK can still
+fall back to software if the graphics driver cannot initialize it.
+
+Existing `GDK_DEBUG` and `GSK_RENDERER` environment overrides are preserved.
+Remove an old `GSK_RENDERER=cairo` override when testing normal performance.
+If accelerated output causes a driver problem, start with `GSK_RENDERER=cairo`
+for a software fallback. Restart Cupid after changing these variables.
+
+The [desktop benchmark](development.md#desktop-performance) compares a normal
+window, maximized view, fullscreen, and a live PPU viewer using a local ROM.
+It reports uncapped throughput separately from normal-speed FPS. ROM timing,
+rewind, filters, other applications, and graphics drivers affect the result.
 
 ## Cartridge will not load
 

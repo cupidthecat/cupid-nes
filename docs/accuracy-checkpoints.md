@@ -331,3 +331,30 @@ diagnostic ROMs, the 8,991-state CPU trace, and AccuracyCoin 144/144 with no
 skipped or unfinished results in 4,182 frames. Region, Unicode-path, and seven
 network scenarios also passed. These are automated checks; they do not replace
 manual native-window, physical-controller, or audio-device acceptance.
+
+## Windows presentation checkpoint
+
+The SMB3 presentation check used the local USA Rev 1 image, GTK 4.24.0,
+default video settings, ten seconds of rewind, and dummy audio. Each view ran
+300 uncapped frames after warmup and then 300 frames at normal speed.
+
+| View | Game area | Uncapped FPS | Normal-speed FPS |
+| --- | --- | --- | --- |
+| Window | 768 by 478 | 102.7 | 60.10 |
+| Maximized | 1920 by 858 | 125.8 | 60.10 |
+| Fullscreen | 1920 by 963 | 128.9 | 60.10 |
+| Maximized with PPU viewer | 1920 by 858 | 119.5 | 60.10 |
+
+All four runs selected `GskGLRenderer`. The initial software-rendered run
+spent 8.18 ms per fullscreen presentation; the accelerated run spent 0.49 ms.
+These are local measurements, not minimum requirements or guarantees for
+other machines. The benchmark advances through the game's opening sequence;
+it is not a complete gameplay or physical-audio acceptance test.
+
+Native GTK checks passed caption notification and saved-window-size
+regressions, texture pixel and scaling checks, keyboard and pointer tests,
+assembler and TAS interactions, settings transactions, and tool-window
+captures. The hardware suite passed with zero failures. AccuracyCoin passed
+144/144 with zero failures, skips, or unfinished entries in 4,182 frames.
+See [desktop performance](development.md#desktop-performance) to repeat the
+window-size measurements with a local ROM.

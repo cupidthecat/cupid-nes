@@ -49,6 +49,7 @@ uint32_t framebuffer[SCREEN_WIDTH * SCREEN_HEIGHT];
 Joypad pad1 = {0}, pad2 = {0};
 
 bool test_gtk_input_accuracy(FrontendDesktopUi *ui);
+int benchmark_gtk(const char *path);
 
 static void pump(FrontendDesktopUi *ui) {
     for (unsigned i = 0; i < 20; i++) {
@@ -97,6 +98,38 @@ static bool capture_ready(FrontendDesktopUi *ui, GtkWidget *widget, const char *
             return false;                                                                                              \
         }                                                                                                              \
     } while (0)
+
+static void count_property_change(GObject *object, GParamSpec *property, gpointer data) {
+    (void)object;
+    (void)property;
+    ++*(unsigned *)data;
+}
+
+static bool game_window_interactions(FrontendDesktopUi *ui) {
+    frontend_desktop_render(ui, 256, 240, "Stable title", "NTSC", "Paused");
+    unsigned changes = 0;
+    gulong title = g_signal_connect(ui->gtk->window, "notify::title", G_CALLBACK(count_property_change), &changes);
+    gulong status = g_signal_connect(ui->gtk->status, "notify::label", G_CALLBACK(count_property_change), &changes);
+    frontend_desktop_render(ui, 256, 240, "Stable title", "NTSC", "Paused");
+    g_signal_handler_disconnect(ui->gtk->window, title);
+    g_signal_handler_disconnect(ui->gtk->status, status);
+    CHECK(changes == 0);
+    unsigned width = ui->settings->window_width, height = ui->settings->window_height;
+    bool remember = ui->settings->remember_window_size;
+    ui->settings->remember_window_size = true;
+    gtk_window_maximize(GTK_WINDOW(ui->gtk->window));
+    pump(ui);
+    /* Xvfb without a window manager may not implement maximization. */
+    if (gtk_window_is_maximized(GTK_WINDOW(ui->gtk->window))) {
+        cupid_gtk_save_size(ui);
+        CHECK(ui->settings->window_width == width && ui->settings->window_height == height);
+    }
+    gtk_window_unmaximize(GTK_WINDOW(ui->gtk->window));
+    pump(ui);
+    ui->settings->remember_window_size = remember;
+    puts("GTK unchanged captions and normal window size preservation: PASS");
+    return true;
+}
 
 static bool game_texture_interactions(FrontendDesktopUi *ui) {
 #if GTK_CHECK_VERSION(4, 10, 0)
@@ -500,6 +533,9 @@ static bool capture_tool(FrontendDesktopUi *ui, CupidGtkTool *tool, unsigned pan
 }
 
 int main(int argc, char **argv) {
+    if (argc == 3 && !strcmp(argv[1], "--benchmark")) {
+        return benchmark_gtk(argv[2]);
+    }
     const char *out = argc > 1 ? argv[1] : "build/gtk-smoke";
     g_mkdir_with_parents(out, 0755);
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_TIMER) != 0) {
@@ -623,7 +659,7 @@ int main(int argc, char **argv) {
     frontend_command_set_session_active(true);
     pump(&ui);
     if (ok) {
-        ok = game_texture_interactions(&ui) && test_gtk_input_accuracy(&ui);
+        ok = game_window_interactions(&ui) && game_texture_interactions(&ui) && test_gtk_input_accuracy(&ui);
     }
     if (ok) {
         ok = file_dialog_interactions(&ui) && register_interactions(&ui);

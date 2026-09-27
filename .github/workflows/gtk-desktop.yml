@@ -65,6 +65,14 @@ jobs:
       - name: Verify packaged desktop without toolchain PATH
         shell: pwsh
         run: ./scripts/check-gtk-package.ps1
+      - name: Upload Windows GTK window captures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: gtk-windows-captures-${{ github.sha }}
+          path: build/gtk-smoke-windows/
+          if-no-files-found: warn
+          retention-days: 14
       - name: Upload preview for review
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

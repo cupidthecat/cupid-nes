@@ -246,6 +246,27 @@ Run the focused hardware regression first. After each implemented accuracy issue
 
 Do not lower pass requirements, substitute expected output, add cartridge-specific success paths, or skip a failing test to make the result green. A missing result protocol and a timeout remain unresolved results. Use [the contribution guide](../CONTRIBUTING.md) for review and reporting details.
 
+## Desktop performance
+
+Build the GTK smoke executable with `make GTK=1 gtk-smoke`, then run:
+
+```sh
+SDL_AUDIODRIVER=dummy build/gtk-ui-smoke --benchmark /path/to/game.nes
+```
+
+On Windows, run the same command in the UCRT64 shell with
+`build/gtk-ui-smoke.exe`. Use a real desktop display. This mode opens windows
+and runs the supplied ROM through the production execution, rewind, video,
+and GTK presentation paths. It does not download or bundle commercial ROMs.
+Audio uses the dummy driver for reproducible measurements.
+
+Each view gets 60 warmup frames, 300 uncapped frames, and 300 frames paced to
+the ROM's regional timing. The report includes the actual view dimensions,
+GTK renderer, emulation time, presentation time, and paced FPS. Windowed,
+maximized, fullscreen, and maximized with a live PPU viewer are measured.
+Uncapped throughput measures spare capacity; it is not the game's playback
+speed. The test reports measurements without a machine-dependent pass threshold.
+
 ## Documentation-only changes
 
 Check relative links and heading anchors, compare CLI examples with [main.c](../src/main.c), and confirm that build paths and test pins match the scripts. Review tables against their source constants and explain any unsupported path explicitly. A prose edit does not need a new C unit test. The existing CI workflow still runs the hardware suite, diagnostic collection, and pinned AccuracyCoin check on pushes and pull requests.

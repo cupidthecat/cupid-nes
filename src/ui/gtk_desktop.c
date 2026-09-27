@@ -686,6 +686,14 @@ static gboolean dropped(GtkDropTarget *target, const GValue *value, double x, do
 
 bool cupid_gtk_init(FrontendDesktopUi *ui) {
     const char *driver = SDL_GetCurrentVideoDriver();
+#ifdef _WIN32
+    /* Recent Win32 GTK renderers require DirectComposition for GPU output.
+     * Without this opt-in they silently fall back to scaling with Cairo.
+     * Keep explicit diagnostic overrides and GTK's device-failure fallback. */
+    if (gtk_check_version(4, 24, 0) == NULL) {
+        g_setenv("GDK_DEBUG", "dcomp", FALSE);
+    }
+#endif
     if (!ui->window || !driver || !strcmp(driver, "dummy") || !gtk_init_check()) {
         return false;
     }
@@ -914,6 +922,10 @@ FrontendDesktopUi *cupid_gtk_open(FrontendDesktopUi *ui, int kind, unsigned id) 
             const char *game, *region, *state;
             desktop_window_context(ui, &game, &region, &state);
             g_string_append_printf(text, "%s\n%s | %s", game ? game : "No game loaded", region, state);
+            GskRenderer *renderer = gtk_native_get_renderer(GTK_NATIVE(d->window));
+            g_string_append_printf(text, "\nGTK %u.%u.%u\nVideo renderer: %s", gtk_get_major_version(),
+                                   gtk_get_minor_version(), gtk_get_micro_version(),
+                                   renderer ? G_OBJECT_TYPE_NAME(renderer) : "Unavailable");
         }
         GtkWidget *view = gtk_text_view_new();
         gtk_text_view_set_editable(GTK_TEXT_VIEW(view), FALSE);
@@ -967,14 +979,18 @@ void cupid_gtk_render(FrontendDesktopUi *ui, const char *title, const char *regi
     gtk_widget_set_visible(d->empty, !session);
     char caption[512];
     g_snprintf(caption, sizeof(caption), "Cupid NES%s%s", title ? " | " : "", title ? title : "");
-    gtk_window_set_title(GTK_WINDOW(d->window), caption);
+    if (g_strcmp0(gtk_window_get_title(GTK_WINDOW(d->window)), caption)) {
+        gtk_window_set_title(GTK_WINDOW(d->window), caption);
+    }
     g_snprintf(caption, sizeof(caption), "%s%s%s%s%s", state ? state : "Ready", region ? " | " : "",
                region ? region : "", ui->status[0] ? " | " : "", ui->status);
     if (ui->settings->show_fps) {
         size_t n = strlen(caption);
         g_snprintf(caption + n, sizeof(caption) - n, " | %.1f fps", ui->fps);
     }
-    gtk_label_set_text(GTK_LABEL(d->status), caption);
+    if (strcmp(gtk_label_get_text(GTK_LABEL(d->status)), caption)) {
+        gtk_label_set_text(GTK_LABEL(d->status), caption);
+    }
     for (CupidGtkTool *t = d->tools; t; t = t->next) {
         if (t->kind == 1 && t->id == TAS_PANEL && gtk_widget_get_visible(t->window)) {
             cupid_gtk_tas_video(t->content);
@@ -1068,7 +1084,8 @@ bool cupid_gtk_event(FrontendDesktopUi *ui, const SDL_Event *event) {
 }
 
 void cupid_gtk_save_size(FrontendDesktopUi *ui) {
-    if (!ui->settings->remember_window_size || ui->settings->fullscreen) {
+    if (!ui->settings->remember_window_size || ui->settings->fullscreen ||
+        gtk_window_is_maximized(GTK_WINDOW(ui->gtk->window))) {
         return;
     }
     int w = gtk_widget_get_width(ui->gtk->window), h = gtk_widget_get_height(ui->gtk->window);
