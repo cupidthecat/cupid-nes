@@ -462,6 +462,12 @@ static void check_interpolation(SDL_Renderer *renderer) {
     }
 
     SDL_Texture *original = runtime.texture;
+    runtime.pixels_only = true;
+    CHECK(frontend_video_runtime_refresh(&runtime, error, sizeof(error)));
+    CHECK(runtime.texture == original);
+    CHECK(runtime.frame.width == 256 && runtime.frame.height == 240);
+    CHECK(!memcmp(runtime.frame.pixels, pixels, sizeof(pixels)));
+    runtime.pixels_only = false;
     for (unsigned pass = 0; pass < 3; ++pass) {
         settings.bilinear_interpolation = pass == 1;
         CHECK(frontend_video_runtime_refresh(&runtime, error, sizeof(error)));

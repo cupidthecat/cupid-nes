@@ -88,6 +88,40 @@ bool nes_state_write_u32(NesStateWriter *writer, uint32_t value) {
     return nes_state_write_bytes(writer, bytes, sizeof(bytes));
 }
 
+/* Reserve once for large video buffers, retaining the scalar wire format. */
+bool nes_state_write_u16_array(NesStateWriter *writer, const uint16_t *values, size_t count) {
+    if (!writer) return false;
+    if ((!values && count) || count > SIZE_MAX / 2) {
+        writer->failed = true;
+        return false;
+    }
+    if (!nes_state_writer_reserve(writer, count * 2)) return false;
+    for (size_t i = 0; i < count; ++i) {
+        writer->data[writer->size + i * 2] = (uint8_t)values[i];
+        writer->data[writer->size + i * 2 + 1] = (uint8_t)(values[i] >> 8);
+    }
+    writer->size += count * 2;
+    return true;
+}
+
+/* Reserve once for large video buffers, retaining the scalar wire format. */
+bool nes_state_write_u32_array(NesStateWriter *writer, const uint32_t *values, size_t count) {
+    if (!writer) return false;
+    if ((!values && count) || count > SIZE_MAX / 4) {
+        writer->failed = true;
+        return false;
+    }
+    if (!nes_state_writer_reserve(writer, count * 4)) return false;
+    for (size_t i = 0; i < count; ++i) {
+        writer->data[writer->size + i * 4] = (uint8_t)values[i];
+        writer->data[writer->size + i * 4 + 1] = (uint8_t)(values[i] >> 8);
+        writer->data[writer->size + i * 4 + 2] = (uint8_t)(values[i] >> 16);
+        writer->data[writer->size + i * 4 + 3] = (uint8_t)(values[i] >> 24);
+    }
+    writer->size += count * 4;
+    return true;
+}
+
 bool nes_state_write_u64(NesStateWriter *writer, uint64_t value) {
     uint8_t bytes[8];
     for (unsigned i = 0; i < 8; ++i) bytes[i] = (uint8_t)(value >> (i * 8));

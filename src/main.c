@@ -799,6 +799,7 @@ static int application_main(int argc, char *argv[]) {
     const double performance_frequency = (double)SDL_GetPerformanceFrequency();
     double frame_deadline = (double)SDL_GetPerformanceCounter();
     double fps_started = frame_deadline;
+    double last_desktop_present = 0;
     unsigned fps_frames = 0;
     uint64_t timing_revision = UINT64_MAX;
     double paced_speed = 0;
@@ -1214,14 +1215,21 @@ static int application_main(int argc, char *argv[]) {
             SDL_RenderCopy(renderer, frontend_video_runtime_texture(&video_runtime), NULL, &game_rect);
         }
 
-        frontend_desktop_render(&desktop_ui, video_width, video_height,
-            frontend_session.current_result.title,
-            nes_region_name(nes_timing()->region),
-            nes_netplay_mode(execution_runtime.netplay) == NES_NETPLAY_CONNECTED
-                || nes_netplay_mode(execution_runtime.netplay) == NES_NETPLAY_LISTENING
-                ? frontend_netplay_status(execution_runtime.network)
-                : execution_runtime.rewind_held ? "Rewinding"
-                : frontend_execution_paused(&execution_runtime) ? "Paused" : "Running");
+        double presentation_now = (double)SDL_GetPerformanceCounter();
+        double next_deadline = frame_deadline + (double)frame_elapsed_cycles * performance_frequency
+            / (nes_timing()->cpu_hz * frontend_execution_speed(&execution_runtime));
+        if (!desktop_ui.gtk || !ran_frame || nes_frame_timing_present(presentation_now,
+                next_deadline, last_desktop_present, performance_frequency)) {
+            last_desktop_present = presentation_now;
+            frontend_desktop_render(&desktop_ui, video_width, video_height,
+                frontend_session.current_result.title,
+                nes_region_name(nes_timing()->region),
+                nes_netplay_mode(execution_runtime.netplay) == NES_NETPLAY_CONNECTED
+                    || nes_netplay_mode(execution_runtime.netplay) == NES_NETPLAY_LISTENING
+                    ? frontend_netplay_status(execution_runtime.network)
+                    : execution_runtime.rewind_held ? "Rewinding"
+                    : frontend_execution_paused(&execution_runtime) ? "Paused" : "Running");
+        }
         uint64_t host_present_start = SDL_GetPerformanceCounter();
         if (!desktop_ui.gtk) {
             SDL_RenderPresent(renderer);

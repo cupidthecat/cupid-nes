@@ -190,6 +190,10 @@ bool frontend_video_runtime_refresh(FrontendVideoRuntime *runtime,
             nes_shader_enable(runtime->shader, false);
         }
     }
+    if (runtime->pixels_only) {
+        if (error && error_size) error[0] = '\0';
+        return true;
+    }
     if (!ensure_texture(runtime, runtime->frame.width, runtime->frame.height, error, error_size)) return false;
     if (SDL_UpdateTexture(runtime->texture, NULL, runtime->frame.pixels,
                           (int)(runtime->frame.width * sizeof(uint32_t))) != 0)

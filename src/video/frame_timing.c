@@ -70,3 +70,8 @@ bool nes_frame_timing_summary(const NesFrameTiming *timing, NesFrameTimingSummar
     summary->audio_underruns = timing->samples[recent].audio_underruns;
     return true;
 }
+
+bool nes_frame_timing_present(double now, double deadline, double last_present, double frequency) {
+    return frequency <= 0 || last_present <= 0 || now < last_present ||
+        now <= deadline || now - last_present >= frequency * 0.050;
+}

@@ -14,6 +14,7 @@
 #include "../system/vs_system.h"
 #include "../debugger/debugger.h"
 #include "../debugger/ppu_inspector.h"
+#include "../video/frame_timing.h"
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -137,6 +138,8 @@ int benchmark_gtk(const char *path) {
          * 60 does not by itself establish stable normal-speed playback. */
         begin = SDL_GetPerformanceCounter();
         double deadline = (double)begin;
+        double last_present = 0;
+        unsigned presented = 0;
         for (unsigned i = 0; i < frames; ++i) {
             SDL_Event event;
             while (SDL_PollEvent(&event)) {
@@ -147,15 +150,20 @@ int benchmark_gtk(const char *path) {
                 result = 1;
                 break;
             }
-            frontend_desktop_render(&ui, 256, 240, "Presentation benchmark", "NTSC", "Running");
             deadline += (cpu_total_cycles - cycles) * frequency / nes_timing()->cpu_hz;
+            double now = (double)SDL_GetPerformanceCounter();
+            if (nes_frame_timing_present(now, deadline, last_present, frequency)) {
+                frontend_desktop_render(&ui, 256, 240, "Presentation benchmark", "NTSC", "Running");
+                last_present = now;
+                ++presented;
+            }
             double remaining = deadline - SDL_GetPerformanceCounter();
             if (remaining > 0) {
                 SDL_Delay((Uint32)(remaining * 1000 / frequency));
             }
         }
         elapsed = (SDL_GetPerformanceCounter() - begin) / frequency;
-        printf("GTK paced: %s, %.2f fps (target %.2f)\n", names[mode], frames / elapsed, nes_timing()->fps);
+        printf("GTK paced: %s, %.2f fps (target %.2f), %u/%u presentations\n", names[mode], frames / elapsed, nes_timing()->fps, presented, frames);
         fflush(stdout);
         if (result) {
             break;

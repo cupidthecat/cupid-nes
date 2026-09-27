@@ -19,6 +19,7 @@
 #include "../rom/rom.h"
 #include "../state/state.h"
 #include "../state/state_alloc.h"
+#include "../state/state_io.h"
 #include "../system/timing.h"
 #include "../system/vs_system.h"
 #include "../../include/globals.h"
@@ -562,8 +563,34 @@ static int test_state_dual_vs_replay(void) {
     return 0;
 }
 
+static int test_state_bulk_video_encoding(void) {
+    const uint16_t words[] = {0, 0x1234, 0xffff, 0x8000};
+    const uint32_t pixels[] = {0, 0x12345678, 0xffffffff, 0x80000000};
+    const uint8_t expected[] = {0, 0, 0x34, 0x12, 0xff, 0xff, 0, 0x80,
+        0, 0, 0, 0, 0x78, 0x56, 0x34, 0x12, 0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0x80};
+    NesStateWriter writer;
+    nes_state_writer_init(&writer, sizeof(expected));
+    CHECK(nes_state_write_u16_array(&writer, NULL, 0));
+    CHECK(nes_state_write_u16_array(&writer, words, 4));
+    CHECK(nes_state_write_u32_array(&writer, pixels, 4));
+    CHECK(writer.size == sizeof(expected) && !memcmp(writer.data, expected, sizeof(expected)));
+    CHECK(!nes_state_write_u16_array(&writer, words, 1));
+    CHECK(writer.failed && writer.size == sizeof(expected));
+    nes_state_writer_destroy(&writer);
+    nes_state_writer_init(&writer, 0);
+    CHECK(!nes_state_write_u32_array(&writer, pixels, SIZE_MAX / 4 + 1));
+    CHECK(writer.failed && writer.size == 0);
+    nes_state_writer_destroy(&writer);
+    nes_state_writer_init(&writer, 0);
+    CHECK(!nes_state_write_u16_array(&writer, NULL, 1));
+    CHECK(writer.failed);
+    nes_state_writer_destroy(&writer);
+    return 0;
+}
+
 int test_state_accuracy(void) {
     static int (*const tests[])(void) = {
+        test_state_bulk_video_encoding,
         test_state_replay_and_failure_atomicity,
         test_state_format_identity_files_and_slots,
         test_state_native_mapper_irq_and_audio,

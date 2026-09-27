@@ -156,7 +156,7 @@ static bool game_texture_interactions(FrontendDesktopUi *ui) {
     const uint32_t *pixels;
     unsigned w, h, stride;
     CHECK(frontend_video_runtime_pixels(ui->video, true, &pixels, &w, &h, &stride));
-    CHECK(d->frame_texture && !d->frame);
+    CHECK(d->frame_texture && d->frame);
     CHECK(gdk_texture_get_width(d->frame_texture) == (int)w);
     CHECK(gdk_texture_get_height(d->frame_texture) == (int)h);
     uint32_t *download = g_new(uint32_t, (size_t)w * h);
@@ -169,6 +169,14 @@ static bool game_texture_interactions(FrontendDesktopUi *ui) {
     }
     g_free(download);
     CHECK(same);
+    cairo_surface_flush(d->frame);
+    const unsigned char *surface = cairo_image_surface_get_data(d->frame);
+    int pitch = cairo_image_surface_get_stride(d->frame);
+    for (unsigned y = 0; y < h; ++y) {
+        const uint32_t *row = (const uint32_t *)(surface + (size_t)y * pitch);
+        for (unsigned x = 0; x < w; ++x)
+            CHECK((row[x] & 0xffffffu) == (pixels[(size_t)y * stride + x] & 0xffffffu));
+    }
 
     bool old_filter = ui->settings->bilinear_interpolation;
     for (unsigned linear = 0; linear < 2; ++linear) {
@@ -179,10 +187,14 @@ static bool game_texture_interactions(FrontendDesktopUi *ui) {
         CHECK(node && gsk_render_node_get_node_type(node) == GSK_CONTAINER_NODE);
         CHECK(gsk_container_node_get_n_children(node) == 2);
         GskRenderNode *game = gsk_container_node_get_child(node, 1);
-        CHECK(gsk_render_node_get_node_type(game) == GSK_TEXTURE_SCALE_NODE);
-        CHECK(gsk_texture_scale_node_get_texture(game) == d->frame_texture);
-        CHECK(gsk_texture_scale_node_get_filter(game) ==
-              (linear ? GSK_SCALING_FILTER_LINEAR : GSK_SCALING_FILTER_NEAREST));
+        if (GSK_IS_CAIRO_RENDERER(gtk_native_get_renderer(GTK_NATIVE(d->window)))) {
+            CHECK(gsk_render_node_get_node_type(game) == GSK_CAIRO_NODE);
+        } else {
+            CHECK(gsk_render_node_get_node_type(game) == GSK_TEXTURE_SCALE_NODE);
+            CHECK(gsk_texture_scale_node_get_texture(game) == d->frame_texture);
+            CHECK(gsk_texture_scale_node_get_filter(game) ==
+                  (linear ? GSK_SCALING_FILTER_LINEAR : GSK_SCALING_FILTER_NEAREST));
+        }
         unsigned vw, vh;
         frontend_video_runtime_display_size(ui->video, &vw, &vh);
         SDL_Rect rect;

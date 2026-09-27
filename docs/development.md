@@ -276,7 +276,10 @@ Audio uses the dummy driver for reproducible measurements.
 
 Each view gets 60 warmup frames, 300 uncapped frames, and 300 frames paced to
 the ROM's regional timing. The report includes the actual view dimensions,
-GTK renderer, emulation time, presentation time, and paced FPS. Windowed,
+GTK renderer, emulation time, presentation time, paced FPS, and the number of
+submitted display updates. Late display updates can be skipped without skipping
+emulation. Run timing measurements without a concurrent build or test suite;
+CPU contention changes both core and presentation costs. Windowed,
 maximized, fullscreen, and maximized with a live PPU viewer are measured.
 Uncapped throughput measures spare capacity; it is not the game's playback
 speed. The test reports measurements without a machine-dependent pass threshold.

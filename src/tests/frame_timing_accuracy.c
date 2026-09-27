@@ -15,6 +15,29 @@
     } while (0)
 
 int run_frame_timing_accuracy_tests(void) {
+    CHECK(nes_frame_timing_present(100, 110, 90, 1000));
+    CHECK(!nes_frame_timing_present(120, 110, 100, 1000));
+    CHECK(nes_frame_timing_present(150, 110, 100, 1000));
+    CHECK(nes_frame_timing_present(120, 110, 0, 1000));
+    CHECK(nes_frame_timing_present(90, 80, 100, 1000));
+    /* The same emulation work keeps its rate as presentation gets more costly. */
+    for (unsigned cost = 2; cost <= 26; cost += 12) {
+        double now = 1, deadline = 1, last = 0;
+        unsigned presentations = 0;
+        for (unsigned frame = 0; frame < 600; ++frame) {
+            now += 3;
+            deadline += 1000.0 / 60;
+            if (nes_frame_timing_present(now, deadline, last, 1000)) {
+                last = now;
+                now += cost;
+                ++presentations;
+            }
+            if (now < deadline) now = deadline;
+        }
+        CHECK(fabs(now - 10001) < 50);
+        CHECK(presentations >= 190 && presentations <= 600);
+        if (cost > 16) CHECK(presentations < 600);
+    }
     NesFrameTiming timing;
     NesFrameTimingSummary summary;
     nes_frame_timing_reset(&timing);

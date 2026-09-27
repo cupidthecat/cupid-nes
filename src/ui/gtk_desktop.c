@@ -521,6 +521,19 @@ static void game_snapshot(GtkWidget *widget, GtkSnapshot *snapshot) {
     SDL_Rect r;
     frontend_desktop_game_rect(d->ui, width, height, (int)vw, (int)vh, d->ui->settings->integer_scaling, &r);
     bounds = GRAPHENE_RECT_INIT(r.x, r.y, r.w, r.h);
+    GskRenderer *renderer = gtk_native_get_renderer(gtk_widget_get_native(widget));
+    if (GSK_IS_CAIRO_RENDERER(renderer)) {
+        /* Scale the opaque source surface directly in the software renderer. */
+        cairo_t *cr = gtk_snapshot_append_cairo(snapshot, &bounds);
+        cairo_translate(cr, r.x, r.y);
+        cairo_scale(cr, (double)r.w / d->frame_width, (double)r.h / d->frame_height);
+        cairo_set_source_surface(cr, d->frame, 0, 0);
+        cairo_pattern_set_filter(cairo_get_source(cr),
+            d->ui->settings->bilinear_interpolation ? CAIRO_FILTER_BILINEAR : CAIRO_FILTER_NEAREST);
+        cairo_paint(cr);
+        cairo_destroy(cr);
+        return;
+    }
     gtk_snapshot_append_scaled_texture(snapshot, d->frame_texture,
         d->ui->settings->bilinear_interpolation ? GSK_SCALING_FILTER_LINEAR : GSK_SCALING_FILTER_NEAREST, &bounds);
 }
@@ -549,6 +562,14 @@ static void update_game(CupidGtkDesktop *d, const uint32_t *pixels, unsigned w, 
     g_bytes_unref(bytes);
     g_clear_object(&d->frame_texture);
     d->frame_texture = texture;
+    if (d->frame) cairo_surface_destroy(d->frame);
+    d->frame = cairo_image_surface_create(CAIRO_FORMAT_RGB24, (int)w, (int)h);
+    cairo_surface_flush(d->frame);
+    unsigned char *out = cairo_image_surface_get_data(d->frame);
+    int pitch = cairo_image_surface_get_stride(d->frame);
+    for (unsigned y = 0; y < h; ++y)
+        memcpy(out + (size_t)y * pitch, pixels + (size_t)y * stride, w * sizeof(uint32_t));
+    cairo_surface_mark_dirty(d->frame);
     d->frame_width = w;
     d->frame_height = h;
     gtk_widget_queue_draw(d->picture);
@@ -956,6 +977,7 @@ FrontendDesktopUi *cupid_gtk_open(FrontendDesktopUi *ui, int kind, unsigned id) 
 
 void cupid_gtk_render(FrontendDesktopUi *ui, const char *title, const char *region, const char *state) {
     CupidGtkDesktop *d = ui->gtk;
+    if (ui->video) ui->video->pixels_only = true;
     theme(d);
     size_t recent = frontend_session_recent_count(ui->sessions ? ui->sessions->session : ui->idle_session);
     bool session = frontend_panel_session_active();
@@ -1034,8 +1056,12 @@ void cupid_gtk_render(FrontendDesktopUi *ui, const char *title, const char *regi
             prompt_open(t);
         }
     }
+    /* A busy source can remain ready forever. Bound dispatch by time as well
+     * as count so resizing and tool refreshes cannot consume the frame budget. */
+    gint64 dispatch_deadline = g_get_monotonic_time() + 1000;
     for (unsigned i = 0; i < 64 && g_main_context_pending(NULL); i++) {
         g_main_context_iteration(NULL, FALSE);
+        if (g_get_monotonic_time() >= dispatch_deadline) break;
     }
 }
 
@@ -1104,6 +1130,7 @@ void cupid_gtk_save_size(FrontendDesktopUi *ui) {
 
 void cupid_gtk_shutdown(FrontendDesktopUi *ui) {
     CupidGtkDesktop *d = ui->gtk;
+    if (ui->video) ui->video->pixels_only = false;
     cupid_gtk_files_shutdown();
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, d->joystick_background ? "1" : "0");
     release_keys(d);

@@ -45,6 +45,13 @@ Use separate option values, such as `--port2 zapper`. Unknown switches and extra
 
 ## Slow video in a large window
 
+Cupid keeps emulation on its regional clock. If drawing takes too long, the
+GTK desktop skips a display update so emulation can catch up. The status-bar
+FPS counts emulated frames; a busy software renderer can display fewer frames.
+Input and window events are serviced at least once every 50 ms between emulator
+frames. Audio, movie input, rewind history, and recording retain every emulated
+frame. A machine that cannot run the core fast enough can still fall behind.
+
 Open Game Information and check the video renderer. `GskCairoRenderer` scales
 the game in software; its cost grows with window size. `GskGLRenderer` uses the
 GPU. Cupid lets GTK choose its supported renderer and compositor. GTK 4.24
@@ -62,7 +69,7 @@ for a software fallback. Restart Cupid after changing these variables.
 
 The [desktop benchmark](development.md#desktop-performance) compares a normal
 window, maximized view, fullscreen, and a live PPU viewer using a local ROM.
-It reports uncapped throughput separately from normal-speed FPS. ROM timing,
+It reports uncapped throughput, normal-speed FPS, and the number of display updates. ROM timing,
 rewind, filters, other applications, and graphics drivers affect the result.
 
 ## Cartridge will not load

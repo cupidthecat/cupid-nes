@@ -99,9 +99,8 @@ static bool ppu_state_write_core(NesStateWriter *writer, const PPU *state) {
         || !nes_state_write_u8(writer, state->at_latch_lo)
         || !nes_state_write_u8(writer, state->at_latch_hi)
         || !nes_state_write_bytes(writer, state->pixel_indices, sizeof(state->pixel_indices))) return false;
-    for (size_t i = 0; i < sizeof(state->pixel_signal) / sizeof(state->pixel_signal[0]); ++i)
-        if (!nes_state_write_u16(writer, state->pixel_signal[i])) return false;
-    return true;
+    return nes_state_write_u16_array(writer, state->pixel_signal,
+        sizeof(state->pixel_signal) / sizeof(state->pixel_signal[0]));
 }
 
 static bool ppu_state_read_core(NesStateReader *reader, PPU *state) {
@@ -213,9 +212,7 @@ bool ppu_machine_state_capture(NesStateWriter *writer, const PpuMachineContext *
         || !nes_state_write_bytes(writer, context->bg_opaque, sizeof(context->bg_opaque))) return false;
     for (unsigned i = 0; i < 8; ++i)
         if (!nes_state_write_u64(writer, context->open_bus_expire[i])) return false;
-    for (size_t i = 0; i < SCREEN_WIDTH * SCREEN_HEIGHT; ++i)
-        if (!nes_state_write_u32(writer, framebuffer_data[i])) return false;
-    return true;
+    return nes_state_write_u32_array(writer, framebuffer_data, SCREEN_WIDTH * SCREEN_HEIGHT);
 }
 
 bool ppu_machine_hardware_state_capture(NesStateWriter *writer,

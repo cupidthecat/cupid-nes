@@ -8,8 +8,9 @@ The GTK4 desktop has native menus, a compact toolbar, and separate windows for
 settings and tools. Keep the debugger, memory editor, or TAS timeline beside the
 game. Windows follows the system light or dark appearance.
 Controls have no surrounding borders; keyboard focus stays visible in both themes.
-The Windows desktop enables GPU presentation on supported GTK runtimes to keep
-maximized and fullscreen play responsive. See [performance troubleshooting](docs/troubleshooting.md#slow-video-in-a-large-window).
+The desktop paces emulation independently of expensive display updates. When
+presentation falls behind, it shows the latest frame while preserving audio,
+movie input, and captured frames. See [performance troubleshooting](docs/troubleshooting.md#slow-video-in-a-large-window).
 
 ![Cupid desktop](docs/images/desktop-main.png)
 

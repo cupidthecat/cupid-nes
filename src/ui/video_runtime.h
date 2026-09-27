@@ -41,6 +41,8 @@ typedef struct {
     unsigned texture_width;
     unsigned texture_height;
     bool composite;
+    /* Pixel consumers do not need a duplicate upload to the hidden SDL host. */
+    bool pixels_only;
 } FrontendVideoRuntime;
 
 bool frontend_video_runtime_init(FrontendVideoRuntime *runtime, SDL_Renderer *renderer,
