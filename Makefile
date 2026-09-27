@@ -207,7 +207,7 @@ TEST_CXX_SRC += src/tests/hd_builder_accuracy.cpp src/tests/shader_preset_accura
 TEST_OBJ = $(addprefix $(BUILD_DIR)/,$(TEST_SRC:.c=.o) $(TEST_CXX_SRC:.cpp=.o))
 OBJ = $(CORE_OBJ) $(TEST_OBJ) $(BUILD_DIR)/src/main.o
 ifeq ($(GTK),1)
-GTK_SMOKE_OBJ = $(BUILD_DIR)/src/tests/gtk_ui_smoke.o $(BUILD_DIR)/src/tests/gtk_input_accuracy.o $(BUILD_DIR)/src/tests/gtk_benchmark.o $(BUILD_DIR)/src/tests/gtk_video_accuracy.o
+GTK_SMOKE_OBJ = $(BUILD_DIR)/src/tests/gtk_ui_smoke.o $(BUILD_DIR)/src/tests/gtk_input_accuracy.o $(BUILD_DIR)/src/tests/gtk_benchmark.o $(BUILD_DIR)/src/tests/gtk_video_accuracy.o $(BUILD_DIR)/src/tests/gtk_shortcut_accuracy.o
 GTK_SETTINGS_TEST_OBJ = $(BUILD_DIR)/src/tests/gtk_settings_accuracy.o
 OBJ += $(GTK_SMOKE_OBJ) $(GTK_SETTINGS_TEST_OBJ)
 endif

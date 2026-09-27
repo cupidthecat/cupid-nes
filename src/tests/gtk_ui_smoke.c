@@ -52,6 +52,7 @@ bool test_gtk_input_accuracy(FrontendDesktopUi *ui);
 int benchmark_gtk(const char *path);
 bool test_gtk_native_video(FrontendDesktopUi *ui, const char *out);
 bool test_gtk_information(FrontendDesktopUi *ui);
+bool test_gtk_shortcuts(FrontendDesktopUi *ui);
 
 static void pump(FrontendDesktopUi *ui) {
     for (unsigned i = 0; i < 20; i++) {
@@ -721,6 +722,7 @@ int main(int argc, char **argv) {
     video.frame.screens = 1;
     ui.video = &video;
     preview_pattern();
+    if (!test_gtk_shortcuts(&ui)) return 1;
     if (native_check) {
         frontend_panel_set_session_active(true);
         frontend_command_set_session_active(true);

@@ -151,6 +151,12 @@ Controllers fill player slots in discovery order, and a hot-plugged controller t
 
 ## Keyboard shortcut does something else
 
+Click the game view and check the active profile in **Settings > Controllers and
+shortcuts**. The default rewind binding is **Ctrl+Backspace**, held down. Rewind
+also needs a nonzero history duration and frames recorded since loading the game.
+Native editors and menus keep keyboard input while focused. Custom bindings take
+effect when the settings are applied.
+
 Special peripherals get their keyboard input before the normal application shortcuts. With Family BASIC selected, R, F6, F7, function keys, letters, and punctuation belong to the BASIC keyboard. With a mat selected, `1 2 3 4`, `Q W E R`, and `A S D F` are mat positions; R therefore does not reset while that mat key is being handled.
 
 ## Palette file or paste is rejected

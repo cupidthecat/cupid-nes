@@ -504,30 +504,7 @@ static bool handle_event(FrontendDesktopUi *ui, const SDL_Event *event) {
     if (ui->panel_open && desktop_tas_panel(ui->panel_id) && !ui->edit_text_active &&
         !ui->settings_open && !ui->choice_open && !desktop_palette_visible(ui) &&
         event->type == SDL_KEYDOWN && desktop_tas_event(ui, event)) return true;
-    if (ui->execution && ui->settings && (event->type == SDL_KEYDOWN || event->type == SDL_KEYUP)) {
-        const FrontendBindingProfile *profile = frontend_settings_active_profile_const(ui->settings);
-        FrontendShortcut shortcut;
-        if (profile && event->type == SDL_KEYUP) {
-            const FrontendShortcut held[] = {FRONTEND_SHORTCUT_FAST_FORWARD_HOLD, FRONTEND_SHORTCUT_REWIND};
-            for (unsigned i = 0; i < 2; ++i) {
-                if (profile->shortcuts[held[i]].key == event->key.keysym.scancode) {
-                    (void)frontend_execution_handle_shortcut_action(ui->execution, held[i], false, false);
-                }
-            }
-        }
-        if (profile && ui->open_menu < 0 && !ui->edit_text_active && !ui->capture_binding && !ui->settings_open &&
-            !desktop_palette_visible(ui) && frontend_profile_shortcut_key(profile, &event->key, &shortcut)) {
-            ui->open_menu = -1;
-            if (shortcut == FRONTEND_SHORTCUT_FAST_FORWARD_HOLD || shortcut == FRONTEND_SHORTCUT_REWIND) {
-                return frontend_execution_handle_shortcut_action(ui->execution, shortcut, event->type == SDL_KEYDOWN,
-                                                                 event->key.repeat != 0);
-            }
-            if (event->type == SDL_KEYDOWN && !event->key.repeat) {
-                (void)desktop_invoke_command(ui, frontend_execution_shortcut_command(shortcut));
-            }
-            return true;
-        }
-    }
+    if (desktop_shortcut_event(ui, event, true)) return true;
     if (event->type == SDL_KEYDOWN && !event->key.repeat && !ui->edit_text_active && !ui->capture_binding) {
         if ((event->key.keysym.mod & KMOD_CTRL) && event->key.keysym.scancode == SDL_SCANCODE_COMMA) {
             desktop_settings_open(ui->parent ? ui->parent : ui, true);
@@ -781,6 +758,34 @@ static bool handle_event(FrontendDesktopUi *ui, const SDL_Event *event) {
         }
     }
     return frontend_desktop_input_captured(ui);
+}
+
+bool desktop_shortcut_event(FrontendDesktopUi *ui, const SDL_Event *event, bool allow_press) {
+    if (ui && event && ui->execution && ui->settings && (event->type == SDL_KEYDOWN || event->type == SDL_KEYUP)) {
+        const FrontendBindingProfile *profile = frontend_settings_active_profile_const(ui->settings);
+        FrontendShortcut shortcut;
+        if (profile && event->type == SDL_KEYUP) {
+            const FrontendShortcut held[] = {FRONTEND_SHORTCUT_FAST_FORWARD_HOLD, FRONTEND_SHORTCUT_REWIND};
+            for (unsigned i = 0; i < 2; ++i) {
+                if (profile->shortcuts[held[i]].key == event->key.keysym.scancode) {
+                    (void)frontend_execution_handle_shortcut_action(ui->execution, held[i], false, false);
+                }
+            }
+        }
+        if (allow_press && profile && ui->open_menu < 0 && !ui->edit_text_active && !ui->capture_binding && !ui->settings_open &&
+            !desktop_palette_visible(ui) && frontend_profile_shortcut_key(profile, &event->key, &shortcut)) {
+            ui->open_menu = -1;
+            if (shortcut == FRONTEND_SHORTCUT_FAST_FORWARD_HOLD || shortcut == FRONTEND_SHORTCUT_REWIND) {
+                return frontend_execution_handle_shortcut_action(ui->execution, shortcut, event->type == SDL_KEYDOWN,
+                                                                 event->key.repeat != 0);
+            }
+            if (event->type == SDL_KEYDOWN && !event->key.repeat) {
+                (void)desktop_invoke_command(ui, frontend_execution_shortcut_command(shortcut));
+            }
+            return true;
+        }
+    }
+    return false;
 }
 
 bool frontend_desktop_handle_event(FrontendDesktopUi *ui, const SDL_Event *event) {

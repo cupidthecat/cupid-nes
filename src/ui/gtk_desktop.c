@@ -1160,6 +1160,26 @@ bool cupid_gtk_event(FrontendDesktopUi *ui, const SDL_Event *event) {
     if (event->type == SDL_WINDOWEVENT) {
         return true;
     }
+    if (event->type == SDL_KEYDOWN || event->type == SDL_KEYUP) {
+        if (event->key.windowID != SDL_GetWindowID(ui->window)) return true;
+        bool captured = cupid_gtk_captured(ui);
+        /* Releases must survive modifier and focus changes. Captured presses
+         * belong to native editors, menus or binding capture, never the game. */
+        bool handled = desktop_shortcut_event(ui, event, !captured);
+        if (captured || handled) return true;
+        if (event->type == SDL_KEYDOWN && !event->key.repeat) {
+            SDL_Keymod mods = (SDL_Keymod)event->key.keysym.mod;
+            SDL_Scancode sc = event->key.keysym.scancode;
+            unsigned command = 0;
+            if ((mods & KMOD_CTRL) && sc == SDL_SCANCODE_COMMA) command = FRONTEND_COMMAND_SETTINGS;
+            else if ((mods & KMOD_ALT) && sc == SDL_SCANCODE_RETURN) command = FRONTEND_COMMAND_FULLSCREEN;
+            else if (sc == SDL_SCANCODE_F7) command = 0x1B00;
+            if (command) {
+                (void)desktop_invoke_command(ui, command);
+                return true;
+            }
+        }
+    }
     for (CupidGtkTool *t = ui->gtk->tools; t; t = t->next) {
         if (t->ui.capture_binding && event->type == SDL_CONTROLLERBUTTONDOWN) {
             desktop_binding_gamepad(&t->ui, (SDL_GameControllerButton)event->cbutton.button);
