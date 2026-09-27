@@ -166,6 +166,11 @@ int run_header_editor_accuracy_tests(void) {
     BOARD_CHECK(frontend_panel_snapshot(HEADER_EDITOR_PANEL, &model, error, sizeof(error)));
     BOARD_CHECK(controls[1 + HEADER_FORMAT].type == FRONTEND_PANEL_CHOICE && controls[1 + HEADER_FORMAT].selected == 1);
     BOARD_CHECK(controls[1 + HEADER_MIRROR].selected == 2 && controls[1 + HEADER_BATTERY].selected == 1);
+    BOARD_CHECK(frontend_panel_action(HEADER_EDITOR_PANEL, HEADER_EDITOR_FIELD_BASE + HEADER_FORMAT, "2147483648", 0,
+                                      error, sizeof(error)));
+    model.count = 0;
+    BOARD_CHECK(frontend_panel_snapshot(HEADER_EDITOR_PANEL, &model, error, sizeof(error)));
+    BOARD_CHECK(controls[1 + HEADER_FORMAT].selected == -1);
     BOARD_CHECK(!frontend_panel_action(HEADER_EDITOR_PANEL, HEADER_EDITOR_FIELD_BASE + HEADER_PRG,
                                        "18446744073709551616", 0, error, sizeof(error)));
     header_editor_frontend_unregister();

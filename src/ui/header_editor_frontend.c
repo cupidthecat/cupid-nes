@@ -84,7 +84,9 @@ static bool snapshot(void *context, FrontendPanelModel *model, char *error, size
         control.item_count = choices(i, &control.items);
         if (control.item_count) {
             control.type = FRONTEND_PANEL_CHOICE;
-            control.selected = (int)panel.draft.value[i] - (i == HEADER_FORMAT ? 1 : 0);
+            uint64_t offset = i == HEADER_FORMAT ? 1 : 0;
+            uint64_t value = panel.draft.value[i];
+            control.selected = value >= offset && value - offset < control.item_count ? (int)(value - offset) : -1;
             control.label = i == HEADER_FORMAT    ? "Format"
                             : i == HEADER_MIRROR  ? "Mirroring"
                             : i == HEADER_CONSOLE ? "Console"
