@@ -1145,7 +1145,6 @@ bool frontend_settings_save(const char *path, const FrontendSettings *settings,
                           "capture_displayed_output=%s\n"
                           "capture_screenshot_path=%s\ncapture_audio_path=%s\ncapture_video_path=%s\n"
                           "state_slot=%u\nstate_file_path=%s\n"
-                          "adapter=%s\nport1=%s\nport2=%s\nexpansion=%s\n"
                           "zapper_radius=%u\nactive_profile=%s\n",
                           FRONTEND_SETTINGS_VERSION,
                           name_for_value(region_names, 4, settings->region_mode),
@@ -1182,15 +1181,24 @@ bool frontend_settings_save(const char *path, const FrontendSettings *settings,
                           settings->capture_paths[0], settings->capture_paths[1],
                           settings->capture_paths[2],
                           settings->state_slot, settings->state_file_path,
-                          name_for_value(adapter_names, 4, settings->input.adapter),
-                          name_for_value(port_names, sizeof(port_names) / sizeof(port_names[0]),
-                                         settings->input.ports[0]),
-                          name_for_value(port_names, sizeof(port_names) / sizeof(port_names[0]),
-                                         settings->input.ports[1]),
-                          name_for_value(expansion_names,
-                                         sizeof(expansion_names) / sizeof(expansion_names[0]),
-                                         settings->input.expansion),
                           settings->zapper_radius, settings->active_profile);
+    if (settings->saved_input_overrides & NES_INPUT_OVERRIDE_ADAPTER) {
+        ok = ok && append_text(buffer, SETTINGS_SAVE_CAPACITY, &used, "adapter=%s\n",
+                               name_for_value(adapter_names, 4, settings->input.adapter));
+    }
+    for (unsigned port = 0; port < 2; ++port) {
+        uint8_t mask = port ? NES_INPUT_OVERRIDE_PORT2 : NES_INPUT_OVERRIDE_PORT1;
+        if (settings->saved_input_overrides & mask) {
+            ok = ok && append_text(buffer, SETTINGS_SAVE_CAPACITY, &used, "port%u=%s\n", port + 1,
+                                   name_for_value(port_names, sizeof(port_names) / sizeof(port_names[0]),
+                                                  settings->input.ports[port]));
+        }
+    }
+    if (settings->saved_input_overrides & NES_INPUT_OVERRIDE_EXPANSION) {
+        ok = ok && append_text(buffer, SETTINGS_SAVE_CAPACITY, &used, "expansion=%s\n",
+                               name_for_value(expansion_names, sizeof(expansion_names) / sizeof(expansion_names[0]),
+                                              settings->input.expansion));
+    }
     ok = ok && append_text(buffer, SETTINGS_SAVE_CAPACITY, &used,
                           "rewind_seconds=%u\nrewind_step_frames=%u\nrun_ahead_frames=%u\n"
                           "vsync=%s\naspect_ratio=%s\nbilinear_interpolation=%s\n"

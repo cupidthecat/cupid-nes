@@ -105,6 +105,8 @@ The [CPU diagnostic tests](../src/tests/cpu_accuracy.c) execute `$4015` disable 
 | Input devices | Console wiring, multiplayer adapters, paddles and mats, beam-aware light guns, Family BASIC keyboard/tape, Subor keyboard/mouse, Hori Track reports, Hyper Shot devices, Party Tap, Pachinko, Boxing and Mahjong switches, Oeka Kids tablet reports with a loaded mapper 96 cartridge, and separate Datach/Barcode Battler timing |
 | Expansion storage | Turbo File bit positions and wrap, BattleBox command/word framing, write protection and erase, complete save round trips, and preservation after failed saves |
 
+Frontend regressions exercise controller settings through save, reload, desktop Apply, and failed-write rollback. They also check that game-specific controller choices stay out of global preferences and that a rejected state-recorder index cannot overwrite retained snapshots. Debugger cases cover function grouping across local labels, capture-start interrupt baselines, and exclusion of speculative execution from instruction traces. Media tests load headerless cartridges with archive-like prefixes and check backup rotation across missing files. Each case uses the production loader, settings, debugger, or file-writing path.
+
 The canonical `nestest` comparison checks 8,991 PC/register/status/stack/cycle states and the diagnostic's result bytes. Its trace contains 225 distinct opcode values. The unit cases execute the remaining opcode values separately; neither number means that every possible operand or interrupt alignment has been exhausted. XAA/ANE and other unstable opcodes use a fixed silicon model.
 
 `scripts/run-diagnostics.py` checks the pinned test collection at commit `95d8f621ae55cee0d09b91519a8989ae0e64753b`. It runs these groups:

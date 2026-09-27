@@ -40,6 +40,8 @@ Tests use the device code listed in [Makefile](../Makefile) and [test-windows.ps
 
 Archive tests include owned synthetic cartridges in ZIP, LZMA 7z, and solid LZMA2 7z files. They exercise Unicode paths, member selection, corrupt archives, unsupported compression, size limits, separate cartridge saves, and database lookup after patching. The fixed patch examples cover every BPS command, reversible UPS changes, IPS records and generation, invalid offsets, and checksum failures. Disk-overlay tests drive real disk registers through writes and reloads for headered and headerless FDS and QD images, including read-only sources and failed save replacement.
 
+Archive detection uses complete format signatures. Regression fixtures load database-recognized headerless cartridges beginning with `PK` or `7z` through the image loader and verify their mapped bytes. Corrupt files with complete archive signatures remain rejected. Movie backup tests cover gaps in the numbered history and preservation of recovery files when a later save step fails.
+
 The fixtures are checked into `src/tests/media_fixtures.h`; running the suite does not require an archive program. To regenerate those owned fixtures, run `python scripts/generate-media-fixtures.py --seven-zip /path/to/7z`. The generator uses only its own temporary directory under `build`. The bundled decoders, licenses, and local portability change are described in [archive codecs](../src/third_party/archive-codecs.md).
 
 ## Prepare the pinned test collections

@@ -289,10 +289,44 @@ static int test_post_patch_database_lookup(const char *directory) {
     return 0;
 }
 
+static int check_plain_archive_prefix(const char *directory, const char *filename,
+                                      uint8_t first, uint8_t second) {
+    char path[512], error[256], row[256];
+    BOARD_CHECK(media_path(path, directory, filename) == 0);
+    uint8_t image[0x6000];
+    memset(image, 0x35, 0x4000);
+    memset(image + 0x4000, 0xC7, 0x2000);
+    image[0] = first;
+    image[1] = second;
+    uint32_t crc = game_db_crc32(image, sizeof(image));
+    int length = snprintf(row, sizeof(row),
+                          "%08X,NesNtsc,NROM,,,0,16,8,0,8,0,0,h,1,N,,0,0\n", (unsigned)crc);
+    BOARD_CHECK(length > 0 && (size_t)length < sizeof(row));
+    rom_database_clear();
+    BOARD_CHECK(rom_database_load_memory(row, (size_t)length));
+    BOARD_CHECK(write_fixture(path, image, sizeof(image)) == 0);
+
+    NesImageRequest request = {path, NULL, NULL};
+    NesImageSource source = {0};
+    BOARD_CHECK(nes_image_prepare(&request, &source, error, sizeof(error)) == NES_MEDIA_OK);
+    BOARD_CHECK(!source.archived && source.size == sizeof(image)
+                && source.data[0] == first && source.data[1] == second);
+    BOARD_CHECK(nes_image_load(&source, NULL, NULL, false, error, sizeof(error)) == NES_MEDIA_OK);
+    BOARD_CHECK(rom_metadata_source() == ROM_METADATA_DATABASE_HEADERLESS);
+    BOARD_CHECK(rom_file_crc32() == crc && cart_cpu_read(0x8000) == first && cart_cpu_read(0x8001) == second);
+    BOARD_CHECK(unload_rom());
+    nes_image_source_free(&source);
+    rom_database_clear();
+    BOARD_CHECK(nes_file_remove(path) == NES_FILE_OK);
+    return 0;
+}
+
 static int test_plain_and_invalid_patch(const char *directory) {
     char path[512], patch_path[512], error[256];
     BOARD_CHECK(media_path(path, directory, "plain.nes") == 0);
     BOARD_CHECK(media_path(patch_path, directory, "invalid.ips") == 0);
+    BOARD_CHECK(check_plain_archive_prefix(directory, "prefix-pk.bin", 'P', 'K') == 0);
+    BOARD_CHECK(check_plain_archive_prefix(directory, "prefix-7z.bin", '7', 'z') == 0);
     size_t image_size;
     uint8_t *image = fixture_image(0x11, &image_size);
     BOARD_CHECK(image && write_fixture(path, image, image_size) == 0);

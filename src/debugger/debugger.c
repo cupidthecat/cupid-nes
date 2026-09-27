@@ -325,7 +325,7 @@ static void trace_instruction(const CPU *state) {
 
 bool debugger_before_instruction(CPU *state) {
     if (!state) return false;
-    if (nes_execution_policy() != NES_EXECUTION_LIVE) { trace_instruction(state); return true; }
+    if (nes_execution_policy() != NES_EXECUTION_LIVE) return true;
     if (debug_state.paused) return false;
 
     if (debug_state.step != STEP_NONE) {

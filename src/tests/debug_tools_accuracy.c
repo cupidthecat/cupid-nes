@@ -128,6 +128,8 @@ static int coverage_profile_stack_trace(void) {
     CHECK(debug_profile_rows(rows, 8, true) == 6 && rows[0].cycles == 6);
     DebugSymbol function = {0, 0x8000, 14, 0, true, "main", "", ""};
     CHECK(debug_symbol_set(&function));
+    DebugSymbol inner_label = {2, 0x8002, 1, 0, false, "store", "", ""};
+    CHECK(debug_symbol_set(&inner_label));
     CHECK(debug_profile_function_rows(rows, 8, true) == 3 && rows[0].key == 0 && rows[0].cycles == 16);
     debug_catalog_clear();
     CHECK(debug_log_count() == 3 && debug_log_overwritten() == 3);
@@ -226,6 +228,17 @@ static int bank_identity_symbols_source_references(void) {
 
 static int event_and_text_capture(void) {
     CHECK(machine(false) == 0);
+    debug_events_enable(false);
+    debug_events_clear();
+    debug_analysis_signals(true, false, false);
+    debug_events_enable(true);
+    uint64_t disabled_frame = ppu.frame_count;
+    debug_analysis_signals(true, false, false);
+    ppu.frame_count = disabled_frame + 1;
+    debug_analysis_event(DEBUG_EVENT_READ, 0, 0);
+    CHECK(debug_events_count(DEBUG_EVENT_NMI) == 0);
+    debug_analysis_signals(false, false, false);
+    debug_events_clear();
     debug_events_enable(true);
     uint64_t frame = ppu.frame_count;
     CHECK(cpu_step(&cpu) == 2);

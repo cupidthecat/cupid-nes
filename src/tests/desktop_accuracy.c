@@ -123,6 +123,28 @@ static void pixel_filter_choices(FrontendDesktopUi *ui) {
     CHECK(!ui->settings_open && ui->settings->pixel_filter.kind == NES_PIXEL_FILTER_NONE);
 }
 
+static void input_override_choices(FrontendDesktopUi *ui) {
+    FrontendSettings previous = ui->staged;
+    int previous_category = ui->settings_category;
+    const uint8_t masks[] = {NES_INPUT_OVERRIDE_ADAPTER, NES_INPUT_OVERRIDE_PORT1, NES_INPUT_OVERRIDE_PORT2,
+                             NES_INPUT_OVERRIDE_EXPANSION};
+    ui->settings_category = 4;
+    for (int row = 1; row <= 4; ++row) {
+        frontend_settings_defaults(&ui->staged);
+        char text[96];
+        desktop_setting_choice_text(ui, row, 0, text, sizeof(text));
+        CHECK(ui->staged.saved_input_overrides == 0);
+        /* Choosing the displayed device is still an explicit user choice. */
+        desktop_setting_choose(ui, row, 0);
+        CHECK(ui->staged.saved_input_overrides == masks[row - 1]);
+        frontend_settings_defaults(&ui->staged);
+        desktop_adjust_setting(ui, row, 1);
+        CHECK(ui->staged.saved_input_overrides == masks[row - 1]);
+    }
+    ui->staged = previous;
+    ui->settings_category = previous_category;
+}
+
 static void ntsc_picture_choices(FrontendDesktopUi *ui) {
     CHECK(frontend_command_invoke(FRONTEND_COMMAND_SETTINGS, NULL, 0));
     render(ui);
@@ -1182,6 +1204,7 @@ int test_desktop_accuracy(void) {
     SDL_SetWindowSize(window, 1280, 960);
     SDL_RenderSetLogicalSize(renderer, 1280, 960);
     typed_settings(&ui);
+    input_override_choices(&ui);
     path_controls(&ui);
     mouse_controls(&ui);
     ui.info_open = ui.log_open = true;

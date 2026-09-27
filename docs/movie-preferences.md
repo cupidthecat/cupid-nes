@@ -62,6 +62,10 @@ file or its recovery copy available. Partially staged temporary files can remain
 after forced termination. Old backups above a lowered retention limit are pruned
 after a successful save; deletion failures may leave extra recovery copies.
 
+When a numbered backup is missing, rotation removes any stale file in its
+destination slot after the new movie is committed. A failed save leaves that
+older recovery file available.
+
 To recover, copy the desired backup to a new `.fm2`, `.cmv`, or `.ctas` path and
 open that copy. The numbered backups contain the original file bytes, including
 movie metadata and native TAS project data. Keep a copy before experimenting

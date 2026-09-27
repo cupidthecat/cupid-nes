@@ -28,11 +28,15 @@ The profiler counts completed instructions and their actual CPU cycles, includin
 
 Results show counts, cycles, percentage of total captured instruction cycles, and an available symbol. Sort by instructions changes the default cycle ordering. Group by function spans combines locations covered by function symbols; other locations keep their own rows. Export writes every result in the current grouping and sort order.
 
+A local label inside a function remains part of that function's total. When function spans overlap, the covering function with the latest starting address owns the sample.
+
 Counters are 64-bit and saturate at their maximum. At most 131,072 distinct instruction locations are retained. The summary reports samples dropped after the location table fills. A physical PRG location has its own key; other locations use `100000000 + CPU address` in hexadecimal. Unresolved banked storage uses this CPU scope and cannot distinguish banks.
 
 ## NES event viewer
 
 The event list shows the last captured completed frame. Each row includes frame number, scanline, dot, CPU cycle, category mask, instruction PC, bus address/value, and the bus address's physical/CPU key. Capture keeps up to 131,072 events per frame and reports overflow. Stopping capture retains the last completed frame.
+
+NMI and IRQ entries describe transitions during capture. Enabling capture while a line is already asserted does not add an earlier transition to the new recording.
 
 Apply capture settings changes the category filter without recapturing. Category bits are hexadecimal:
 
@@ -112,3 +116,5 @@ The hexadecimal Columns mask selects registers (`1`), CPU cycles (`2`), fetched 
 ## Regression coverage
 
 `src/tests/debug_tools_accuracy.c` runs against the production CPU, cartridge mappings, debugger hooks, file transactions, and panel registry. It covers bank separation, cycle totals, stack returns and uncertainty, ring retention, rejected imports, source mapping, static references, text decoding, bounded events, panel actions, and extra bus accesses. The integration run also exercises all CPU/joypad bus-order groups with tools disabled and enabled. Full hardware, diagnostic-ROM, AccuracyCoin, and sanitizer results belong to the combined build.
+
+Regression cases also check function totals across local labels and event baselines while capture is disabled. `src/tests/debugger_accuracy.c` executes a speculative CPU instruction and checks that it adds no entry to the basic instruction trace.

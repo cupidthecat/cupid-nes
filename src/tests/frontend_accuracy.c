@@ -16,6 +16,7 @@
 #include "../system/vs_system.h"
 #include "../ui/execution_control.h"
 #include "../ui/desktop_ui.h"
+#include "../ui/desktop_internal.h"
 #include "../ui/platform_frontend.h"
 #include "../ui/frontend_commands.h"
 #include "../ui/frontend_execution.h"
@@ -447,6 +448,75 @@ static int settings_cli_precedence(void) {
     return 0;
 }
 
+static int settings_preserve_automatic_input(void) {
+    const char *path = "build/frontend-input-settings.ini";
+    const uint8_t masks[] = {0,
+                             NES_INPUT_OVERRIDE_ADAPTER,
+                             NES_INPUT_OVERRIDE_PORT1,
+                             NES_INPUT_OVERRIDE_PORT2,
+                             NES_INPUT_OVERRIDE_EXPANSION,
+                             NES_INPUT_OVERRIDE_ADAPTER | NES_INPUT_OVERRIDE_PORT1 | NES_INPUT_OVERRIDE_PORT2 |
+                                 NES_INPUT_OVERRIDE_EXPANSION};
+    NesInputConfiguration previous = {
+        joypad_adapter(), {joypad_port_device(0), joypad_port_device(1)}, joypad_expansion_device()};
+    uint8_t previous_overrides = joypad_configuration_overrides();
+    NesConsoleModel previous_console = nes_console_model();
+    NesAudioMixSettings previous_mix;
+    NesVideoPresentationSettings previous_presentation;
+    nes_audio_mix_get(&previous_mix);
+    nes_video_presentation_get(&previous_presentation);
+    char error[160];
+    for (size_t i = 0; i < sizeof(masks) / sizeof(masks[0]); ++i) {
+        FrontendSettings saved, loaded;
+        FrontendSettingsReport report;
+        frontend_settings_defaults(&saved);
+        saved.saved_input_overrides = masks[i];
+        CHECK(frontend_settings_save(path, &saved, &report));
+        CHECK(frontend_settings_load(path, &loaded, &report));
+        CHECK(frontend_settings_apply_core(&loaded, error, sizeof(error)));
+        unload_rom();
+        build_nrom(0);
+        image[15] = 0x2b;
+        CHECK(load_rom_memory(image, sizeof(image)) == 0);
+        CHECK(joypad_port_device(0) ==
+              ((masks[i] & NES_INPUT_OVERRIDE_PORT1) ? NES_PORT_GAMEPAD : NES_PORT_SNES_CONTROLLER));
+        CHECK(joypad_port_device(1) ==
+              ((masks[i] & NES_INPUT_OVERRIDE_PORT2) ? NES_PORT_GAMEPAD : NES_PORT_SNES_CONTROLLER));
+        CHECK(loaded.saved_input_overrides == masks[i]);
+        FrontendDesktopUi ui = {.settings = &loaded, .staged = loaded};
+        ui.staged.audio_mix.master_volume = 53;
+        desktop_settings_button(&ui, 0);
+        CHECK(loaded.audio_mix.master_volume == 53);
+        CHECK(joypad_port_device(0) ==
+              ((masks[i] & NES_INPUT_OVERRIDE_PORT1) ? NES_PORT_GAMEPAD : NES_PORT_SNES_CONTROLLER));
+        CHECK(joypad_port_device(1) ==
+              ((masks[i] & NES_INPUT_OVERRIDE_PORT2) ? NES_PORT_GAMEPAD : NES_PORT_SNES_CONTROLLER));
+        CHECK(loaded.input.ports[0] == NES_PORT_GAMEPAD && loaded.input.ports[1] == NES_PORT_GAMEPAD);
+        CHECK(loaded.saved_input_overrides == masks[i]);
+
+        /* A failed settings write must restore the actual automatic devices too. */
+        ui.settings_path = "build";
+        ui.staged.audio_mix.master_volume = 61;
+        ui.staged.input.ports[1] = NES_PORT_ZAPPER;
+        ui.staged.saved_input_overrides |= NES_INPUT_OVERRIDE_PORT2;
+        desktop_settings_button(&ui, 0);
+        CHECK(loaded.audio_mix.master_volume == 53 && ui.status[0]);
+        CHECK(joypad_port_device(0) ==
+              ((masks[i] & NES_INPUT_OVERRIDE_PORT1) ? NES_PORT_GAMEPAD : NES_PORT_SNES_CONTROLLER));
+        CHECK(joypad_port_device(1) ==
+              ((masks[i] & NES_INPUT_OVERRIDE_PORT2) ? NES_PORT_GAMEPAD : NES_PORT_SNES_CONTROLLER));
+        CHECK(joypad_configuration_overrides() == masks[i]);
+    }
+    unload_rom();
+    CHECK(nes_set_console_model(previous_console));
+    CHECK(joypad_apply_configuration(&previous));
+    joypad_set_configuration_overrides(previous_overrides);
+    CHECK(nes_audio_mix_set(&previous_mix, error, sizeof(error)));
+    CHECK(nes_video_presentation_set(&previous_presentation, error, sizeof(error)));
+    CHECK(nes_file_remove(path) == NES_FILE_OK);
+    return 0;
+}
+
 static int remapped_execution_shortcuts(void) {
     unload_rom();
     CHECK(nes_set_region_mode(NES_REGION_MODE_NTSC));
@@ -755,6 +825,7 @@ int test_frontend_accuracy(void) {
     failures += settings_round_trip();
     failures += settings_migration_and_errors();
     failures += settings_cli_precedence();
+    failures += settings_preserve_automatic_input();
     failures += remapped_execution_shortcuts();
     failures += session_transitions_and_recents();
     failures += settings_text_editing();

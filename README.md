@@ -41,6 +41,9 @@ Open **Settings** from the toolbar or press **Ctrl+Comma**. Choose a category on
 the left. Video, audio, input, media, and hardware pages divide longer lists into
 tabs. **Apply** saves validated changes; **Cancel** discards pending changes.
 File fields have native pickers. Audio settings list detected output devices.
+Controller choices remain automatic until explicitly selected. Saving other
+preferences preserves automatic detection, and game-specific controller choices
+stay with that game. See [configuration](docs/configuration.md) for saved settings.
 
 ![Video settings](docs/images/desktop-category-2.png)
 
@@ -132,6 +135,8 @@ and remaining limits. Mapper support is not a per-game compatibility guarantee.
 Cartridge saves normally live beside the ROM. Disk System writes default to a
 separate IPS overlay. Quitting or replacing an image finalizes recordings and
 persistent data first; failed writes leave the session available for retry.
+The state recorder preserves existing snapshots when its history index cannot
+be read and reports the problem before allowing another capture.
 See [saves and media](docs/saves.md), [states and replay](docs/replay.md),
 [netplay](docs/netplay.md), and [HD packs](docs/hd-packs.md).
 

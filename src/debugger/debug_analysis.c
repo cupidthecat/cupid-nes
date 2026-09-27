@@ -266,6 +266,25 @@ static int profile_key(const void *a, const void *b) {
     return x->key > y->key ? 1 : x->key < y->key ? -1 : 0;
 }
 
+static bool profile_function(uint64_t key, DebugSymbol *out) {
+    DebugSymbol best = {0};
+    bool found = false;
+    for (size_t i = 0; i < debug_symbol_count(); ++i) {
+        DebugSymbol symbol;
+        if (!debug_symbol_at(i, &symbol) || !symbol.function || key < symbol.key || key - symbol.key >= symbol.size) {
+            continue;
+        }
+        if (!found || symbol.key > best.key) {
+            best = symbol;
+            found = true;
+        }
+    }
+    if (found && out) {
+        *out = best;
+    }
+    return found;
+}
+
 size_t debug_profile_function_rows(DebugProfileRow *out, size_t capacity, bool by_cycles) {
     DebugProfileRow *rows = malloc(PROFILE_CAP * sizeof(*rows));
     if (!rows) {
@@ -274,7 +293,7 @@ size_t debug_profile_function_rows(DebugProfileRow *out, size_t capacity, bool b
     size_t count = debug_profile_rows(rows, PROFILE_CAP, by_cycles);
     for (size_t i = 0; i < count; ++i) {
         DebugSymbol symbol;
-        if (debug_symbol_find(rows[i].key, &symbol) && symbol.function) {
+        if (profile_function(rows[i].key, &symbol)) {
             rows[i].key = symbol.key;
             rows[i].address = symbol.address;
         }
@@ -516,7 +535,13 @@ uint64_t debug_events_dropped(void) {
 }
 
 void debug_analysis_signals(bool nmi, bool irq, bool mapper_irq) {
-    if (!analysis.events_on || nes_execution_policy() != NES_EXECUTION_LIVE) {
+    if (nes_execution_policy() != NES_EXECUTION_LIVE) {
+        return;
+    }
+    if (!analysis.events_on) {
+        analysis.nmi = nmi;
+        analysis.irq = irq;
+        analysis.mapper_irq = mapper_irq;
         return;
     }
     if (nmi != analysis.nmi) {

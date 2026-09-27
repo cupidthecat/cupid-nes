@@ -76,6 +76,21 @@ static const Field fields[] = {
 #undef FIELD
 _Static_assert(sizeof(fields) / sizeof(fields[0]) <= GAME_CONFIG_FIELDS, "field capacity");
 
+static uint8_t input_override(const Field *field) {
+    switch (field->cli) {
+    case FRONTEND_OVERRIDE_ADAPTER:
+        return NES_INPUT_OVERRIDE_ADAPTER;
+    case FRONTEND_OVERRIDE_PORT1:
+        return NES_INPUT_OVERRIDE_PORT1;
+    case FRONTEND_OVERRIDE_PORT2:
+        return NES_INPUT_OVERRIDE_PORT2;
+    case FRONTEND_OVERRIDE_EXPANSION:
+        return NES_INPUT_OVERRIDE_EXPANSION;
+    default:
+        return 0;
+    }
+}
+
 size_t game_config_field_count(void) {
     return sizeof(fields) / sizeof(fields[0]);
 }
@@ -182,18 +197,7 @@ bool game_config_resolve(const FrontendSettings *global, const GameConfig *confi
         if (!strcmp(fields[i].name, "shader_path")) {
             result.shader_parameter_count = 0;
         }
-        if (!strcmp(fields[i].name, "adapter")) {
-            result.saved_input_overrides |= NES_INPUT_OVERRIDE_ADAPTER;
-        }
-        if (!strcmp(fields[i].name, "port1")) {
-            result.saved_input_overrides |= NES_INPUT_OVERRIDE_PORT1;
-        }
-        if (!strcmp(fields[i].name, "port2")) {
-            result.saved_input_overrides |= NES_INPUT_OVERRIDE_PORT2;
-        }
-        if (!strcmp(fields[i].name, "expansion")) {
-            result.saved_input_overrides |= NES_INPUT_OVERRIDE_EXPANSION;
-        }
+        result.saved_input_overrides |= input_override(&fields[i]);
     }
     result.audio_mix.muted = result.muted;
     if (!frontend_settings_validate(&result, error, error_size)) {
@@ -473,6 +477,9 @@ bool game_config_save_globals(GameConfigFrontend *r, const char *path, const Fro
         if ((r->config.present & (UINT64_C(1) << i)) || (r->cli_fields & (UINT64_C(1) << i)) ||
             (effective->cli_overrides & fields[i].cli)) {
             memcpy((char *)&global + fields[i].offset, (char *)r->global + fields[i].offset, fields[i].size);
+            uint8_t input = input_override(&fields[i]);
+            global.saved_input_overrides =
+                (global.saved_input_overrides & (uint8_t)~input) | (r->global->saved_input_overrides & input);
         }
     }
     int shader_field = game_config_find_field("shader_path");

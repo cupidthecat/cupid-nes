@@ -47,7 +47,7 @@ NesFileResult nes_movie_backup_path(const char *path, const NesMovieBackupOption
 }
 
 static NesFileResult rotate(const char *path, const NesMovieBackupOptions *options, const uint8_t *previous,
-                            size_t previous_size) {
+                            size_t previous_size, bool *prune) {
     char source[NES_FILE_PATH_LIMIT], destination[NES_FILE_PATH_LIMIT];
     /* Copy oldest first. Every slot is replaced atomically, and the active
      * destination is untouched until all required recovery copies exist. */
@@ -64,6 +64,7 @@ static NesFileResult rotate(const char *path, const NesMovieBackupOptions *optio
         size_t size = 0;
         result = nes_file_read_all(source, 512u * 1024u * 1024u, &bytes, &size);
         if (result == NES_FILE_NOT_FOUND) {
+            prune[i] = true;
             continue;
         }
         if (result == NES_FILE_OK) {
@@ -96,12 +97,13 @@ NesFileResult nes_movie_backup_write(const char *path, const void *data, size_t 
     }
     uint8_t *previous = NULL;
     size_t previous_size = 0;
+    bool prune[NES_MOVIE_BACKUP_MAX + 1] = {false};
     if (result == NES_FILE_OK) {
         result = nes_file_read_all(path, 512u * 1024u * 1024u, &previous, &previous_size);
         if (result == NES_FILE_NOT_FOUND) {
             result = NES_FILE_OK;
         } else if (result == NES_FILE_OK) {
-            result = rotate(path, options, previous, previous_size);
+            result = rotate(path, options, previous, previous_size, prune);
         }
     }
     free(previous);
@@ -109,10 +111,13 @@ NesFileResult nes_movie_backup_write(const char *path, const void *data, size_t 
         result = nes_file_transaction_commit(&staged);
     }
     nes_file_transaction_abort(&staged);
-    /* Prune only after replacement succeeds. Existing recovery slots survive
-     * failures and an interrupted commit. This also applies a lowered count. */
+    /* Remove stale gap destinations and excess generations only after the
+     * active movie has been replaced successfully. */
     if (result == NES_FILE_OK) {
-        for (unsigned i = options->retained + 1; i <= NES_MOVIE_BACKUP_MAX; ++i) {
+        for (unsigned i = 1; i <= NES_MOVIE_BACKUP_MAX; ++i) {
+            if (i <= options->retained && !prune[i]) {
+                continue;
+            }
             char name[NES_FILE_PATH_LIMIT];
             if (nes_movie_backup_path(path, options, i, name, sizeof(name)) == NES_FILE_OK) {
                 (void)nes_file_remove(name);

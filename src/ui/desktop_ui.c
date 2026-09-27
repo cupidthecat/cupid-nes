@@ -235,10 +235,28 @@ static bool save_settings(FrontendDesktopUi *ui) {
     if (ui->sessions && ui->sessions->before_configuration)
         ui->sessions->before_configuration(ui->sessions->configuration_context);
     FrontendSettings previous = *ui->settings;
+    FrontendSettings core_settings = ui->staged;
+    if (rom_metadata_source() != ROM_METADATA_NONE) {
+        previous.input = (NesInputConfiguration){
+            joypad_adapter(), {joypad_port_device(0), joypad_port_device(1)}, joypad_expansion_device()};
+        previous.saved_input_overrides = joypad_configuration_overrides();
+        /* Preserve this game's automatic devices without saving them as defaults. */
+        uint8_t overrides = core_settings.saved_input_overrides;
+        if (!(overrides & NES_INPUT_OVERRIDE_ADAPTER)) {
+            core_settings.input.adapter = previous.input.adapter;
+        }
+        if (!(overrides & NES_INPUT_OVERRIDE_PORT1)) {
+            core_settings.input.ports[0] = previous.input.ports[0];
+        }
+        if (!(overrides & NES_INPUT_OVERRIDE_PORT2)) {
+            core_settings.input.ports[1] = previous.input.ports[1];
+        }
+        if (!(overrides & NES_INPUT_OVERRIDE_EXPANSION)) {
+            core_settings.input.expansion = previous.input.expansion;
+        }
+    }
     FrontendAudioPrepared prepared_audio = {0};
-    if (ui->audio
-        && !frontend_audio_runtime_prepare(ui->audio, &ui->staged, &prepared_audio,
-                                           error, sizeof(error))) {
+    if (ui->audio && !frontend_audio_runtime_prepare(ui->audio, &ui->staged, &prepared_audio, error, sizeof(error))) {
         desktop_copy_status(ui, error);
         return false;
     }
@@ -272,7 +290,7 @@ static bool save_settings(FrontendDesktopUi *ui) {
                                              error, sizeof(error))) goto rollback;
         ui->capture->preferences = ui->staged.movie_preferences;
     }
-    if (!frontend_settings_apply_core(&ui->staged, error, sizeof(error))) goto rollback;
+    if (!frontend_settings_apply_core(&core_settings, error, sizeof(error))) goto rollback;
     if (ui->execution) {
         if (!frontend_execution_set_speeds(ui->execution, ui->staged.speed,
                                            ui->staged.fast_forward_speed)
@@ -758,18 +776,27 @@ void desktop_adjust_setting(FrontendDesktopUi *ui, int row, int direction) {
             if (index & 1u) { int v = s->audio_mix.pan[channel] + direction * 5; s->audio_mix.pan[channel] = v < -100 ? -100 : v > 100 ? 100 : v; }
             else { int v = (int)s->audio_mix.volume[channel] + direction * 5; s->audio_mix.volume[channel] = (unsigned)(v < 0 ? 0 : v > 200 ? 200 : v); }
         }
-    }
-    else if (ui->settings_category == 4) {
+    } else if (ui->settings_category == 4) {
         if (row == 0 && s->profile_count) {
-            size_t index = 0; for (; index < s->profile_count; ++index) if (!strcmp(s->profiles[index].name, s->active_profile)) break;
-            index = (index + s->profile_count + direction) % s->profile_count; strcpy(s->active_profile, s->profiles[index].name);
-        } else if (row == 1) s->input.adapter = (NesInputAdapter)(((int)s->input.adapter + direction + 4) % 4);
-        else if (row == 2 || row == 3) s->input.ports[row - 2] = (NesPortDevice)(((int)s->input.ports[row - 2] + direction + 11) % 11);
-        else if (row == 4) s->input.expansion = (NesExpansionDevice)(((int)s->input.expansion + direction + 19) % 19);
-        else if (row == 5) { int v = (int)s->zapper_radius + direction; s->zapper_radius = (unsigned)(v < 0 ? 0 : v > 255 ? 255 : v); }
-        else if (row == 6) ui->settings_player = (ui->settings_player + NES_INPUT_PLAYERS + direction) % NES_INPUT_PLAYERS;
-        else if (row == 7) desktop_begin_edit(ui, (unsigned)row, s->device_guid[ui->settings_player]);
-        else {
+            size_t index = 0;
+            for (; index < s->profile_count; ++index) {
+                if (!strcmp(s->profiles[index].name, s->active_profile)) {
+                    break;
+                }
+            }
+            index = (index + s->profile_count + direction) % s->profile_count;
+            strcpy(s->active_profile, s->profiles[index].name);
+        } else if (row >= 1 && row <= 4) {
+            int selected, count = desktop_setting_choices(ui, row, &selected);
+            desktop_setting_choose(ui, row, (selected + direction + count) % count);
+        } else if (row == 5) {
+            int v = (int)s->zapper_radius + direction;
+            s->zapper_radius = (unsigned)(v < 0 ? 0 : v > 255 ? 255 : v);
+        } else if (row == 6) {
+            ui->settings_player = (ui->settings_player + NES_INPUT_PLAYERS + direction) % NES_INPUT_PLAYERS;
+        } else if (row == 7) {
+            desktop_begin_edit(ui, (unsigned)row, s->device_guid[ui->settings_player]);
+        } else {
             ui->capture_binding = true;
             ui->capture_gamepad = row >= 16 && row < 24
                 ? true : row >= 24 + FRONTEND_SHORTCUT_COUNT;
