@@ -12,7 +12,8 @@ CPPFLAGS += -DCUPID_VERSION='"$(VERSION)"' -DCUPID_BUILD_REVISION='"$(BUILD_REVI
 ifeq ($(GTK),1)
 ifeq ($(shell $(PKG_CONFIG) --atleast-version=4.8 gtk4 && echo yes),yes)
 CPPFLAGS += -DCUPID_GTK $(shell $(PKG_CONFIG) --cflags gtk4)
-CPPFLAGS += -DGDK_VERSION_MIN_REQUIRED=GDK_VERSION_4_8 -DGDK_VERSION_MAX_ALLOWED=GDK_VERSION_4_8
+GTK_MAX_API = $(if $(shell $(PKG_CONFIG) --atleast-version=4.10 gtk4 && echo yes),GDK_VERSION_4_10,GDK_VERSION_4_8)
+CPPFLAGS += -DGDK_VERSION_MIN_REQUIRED=GDK_VERSION_4_8 -DGDK_VERSION_MAX_ALLOWED=$(GTK_MAX_API)
 GTK_LIBS = $(shell $(PKG_CONFIG) --libs gtk4)
 else
 $(error GTK 4.8+ development files are required; install gtk4 or use GTK=0 for hardware tests)

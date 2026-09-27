@@ -496,6 +496,65 @@ static void toolbar_action(GtkButton *button, gpointer data) {
     gtk_widget_grab_focus(d->picture);
 }
 
+#if GTK_CHECK_VERSION(4, 10, 0)
+typedef struct {
+    GtkWidget parent_instance;
+    CupidGtkDesktop *desktop;
+} CupidGtkGameView;
+
+typedef GtkWidgetClass CupidGtkGameViewClass;
+
+G_DEFINE_TYPE(CupidGtkGameView, cupid_gtk_game_view, GTK_TYPE_WIDGET)
+
+static void game_snapshot(GtkWidget *widget, GtkSnapshot *snapshot) {
+    CupidGtkDesktop *d = ((CupidGtkGameView *)widget)->desktop;
+    int width = gtk_widget_get_width(widget), height = gtk_widget_get_height(widget);
+    graphene_rect_t bounds = GRAPHENE_RECT_INIT(0, 0, width, height);
+    const GdkRGBA background = {.025f, .028f, .035f, 1.f};
+    gtk_snapshot_append_color(snapshot, &background, &bounds);
+    if (!d->frame_texture || !d->session) {
+        return;
+    }
+
+    unsigned vw, vh;
+    frontend_video_runtime_display_size(d->ui->video, &vw, &vh);
+    SDL_Rect r;
+    frontend_desktop_game_rect(d->ui, width, height, (int)vw, (int)vh, d->ui->settings->integer_scaling, &r);
+    bounds = GRAPHENE_RECT_INIT(r.x, r.y, r.w, r.h);
+    gtk_snapshot_append_scaled_texture(snapshot, d->frame_texture,
+        d->ui->settings->bilinear_interpolation ? GSK_SCALING_FILTER_LINEAR : GSK_SCALING_FILTER_NEAREST, &bounds);
+}
+
+static void cupid_gtk_game_view_class_init(CupidGtkGameViewClass *klass) {
+    GTK_WIDGET_CLASS(klass)->snapshot = game_snapshot;
+}
+
+static void cupid_gtk_game_view_init(CupidGtkGameView *view) {
+    gtk_widget_set_overflow(GTK_WIDGET(view), GTK_OVERFLOW_HIDDEN);
+}
+
+static void update_game(CupidGtkDesktop *d, const uint32_t *pixels, unsigned w, unsigned h, unsigned stride) {
+    /* Upload the source frame once; GTK scales its texture at presentation.
+     * The immutable copy outlives emulation's reusable pixel buffers. Like
+     * Cairo RGB24, the game view ignores the source's unused alpha byte. */
+    uint32_t *copy = g_new(uint32_t, (size_t)w * h);
+    for (unsigned y = 0; y < h; ++y) {
+        for (unsigned x = 0; x < w; ++x) {
+            copy[(size_t)y * w + x] = pixels[(size_t)y * stride + x] | 0xff000000u;
+        }
+    }
+
+    GBytes *bytes = g_bytes_new_take(copy, (size_t)w * h * sizeof(*copy));
+    GdkTexture *texture = gdk_memory_texture_new((int)w, (int)h, GDK_MEMORY_DEFAULT, bytes, w * sizeof(*copy));
+    g_bytes_unref(bytes);
+    g_clear_object(&d->frame_texture);
+    d->frame_texture = texture;
+    d->frame_width = w;
+    d->frame_height = h;
+    gtk_widget_queue_draw(d->picture);
+}
+#else
+/* GTK 4.8 lacks texture scaling filters; retain its pixel-exact Cairo path. */
 static void draw_game(GtkDrawingArea *area, cairo_t *cr, int width, int height, gpointer data) {
     (void)area;
     CupidGtkDesktop *d = data;
@@ -534,6 +593,7 @@ static void update_game(CupidGtkDesktop *d, const uint32_t *pixels, unsigned w, 
     cairo_surface_mark_dirty(d->frame);
     gtk_widget_queue_draw(d->picture);
 }
+#endif
 
 static void pointer_event(CupidGtkDesktop *d, double x, double y, Uint32 type, guint button) {
     int w = gtk_widget_get_width(d->picture), h = gtk_widget_get_height(d->picture), sw, sh;
@@ -666,8 +726,13 @@ bool cupid_gtk_init(FrontendDesktopUi *ui) {
     GtkWidget *overlay = gtk_overlay_new();
     gtk_widget_set_vexpand(overlay, TRUE);
     gtk_box_append(GTK_BOX(box), overlay);
+#if GTK_CHECK_VERSION(4, 10, 0)
+    d->picture = g_object_new(cupid_gtk_game_view_get_type(), NULL);
+    ((CupidGtkGameView *)d->picture)->desktop = d;
+#else
     d->picture = gtk_drawing_area_new();
     gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(d->picture), draw_game, d, NULL);
+#endif
     gtk_widget_set_focusable(d->picture, TRUE);
     g_signal_connect(d->picture, "notify::has-focus", G_CALLBACK(picture_focus_changed), d);
     gtk_widget_add_css_class(d->picture, "game-view");
@@ -1029,6 +1094,7 @@ void cupid_gtk_shutdown(FrontendDesktopUi *ui) {
     if (d->frame) {
         cairo_surface_destroy(d->frame);
     }
+    g_clear_object(&d->frame_texture);
     g_clear_object(&d->actions);
     g_free(d);
     ui->gtk = NULL;

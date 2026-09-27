@@ -19,6 +19,7 @@ typedef struct CupidGtkDesktop {
     bool session, held[SDL_NUM_SCANCODES], fullscreen, joystick_background;
     uint32_t refreshed, theme_checked;
     cairo_surface_t *frame;
+    GdkTexture *frame_texture;
     unsigned frame_width, frame_height;
     int mouse_x, mouse_y;
     uint32_t mouse_buttons, consumed_mouse_buttons;

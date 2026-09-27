@@ -98,6 +98,58 @@ static bool capture_ready(FrontendDesktopUi *ui, GtkWidget *widget, const char *
         }                                                                                                              \
     } while (0)
 
+static bool game_texture_interactions(FrontendDesktopUi *ui) {
+#if GTK_CHECK_VERSION(4, 10, 0)
+    CupidGtkDesktop *d = ui->gtk;
+    const uint32_t *pixels;
+    unsigned w, h, stride;
+    CHECK(frontend_video_runtime_pixels(ui->video, true, &pixels, &w, &h, &stride));
+    CHECK(d->frame_texture && !d->frame);
+    CHECK(gdk_texture_get_width(d->frame_texture) == (int)w);
+    CHECK(gdk_texture_get_height(d->frame_texture) == (int)h);
+    uint32_t *download = g_new(uint32_t, (size_t)w * h);
+    gdk_texture_download(d->frame_texture, (guchar *)download, w * sizeof(*download));
+    bool same = true;
+    for (unsigned y = 0; y < h; ++y) {
+        for (unsigned x = 0; x < w; ++x) {
+            same &= download[(size_t)y * w + x] == (pixels[(size_t)y * stride + x] | 0xff000000u);
+        }
+    }
+    g_free(download);
+    CHECK(same);
+
+    bool old_filter = ui->settings->bilinear_interpolation;
+    for (unsigned linear = 0; linear < 2; ++linear) {
+        ui->settings->bilinear_interpolation = linear != 0;
+        GtkSnapshot *snapshot = gtk_snapshot_new();
+        GTK_WIDGET_GET_CLASS(d->picture)->snapshot(d->picture, snapshot);
+        GskRenderNode *node = gtk_snapshot_free_to_node(snapshot);
+        CHECK(node && gsk_render_node_get_node_type(node) == GSK_CONTAINER_NODE);
+        CHECK(gsk_container_node_get_n_children(node) == 2);
+        GskRenderNode *game = gsk_container_node_get_child(node, 1);
+        CHECK(gsk_render_node_get_node_type(game) == GSK_TEXTURE_SCALE_NODE);
+        CHECK(gsk_texture_scale_node_get_texture(game) == d->frame_texture);
+        CHECK(gsk_texture_scale_node_get_filter(game) ==
+              (linear ? GSK_SCALING_FILTER_LINEAR : GSK_SCALING_FILTER_NEAREST));
+        unsigned vw, vh;
+        frontend_video_runtime_display_size(ui->video, &vw, &vh);
+        SDL_Rect rect;
+        frontend_desktop_game_rect(ui, gtk_widget_get_width(d->picture), gtk_widget_get_height(d->picture),
+                                  (int)vw, (int)vh, ui->settings->integer_scaling, &rect);
+        graphene_rect_t bounds;
+        gsk_render_node_get_bounds(game, &bounds);
+        CHECK(bounds.origin.x == rect.x && bounds.origin.y == rect.y);
+        CHECK(bounds.size.width == rect.w && bounds.size.height == rect.h);
+        gsk_render_node_unref(node);
+    }
+    ui->settings->bilinear_interpolation = old_filter;
+    puts("GTK game texture pixels, native resolution, scaling bounds and filters: PASS");
+#else
+    (void)ui;
+#endif
+    return true;
+}
+
 static GtkWidget *find_widget(GtkWidget *root, GType type) {
     if (G_TYPE_CHECK_INSTANCE_TYPE(root, type)) {
         return root;
@@ -571,7 +623,7 @@ int main(int argc, char **argv) {
     frontend_command_set_session_active(true);
     pump(&ui);
     if (ok) {
-        ok = test_gtk_input_accuracy(&ui);
+        ok = game_texture_interactions(&ui) && test_gtk_input_accuracy(&ui);
     }
     if (ok) {
         ok = file_dialog_interactions(&ui) && register_interactions(&ui);
