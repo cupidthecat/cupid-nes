@@ -28,7 +28,7 @@ try {
     & $bash -lc $command
     if ($LASTEXITCODE -ne 0) { throw 'GTK desktop build failed' }
     if ($Test) {
-        & $bash -lc "cd $rootArgument && make -j$Jobs GTK=1 BUILD_REVISION=$BuildRevision gtk-smoke && G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-settings-test.exe && G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke.exe build/gtk-smoke-windows"
+        & $bash -lc "cd $rootArgument && make -j$Jobs GTK=1 BUILD_REVISION=$BuildRevision gtk-smoke && GSK_RENDERER=cairo G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-settings-test.exe && GSK_RENDERER=cairo G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke.exe build/gtk-smoke-windows"
         if ($LASTEXITCODE -ne 0) { throw 'GTK desktop regressions failed' }
         & $bash -lc "cd $rootArgument && SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy make -j$Jobs GTK=0 TARGET=build/windows-gtk0/cupid-nes.exe TEST_TARGET=build/windows-gtk0/accuracy-tests.exe all test"
         if ($LASTEXITCODE -ne 0) { throw 'Hardware regressions failed' }
