@@ -15,6 +15,17 @@ Run the remaining commands from the repository root. The build does not download
 
 ## Linux
 
+The Linux x64 preview archive targets Ubuntu 24.04 and uses system libraries:
+
+```sh
+sudo apt install libgtk-4-1 libsdl2-2.0-0 libcurl4t64
+tar -xzf cupid-linux-x64.tar.gz
+cd cupid-linux-x64
+./cupid-nes
+```
+
+The archive includes the executable, component licenses, and a build manifest.
+
 Ubuntu and the Linux CI job use the normal Makefile build. Install GCC/G++, Make, and the SDL2 development package:
 
 ```sh

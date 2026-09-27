@@ -17,6 +17,9 @@ Extract it into a new folder and run `cupid-nes.cmd`. The package includes GTK a
 its runtime libraries. Preview releases are available while the desktop changes
 are under review.
 
+Linux x64 previews are available as `cupid-linux-x64.tar.gz` for Ubuntu 24.04.
+See [Linux download instructions](docs/getting-started.md#linux) for runtime dependencies.
+
 Use **File > Open Game**, press **Ctrl+O**, or drop an image onto the game window.
 Recent games remember archive members and patches. Opening another image switches
 games in the same window; a failed load keeps the current session available.
