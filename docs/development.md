@@ -16,13 +16,12 @@ Results from a modified working tree should be identified as such. A passing his
 On Linux, use the strict GCC flags from CI:
 
 ```sh
-make clean
-make -j2 CC=gcc CXX=g++ CFLAGS='-std=c11 -Wall -Wextra -Werror -O2' all test
+make -j2 GTK=0 CC=gcc CXX=g++ CFLAGS='-std=c11 -Wall -Wextra -Werror -O2' all test
 ```
 
 The application is `./cupid-nes` and the runner is `build/accuracy-tests`. Running the test executable without arguments executes CPU, APU, PPU, cartridge, media, input, VS, and EPSM groups and returns failure if any group fails. Media tests include disk transport, StudyBox, and NSF/NSFe execution and sound. The C core uses C11; cartridge board modules, the metadata database, the EPSM wrapper, and ymfm use C++17.
 
-The Makefile defaults to `CC=gcc` and `CFLAGS='-std=c11 -Wall -Wextra -O2'`. When `CXX` still has GNU Make's built-in default, the Makefile selects `g++` for GCC and `clang++` when `CC` contains `clang`. An explicitly supplied `CXX` is kept. Unless `CXXFLAGS` is supplied separately, the Makefile derives it from `CFLAGS`, removes any C language-standard flag, and appends `-std=c++17`. `LDLIBS` defaults to `-lSDL2 -lm`. Use `make clean` before changing compiler families or flag sets because those settings are not tracked as object-file dependencies.
+The Makefile defaults to `CC=gcc` and `CFLAGS='-std=c11 -Wall -Wextra -O2'`. When `CXX` still has GNU Make's built-in default, the Makefile selects `g++` for GCC and `clang++` when `CC` contains `clang`. An explicitly supplied `CXX` is kept. Unless `CXXFLAGS` is supplied separately, the Makefile derives it from `CFLAGS`, removes any C language-standard flag, and appends `-std=c++17`. `LDLIBS` defaults to `-lSDL2 -lm`, with platform and GTK libraries added as needed. The Makefile tracks compiler settings and rebuilds affected objects when they change. Set separate `BUILD_DIR`, `TARGET`, and `TEST_TARGET` paths to retain multiple compiler configurations. `GTK=0` builds the hardware runner without GTK; the desktop build uses `GTK=1`.
 
 On Windows:
 
@@ -206,8 +205,7 @@ memory, and screen APIs. Its emulation code does not need instrumentation.
 Build a fresh Linux binary with Clang AddressSanitizer and UndefinedBehaviorSanitizer:
 
 ```sh
-make clean
-ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 make -j2 CC=clang CXX=clang++ CFLAGS='-std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer' all test
+ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 make -j2 GTK=0 CC=clang CXX=clang++ CFLAGS='-std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer' all test
 ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 python3 scripts/run-diagnostics.py build/accuracy-tests build/diagnostic-roms
 ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 build/accuracy-tests --accuracycoin 12000 build/accuracycoin/AccuracyCoin.nes
 ```

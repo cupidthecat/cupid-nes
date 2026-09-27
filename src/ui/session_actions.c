@@ -219,6 +219,7 @@ static bool restore_previous_session(FrontendSessionActions *actions, const Fron
             return false;
         }
     }
+    debugger_invalidate_memory();
     sync_active_session(actions, false);
     return true;
 }

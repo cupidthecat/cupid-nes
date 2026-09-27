@@ -38,7 +38,7 @@ The event list shows the last captured completed frame. Each row includes frame 
 
 NMI and IRQ entries describe transitions during capture. Enabling capture while a line is already asserted does not add an earlier transition to the new recording.
 
-Loading a state or resuming History resets the event baseline to the restored interrupt levels. Those restored levels do not become new events; subsequent live transitions remain visible. History Resume uses the same debugger and timing reset as rewind.
+Loading a state, resuming History, or restoring the previous game after a failed replacement resets the event baseline to the restored interrupt levels. Those restored levels do not become new events; subsequent live transitions remain visible. Reset and Power Cycle establish the baseline after the hardware reset finishes. History Resume uses the same debugger and timing reset as rewind.
 
 Apply capture settings changes the category filter without recapturing. Category bits are hexadecimal:
 
@@ -120,3 +120,5 @@ The hexadecimal Columns mask selects registers (`1`), CPU cycles (`2`), fetched 
 `src/tests/debug_tools_accuracy.c` runs against the production CPU, cartridge mappings, debugger hooks, file transactions, and panel registry. It covers bank separation, cycle totals, stack returns and uncertainty, ring retention, rejected imports, source mapping, static references, text decoding, bounded events, panel actions, and extra bus accesses. The integration run also exercises all CPU/joypad bus-order groups with tools disabled and enabled. Full hardware, diagnostic-ROM, AccuracyCoin, and sanitizer results belong to the combined build.
 
 Regression cases also check function totals across local labels and event baselines while capture is disabled or after a saved state is restored. `src/tests/presentation_history_accuracy.c` exercises History Resume through its panel action and checks that the next genuine interrupt transition remains visible. `src/tests/debugger_accuracy.c` executes a speculative CPU instruction and checks that it adds no entry to the basic instruction trace.
+
+`src/tests/frontend_accuracy.c` checks interrupt capture across soft reset, power cycle, rejected startup alignment, and rollback after a replacement's peripheral storage fails to load. It also checks that later interrupt transitions are still captured.

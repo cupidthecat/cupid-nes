@@ -9,6 +9,7 @@
 #include "../util/sha1.h"
 #include "../apu/apu.h"
 #include "../cpu/cpu.h"
+#include "../debugger/debug_analysis.h"
 #include "../ppu/ppu.h"
 #include "../rom/rom.h"
 #include "../system/hardware.h"
@@ -130,6 +131,74 @@ static int lifecycle_actions(void) {
     CHECK(frontend_machine_power_cycle());
     CHECK(read_mem(0x0010) == 0x00);
     return 0;
+}
+
+static int reset_event_baseline(unsigned action) {
+    CHECK(unload_rom());
+    CHECK(nes_set_region_mode(NES_REGION_MODE_NTSC));
+    cpu_use_default_startup_alignment();
+    build_nrom(0);
+    CHECK(load_rom_memory(image, sizeof(image)) == 0);
+    CHECK(frontend_machine_power_cycle());
+    debugger_init();
+    debug_events_enable(true);
+    CHECK(debug_events_enabled());
+
+    ppu.startup_writes_restricted = false;
+    ppu.status |= 0x80;
+    ppu_reg_write_cpu(0x2000, 0x80, 0);
+    apu.frame_irq_source = true;
+    apu.irq_inhibit = false;
+    CHECK(cpu_step(&cpu) > 0);
+    CHECK(ppu.nmi_out && apu_irq_pending(&apu));
+    debug_events_clear();
+
+    if (action == 2) {
+        nes_set_region(NES_REGION_PAL);
+        CHECK(cpu_set_startup_alignment(15, 4));
+        nes_set_region(NES_REGION_NTSC);
+        CHECK(!frontend_machine_power_cycle());
+    } else {
+        CHECK(action == 0 ? frontend_machine_soft_reset() : frontend_machine_power_cycle());
+    }
+
+    CHECK(!ppu.nmi_out && !apu_irq_pending(&apu));
+    CHECK(cpu_step(&cpu) > 0);
+    ++ppu.frame_count;
+    debug_analysis_event(DEBUG_EVENT_READ, 0, 0);
+    CHECK(debug_events_count(DEBUG_EVENT_NMI) == 0);
+    CHECK(debug_events_count(DEBUG_EVENT_IRQ) == 0);
+
+    apu.frame_irq_source = true;
+    apu.irq_inhibit = false;
+    CHECK(cpu_step(&cpu) > 0);
+    ++ppu.frame_count;
+    debug_analysis_event(DEBUG_EVENT_READ, 0, 0);
+    CHECK(debug_events_count(DEBUG_EVENT_IRQ) == 1);
+    DebugNesEvent edge;
+    CHECK(debug_events_at(0, DEBUG_EVENT_IRQ, &edge) && edge.value == 1);
+
+    (void)read_mem(0x4015);
+    CHECK(cpu_step(&cpu) > 0);
+    ++ppu.frame_count;
+    debug_analysis_event(DEBUG_EVENT_READ, 0, 0);
+    CHECK(debug_events_count(DEBUG_EVENT_IRQ) == 1);
+    CHECK(debug_events_at(0, DEBUG_EVENT_IRQ, &edge) && edge.value == 0);
+    return 0;
+}
+
+static int lifecycle_event_baselines(void) {
+    bool suppressed = ppu_reset_suppression_enabled();
+    ppu_set_reset_suppression(false);
+    int failures = 0;
+    for (unsigned action = 0; action < 3; ++action) {
+        failures += reset_event_baseline(action);
+        debugger_shutdown();
+        cpu_use_default_startup_alignment();
+    }
+
+    ppu_set_reset_suppression(suppressed);
+    return failures;
 }
 
 typedef struct {
@@ -785,6 +854,17 @@ static int session_replacement_rollback(void) {
     frontend_settings_defaults(&settings);
     FrontendSessionActions actions;
     frontend_session_actions_init(&actions, &session, &settings, NULL);
+    debugger_init();
+    debug_events_enable(true);
+    CHECK(debug_events_enabled());
+    ppu.startup_writes_restricted = false;
+    ppu.status |= 0x80;
+    ppu_reg_write_cpu(0x2000, 0x80, 0);
+    apu.frame_irq_source = true;
+    apu.irq_inhibit = false;
+    CHECK(cpu_step(&cpu) > 0);
+    CHECK(ppu.nmi_out && apu_irq_pending(&apu));
+    debug_events_clear();
     CHECK(!frontend_session_action_open_path(&actions, replacement_path,
                                              error, sizeof(error)));
     CHECK(strstr(error, "previous session was restored") != NULL);
@@ -792,10 +872,30 @@ static int session_replacement_rollback(void) {
     CHECK(rom_file_crc32() == original_crc);
     CHECK(read_mem(0x0010) == 0xA5);
     CHECK(joypad_expansion_device() == NES_EXPANSION_TURBO_FILE);
+    CHECK(ppu.nmi_out && apu_irq_pending(&apu));
     CHECK(joypad_persistent_flush());
     CHECK(joypad_persistent_shutdown());
     CHECK(joypad_set_expansion_device(previous_expansion));
     CHECK(nes_file_remove(replacement_storage) == NES_FILE_OK);
+
+    CHECK(cpu_step(&cpu) > 0);
+    ++ppu.frame_count;
+    debug_analysis_event(DEBUG_EVENT_READ, 0, 0);
+    bool clean_baseline = debug_events_count(DEBUG_EVENT_NMI) == 0
+        && debug_events_count(DEBUG_EVENT_IRQ) == 0;
+    ppu_reg_write_cpu(0x2000, 0, 0);
+    (void)read_mem(0x4015);
+    CHECK(cpu_step(&cpu) > 0);
+    ++ppu.frame_count;
+    debug_analysis_event(DEBUG_EVENT_READ, 0, 0);
+    DebugNesEvent nmi_edge, irq_edge;
+    bool live_edges = debug_events_count(DEBUG_EVENT_NMI) == 1
+        && debug_events_count(DEBUG_EVENT_IRQ) == 1
+        && debug_events_at(0, DEBUG_EVENT_NMI, &nmi_edge) && nmi_edge.value == 0
+        && debug_events_at(0, DEBUG_EVENT_IRQ, &irq_edge) && irq_edge.value == 0;
+    debugger_shutdown();
+    CHECK(clean_baseline);
+    CHECK(live_edges);
     return 0;
 }
 
@@ -820,6 +920,7 @@ int test_frontend_accuracy(void) {
     failures += image_identity_hash();
     failures += execution_gate_regions();
     failures += lifecycle_actions();
+    failures += lifecycle_event_baselines();
     failures += command_registry();
     failures += panel_registry();
     failures += settings_round_trip();

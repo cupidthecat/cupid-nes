@@ -162,6 +162,7 @@ void desktop_settings_open(FrontendDesktopUi *ui, bool open) {
         if(ui->devices){snprintf(ui->settings->tape_play_path,sizeof(ui->settings->tape_play_path),"%s",ui->devices->tape_input);snprintf(ui->settings->tape_record_path,sizeof(ui->settings->tape_record_path),"%s",ui->devices->tape_output);}
         if(ui->music)ui->settings->nsf_player=ui->music->options;
         ui->staged = *ui->settings;
+        ui->settings_input_changes = 0;
         if (ui->execution) {
             ui->staged.speed = ui->execution->execution.speed;
             ui->staged.fast_forward_speed = ui->execution->execution.fast_forward_speed;
@@ -235,13 +236,15 @@ static bool save_settings(FrontendDesktopUi *ui) {
     if (ui->sessions && ui->sessions->before_configuration)
         ui->sessions->before_configuration(ui->sessions->configuration_context);
     FrontendSettings previous = *ui->settings;
-    FrontendSettings core_settings = ui->staged;
+    FrontendSettings requested = ui->staged;
+    FrontendSettings applied = ui->staged;
+    FrontendSettings core_settings = applied;
     if (rom_metadata_source() != ROM_METADATA_NONE) {
         previous.input = (NesInputConfiguration){
             joypad_adapter(), {joypad_port_device(0), joypad_port_device(1)}, joypad_expansion_device()};
         previous.saved_input_overrides = joypad_configuration_overrides();
-        game_config_preserve_input_overrides(ui->sessions ? ui->sessions->game_config : NULL, &ui->staged, &previous);
-        core_settings = ui->staged;
+        game_config_preserve_input_overrides(ui->sessions ? ui->sessions->game_config : NULL, &applied, &previous);
+        core_settings = applied;
         /* Preserve this game's automatic devices without saving them as defaults. */
         uint8_t overrides = core_settings.saved_input_overrides;
         if (!(overrides & NES_INPUT_OVERRIDE_ADAPTER)) {
@@ -315,7 +318,8 @@ static bool save_settings(FrontendDesktopUi *ui) {
     if (ui->settings_path) {
         FrontendSettingsReport report;
         bool saved = ui->sessions && ui->sessions->game_config
-            ? game_config_save_globals(ui->sessions->game_config, ui->settings_path, &ui->staged, &report)
+            ? game_config_save_globals_with_input_changes(ui->sessions->game_config, ui->settings_path, &requested,
+                                                          ui->settings_input_changes, &report)
             : frontend_settings_save(ui->settings_path, &ui->staged, &report);
         if (!saved) {
             snprintf(error, sizeof(error), "%s", report.message);
@@ -329,7 +333,9 @@ static bool save_settings(FrontendDesktopUi *ui) {
         frontend_host_input_shutdown();
         frontend_host_input_open_controllers(&ui->staged);
     }
+    ui->staged = applied;
     *ui->settings = ui->staged;
+    ui->settings_input_changes = 0;
     if (ui->video) ui->video->settings = ui->settings;
     (void)frontend_command_set_checked(FRONTEND_COMMAND_FULLSCREEN, ui->settings->fullscreen);
     (void)frontend_command_set_checked(FRONTEND_COMMAND_MUTE, ui->settings->muted);
@@ -339,6 +345,7 @@ static bool save_settings(FrontendDesktopUi *ui) {
 rollback:
     frontend_audio_runtime_cancel(&prepared_audio);
     restore_runtime_settings(ui, &previous);
+    ui->staged = requested;
     frontend_execution_end_machine_change_preserving_audio(ui->execution);
     if (trace_prepared && !previous_layers)
         (void)nes_video_trace_use(NES_VIDEO_TRACE_LAYERS, false);
@@ -1033,6 +1040,8 @@ static void category_defaults(FrontendDesktopUi *ui) {
             memcpy(&ui->staged.input, &d.input, sizeof(d.input));
             memcpy(&ui->staged.zapper_radius, &d.zapper_radius, sizeof(d.zapper_radius));
             memcpy(&ui->staged.saved_input_overrides, &d.saved_input_overrides, sizeof(d.saved_input_overrides));
+            ui->settings_input_changes |= NES_INPUT_OVERRIDE_ADAPTER | NES_INPUT_OVERRIDE_PORT1 |
+                                          NES_INPUT_OVERRIDE_PORT2 | NES_INPUT_OVERRIDE_EXPANSION;
             memcpy(&ui->staged.active_profile, &d.active_profile, sizeof(d.active_profile));
             memcpy(&ui->staged.profiles, &d.profiles, sizeof(d.profiles));
             memcpy(&ui->staged.profile_count, &d.profile_count, sizeof(d.profile_count));
@@ -1097,6 +1106,8 @@ void desktop_settings_button(FrontendDesktopUi *ui, int button) {
             uint32_t overrides = ui->staged.cli_overrides;
             frontend_settings_defaults(&ui->staged);
             ui->staged.cli_overrides = overrides;
+            ui->settings_input_changes |= NES_INPUT_OVERRIDE_ADAPTER | NES_INPUT_OVERRIDE_PORT1 |
+                                          NES_INPUT_OVERRIDE_PORT2 | NES_INPUT_OVERRIDE_EXPANSION;
             ui->confirm_restore_all = false;
         } else { ui->confirm_restore_all = true; desktop_copy_status(ui, "Activate Reset all again to confirm"); }
     }

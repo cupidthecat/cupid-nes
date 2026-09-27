@@ -484,8 +484,9 @@ void game_config_unregister_ui(void) {
     frontend_panel_unregister(GAME_CONFIG_PANEL);
 }
 
-bool game_config_save_globals(GameConfigFrontend *r, const char *path, const FrontendSettings *effective,
-                              FrontendSettingsReport *report) {
+bool game_config_save_globals_with_input_changes(GameConfigFrontend *r, const char *path,
+                                                 const FrontendSettings *effective, uint8_t input_changes,
+                                                 FrontendSettingsReport *report) {
     if (!r || !r->global || !effective) {
         return false;
     }
@@ -495,8 +496,11 @@ bool game_config_save_globals(GameConfigFrontend *r, const char *path, const Fro
             continue;
         }
         uint8_t input = input_override(&fields[i]);
-        if ((r->config.present & (UINT64_C(1) << i)) || (r->applied_input_overrides & input) ||
-            (r->cli_fields & (UINT64_C(1) << i)) || (effective->cli_overrides & fields[i].cli)) {
+        uint64_t bit = UINT64_C(1) << i;
+        bool game_override = (r->config.present & bit) || (input && (r->applied_input_overrides & input));
+        bool input_changed = input && (input_changes & input);
+        if ((game_override && !input_changed) || (r->cli_fields & bit) ||
+            (effective->cli_overrides & fields[i].cli)) {
             memcpy((char *)&global + fields[i].offset, (char *)r->global + fields[i].offset, fields[i].size);
             global.saved_input_overrides =
                 (global.saved_input_overrides & (uint8_t)~input) | (r->global->saved_input_overrides & input);
@@ -512,4 +516,9 @@ bool game_config_save_globals(GameConfigFrontend *r, const char *path, const Fro
     }
     *r->global = global;
     return true;
+}
+
+bool game_config_save_globals(GameConfigFrontend *r, const char *path, const FrontendSettings *effective,
+                              FrontendSettingsReport *report) {
+    return game_config_save_globals_with_input_changes(r, path, effective, 0, report);
 }

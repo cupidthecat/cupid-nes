@@ -82,6 +82,7 @@ typedef struct FrontendDesktopUi {
     int settings_category;
     int settings_row;
     int settings_scroll;
+    uint8_t settings_input_changes;
     unsigned settings_player;
     unsigned capture_index;
     unsigned panel_id;

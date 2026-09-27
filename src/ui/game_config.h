@@ -46,6 +46,9 @@ void game_config_preserve_input_overrides(const GameConfigFrontend *frontend, Fr
                                           const FrontendSettings *previous);
 bool game_config_save_globals(GameConfigFrontend *frontend, const char *path, const FrontendSettings *effective,
                               FrontendSettingsReport *report);
+bool game_config_save_globals_with_input_changes(GameConfigFrontend *frontend, const char *path,
+                                                 const FrontendSettings *effective, uint8_t input_changes,
+                                                 FrontendSettingsReport *report);
 bool game_config_register_ui(GameConfigFrontend *frontend, FrontendSettings *global, const char *directory);
 void game_config_unregister_ui(void);
 #endif
