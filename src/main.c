@@ -1125,10 +1125,15 @@ static int application_main(int argc, char *argv[]) {
             presentation_host.previous_end = 0;
             nes_frame_timing_reset(&presentation_host.timing.timing);
             if (audio_dev) SDL_PauseAudioDevice(audio_dev, 1);
-            SDL_SetRenderDrawColor(renderer, 14, 18, 27, 255);
-            SDL_RenderClear(renderer);
+            if (!desktop_ui.gtk) {
+                SDL_SetRenderDrawColor(renderer, 14, 18, 27, 255);
+                SDL_RenderClear(renderer);
+            }
+
             frontend_desktop_render(&desktop_ui, 256, 240, NULL, NULL, "Idle");
-            SDL_RenderPresent(renderer);
+            if (!desktop_ui.gtk) {
+                SDL_RenderPresent(renderer);
+            }
             SDL_Delay(8);
             continue;
         }
@@ -1140,7 +1145,9 @@ static int application_main(int argc, char *argv[]) {
             timing_revision = execution_runtime.timing_revision;
             paced_speed = loop_speed;
         }
-        int wanted_vsync = frontend_settings.vsync && loop_speed == 1.0;
+        // GTK presents the visible window. VSync on the hidden SDL host can
+        // block independently of GTK's frame clock and slow down emulation.
+        int wanted_vsync = !desktop_ui.gtk && frontend_settings.vsync && loop_speed == 1.0;
         if (active_vsync != wanted_vsync) {
             (void)SDL_RenderSetVSync(renderer, wanted_vsync);
             active_vsync = wanted_vsync;
@@ -1197,13 +1204,16 @@ static int application_main(int argc, char *argv[]) {
         frontend_video_runtime_display_size(&video_runtime, &display_width, &display_height);
         video_width = (int)display_width;
         video_height = (int)display_height;
-        SDL_RenderClear(renderer);
-        int ww = 0, hh = 0;
-        SDL_GetWindowSize(window, &ww, &hh);
-        SDL_Rect game_rect;
-        frontend_desktop_game_rect(&desktop_ui, ww, hh, video_width, video_height,
-                                           frontend_settings.integer_scaling, &game_rect);
-        SDL_RenderCopy(renderer, frontend_video_runtime_texture(&video_runtime), NULL, &game_rect);
+        if (!desktop_ui.gtk) {
+            SDL_RenderClear(renderer);
+            int ww = 0, hh = 0;
+            SDL_GetWindowSize(window, &ww, &hh);
+            SDL_Rect game_rect;
+            frontend_desktop_game_rect(&desktop_ui, ww, hh, video_width, video_height,
+                                       frontend_settings.integer_scaling, &game_rect);
+            SDL_RenderCopy(renderer, frontend_video_runtime_texture(&video_runtime), NULL, &game_rect);
+        }
+
         frontend_desktop_render(&desktop_ui, video_width, video_height,
             frontend_session.current_result.title,
             nes_region_name(nes_timing()->region),
@@ -1213,7 +1223,9 @@ static int application_main(int argc, char *argv[]) {
                 : execution_runtime.rewind_held ? "Rewinding"
                 : frontend_execution_paused(&execution_runtime) ? "Paused" : "Running");
         uint64_t host_present_start = SDL_GetPerformanceCounter();
-        SDL_RenderPresent(renderer);
+        if (!desktop_ui.gtk) {
+            SDL_RenderPresent(renderer);
+        }
         uint64_t host_present_end = SDL_GetPerformanceCounter();
     
         double fps_now = (double)SDL_GetPerformanceCounter();

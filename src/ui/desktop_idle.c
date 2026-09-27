@@ -76,8 +76,17 @@ FrontendIdleResult frontend_desktop_idle_open(FrontendSettings *settings,const F
                 if(!choose(&selection,error,error_size)&&error&&error[0])frontend_desktop_set_status(&ui,error);
             }
         }
-        SDL_SetRenderDrawColor(*renderer,14,18,27,255);SDL_RenderClear(*renderer);
-        frontend_desktop_render(&ui,256,240,NULL,NULL,"Idle");SDL_RenderPresent(*renderer);SDL_Delay(10);
+        if (!ui.gtk) {
+            SDL_SetRenderDrawColor(*renderer, 14, 18, 27, 255);
+            SDL_RenderClear(*renderer);
+        }
+
+        frontend_desktop_render(&ui, 256, 240, NULL, NULL, "Idle");
+        if (!ui.gtk) {
+            SDL_RenderPresent(*renderer);
+        }
+
+        SDL_Delay(10);
     }
     frontend_desktop_update_window_settings(&ui);frontend_desktop_shutdown(&ui);
     update_checker_shutdown(&updater);
