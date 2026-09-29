@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "frame_timing.h"
+#include "frame_wait.h"
 #include <SDL2/SDL.h>
 #include <math.h>
 #include <stdlib.h>
@@ -89,24 +90,5 @@ unsigned nes_frame_timing_sleep_ms(double remaining_ms) {
 }
 
 void nes_frame_timing_wait(double deadline, double frequency, void (*service)(void *), void *context) {
-    if (!isfinite(deadline) || !isfinite(frequency) || frequency <= 0) return;
-    for (;;) {
-        double now = (double)SDL_GetPerformanceCounter();
-        if (now >= deadline) return;
-        /* Process pending paints before sleeping, including frames queued late
-         * in GTK's update phase. Never upload another image from this callback. */
-        if (service) service(context);
-        now = (double)SDL_GetPerformanceCounter();
-        double remaining = (deadline - now) * 1000.0 / frequency;
-        if (remaining <= 0) return;
-        unsigned delay = nes_frame_timing_sleep_ms(remaining);
-        if (service && delay > 1) delay = 1;
-        if (delay) SDL_Delay(delay);
-        else {
-            while ((double)SDL_GetPerformanceCounter() < deadline) {
-                SDL_CPUPauseInstruction();
-            }
-            return;
-        }
-    }
+    frame_wait(deadline, frequency, service, context, SDL_GetPerformanceCounter, SDL_Delay);
 }

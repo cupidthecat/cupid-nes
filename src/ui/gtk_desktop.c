@@ -49,8 +49,16 @@ void cupid_gtk_picture(GtkWidget *picture, const uint32_t *pixels, unsigned w, u
     if (!pixels || !w || !h) {
         return;
     }
-    GBytes *bytes = g_bytes_new(pixels, (size_t)stride * h);
-    GdkTexture *texture = gdk_memory_texture_new((int)w, (int)h, GDK_MEMORY_B8G8R8A8, bytes, stride);
+    uint32_t *copy = g_new(uint32_t, (size_t)w *h);
+    for (unsigned y = 0; y < h; ++y) {
+        const uint32_t *row = (const uint32_t *)((const unsigned char *)pixels + (size_t)y * stride);
+        for (unsigned x = 0; x < w; ++x) {
+            copy[(size_t)y * w + x] = row[x] | 0xff000000u;
+        }
+    }
+
+    GBytes *bytes = g_bytes_new_take(copy, (size_t)w * h * sizeof(*copy));
+    GdkTexture *texture = gdk_memory_texture_new((int)w, (int)h, GDK_MEMORY_DEFAULT, bytes, w * sizeof(*copy));
     gtk_picture_set_paintable(GTK_PICTURE(picture), GDK_PAINTABLE(texture));
     g_object_unref(texture);
     g_bytes_unref(bytes);
@@ -535,7 +543,7 @@ static void game_snapshot(GtkWidget *widget, GtkSnapshot *snapshot) {
     graphene_rect_t bounds = GRAPHENE_RECT_INIT(0, 0, width, height);
     const GdkRGBA background = {.025f, .028f, .035f, 1.f};
     gtk_snapshot_append_color(snapshot, &background, &bounds);
-    if (!d->frame_texture || !d->session) {
+    if ((!d->frame_texture && !d->frame) || !d->session) {
         return;
     }
     if (!d->native_video) cupid_gtk_record_draw(d);
@@ -571,29 +579,44 @@ static void cupid_gtk_game_view_init(CupidGtkGameView *view) {
 }
 
 static void update_game(CupidGtkDesktop *d, const uint32_t *pixels, unsigned w, unsigned h, unsigned stride) {
-    /* Upload the source frame once; GTK scales its texture at presentation.
-     * The immutable copy outlives emulation's reusable pixel buffers. Like
-     * Cairo RGB24, the game view ignores the source's unused alpha byte. */
-    uint32_t *copy = g_new(uint32_t, (size_t)w * h);
-    for (unsigned y = 0; y < h; ++y) {
-        for (unsigned x = 0; x < w; ++x) {
-            copy[(size_t)y * w + x] = pixels[(size_t)y * stride + x] | 0xff000000u;
+    GskRenderer *renderer = gtk_native_get_renderer(GTK_NATIVE(d->window));
+    if (GSK_IS_CAIRO_RENDERER(renderer)) {
+        g_clear_object(&d->frame_texture);
+        /* Each snapshot owns its source surface until GTK finishes drawing it. */
+        if (d->frame) {
+            cairo_surface_destroy(d->frame);
         }
+
+        d->frame = cairo_image_surface_create(CAIRO_FORMAT_RGB24, (int)w, (int)h);
+        cairo_surface_flush(d->frame);
+        unsigned char *out = cairo_image_surface_get_data(d->frame);
+        int pitch = cairo_image_surface_get_stride(d->frame);
+        for (unsigned y = 0; y < h; ++y) {
+            memcpy(out + (size_t)y * pitch, pixels + (size_t)y * stride, w * sizeof(uint32_t));
+        }
+
+        cairo_surface_mark_dirty(d->frame);
+    } else {
+        if (d->frame) {
+            cairo_surface_destroy(d->frame);
+            d->frame = NULL;
+        }
+
+        /* GPU presentation needs only the immutable, opaque source texture. */
+        uint32_t *copy = g_new(uint32_t, (size_t)w *h);
+        for (unsigned y = 0; y < h; ++y) {
+            for (unsigned x = 0; x < w; ++x) {
+                copy[(size_t)y * w + x] = pixels[(size_t)y * stride + x] | 0xff000000u;
+            }
+        }
+
+        GBytes *bytes = g_bytes_new_take(copy, (size_t)w * h * sizeof(*copy));
+        GdkTexture *texture = gdk_memory_texture_new((int)w, (int)h, GDK_MEMORY_DEFAULT, bytes, w * sizeof(*copy));
+        g_bytes_unref(bytes);
+        g_clear_object(&d->frame_texture);
+        d->frame_texture = texture;
     }
 
-    GBytes *bytes = g_bytes_new_take(copy, (size_t)w * h * sizeof(*copy));
-    GdkTexture *texture = gdk_memory_texture_new((int)w, (int)h, GDK_MEMORY_DEFAULT, bytes, w * sizeof(*copy));
-    g_bytes_unref(bytes);
-    g_clear_object(&d->frame_texture);
-    d->frame_texture = texture;
-    if (d->frame) cairo_surface_destroy(d->frame);
-    d->frame = cairo_image_surface_create(CAIRO_FORMAT_RGB24, (int)w, (int)h);
-    cairo_surface_flush(d->frame);
-    unsigned char *out = cairo_image_surface_get_data(d->frame);
-    int pitch = cairo_image_surface_get_stride(d->frame);
-    for (unsigned y = 0; y < h; ++y)
-        memcpy(out + (size_t)y * pitch, pixels + (size_t)y * stride, w * sizeof(uint32_t));
-    cairo_surface_mark_dirty(d->frame);
     d->frame_width = w;
     d->frame_height = h;
     if (!d->native_video) gtk_widget_queue_draw(d->picture);

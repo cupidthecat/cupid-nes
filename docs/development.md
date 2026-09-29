@@ -269,13 +269,20 @@ allocation with the window's decoration inset. Readback captures are written
 to `build/gtk-native-video/`. Both paths
 check that Game Information refreshes after reopening, live replacement, and unload.
 
+Linux with GTK 4.10 or later also runs `--native-video-check` with Cairo and GL.
+The checks render the game snapshot and read back its colors, letterboxing, integer scaling,
+and bilinear output. Retained snapshots must keep their original pixels after
+the next frame. The shared preview test includes unused alpha bits and padded
+rows. Deadline tests use a deterministic clock to check that GTK servicing
+continues during the final spin wait and when a frame is already late.
+
 The GTK fixture sends key-press and key-release signals through the desktop event
 dispatcher for every configurable shortcut. Command counters check save, load,
 reset, and open without showing file dialogs. Hold actions use the execution
 runtime. Checks cover key repeat, remapping, releasing a modifier first, losing
 focus, and the fixed Settings, fullscreen, and palette keys.
-The startup check rejects changes to `GDK_DEBUG`. Also run the fixture without
-`GSK_RENDERER` to exercise the default renderer on a desktop display. Widget
+The startup check rejects changes to `GDK_DEBUG` and `GSK_RENDERER`. Also run the
+fixture without `GSK_RENDERER` to exercise the default renderer on a desktop display. Widget
 snapshots do not capture the native window's transparent margins; inspect those
 on screen when checking for black borders.
 

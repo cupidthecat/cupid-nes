@@ -1256,10 +1256,13 @@ static int application_main(int argc, char *argv[]) {
             if (execution_runtime.rewind_held) {
                 if (rewind_wait > 0) frontend_desktop_wait(&desktop_ui, current_ticks + rewind_wait, performance_frequency);
             } else SDL_Delay(8);
-        } else if (frame_deadline > current_ticks) {
+        } else {
+            /* Late frames can skip uploading, but still dispatch the desktop. */
             frontend_desktop_wait(&desktop_ui, frame_deadline, performance_frequency);
-        } else if (current_ticks - frame_deadline > performance_frequency * 0.050) {
-            frame_deadline = current_ticks;
+            current_ticks = (double)SDL_GetPerformanceCounter();
+            if (current_ticks - frame_deadline > performance_frequency * 0.050) {
+                frame_deadline = current_ticks;
+            }
         }
         if (ran_frame) (void)frontend_presentation_host_record(&presentation_host, host_emulation_start,
             host_render_start, host_present_start, host_present_end, SDL_GetPerformanceCounter());

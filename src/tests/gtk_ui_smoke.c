@@ -52,6 +52,8 @@ bool test_gtk_input_accuracy(FrontendDesktopUi *ui);
 int benchmark_gtk(const char *path);
 bool test_gtk_native_video(FrontendDesktopUi *ui, const char *out);
 bool test_gtk_information(FrontendDesktopUi *ui);
+bool test_gtk_picture_pixels(void);
+bool test_gtk_game_pixels(FrontendDesktopUi *ui);
 bool test_gtk_shortcuts(FrontendDesktopUi *ui);
 
 static void pump(FrontendDesktopUi *ui) {
@@ -141,6 +143,13 @@ static bool game_window_interactions(FrontendDesktopUi *ui) {
     uint64_t submitted = ui->gtk->submitted_frames;
     guint source = g_idle_add(pacing_dispatch, &dispatched);
     double frequency = (double)SDL_GetPerformanceFrequency();
+    frontend_desktop_wait(ui, 0, frequency);
+    if (!dispatched) {
+        g_source_remove(source);
+    }
+    CHECK(dispatched == 1 && ui->gtk->submitted_frames == submitted);
+    dispatched = 0;
+    source = g_idle_add(pacing_dispatch, &dispatched);
     frontend_desktop_wait(ui, (double)SDL_GetPerformanceCounter() + frequency * 0.030, frequency);
     if (!dispatched) g_source_remove(source);
     CHECK(dispatched == 1 && ui->gtk->submitted_frames == submitted);
@@ -175,26 +184,32 @@ static bool game_texture_interactions(FrontendDesktopUi *ui) {
     const uint32_t *pixels;
     unsigned w, h, stride;
     CHECK(frontend_video_runtime_pixels(ui->video, true, &pixels, &w, &h, &stride));
-    CHECK(d->frame_texture && d->frame);
-    CHECK(gdk_texture_get_width(d->frame_texture) == (int)w);
-    CHECK(gdk_texture_get_height(d->frame_texture) == (int)h);
-    uint32_t *download = g_new(uint32_t, (size_t)w * h);
-    gdk_texture_download(d->frame_texture, (guchar *)download, w * sizeof(*download));
-    bool same = true;
-    for (unsigned y = 0; y < h; ++y) {
-        for (unsigned x = 0; x < w; ++x) {
-            same &= download[(size_t)y * w + x] == (pixels[(size_t)y * stride + x] | 0xff000000u);
+    bool software = GSK_IS_CAIRO_RENDERER(gtk_native_get_renderer(GTK_NATIVE(d->window)));
+    if (software) {
+        CHECK(d->frame && !d->frame_texture);
+        cairo_surface_flush(d->frame);
+        const unsigned char *surface = cairo_image_surface_get_data(d->frame);
+        int pitch = cairo_image_surface_get_stride(d->frame);
+        for (unsigned y = 0; y < h; ++y) {
+            const uint32_t *row = (const uint32_t *)(surface + (size_t)y * pitch);
+            for (unsigned x = 0; x < w; ++x) {
+                CHECK((row[x] & 0xffffffu) == (pixels[(size_t)y * stride + x] & 0xffffffu));
+            }
         }
-    }
-    g_free(download);
-    CHECK(same);
-    cairo_surface_flush(d->frame);
-    const unsigned char *surface = cairo_image_surface_get_data(d->frame);
-    int pitch = cairo_image_surface_get_stride(d->frame);
-    for (unsigned y = 0; y < h; ++y) {
-        const uint32_t *row = (const uint32_t *)(surface + (size_t)y * pitch);
-        for (unsigned x = 0; x < w; ++x)
-            CHECK((row[x] & 0xffffffu) == (pixels[(size_t)y * stride + x] & 0xffffffu));
+    } else {
+        CHECK(d->frame_texture && !d->frame);
+        CHECK(gdk_texture_get_width(d->frame_texture) == (int)w);
+        CHECK(gdk_texture_get_height(d->frame_texture) == (int)h);
+        uint32_t *download = g_new(uint32_t, (size_t)w *h);
+        gdk_texture_download(d->frame_texture, (guchar *)download, w * sizeof(*download));
+        bool same = true;
+        for (unsigned y = 0; y < h; ++y) {
+            for (unsigned x = 0; x < w; ++x) {
+                same &= download[(size_t)y * w + x] == (pixels[(size_t)y * stride + x] | 0xff000000u);
+            }
+        }
+        g_free(download);
+        CHECK(same);
     }
 
     bool old_filter = ui->settings->bilinear_interpolation;
@@ -683,9 +698,12 @@ int main(int argc, char **argv) {
     SDL_Renderer *renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
     FrontendDesktopUi ui;
     char *debug_override = g_strdup(g_getenv("GDK_DEBUG"));
+    char *renderer_override = g_strdup(g_getenv("GSK_RENDERER"));
     frontend_desktop_init(&ui, window, renderer, &settings, &execution, NULL, NULL);
-    bool compositor_unchanged = g_strcmp0(debug_override, g_getenv("GDK_DEBUG")) == 0;
+    bool compositor_unchanged = g_strcmp0(debug_override, g_getenv("GDK_DEBUG")) == 0 &&
+                                g_strcmp0(renderer_override, g_getenv("GSK_RENDERER")) == 0;
     g_free(debug_override);
+    g_free(renderer_override);
     if (!compositor_unchanged) {
         fprintf(stderr, "Desktop startup changed the GTK compositor override\n");
         return 1;
@@ -714,11 +732,13 @@ int main(int argc, char **argv) {
     video.frame.screens = 1;
     ui.video = &video;
     preview_pattern();
-    if (!test_gtk_shortcuts(&ui)) return 1;
+    if (!test_gtk_picture_pixels() || !test_gtk_shortcuts(&ui)) {
+        return 1;
+    }
     if (native_check) {
         frontend_panel_set_session_active(true);
         frontend_command_set_session_active(true);
-        bool passed = test_gtk_native_video(&ui, out) && test_gtk_information(&ui);
+        bool passed = test_gtk_native_video(&ui, out) && test_gtk_game_pixels(&ui) && test_gtk_information(&ui);
         frontend_desktop_shutdown(&ui);
         frontend_execution_shutdown(&execution);
         unload_rom();
@@ -797,8 +817,8 @@ int main(int argc, char **argv) {
     frontend_command_set_session_active(true);
     pump(&ui);
     if (ok) {
-        ok = game_window_interactions(&ui) && game_texture_interactions(&ui) && test_gtk_input_accuracy(&ui) &&
-             test_gtk_information(&ui);
+        ok = game_window_interactions(&ui) && game_texture_interactions(&ui) && test_gtk_game_pixels(&ui) &&
+             test_gtk_input_accuracy(&ui) && test_gtk_information(&ui);
     }
     if (ok) {
         ok = file_dialog_interactions(&ui) && register_interactions(&ui);

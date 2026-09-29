@@ -74,6 +74,10 @@ produce black borders around windows with GL or Vulkan, so Cupid does not
 enable it automatically.
 
 Existing `GDK_DEBUG` and `GSK_RENDERER` environment overrides are preserved.
+On Linux, GTK selects the renderer for both the game and desktop widgets.
+With GTK 4.10 or later, the Cairo path prepares a software image and accelerated
+renderers prepare a texture. Each path retains its submitted image while GTK
+finishes drawing it. GTK 4.8 uses the Cairo drawing path for the game.
 If windows have thick black outer margins, remove `dcomp` from `GDK_DEBUG`
 and restart Cupid. This affects the native window surface, so changing widget
 border styles does not fix it.

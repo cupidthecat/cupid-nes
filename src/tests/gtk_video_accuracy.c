@@ -38,6 +38,108 @@ static bool contains(GtkWidget *view, const char *expected) {
     return found;
 }
 
+bool test_gtk_picture_pixels(void) {
+    GtkWidget *picture = g_object_ref_sink(gtk_picture_new());
+    /* Packed RGB, partial alpha and padded rows must all remain opaque. */
+    uint32_t pixels[8] = {0x00112233, 0x80445566, 0, 0, 0x00778899, 0xffaabbcc, 0, 0};
+    cupid_gtk_picture(picture, pixels, 2, 2, 4 * sizeof(uint32_t));
+    GdkTexture *texture = GDK_TEXTURE(gtk_picture_get_paintable(GTK_PICTURE(picture)));
+    CHECK(texture && gdk_texture_get_width(texture) == 2 && gdk_texture_get_height(texture) == 2);
+    g_object_ref(texture);
+    uint32_t download[4];
+    gdk_texture_download(texture, (guchar *)download, 2 * sizeof(uint32_t));
+    CHECK(download[0] == 0xff112233 && download[1] == 0xff445566);
+    CHECK(download[2] == 0xff778899 && download[3] == 0xffaabbcc);
+    memset(pixels, 0, sizeof(pixels));
+    cupid_gtk_picture(picture, pixels, 2, 2, 4 * sizeof(uint32_t));
+    gdk_texture_download(texture, (guchar *)download, 2 * sizeof(uint32_t));
+    CHECK(download[0] == 0xff112233 && download[3] == 0xffaabbcc);
+    g_object_unref(texture);
+    g_object_unref(picture);
+    puts("GTK preview opacity, padded rows and retained texture: PASS");
+    return true;
+}
+
+#if GTK_CHECK_VERSION(4, 10, 0)
+static bool check_snapshot_pixels(FrontendDesktopUi *ui, GskRenderNode *node) {
+    CupidGtkDesktop *d = ui->gtk;
+    unsigned width = (unsigned)gtk_widget_get_width(d->picture);
+    unsigned height = (unsigned)gtk_widget_get_height(d->picture);
+    graphene_rect_t viewport = GRAPHENE_RECT_INIT(0, 0, width, height);
+    GskRenderer *renderer = gtk_native_get_renderer(GTK_NATIVE(d->window));
+    GdkTexture *texture = gsk_renderer_render_texture(renderer, node, &viewport);
+    CHECK(texture && gdk_texture_get_width(texture) == (int)width && gdk_texture_get_height(texture) == (int)height);
+    uint32_t *pixels = g_new(uint32_t, (size_t)width *height);
+    gdk_texture_download(texture, (guchar *)pixels, width * sizeof(*pixels));
+    SDL_Rect game;
+    frontend_desktop_game_rect(ui, (int)width, (int)height, 64, 48, ui->settings->integer_scaling, &game);
+    const uint32_t colors[] = {0xff2266aa, 0xffaa6633, 0xff33aa66, 0xffaa3366};
+    bool same = true;
+    for (unsigned quadrant = 0; quadrant < 4; ++quadrant) {
+        unsigned x = game.x + game.w * (quadrant % 2 ? 3 : 1) / 4;
+        unsigned y = game.y + game.h * (quadrant / 2 ? 3 : 1) / 4;
+        if (pixels[(size_t)y * width + x] != colors[quadrant]) {
+            fprintf(stderr, "Snapshot quadrant %u at %u,%u: %08x expected %08x\n", quadrant, x, y,
+                    pixels[(size_t)y * width + x], colors[quadrant]);
+        }
+        same &= pixels[(size_t)y * width + x] == colors[quadrant];
+    }
+    if (game.x > 0 || game.y > 0) {
+        /* Cairo and GPU compositors round the float background differently. */
+        same &= pixels[0] == 0xff060708 || pixels[0] == 0xff060709;
+    }
+    g_free(pixels);
+    g_object_unref(texture);
+    CHECK(same);
+    return true;
+}
+#endif
+
+bool test_gtk_game_pixels(FrontendDesktopUi *ui) {
+#if GTK_CHECK_VERSION(4, 10, 0)
+    uint32_t source[64 * 48];
+    const uint32_t colors[] = {0x002266aa, 0x80aa6633, 0x0033aa66, 0xffaa3366};
+    const uint32_t *saved = ui->video->frame.pixels;
+    unsigned width = ui->video->frame.width, height = ui->video->frame.height;
+    bool integer = ui->settings->integer_scaling, linear = ui->settings->bilinear_interpolation;
+    FrontendAspectMode aspect = ui->settings->aspect_mode;
+    ui->video->frame.pixels = source;
+    ui->video->frame.width = 64;
+    ui->video->frame.height = 48;
+    ui->settings->aspect_mode = FRONTEND_ASPECT_SOURCE;
+    for (unsigned mode = 0; mode < 2; ++mode) {
+        for (unsigned y = 0; y < 48; ++y) {
+            for (unsigned x = 0; x < 64; ++x) {
+                source[y * 64 + x] = colors[(y >= 24) * 2 + (x >= 32)];
+            }
+        }
+        ui->settings->integer_scaling = mode == 0;
+        ui->settings->bilinear_interpolation = mode == 1;
+        pump(ui);
+        GtkSnapshot *snapshot = gtk_snapshot_new();
+        GTK_WIDGET_GET_CLASS(ui->gtk->picture)->snapshot(ui->gtk->picture, snapshot);
+        GskRenderNode *node = gtk_snapshot_free_to_node(snapshot);
+        CHECK(node && check_snapshot_pixels(ui, node));
+        /* GTK may retain a snapshot across the next emulated frame. */
+        memset(source, 0, sizeof(source));
+        pump(ui);
+        CHECK(check_snapshot_pixels(ui, node));
+        gsk_render_node_unref(node);
+    }
+    ui->settings->integer_scaling = integer;
+    ui->settings->bilinear_interpolation = linear;
+    ui->settings->aspect_mode = aspect;
+    ui->video->frame.pixels = saved;
+    ui->video->frame.width = width;
+    ui->video->frame.height = height;
+    pump(ui);
+    puts("GTK rendered colors, letterboxing, filtering and retained snapshots: PASS");
+#else
+    (void)ui;
+#endif
+    return true;
+}
+
 bool test_gtk_information(FrontendDesktopUi *ui) {
     FrontendSessionActions *saved = ui->sessions;
     FrontendSession *session = g_new0(FrontendSession, 1);

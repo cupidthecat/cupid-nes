@@ -12,9 +12,12 @@ The desktop paces emulation independently of expensive display updates. When
 presentation falls behind, it shows the latest frame while preserving audio,
 movie input, and captured frames. See [performance troubleshooting](docs/troubleshooting.md#slow-video-in-a-large-window).
 Frame waits use the high-resolution clock and service pending desktop paints
-between frames. Windows uses an accelerated SDL game viewport even when GTK
-uses Cairo for desktop widgets. Game Information shows the game renderer and
-refreshes when a game is replaced or unloaded.
+between frames, including late frames and the final spin wait. With GTK 4.10
+or later, Linux prepares an opaque texture for GPU rendering or a Cairo image
+for software rendering. GTK 4.8 uses the Cairo drawing path. Windows uses an
+accelerated SDL game viewport even when GTK uses Cairo for desktop widgets.
+Game Information shows the game renderer and refreshes when a game is replaced
+or unloaded.
 Frame Timing Statistics reports emulation and display draw rates
 separately, with interval jitter to help diagnose uneven motion.
 
@@ -70,8 +73,8 @@ descriptions, and a rejected catalog import keeps the previous catalog available
 
 The TAS editor opens FM2 movies and FM3 projects. Its input grid sits beside a
 resizable game preview and editing tabs. Save the full editing session as CTAS
-or export a movie. The converter handles supported power-on FCM movies after
-checking game identity.
+or export a movie. The preview uses the same opaque game colors as the main view.
+The converter handles supported power-on FCM movies after checking game identity.
 
 ![TAS editor](docs/images/tas-editor.png)
 
