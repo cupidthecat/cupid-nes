@@ -141,7 +141,9 @@ static gboolean pacing_dispatch(gpointer data) {
 static bool game_window_interactions(FrontendDesktopUi *ui) {
     unsigned dispatched = 0;
     uint64_t submitted = ui->gtk->submitted_frames;
-    guint source = g_idle_add(pacing_dispatch, &dispatched);
+    /* The expired wait dispatches once. A normal-priority idle can remain
+     * behind Win32 paints when that dispatch reaches its time budget. */
+    guint source = g_idle_add_full(G_PRIORITY_HIGH, pacing_dispatch, &dispatched, NULL);
     double frequency = (double)SDL_GetPerformanceFrequency();
     frontend_desktop_wait(ui, 0, frequency);
     if (!dispatched) {
