@@ -45,6 +45,58 @@ GtkWidget *cupid_gtk_scroll(GtkWidget *child) {
     return w;
 }
 
+typedef struct {
+    GObject parent;
+    GdkTexture *texture;
+} CupidFramePaintable;
+
+typedef GObjectClass CupidFramePaintableClass;
+static void frame_paintable_interface(GdkPaintableInterface *iface);
+G_DEFINE_TYPE_WITH_CODE(CupidFramePaintable, cupid_frame_paintable, G_TYPE_OBJECT,
+                        G_IMPLEMENT_INTERFACE(GDK_TYPE_PAINTABLE, frame_paintable_interface))
+
+static void frame_paintable_snapshot(GdkPaintable *paintable, GdkSnapshot *snapshot, double width, double height) {
+    CupidFramePaintable *frame = (CupidFramePaintable *)paintable;
+    if (frame->texture) {
+        gdk_paintable_snapshot(GDK_PAINTABLE(frame->texture), snapshot, width, height);
+    }
+}
+
+static GdkPaintable *frame_paintable_image(GdkPaintable *paintable) {
+    CupidFramePaintable *frame = (CupidFramePaintable *)paintable;
+    return frame->texture ? GDK_PAINTABLE(g_object_ref(frame->texture)) : gdk_paintable_new_empty(0, 0);
+}
+
+static int frame_paintable_width(GdkPaintable *paintable) {
+    CupidFramePaintable *frame = (CupidFramePaintable *)paintable;
+    return frame->texture ? gdk_texture_get_width(frame->texture) : 0;
+}
+
+static int frame_paintable_height(GdkPaintable *paintable) {
+    CupidFramePaintable *frame = (CupidFramePaintable *)paintable;
+    return frame->texture ? gdk_texture_get_height(frame->texture) : 0;
+}
+
+static void frame_paintable_interface(GdkPaintableInterface *iface) {
+    iface->snapshot = frame_paintable_snapshot;
+    iface->get_current_image = frame_paintable_image;
+    iface->get_intrinsic_width = frame_paintable_width;
+    iface->get_intrinsic_height = frame_paintable_height;
+}
+
+static void frame_paintable_dispose(GObject *object) {
+    g_clear_object(&((CupidFramePaintable *)object)->texture);
+    G_OBJECT_CLASS(cupid_frame_paintable_parent_class)->dispose(object);
+}
+
+static void cupid_frame_paintable_class_init(CupidFramePaintableClass *klass) {
+    G_OBJECT_CLASS(klass)->dispose = frame_paintable_dispose;
+}
+
+static void cupid_frame_paintable_init(CupidFramePaintable *frame) {
+    (void)frame;
+}
+
 void cupid_gtk_picture(GtkWidget *picture, const uint32_t *pixels, unsigned w, unsigned h, unsigned stride) {
     if (!pixels || !w || !h) {
         return;
@@ -59,7 +111,22 @@ void cupid_gtk_picture(GtkWidget *picture, const uint32_t *pixels, unsigned w, u
 
     GBytes *bytes = g_bytes_new_take(copy, (size_t)w * h * sizeof(*copy));
     GdkTexture *texture = gdk_memory_texture_new((int)w, (int)h, GDK_MEMORY_DEFAULT, bytes, w * sizeof(*copy));
-    gtk_picture_set_paintable(GTK_PICTURE(picture), GDK_PAINTABLE(texture));
+    GdkPaintable *paintable = gtk_picture_get_paintable(GTK_PICTURE(picture));
+    if (paintable && G_TYPE_CHECK_INSTANCE_TYPE(paintable, cupid_frame_paintable_get_type())) {
+        bool resized = frame_paintable_width(paintable) != (int)w || frame_paintable_height(paintable) != (int)h;
+        g_set_object(&((CupidFramePaintable *)paintable)->texture, texture);
+        /* Replacing the picture's paintable queues a layout on every frame.
+         * Keep it stable and invalidate only contents at unchanged dimensions. */
+        gdk_paintable_invalidate_contents(paintable);
+        if (resized) {
+            gdk_paintable_invalidate_size(paintable);
+        }
+    } else {
+        CupidFramePaintable *frame = g_object_new(cupid_frame_paintable_get_type(), NULL);
+        frame->texture = g_object_ref(texture);
+        gtk_picture_set_paintable(GTK_PICTURE(picture), GDK_PAINTABLE(frame));
+        g_object_unref(frame);
+    }
     g_object_unref(texture);
     g_bytes_unref(bytes);
 }

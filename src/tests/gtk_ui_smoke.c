@@ -44,12 +44,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 uint32_t framebuffer[SCREEN_WIDTH * SCREEN_HEIGHT];
 Joypad pad1 = {0}, pad2 = {0};
 
 bool test_gtk_input_accuracy(FrontendDesktopUi *ui);
-int benchmark_gtk(const char *path);
+int benchmark_gtk(const char *path, const char *movie);
 bool test_gtk_native_video(FrontendDesktopUi *ui, const char *out);
 bool test_gtk_information(FrontendDesktopUi *ui);
 bool test_gtk_picture_pixels(void);
@@ -524,6 +525,40 @@ static void count_model_change(GtkTreeModel *model, GtkTreePath *path, GtkTreeIt
     ++*(unsigned *)data;
 }
 
+static bool tas_grid_pixels(GtkWidget *tree) {
+    GtkSnapshot *snapshot = gtk_snapshot_new();
+    GTK_WIDGET_GET_CLASS(tree)->snapshot(tree, snapshot);
+    GskRenderNode *cached = gtk_snapshot_free_to_node(snapshot);
+    CHECK(cached && gsk_render_node_get_node_type(cached) == GSK_TEXTURE_NODE);
+    GdkTexture *texture = gsk_texture_node_get_texture(cached);
+    int scale = gtk_widget_get_scale_factor(tree);
+    int width = gtk_widget_get_width(tree) * scale, height = gtk_widget_get_height(tree) * scale;
+    CHECK(gdk_texture_get_width(texture) == width && gdk_texture_get_height(texture) == height);
+    GtkWidgetClass *native_class = g_type_class_ref(GTK_TYPE_TREE_VIEW);
+    snapshot = gtk_snapshot_new();
+    native_class->snapshot(tree, snapshot);
+    GskRenderNode *native = gtk_snapshot_free_to_node(snapshot);
+    g_type_class_unref(native_class);
+    CHECK(native);
+    cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+    cairo_t *cr = cairo_create(surface);
+    cairo_scale(cr, scale, scale);
+    gsk_render_node_draw(native, cr);
+    cairo_destroy(cr);
+    cairo_surface_flush(surface);
+    int stride = cairo_image_surface_get_stride(surface);
+    size_t bytes = (size_t)stride * height;
+    guchar *pixels = g_malloc(bytes);
+    gdk_texture_download(texture, pixels, stride);
+    bool equal = !memcmp(pixels, cairo_image_surface_get_data(surface), bytes);
+    g_free(pixels);
+    cairo_surface_destroy(surface);
+    gsk_render_node_unref(native);
+    gsk_render_node_unref(cached);
+    CHECK(equal);
+    return true;
+}
+
 static bool tas_interactions(FrontendDesktopUi *ui) {
     CupidGtkTool *tool = find_tool(ui, cupid_gtk_open(ui, 1, TAS_PANEL));
     CHECK(tool);
@@ -533,6 +568,7 @@ static bool tas_interactions(FrontendDesktopUi *ui) {
     GtkWidget *picture = find_widget(tool->content, GTK_TYPE_PICTURE);
     GtkWidget *entry = find_widget(tool->content, GTK_TYPE_ENTRY);
     CHECK(tree && picture && entry);
+    CHECK(tas_grid_pixels(tree));
     GtkTreeModel *rows = gtk_tree_view_get_model(GTK_TREE_VIEW(tree));
     CHECK(gtk_tree_model_iter_n_children(rows, NULL) == 10000);
     GtkTreeIter iter;
@@ -547,9 +583,11 @@ static bool tas_interactions(FrontendDesktopUi *ui) {
     g_signal_handler_disconnect(rows, observer);
     CHECK(changes == 0 && gtk_tree_view_get_model(GTK_TREE_VIEW(tree)) == rows);
     GdkPaintable *paintable = gtk_picture_get_paintable(GTK_PICTURE(picture));
-    CHECK(GDK_IS_TEXTURE(paintable));
+    GdkPaintable *image = gdk_paintable_get_current_image(paintable);
+    CHECK(GDK_IS_TEXTURE(image));
     uint32_t downloaded[256 * 240];
-    gdk_texture_download(GDK_TEXTURE(paintable), (guchar *)downloaded, 256 * sizeof(uint32_t));
+    gdk_texture_download(GDK_TEXTURE(image), (guchar *)downloaded, 256 * sizeof(uint32_t));
+    g_object_unref(image);
     CHECK(!memcmp(downloaded, framebuffer, sizeof(downloaded)));
     NesTasProject *project = desktop_tas_project_writable(&tool->ui, false);
     CHECK(project);
@@ -605,6 +643,39 @@ static bool tas_interactions(FrontendDesktopUi *ui) {
     CHECK(tool->ui.tas_editor->splice.preview_valid);
     CHECK(tas_action(tool, TAS_ACTION_SIDEBAR_INPUT));
     gtk_adjustment_set_value(gtk_scrollable_get_hadjustment(GTK_SCROLLABLE(tree)), 0);
+    GtkAdjustment *vertical = gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(tree));
+    gtk_adjustment_set_value(vertical, 0);
+    pump(ui);
+    gboolean animations;
+    g_object_get(gtk_settings_get_default(), "gtk-enable-animations", &animations, NULL);
+    g_object_set(gtk_settings_get_default(), "gtk-enable-animations", TRUE, NULL);
+    size_t selected = nes_tas_selection_count(project), cursor = tool->ui.tas_editor->cursor;
+    tool->ui.tas_editor->follow_playback = true;
+    tool->ui.tas_editor->follow_initialized = true;
+    tool->ui.tas_editor->last_playback_frame = 0;
+    char error[256] = {0};
+    CHECK(tas_frontend_seek(ui->execution, 200, error, sizeof(error)));
+    for (unsigned frame = 0; frame < 200; ++frame) {
+        CHECK(frontend_execution_run_frame(ui->execution));
+    }
+    SDL_Delay(110);
+    double previous = gtk_adjustment_get_value(vertical);
+    cupid_gtk_tas_refresh(tool->content);
+    double followed = gtk_adjustment_get_value(vertical);
+    CHECK(followed > previous);
+    for (unsigned i = 0; i < 8; ++i) {
+        cupid_gtk_dispatch();
+        SDL_Delay(10);
+    }
+    CHECK(fabs(gtk_adjustment_get_value(vertical) - followed) < 0.5);
+    GtkTreePath *first = NULL, *last = NULL;
+    CHECK(gtk_tree_view_get_visible_range(GTK_TREE_VIEW(tree), &first, &last));
+    CHECK(gtk_tree_path_get_indices(first)[0] <= 200 && gtk_tree_path_get_indices(last)[0] >= 200);
+    gtk_tree_path_free(first);
+    gtk_tree_path_free(last);
+    CHECK(nes_tas_selection_count(project) == selected && tool->ui.tas_editor->cursor == cursor);
+    CHECK(tas_grid_pixels(tree));
+    g_object_set(gtk_settings_get_default(), "gtk-enable-animations", animations, NULL);
     preview_pattern();
     cupid_gtk_tas_video(tool->content);
     /* Retain a disposed root to verify late presentation/refresh calls are safe. */
@@ -653,12 +724,13 @@ static bool capture_tool(FrontendDesktopUi *ui, CupidGtkTool *tool, unsigned pan
 }
 
 int main(int argc, char **argv) {
-    if (argc == 3 && !strcmp(argv[1], "--benchmark")) {
-        return benchmark_gtk(argv[2]);
+    if ((argc == 3 || argc == 4) && !strcmp(argv[1], "--benchmark")) {
+        return benchmark_gtk(argv[2], argc == 4 ? argv[3] : NULL);
     }
     bool startup_check = argc == 2 && !strcmp(argv[1], "--startup-check");
     bool native_check = argc == 2 && !strcmp(argv[1], "--native-video-check");
-    const char *out = native_check ? "build/gtk-native-video" : startup_check ? "build/gtk-startup-check" : argc > 1 ? argv[1] : "build/gtk-smoke";
+    bool tas_check = argc == 2 && !strcmp(argv[1], "--tas-video-check");
+    const char *out = tas_check ? "build/gtk-tas-check" : native_check ? "build/gtk-native-video" : startup_check ? "build/gtk-startup-check" : argc > 1 ? argv[1] : "build/gtk-smoke";
     g_mkdir_with_parents(out, 0755);
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_TIMER) != 0) {
         return 1;
@@ -738,7 +810,9 @@ int main(int argc, char **argv) {
         puts("GTK default compositor selection: PASS");
         return 0;
     }
-    g_object_set(gtk_settings_get_default(), "gtk-enable-animations", FALSE, NULL);
+    if (!tas_check) {
+        g_object_set(gtk_settings_get_default(), "gtk-enable-animations", FALSE, NULL);
+    }
     FrontendVideoRuntime video = {0};
     video.settings = &settings;
     video.frame.pixels = framebuffer;
@@ -762,6 +836,20 @@ int main(int argc, char **argv) {
         SDL_DestroyWindow(window);
         SDL_Quit();
         puts(passed ? "GTK accelerated game view: PASS" : "GTK accelerated game view: FAIL");
+        return passed ? 0 : 1;
+    }
+    if (tas_check) {
+        frontend_panel_set_session_active(true);
+        frontend_command_set_session_active(true);
+        bool passed = frontend_execution_register_commands(&execution) && tas_fixture(&ui, out) && tas_interactions(&ui);
+        frontend_desktop_shutdown(&ui);
+        tas_frontend_unregister();
+        frontend_execution_shutdown(&execution);
+        unload_rom();
+        SDL_DestroyRenderer(renderer);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        puts(passed ? "GTK TAS grid pixels, preview and playback following: PASS" : "GTK TAS playback: FAIL");
         return passed ? 0 : 1;
     }
     DebugFrontend *debug = debug_frontend_create(&execution);

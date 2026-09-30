@@ -59,6 +59,12 @@ The draw row counts new images drawn by the game viewport. It does not measure
 the monitor's refresh rate. Pending GTK work is serviced during frame waits;
 the high-resolution clock controls when the next emulated frame starts.
 
+If an FM2 runs at normal speed until the TAS editor opens, update to a build
+with the playback-following fix. Older builds could keep starting scroll
+animations while the movie advanced, repeatedly redrawing the input grid.
+Current builds move the grid directly and reuse its drawing between changes.
+The live preview keeps updating alongside the game.
+
 Open Game Information and check **Video renderer**. On Windows, Cupid uses an
 accelerated SDL game viewport, preferring Direct3D 11. GTK can continue to use
 `GskCairoRenderer` for desktop widgets; that appears separately under **Desktop

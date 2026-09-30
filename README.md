@@ -24,6 +24,9 @@ graphics context after loading, rendering, or releasing a preset. Explicit rende
 remain available for troubleshooting.
 Frame Timing Statistics reports emulation and display draw rates
 separately, with interval jitter to help diagnose uneven motion.
+The TAS editor reuses its grid drawing between changes. Follow Playback moves
+directly to the current row, and live preview frames update without repeating
+the window layout.
 
 ![Cupid desktop](docs/images/desktop-main.png)
 

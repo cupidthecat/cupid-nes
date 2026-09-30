@@ -40,25 +40,48 @@ static bool contains(GtkWidget *view, const char *expected) {
     return found;
 }
 
+static void picture_invalidated(GdkPaintable *paintable, gpointer data) {
+    (void)paintable;
+    ++*(unsigned *)data;
+}
+
 bool test_gtk_picture_pixels(void) {
     GtkWidget *picture = g_object_ref_sink(gtk_picture_new());
     /* Packed RGB, partial alpha and padded rows must all remain opaque. */
     uint32_t pixels[8] = {0x00112233, 0x80445566, 0, 0, 0x00778899, 0xffaabbcc, 0, 0};
     cupid_gtk_picture(picture, pixels, 2, 2, 4 * sizeof(uint32_t));
-    GdkTexture *texture = GDK_TEXTURE(gtk_picture_get_paintable(GTK_PICTURE(picture)));
+    GdkPaintable *paintable = gtk_picture_get_paintable(GTK_PICTURE(picture));
+    GdkPaintable *image = gdk_paintable_get_current_image(paintable);
+    CHECK(GDK_IS_TEXTURE(image));
+    GdkTexture *texture = GDK_TEXTURE(image);
     CHECK(texture && gdk_texture_get_width(texture) == 2 && gdk_texture_get_height(texture) == 2);
-    g_object_ref(texture);
+    CHECK(gdk_paintable_get_intrinsic_aspect_ratio(paintable) == 1.0);
+    unsigned contents = 0, sizes = 0;
+    g_signal_connect(paintable, "invalidate-contents", G_CALLBACK(picture_invalidated), &contents);
+    g_signal_connect(paintable, "invalidate-size", G_CALLBACK(picture_invalidated), &sizes);
     uint32_t download[4];
     gdk_texture_download(texture, (guchar *)download, 2 * sizeof(uint32_t));
     CHECK(download[0] == 0xff112233 && download[1] == 0xff445566);
     CHECK(download[2] == 0xff778899 && download[3] == 0xffaabbcc);
     memset(pixels, 0, sizeof(pixels));
     cupid_gtk_picture(picture, pixels, 2, 2, 4 * sizeof(uint32_t));
+    CHECK(gtk_picture_get_paintable(GTK_PICTURE(picture)) == paintable && contents == 1 && sizes == 0);
     gdk_texture_download(texture, (guchar *)download, 2 * sizeof(uint32_t));
     CHECK(download[0] == 0xff112233 && download[3] == 0xffaabbcc);
+    GdkPaintable *current = gdk_paintable_get_current_image(paintable);
+    CHECK(GDK_IS_TEXTURE(current));
+    gdk_texture_download(GDK_TEXTURE(current), (guchar *)download, 2 * sizeof(uint32_t));
+    CHECK(download[0] == 0xff000000 && download[3] == 0xff000000);
+    g_object_unref(current);
+    cupid_gtk_picture(picture, pixels, 3, 2, 4 * sizeof(uint32_t));
+    CHECK(gtk_picture_get_paintable(GTK_PICTURE(picture)) == paintable && contents == 2 && sizes == 1);
+    CHECK(gdk_paintable_get_intrinsic_width(paintable) == 3 && gdk_paintable_get_intrinsic_height(paintable) == 2);
+    CHECK(gdk_paintable_get_intrinsic_aspect_ratio(paintable) == 1.5);
+    g_signal_handlers_disconnect_by_data(paintable, &contents);
+    g_signal_handlers_disconnect_by_data(paintable, &sizes);
     g_object_unref(texture);
     g_object_unref(picture);
-    puts("GTK preview opacity, padded rows and retained texture: PASS");
+    puts("GTK preview opacity, stable layout, resize and retained texture: PASS");
     return true;
 }
 

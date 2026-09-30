@@ -37,6 +37,12 @@ jobs:
         run: |
           xvfb-run -a env GSK_RENDERER=ngl SDL_RENDER_DRIVER=opengl SDL_FRAMEBUFFER_ACCELERATION=1 G_DEBUG=fatal-criticals python3 scripts/check-gtk-launch.py ./cupid-nes
           xvfb-run -a env -u GSK_RENDERER SDL_RENDER_DRIVER=opengl SDL_FRAMEBUFFER_ACCELERATION=1 G_DEBUG=fatal-criticals python3 scripts/check-gtk-launch.py ./cupid-nes
+      - name: Check Linux TAS grid pixels and playback following
+        run: |
+          xvfb-run -a env GSK_RENDERER=cairo G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke --tas-video-check
+          xvfb-run -a env GSK_RENDERER=gl G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke --tas-video-check
+          xvfb-run -a env GSK_RENDERER=ngl G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke --tas-video-check
+          xvfb-run -a env GSK_RENDERER=ngl GDK_SCALE=2 G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke --tas-video-check
       - name: Package Linux preview
         run: python3 scripts/package-gtk-linux.py --executable cupid-nes --revision '${{ github.sha }}'
       - name: Verify extracted Linux desktop

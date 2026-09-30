@@ -305,6 +305,7 @@ Build the GTK smoke executable with `make GTK=1 gtk-smoke`, then run:
 
 ```sh
 SDL_AUDIODRIVER=dummy build/gtk-ui-smoke --benchmark /path/to/game.nes
+SDL_AUDIODRIVER=dummy build/gtk-ui-smoke --benchmark /path/to/game.nes /path/to/run.fm2
 ```
 
 On Windows, run the same command in the UCRT64 shell with
@@ -324,8 +325,17 @@ Late display updates can be skipped without skipping
 emulation. Run timing measurements without a concurrent build or test suite;
 CPU contention changes both core and presentation costs. Windowed,
 maximized, fullscreen, and maximized with a live PPU viewer are measured.
+An optional movie adds playback measurements with the editor closed and open,
+including Follow Playback and the live preview. Use a movie with at least 1,320
+frames remaining across those two views. The movie must match the supplied ROM.
 Uncapped throughput measures spare capacity; it is not the game's playback
 speed. The test reports measurements without a machine-dependent pass threshold.
+
+`build/gtk-ui-smoke --tas-video-check` runs the synthetic TAS window regressions
+without capturing the other tools. It compares the cached grid pixels with the
+native table drawing, checks that preview updates preserve layout and retained
+images, and verifies immediate playback following with animations enabled.
+Linux CI runs this check with Cairo, GL, NGL, and a scale factor of two.
 
 ## Documentation-only changes
 
