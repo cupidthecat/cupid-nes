@@ -287,8 +287,9 @@ snapshots do not capture the native window's transparent margins; inspect those
 on screen when checking for black borders.
 
 The startup fixture uses the production SDL renderer selector and checks that
-the hidden host uses the software driver even with an OpenGL driver hint. It
-dispatches GTK until a rendered window is mapped. The launch script checks both
+the hidden host uses a software surface without a GL context, even with OpenGL
+driver and framebuffer acceleration hints. It dispatches GTK until a rendered
+window is mapped. The launch script checks both
 the idle window and an owned synthetic NROM cartridge for five seconds each;
 graphics-context failures fail the check even when the process stays alive.
 Linux CI runs these launch paths with the default compositor and `ngl`, with

@@ -150,9 +150,10 @@ An EPSM cartridge does not require the file to start. Without it, Cupid reports 
 ## Linux launch stops at a graphics-context warning
 
 `gdk_gl_context_make_current() failed` means GTK could not activate its graphics
-context. GTK builds use a software SDL renderer for the hidden input host so
-that it does not hold a competing OpenGL context. This selection also applies
-when `SDL_RENDER_DRIVER=opengl` is set. The visible game view still follows
+context. GTK builds use a software SDL renderer and window surface for the
+hidden input host so that it does not hold a competing OpenGL context. This
+selection also applies when `SDL_RENDER_DRIVER=opengl` or
+`SDL_FRAMEBUFFER_ACCELERATION=1` is set. The visible game view still follows
 GTK's renderer selection.
 
 If the warning persists with a current build, try `GSK_RENDERER=cairo cupid-nes`

@@ -390,6 +390,9 @@ SDL_Renderer *frontend_desktop_create_renderer(SDL_Window *window, Uint32 flags)
      * host can prevent GTK's EGL context from becoming current on X11.
      * Select the software driver explicitly, including when SDL has a hint. */
     (void)flags;
+    /* SDL can back even a software renderer with an accelerated window surface.
+     * The hidden host needs neither that surface's GL context nor its texture. */
+    SDL_SetHintWithPriority(SDL_HINT_FRAMEBUFFER_ACCELERATION, "0", SDL_HINT_OVERRIDE);
     for (int i = 0; i < SDL_GetNumRenderDrivers(); ++i) {
         SDL_RendererInfo info;
         if (SDL_GetRenderDriverInfo(i, &info) == 0 && (info.flags & SDL_RENDERER_SOFTWARE)) {

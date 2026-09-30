@@ -701,8 +701,8 @@ int main(int argc, char **argv) {
     SDL_Renderer *renderer = frontend_desktop_create_renderer(window, SDL_RENDERER_ACCELERATED);
     SDL_RendererInfo host_info;
     if (!renderer || SDL_GetRendererInfo(renderer, &host_info) != 0 ||
-        !(host_info.flags & SDL_RENDERER_SOFTWARE)) {
-        fprintf(stderr, "GTK host did not select the software SDL driver: %s\n", SDL_GetError());
+        !(host_info.flags & SDL_RENDERER_SOFTWARE) || SDL_GL_GetCurrentContext()) {
+        fprintf(stderr, "GTK host did not select an SDL software surface without a GL context: %s\n", SDL_GetError());
         return 1;
     }
     FrontendDesktopUi ui;

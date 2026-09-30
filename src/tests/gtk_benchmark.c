@@ -63,7 +63,7 @@ int benchmark_gtk(const char *path) {
     frontend_execution_init(&execution, &audio, have.freq, NULL, NULL, NULL, NULL);
     frontend_execution_set_rewind_seconds(&execution, settings.rewind_seconds);
     SDL_Window *window = SDL_CreateWindow("Presentation benchmark", 0, 0, 900, 700, SDL_WINDOW_HIDDEN);
-    SDL_Renderer *renderer = window ? SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE) : NULL;
+    SDL_Renderer *renderer = frontend_desktop_create_renderer(window, SDL_RENDERER_SOFTWARE);
     if (!renderer) {
         return 2;
     }
