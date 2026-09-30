@@ -18,6 +18,10 @@ for software rendering. GTK 4.8 uses the Cairo drawing path. Windows uses an
 accelerated SDL game viewport even when GTK uses Cairo for desktop widgets.
 Game Information shows the game renderer and refreshes when a game is replaced
 or unloaded.
+GTK builds use a software SDL renderer for the hidden input host. GTK renders
+the visible Linux window, and shader processing restores its graphics context
+after loading, rendering, or releasing a preset. Explicit renderer overrides
+remain available for troubleshooting.
 Frame Timing Statistics reports emulation and display draw rates
 separately, with interval jitter to help diagnose uneven motion.
 

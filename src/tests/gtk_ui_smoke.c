@@ -54,6 +54,7 @@ bool test_gtk_native_video(FrontendDesktopUi *ui, const char *out);
 bool test_gtk_information(FrontendDesktopUi *ui);
 bool test_gtk_picture_pixels(void);
 bool test_gtk_game_pixels(FrontendDesktopUi *ui);
+bool test_gtk_shader_context(FrontendDesktopUi *ui);
 bool test_gtk_shortcuts(FrontendDesktopUi *ui);
 
 static void pump(FrontendDesktopUi *ui) {
@@ -697,7 +698,13 @@ int main(int argc, char **argv) {
     frontend_commands_reset();
     frontend_panels_reset();
     SDL_Window *window = SDL_CreateWindow("GTK rendering fixture", 0, 0, 900, 700, SDL_WINDOW_HIDDEN);
-    SDL_Renderer *renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
+    SDL_Renderer *renderer = frontend_desktop_create_renderer(window, SDL_RENDERER_ACCELERATED);
+    SDL_RendererInfo host_info;
+    if (!renderer || SDL_GetRendererInfo(renderer, &host_info) != 0 ||
+        !(host_info.flags & SDL_RENDERER_SOFTWARE)) {
+        fprintf(stderr, "GTK host did not select the software SDL driver: %s\n", SDL_GetError());
+        return 1;
+    }
     FrontendDesktopUi ui;
     char *debug_override = g_strdup(g_getenv("GDK_DEBUG"));
     char *renderer_override = g_strdup(g_getenv("GSK_RENDERER"));
@@ -716,6 +723,12 @@ int main(int argc, char **argv) {
         return 1;
     }
     if (startup_check) {
+        pump(&ui);
+        if (!gtk_widget_get_mapped(ui.gtk->window) ||
+            !gtk_native_get_renderer(GTK_NATIVE(ui.gtk->window))) {
+            fprintf(stderr, "GTK startup did not map a rendered window\n");
+            return 1;
+        }
         frontend_desktop_shutdown(&ui);
         frontend_execution_shutdown(&execution);
         unload_rom();
@@ -740,7 +753,8 @@ int main(int argc, char **argv) {
     if (native_check) {
         frontend_panel_set_session_active(true);
         frontend_command_set_session_active(true);
-        bool passed = test_gtk_native_video(&ui, out) && test_gtk_game_pixels(&ui) && test_gtk_information(&ui);
+        bool passed = test_gtk_shader_context(&ui) && test_gtk_native_video(&ui, out) &&
+                      test_gtk_game_pixels(&ui) && test_gtk_information(&ui);
         frontend_desktop_shutdown(&ui);
         frontend_execution_shutdown(&execution);
         unload_rom();

@@ -147,6 +147,20 @@ An EPSM cartridge does not require the file to start. Without it, Cupid reports 
 
 `SDL_Init Error`, `SDL_CreateWindow Error`, `SDL_CreateRenderer Error`, and `SDL_CreateTexture Error` come from SDL setup before emulation starts. On Linux, confirm a working graphical session and SDL2 installation. On Windows, make sure the `SDL2.dll` copied by the build script remains beside `cupid-nes.exe` and that the executable is running in a desktop session with a usable graphics driver.
 
+## Linux launch stops at a graphics-context warning
+
+`gdk_gl_context_make_current() failed` means GTK could not activate its graphics
+context. GTK builds use a software SDL renderer for the hidden input host so
+that it does not hold a competing OpenGL context. This selection also applies
+when `SDL_RENDER_DRIVER=opengl` is set. The visible game view still follows
+GTK's renderer selection.
+
+If the warning persists with a current build, try `GSK_RENDERER=cairo cupid-nes`
+and include the GTK version, graphics driver, renderer environment variables,
+and complete launch log in the report. An SDL shader uses its own context;
+Cupid releases and restores GTK's context around shader operations, including
+a rejected preset reload.
+
 ## Controller is ignored
 
 The frontend opens devices SDL recognizes as GameControllers. Raw joysticks without an SDL GameController mapping are skipped. Supported host inputs are A, B, Back, Start, and the D-pad; analog-stick movement is not mapped.

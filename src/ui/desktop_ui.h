@@ -102,6 +102,7 @@ FrontendIdleResult frontend_desktop_idle_open(FrontendSettings *settings,
                                               SDL_Window **window,
                                               SDL_Renderer **renderer,
                                               char *error, size_t error_size);
+SDL_Renderer *frontend_desktop_create_renderer(SDL_Window *window, Uint32 flags);
 void frontend_desktop_init(FrontendDesktopUi *ui, SDL_Window *window,
                            SDL_Renderer *renderer, FrontendSettings *settings,
                            FrontendExecutionRuntime *execution,

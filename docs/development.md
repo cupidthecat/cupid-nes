@@ -286,6 +286,20 @@ fixture without `GSK_RENDERER` to exercise the default renderer on a desktop dis
 snapshots do not capture the native window's transparent margins; inspect those
 on screen when checking for black borders.
 
+The startup fixture uses the production SDL renderer selector and checks that
+the hidden host uses the software driver even with an OpenGL driver hint. It
+dispatches GTK until a rendered window is mapped. The launch script checks both
+the idle window and an owned synthetic NROM cartridge for five seconds each;
+graphics-context failures fail the check even when the process stays alive.
+Linux CI runs these launch paths with the default compositor and `ngl`, with
+`SDL_RENDER_DRIVER=opengl` set.
+
+The accelerated pixel check also loads a shader while a GTK GL context is
+current. It checks exact shader output, context restoration after successive
+frames, successful and rejected reloads, retained output after a rejected
+reload, and GPU cleanup. The software renderer skips this GPU-specific check.
+Game snapshot checks cover both the texture widget and the GTK 4.8 drawing path.
+
 Build the GTK smoke executable with `make GTK=1 gtk-smoke`, then run:
 
 ```sh

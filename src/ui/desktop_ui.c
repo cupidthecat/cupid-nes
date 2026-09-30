@@ -383,6 +383,27 @@ static bool command_mute(void *context, char *error, size_t error_size) {
     return true;
 }
 
+SDL_Renderer *frontend_desktop_create_renderer(SDL_Window *window, Uint32 flags) {
+    if (!window) return NULL;
+#ifdef CUPID_GTK
+    /* GTK owns the visible surface. An unused SDL GL renderer on its hidden
+     * host can prevent GTK's EGL context from becoming current on X11.
+     * Select the software driver explicitly, including when SDL has a hint. */
+    (void)flags;
+    for (int i = 0; i < SDL_GetNumRenderDrivers(); ++i) {
+        SDL_RendererInfo info;
+        if (SDL_GetRenderDriverInfo(i, &info) == 0 && (info.flags & SDL_RENDERER_SOFTWARE)) {
+            return SDL_CreateRenderer(window, i, SDL_RENDERER_SOFTWARE);
+        }
+    }
+    SDL_SetError("No software renderer is available for the GTK host");
+    return NULL;
+#else
+    SDL_Renderer *renderer = SDL_CreateRenderer(window, -1, flags);
+    return renderer ? renderer : SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
+#endif
+}
+
 void frontend_desktop_init(FrontendDesktopUi *ui, SDL_Window *window,
                            SDL_Renderer *renderer, FrontendSettings *settings,
                            FrontendExecutionRuntime *execution,

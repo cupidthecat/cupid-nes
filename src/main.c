@@ -579,8 +579,7 @@ static int application_main(int argc, char *argv[]) {
         (int)frontend_settings.window_width, (int)frontend_settings.window_height,
         SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
     if (!window) { fprintf(stderr, "SDL_CreateWindow Error: %s\n", SDL_GetError()); return 1; }
-    if (!renderer) renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
-    if (!renderer) renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
+    if (!renderer) renderer = frontend_desktop_create_renderer(window, SDL_RENDERER_ACCELERATED);
     if (!renderer) { fprintf(stderr, "SDL_CreateRenderer Error: %s\n", SDL_GetError()); return 1; }
 #ifndef CUPID_GTK
     if (frontend_settings.fullscreen)

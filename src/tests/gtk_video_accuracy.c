@@ -5,9 +5,11 @@
  */
 #include "../ui/gtk_internal.h"
 #include "../ui/gtk_desktop.h"
+#include "../video/shader_preset.h"
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
+#include <glib/gstdio.h>
 #ifdef _WIN32
 #include <gdk/win32/gdkwin32.h>
 #endif
@@ -60,7 +62,62 @@ bool test_gtk_picture_pixels(void) {
     return true;
 }
 
-#if GTK_CHECK_VERSION(4, 10, 0)
+bool test_gtk_shader_context(FrontendDesktopUi *ui) {
+    if (GSK_IS_CAIRO_RENDERER(gtk_native_get_renderer(GTK_NATIVE(ui->gtk->window)))) return true;
+    GError *error = NULL;
+    GdkSurface *surface = gtk_native_get_surface(GTK_NATIVE(ui->gtk->window));
+    GdkGLContext *context = gdk_surface_create_gl_context(surface, &error);
+    CHECK(context && gdk_gl_context_realize(context, &error));
+    gdk_gl_context_make_current(context);
+    CHECK(gdk_gl_context_get_current() == context);
+    char *directory = g_dir_make_tmp("cupid-gtk-shader-XXXXXX", &error);
+    CHECK(directory);
+    char *source = g_build_filename(directory, "pass.glsl", NULL);
+    char *preset = g_build_filename(directory, "preset.glslp", NULL);
+    const char *glsl =
+        "#version 130\n#ifdef VERTEX\n"
+        "in vec4 VertexCoord; in vec2 TexCoord; out vec2 uv; uniform mat4 MVPMatrix;\n"
+        "void main() { gl_Position=MVPMatrix*VertexCoord; uv=TexCoord; }\n"
+        "#elif defined(FRAGMENT)\n"
+        "in vec2 uv; out vec4 FragColor; uniform sampler2D Texture;\n"
+        "void main() { FragColor=vec4(texture(Texture,uv).rgb,1.0); }\n#endif\n";
+    CHECK(g_file_set_contents(source, glsl, -1, &error));
+    CHECK(g_file_set_contents(preset, "shaders=1\nshader0=pass.glsl\n", -1, &error));
+    NesShaderPreset *shader = nes_shader_create();
+    char why[512] = {0};
+    bool loaded = nes_shader_load(shader, preset, why, sizeof(why));
+    if (!loaded) fprintf(stderr, "GTK shader load: %s\n", why);
+    CHECK(loaded && gdk_gl_context_get_current() == context);
+    uint32_t pixels[4] = {0xff2266aa, 0xffaa6633, 0xff33aa66, 0xffaa3366};
+    NesVideoPresentationFrame input = {0}, output = {0};
+    input.pixels = pixels;
+    input.width = input.height = 2;
+    input.screens = 1;
+    for (unsigned i = 0; i < 3; ++i) {
+        CHECK(nes_shader_render(shader, &input, 2, 2, &output, why, sizeof(why)));
+        CHECK(output.width == 2 && output.height == 2 && !memcmp(output.pixels, pixels, sizeof(pixels)));
+        CHECK(gdk_gl_context_get_current() == context);
+    }
+    /* A rejected replacement destroys its partial GPU state and restores GTK. */
+    CHECK(g_file_set_contents(source, "invalid GLSL", -1, &error));
+    CHECK(!nes_shader_reload(shader, why, sizeof(why)) && gdk_gl_context_get_current() == context);
+    CHECK(nes_shader_render(shader, &input, 2, 2, &output, why, sizeof(why)));
+    CHECK(!memcmp(output.pixels, pixels, sizeof(pixels)) && gdk_gl_context_get_current() == context);
+    CHECK(g_file_set_contents(source, glsl, -1, &error));
+    CHECK(nes_shader_reload(shader, why, sizeof(why)) && gdk_gl_context_get_current() == context);
+    nes_shader_destroy(shader);
+    CHECK(gdk_gl_context_get_current() == context);
+    gdk_gl_context_clear_current();
+    g_object_unref(context);
+    CHECK(remove(preset) == 0 && remove(source) == 0);
+    CHECK(g_rmdir(directory) == 0);
+    g_free(preset);
+    g_free(source);
+    g_free(directory);
+    puts("GTK shader pixels and GL context restoration: PASS");
+    return true;
+}
+
 static bool check_snapshot_pixels(FrontendDesktopUi *ui, GskRenderNode *node) {
     CupidGtkDesktop *d = ui->gtk;
     unsigned width = (unsigned)gtk_widget_get_width(d->picture);
@@ -93,10 +150,8 @@ static bool check_snapshot_pixels(FrontendDesktopUi *ui, GskRenderNode *node) {
     CHECK(same);
     return true;
 }
-#endif
 
 bool test_gtk_game_pixels(FrontendDesktopUi *ui) {
-#if GTK_CHECK_VERSION(4, 10, 0)
     uint32_t source[64 * 48];
     const uint32_t colors[] = {0x002266aa, 0x80aa6633, 0x0033aa66, 0xffaa3366};
     const uint32_t *saved = ui->video->frame.pixels;
@@ -134,9 +189,6 @@ bool test_gtk_game_pixels(FrontendDesktopUi *ui) {
     ui->video->frame.height = height;
     pump(ui);
     puts("GTK rendered colors, letterboxing, filtering and retained snapshots: PASS");
-#else
-    (void)ui;
-#endif
     return true;
 }
 
