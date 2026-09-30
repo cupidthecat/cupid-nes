@@ -10,6 +10,7 @@
 #include "../ppu/ppu.h"
 #include "../rom/rom.h"
 #include "../rom/mapper.h"
+#include "../state/state.h"
 #include "../system/execution_policy.h"
 #include "../system/timing.h"
 #include "../ui/debug_tools_frontend.h"
@@ -128,6 +129,8 @@ static int coverage_profile_stack_trace(void) {
     CHECK(debug_profile_rows(rows, 8, true) == 6 && rows[0].cycles == 6);
     DebugSymbol function = {0, 0x8000, 14, 0, true, "main", "", ""};
     CHECK(debug_symbol_set(&function));
+    DebugSymbol inner_label = {2, 0x8002, 1, 0, false, "store", "", ""};
+    CHECK(debug_symbol_set(&inner_label));
     CHECK(debug_profile_function_rows(rows, 8, true) == 3 && rows[0].key == 0 && rows[0].cycles == 16);
     debug_catalog_clear();
     CHECK(debug_log_count() == 3 && debug_log_overwritten() == 3);
@@ -226,6 +229,17 @@ static int bank_identity_symbols_source_references(void) {
 
 static int event_and_text_capture(void) {
     CHECK(machine(false) == 0);
+    debug_events_enable(false);
+    debug_events_clear();
+    debug_analysis_signals(true, false, false);
+    debug_events_enable(true);
+    uint64_t disabled_frame = ppu.frame_count;
+    debug_analysis_signals(true, false, false);
+    ppu.frame_count = disabled_frame + 1;
+    debug_analysis_event(DEBUG_EVENT_READ, 0, 0);
+    CHECK(debug_events_count(DEBUG_EVENT_NMI) == 0);
+    debug_analysis_signals(false, false, false);
+    debug_events_clear();
     debug_events_enable(true);
     uint64_t frame = ppu.frame_count;
     CHECK(cpu_step(&cpu) == 2);
@@ -269,6 +283,50 @@ static int event_and_text_capture(void) {
     ++ppu.frame_count;
     debug_analysis_event(DEBUG_EVENT_IRQ, 0, 0);
     CHECK(debug_events_count(DEBUG_EVENT_IRQ) == 131072 && debug_events_dropped() == 3);
+    return 0;
+}
+
+static int restored_event_baseline(void) {
+    CHECK(machine(false) == 0);
+    debug_events_enable(false);
+    debug_events_clear();
+
+    ppu.startup_writes_restricted = false;
+    ppu.status |= 0x80;
+    ppu_reg_write_cpu(0x2000, 0x80, 0);
+    CHECK(ppu.nmi_out);
+    cpu_soft_reset(&cpu);
+    CHECK(ppu.nmi_out);
+    apu.frame_irq_source = true;
+    apu.irq_inhibit = false;
+    NesStateBlob asserted = {0};
+    CHECK(nes_state_capture(&asserted) == NES_STATE_OK);
+
+    ppu_reg_write_cpu(0x2000, 0, 0);
+    apu.frame_irq_source = false;
+    CHECK(cpu_step(&cpu) > 0);
+    debug_events_enable(true);
+    debug_events_clear();
+    CHECK(nes_state_restore(asserted.data, asserted.size) == NES_STATE_OK);
+    nes_state_blob_free(&asserted);
+    CHECK(ppu.nmi_out && apu_irq_pending(&apu));
+    debugger_reset_session();
+
+    uint64_t frame = ppu.frame_count;
+    CHECK(cpu_step(&cpu) > 0);
+    ppu.frame_count = frame + 1;
+    debug_analysis_event(DEBUG_EVENT_READ, 0, 0);
+    CHECK(debug_events_count(DEBUG_EVENT_NMI) == 0 && debug_events_count(DEBUG_EVENT_IRQ) == 0);
+
+    ppu_reg_write_cpu(0x2000, 0, 0);
+    apu.frame_irq_source = false;
+    CHECK(cpu_step(&cpu) > 0);
+    ++ppu.frame_count;
+    debug_analysis_event(DEBUG_EVENT_READ, 0, 0);
+    CHECK(debug_events_count(DEBUG_EVENT_NMI) == 1 && debug_events_count(DEBUG_EVENT_IRQ) == 1);
+    DebugNesEvent edge;
+    CHECK(debug_events_at(0, DEBUG_EVENT_NMI, &edge) && edge.value == 0);
+    CHECK(debug_events_at(0, DEBUG_EVENT_IRQ, &edge) && edge.value == 0);
     return 0;
 }
 
@@ -355,8 +413,8 @@ static int native_panels(void) {
 int run_debug_tools_accuracy_tests(void) {
     checks = 0;
     int failures = uxrom_physical_mapping() + coverage_profile_stack_trace() +
-                   bank_identity_symbols_source_references() + event_and_text_capture() + observational_bus() +
-                   native_panels();
+                   bank_identity_symbols_source_references() + event_and_text_capture() + restored_event_baseline() +
+                   observational_bus() + native_panels();
     debugger_shutdown();
     (void)unload_rom();
     printf("Debugger tools: %s (%u checks, %d failing groups)\n", failures ? "FAIL" : "PASS", checks, failures);

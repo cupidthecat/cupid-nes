@@ -96,11 +96,12 @@ bool state_recorder_image_changed(StateRecorder *r, const FrontendSession *sessi
     if (!session || !session->active) {
         return true;
     }
-    if (!recovery_game_key(session, r->key)) {
+    char key[41];
+    if (!recovery_game_key(session, key)) {
         return recorder_error(r, error, error_size, "No stable image identity for recovery history");
     }
     char path[4096];
-    if (!manifest_path(r, path, sizeof(path))) {
+    if (!recovery_path(r->directory, key, ".recorder-index", path, sizeof(path))) {
         return false;
     }
     uint8_t *bytes = NULL;
@@ -129,6 +130,7 @@ bool state_recorder_image_changed(StateRecorder *r, const FrontendSession *sessi
     } else if (result != NES_FILE_NOT_FOUND) {
         return recorder_error(r, error, error_size, nes_file_result_message(result));
     }
+    strcpy(r->key, key);
     r->running = r->options.automatic;
     if (!cleanup_unused(r)) {
         snprintf(r->status, sizeof(r->status), "History loaded; old snapshot cleanup needs retry");
@@ -140,7 +142,8 @@ bool state_recorder_image_changed(StateRecorder *r, const FrontendSession *sessi
 
 bool state_recorder_capture(StateRecorder *r, char *error, size_t error_size) {
     if (!r || !r->key[0] || !r->state) {
-        return false;
+        return recorder_error(r, error, error_size,
+                              "Recovery history is unavailable; reopen the game after repairing its index");
     }
     bool used[STATE_RECORDER_MAX + 1] = {0};
     for (size_t i = 0; i < r->count; ++i) {

@@ -285,6 +285,22 @@ void desktop_setting_choose(FrontendDesktopUi *ui, int row, int option) {
     if (option < 0 || option >= count) {
         return;
     }
+    if (ui->settings_category == 4 && row >= 1 && row <= 4) {
+        if (row == 1) {
+            ui->staged.input.adapter = (NesInputAdapter)option;
+            ui->staged.saved_input_overrides |= NES_INPUT_OVERRIDE_ADAPTER;
+            ui->settings_input_changes |= NES_INPUT_OVERRIDE_ADAPTER;
+        } else if (row == 2 || row == 3) {
+            ui->staged.input.ports[row - 2] = (NesPortDevice)option;
+            ui->staged.saved_input_overrides |= row == 2 ? NES_INPUT_OVERRIDE_PORT1 : NES_INPUT_OVERRIDE_PORT2;
+            ui->settings_input_changes |= row == 2 ? NES_INPUT_OVERRIDE_PORT1 : NES_INPUT_OVERRIDE_PORT2;
+        } else {
+            ui->staged.input.expansion = (NesExpansionDevice)option;
+            ui->staged.saved_input_overrides |= NES_INPUT_OVERRIDE_EXPANSION;
+            ui->settings_input_changes |= NES_INPUT_OVERRIDE_EXPANSION;
+        }
+        return;
+    }
     if (ui->settings_category == 2 && row == 25) {
         (void)ntsc_composite_preset(&ui->staged.ntsc_picture, (unsigned)option);
         return;

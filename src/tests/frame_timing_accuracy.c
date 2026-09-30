@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "../video/frame_timing.h"
+#include "../video/frame_wait.h"
 #include <SDL2/SDL.h>
 #include <math.h>
 #include <stdio.h>
@@ -19,12 +20,52 @@ static void count_service(void *context) {
     ++*(unsigned *)context;
 }
 
+static Uint64 clock_ticks, last_service;
+static unsigned sleeps, services, longest_sleep;
+
+static Uint64 SDLCALL test_counter(void) {
+    return clock_ticks += 100;
+}
+
+static void SDLCALL test_sleep(Uint32 milliseconds) {
+    ++sleeps;
+    if (milliseconds > longest_sleep) {
+        longest_sleep = milliseconds;
+    }
+
+    clock_ticks += milliseconds * 1000;
+}
+
+static void test_service(void *context) {
+    (void)context;
+    ++services;
+    last_service = clock_ticks;
+}
+
 int run_frame_timing_accuracy_tests(void) {
+    clock_ticks = 1000;
+    services = sleeps = longest_sleep = 0;
+    frame_wait(2500, 1000000, test_service, NULL, test_counter, test_sleep);
+    CHECK(clock_ticks >= 2500 && services >= 3 && sleeps == 0 && last_service >= 2000);
+    clock_ticks = 1000;
+    services = sleeps = longest_sleep = 0;
+    frame_wait(11000, 1000000, test_service, NULL, test_counter, test_sleep);
+    CHECK(clock_ticks >= 11000 && services >= 8 && sleeps > 0 && longest_sleep == 1);
+    services = 0;
+    frame_wait(0, 1000000, test_service, NULL, test_counter, test_sleep);
+    CHECK(services == 1);
+    frame_wait(NAN, 1000000, test_service, NULL, test_counter, test_sleep);
+    frame_wait(100000, INFINITY, test_service, NULL, test_counter, test_sleep);
+    CHECK(services == 1);
     unsigned serviced = 0;
     double frequency = (double)SDL_GetPerformanceFrequency();
     double deadline = (double)SDL_GetPerformanceCounter() + frequency * 0.004;
     nes_frame_timing_wait(deadline, frequency, count_service, &serviced);
     CHECK((double)SDL_GetPerformanceCounter() >= deadline);
+    /* Late frames still need to dispatch GTK paints and input. */
+    serviced = 0;
+    nes_frame_timing_wait(0, frequency, count_service, &serviced);
+    CHECK(serviced == 1);
     nes_frame_timing_wait(NAN, frequency, count_service, &serviced);
     nes_frame_timing_wait(deadline, 0, NULL, NULL);
     nes_frame_timing_wait(0, frequency, NULL, NULL);

@@ -8,6 +8,9 @@
 #include <x86intrin.h>
 #endif
 #include <SDL2/SDL.h>
+#ifdef CUPID_GTK
+#include <gdk/gdk.h>
+#endif
 #define GL_GLEXT_PROTOTYPES
 #include <SDL2/SDL_opengl.h>
 #include "shader_internal.hpp"
@@ -52,9 +55,29 @@ struct GL {
 struct Current {
     SDL_Window *window = SDL_GL_GetCurrentWindow();
     SDL_GLContext context = SDL_GL_GetCurrentContext();
+#ifdef CUPID_GTK
+    GdkGLContext *gtk_context = gdk_gl_context_get_current();
+
+    Current() {
+        if (gtk_context) {
+            g_object_ref(gtk_context);
+            /* GTK may use EGL while SDL uses GLX. Release GTK's binding and
+             * cached current context before entering the shader renderer. */
+            gdk_gl_context_clear_current();
+            window = nullptr;
+            context = nullptr;
+        }
+    }
+#endif
 
     ~Current() {
         SDL_GL_MakeCurrent(window, context);
+#ifdef CUPID_GTK
+        if (gtk_context) {
+            gdk_gl_context_make_current(gtk_context);
+            g_object_unref(gtk_context);
+        }
+#endif
     }
 };
 

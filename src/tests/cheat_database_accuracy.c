@@ -68,6 +68,38 @@ static int catalog_checks(void) {
     return 0;
 }
 
+static int catalog_utf8_retention(void) {
+    const char *identity = "0123456789012345678901234567890123456789";
+    const char valid[] =
+        "0123456789012345678901234567890123456789\tMöbius 猫\tÉtoile 星\t0010:33\n";
+    const char *invalid[] = {"\x80", "\xC0\xAF", "\xE2\x82", "\xED\xA0\x80",
+                             "\xF4\x90\x80\x80", "\xF0\x80\x80\x80"};
+    CheatDatabase *database = cheat_database_create();
+    BOARD_CHECK(database);
+    char error[256] = {0};
+    BOARD_CHECK(cheat_database_parse(database, valid, sizeof(valid) - 1, error, sizeof(error)));
+    for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
+        for (unsigned field = 0; field < 2; ++field) {
+            char row[256];
+            int length = snprintf(row, sizeof(row), "%s\t%s\t%s\t0010:77\n", identity,
+                                  field == 0 ? invalid[i] : "Game", field == 1 ? invalid[i] : "Description");
+            BOARD_CHECK(length > 0 && (size_t)length < sizeof(row));
+            bool accepted = cheat_database_parse(database, row, (size_t)length, error, sizeof(error));
+            if (accepted) {
+                cheat_database_destroy(database);
+            }
+            BOARD_CHECK(!accepted);
+            CheatDatabaseEntry retained;
+            BOARD_CHECK(cheat_database_count(database, identity) == 1);
+            BOARD_CHECK(cheat_database_entry(database, identity, 0, &retained));
+            BOARD_CHECK(!strcmp(retained.game, "Möbius 猫") && !strcmp(retained.description, "Étoile 星"));
+            BOARD_CHECK(!strcmp(retained.codes, "0010:33"));
+        }
+    }
+    cheat_database_destroy(database);
+    return 0;
+}
+
 static int production_identity(void) {
     BoardImage image = {0};
     BOARD_CHECK(board_image_create(&image, 0, 0x8000, 0x2000, true));
@@ -104,7 +136,7 @@ static int production_identity(void) {
 }
 
 int test_cheat_database_accuracy(void) {
-    int failures = catalog_checks() + production_identity();
+    int failures = catalog_checks() + catalog_utf8_retention() + production_identity();
     printf("Cheat database: matching, atomic groups, policies and native panel, %d failures\n", failures);
     return failures;
 }

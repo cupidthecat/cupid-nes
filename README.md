@@ -12,11 +12,21 @@ The desktop paces emulation independently of expensive display updates. When
 presentation falls behind, it shows the latest frame while preserving audio,
 movie input, and captured frames. See [performance troubleshooting](docs/troubleshooting.md#slow-video-in-a-large-window).
 Frame waits use the high-resolution clock and service pending desktop paints
-between frames. Windows uses an accelerated SDL game viewport even when GTK
-uses Cairo for desktop widgets. Game Information shows the game renderer and
-refreshes when a game is replaced or unloaded.
+between frames, including late frames and the final spin wait. With GTK 4.10
+or later, Linux prepares an opaque texture for GPU rendering or a Cairo image
+for software rendering. GTK 4.8 uses the Cairo drawing path. Windows uses an
+accelerated SDL game viewport even when GTK uses Cairo for desktop widgets.
+Game Information shows the game renderer and refreshes when a game is replaced
+or unloaded.
+GTK builds use a software SDL renderer and window surface for the hidden input
+host. GTK renders the visible Linux window, and shader processing restores its
+graphics context after loading, rendering, or releasing a preset. Explicit renderer overrides
+remain available for troubleshooting.
 Frame Timing Statistics reports emulation and display draw rates
 separately, with interval jitter to help diagnose uneven motion.
+The TAS editor reuses its grid drawing between changes. Follow Playback moves
+directly to the current row, and live preview frames update without repeating
+the window layout.
 
 ![Cupid desktop](docs/images/desktop-main.png)
 
@@ -41,6 +51,9 @@ Open **Settings** from the toolbar or press **Ctrl+Comma**. Choose a category on
 the left. Video, audio, input, media, and hardware pages divide longer lists into
 tabs. **Apply** saves validated changes; **Cancel** discards pending changes.
 File fields have native pickers. Audio settings list detected output devices.
+Controller choices remain automatic until explicitly selected. Saving other
+preferences preserves automatic detection, and game-specific controller choices
+stay with that game. See [configuration](docs/configuration.md) for saved settings.
 
 ![Video settings](docs/images/desktop-category-2.png)
 
@@ -62,10 +75,13 @@ ROM, RAM, and console fields; format, mirroring, and region use named choices.
 | Edit cartridge metadata | [iNES and NES 2.0 header editor](docs/header-editor.md) |
 | Use expansion input | [Controllers and peripherals](docs/controls.md), [Family BASIC keyboard](docs/keyboard.md) |
 
+The cheat editor supports up to 256 codes per game. Saved lists preserve UTF-8
+descriptions, and a rejected catalog import keeps the previous catalog available.
+
 The TAS editor opens FM2 movies and FM3 projects. Its input grid sits beside a
 resizable game preview and editing tabs. Save the full editing session as CTAS
-or export a movie. The converter handles supported power-on FCM movies after
-checking game identity.
+or export a movie. The preview uses the same opaque game colors as the main view.
+The converter handles supported power-on FCM movies after checking game identity.
 
 ![TAS editor](docs/images/tas-editor.png)
 
@@ -132,6 +148,8 @@ and remaining limits. Mapper support is not a per-game compatibility guarantee.
 Cartridge saves normally live beside the ROM. Disk System writes default to a
 separate IPS overlay. Quitting or replacing an image finalizes recordings and
 persistent data first; failed writes leave the session available for retry.
+The state recorder preserves existing snapshots when its history index cannot
+be read and reports the problem before allowing another capture.
 See [saves and media](docs/saves.md), [states and replay](docs/replay.md),
 [netplay](docs/netplay.md), and [HD packs](docs/hd-packs.md).
 

@@ -92,11 +92,6 @@ static char *save_identity(const NesImageSource *source) {
     return path;
 }
 
-static bool archive_signature(const uint8_t *data, size_t size) {
-    return (size >= 2 && !memcmp(data, "PK", 2))
-        || (size >= 2 && !memcmp(data, "7z", 2));
-}
-
 NesMediaResult nes_image_list(const char *path, NesArchiveList *list,
                               char *error, size_t error_size) {
     if (!list) {
@@ -198,7 +193,7 @@ NesMediaResult nes_image_prepare(const NesImageRequest *request, NesImageSource 
         return report(result, error, error_size);
     }
 
-    if (archive_signature(source->data, source->size)) {
+    if (archive_has_signature(source->data, source->size)) {
         result = prepare_archive(request, source);
     } else if (request->member && *request->member) {
         result = NES_MEDIA_MEMBER_NOT_FOUND;

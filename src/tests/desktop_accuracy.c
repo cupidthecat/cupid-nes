@@ -28,6 +28,7 @@
 #include "../ui/device_frontend.h"
 #include "../ui/frontend_commands.h"
 #include "../ui/frontend_panels.h"
+#include "../ui/game_config.h"
 #include "../ui/palette_tool.h"
 #include "../ui/storage_frontend.h"
 #include <stdio.h>
@@ -121,6 +122,149 @@ static void pixel_filter_choices(FrontendDesktopUi *ui) {
     render(ui);
     click_control(ui, HIT_SETTINGS_BUTTON, 2, 0);
     CHECK(!ui->settings_open && ui->settings->pixel_filter.kind == NES_PIXEL_FILTER_NONE);
+}
+
+static void input_override_choices(FrontendDesktopUi *ui) {
+    FrontendSettings previous = ui->staged;
+    int previous_category = ui->settings_category;
+    uint8_t previous_input_changes = ui->settings_input_changes;
+    const uint8_t masks[] = {NES_INPUT_OVERRIDE_ADAPTER, NES_INPUT_OVERRIDE_PORT1, NES_INPUT_OVERRIDE_PORT2,
+                             NES_INPUT_OVERRIDE_EXPANSION};
+    ui->settings_category = 4;
+    for (int row = 1; row <= 4; ++row) {
+        frontend_settings_defaults(&ui->staged);
+        char text[96];
+        desktop_setting_choice_text(ui, row, 0, text, sizeof(text));
+        CHECK(ui->staged.saved_input_overrides == 0);
+        /* Choosing the displayed device is still an explicit user choice. */
+        desktop_setting_choose(ui, row, 0);
+        CHECK(ui->staged.saved_input_overrides == masks[row - 1]);
+        frontend_settings_defaults(&ui->staged);
+        desktop_adjust_setting(ui, row, 1);
+        CHECK(ui->staged.saved_input_overrides == masks[row - 1]);
+    }
+    ui->staged = previous;
+    ui->settings_category = previous_category;
+    ui->settings_input_changes = previous_input_changes;
+}
+
+static void input_override_global_choice(void) {
+    const char *settings_path = "build/desktop-input-choice.ini";
+    uint8_t image[16 + 16384 + 8192] = {0};
+    memcpy(image, "NES\x1a", 4);
+    image[4] = image[5] = 1;
+    image[16] = 0x4c;
+    image[17] = 0;
+    image[18] = 0x80;
+    image[16 + 0x3ffd] = 0x80;
+    CHECK(load_rom_memory(image, sizeof(image)) == 0);
+
+    FrontendSettings global, effective, saved;
+    frontend_settings_defaults(&global);
+    effective = global;
+    GameConfigFrontend configuration;
+    CHECK(game_config_init(&configuration, &global, "build"));
+    int port2 = game_config_find_field("port2");
+    CHECK(port2 >= 0 && game_config_set(&configuration.config, (size_t)port2, "5"));
+    configuration.applied_input_overrides = NES_INPUT_OVERRIDE_PORT2;
+    effective.input.ports[1] = NES_PORT_ZAPPER;
+    effective.saved_input_overrides = NES_INPUT_OVERRIDE_PORT2;
+    char error[256];
+    CHECK(frontend_settings_apply_core(&effective, error, sizeof(error)));
+    CHECK(joypad_port_device(1) == NES_PORT_ZAPPER);
+
+    FrontendSession session = {.active = true};
+    FrontendSessionActions actions;
+    frontend_session_actions_init(&actions, &session, &effective, NULL);
+    actions.game_config = &configuration;
+    FrontendDesktopUi ui = {.settings = &effective,
+                            .staged = effective,
+                            .sessions = &actions,
+                            .settings_path = settings_path,
+                            .settings_category = 4};
+
+    /* Reselecting an inherited per-game value is still an explicit global choice. */
+    desktop_setting_choose(&ui, 3, NES_PORT_ZAPPER);
+    desktop_settings_button(&ui, 0);
+    CHECK(global.saved_input_overrides & NES_INPUT_OVERRIDE_PORT2);
+    CHECK(global.input.ports[1] == NES_PORT_ZAPPER);
+    CHECK(configuration.applied_input_overrides == NES_INPUT_OVERRIDE_PORT2);
+    CHECK(configuration.config.present & (UINT64_C(1) << port2));
+    CHECK(!strcmp(configuration.config.values[port2], "5"));
+    FrontendSettingsReport report;
+    CHECK(frontend_settings_load(settings_path, &saved, &report));
+    CHECK(saved.saved_input_overrides & NES_INPUT_OVERRIDE_PORT2);
+    CHECK(saved.input.ports[1] == NES_PORT_ZAPPER);
+
+    /* An unrelated Apply must continue to keep the active game override out of globals. */
+    frontend_settings_defaults(&global);
+    CHECK(game_config_resolve(&global, &configuration.config, 0, &effective, NULL, 0, error, sizeof(error)));
+    configuration.applied_input_overrides = NES_INPUT_OVERRIDE_PORT2;
+    CHECK(frontend_settings_apply_core(&effective, error, sizeof(error)));
+    ui.settings = &effective;
+    ui.staged = effective;
+    ui.staged.audio_mix.master_volume = 73;
+    desktop_settings_button(&ui, 0);
+    CHECK(global.saved_input_overrides == 0);
+    CHECK(global.input.ports[1] == NES_PORT_GAMEPAD);
+    CHECK(global.audio_mix.master_volume == 73);
+    CHECK(configuration.applied_input_overrides == NES_INPUT_OVERRIDE_PORT2);
+    CHECK(configuration.config.present & (UINT64_C(1) << port2));
+    CHECK(!strcmp(configuration.config.values[port2], "5"));
+    CHECK(joypad_port_device(1) == NES_PORT_ZAPPER);
+
+    /* Defaults clears an old explicit global choice without changing the active per-game device.
+     * A failed save must retain that raw Defaults request so retry does not persist the inherited Zapper. */
+    frontend_settings_defaults(&global);
+    global.saved_input_overrides = NES_INPUT_OVERRIDE_PORT2;
+    CHECK(game_config_resolve(&global, &configuration.config, 0, &effective, NULL, 0, error, sizeof(error)));
+    configuration.applied_input_overrides = NES_INPUT_OVERRIDE_PORT2;
+    CHECK(frontend_settings_apply_core(&effective, error, sizeof(error)));
+    ui.settings = &effective;
+    ui.staged = effective;
+    ui.settings_path = "build";
+    desktop_settings_button(&ui, 3);
+    CHECK(ui.staged.saved_input_overrides == 0);
+    CHECK(ui.staged.input.ports[1] == NES_PORT_GAMEPAD);
+    desktop_settings_button(&ui, 0);
+    CHECK(ui.status[0]);
+    CHECK(ui.staged.saved_input_overrides == 0);
+    CHECK(ui.staged.input.ports[1] == NES_PORT_GAMEPAD);
+    CHECK(global.saved_input_overrides == NES_INPUT_OVERRIDE_PORT2);
+    CHECK(joypad_port_device(1) == NES_PORT_ZAPPER);
+    ui.settings_path = settings_path;
+    desktop_settings_button(&ui, 0);
+    CHECK(global.saved_input_overrides == 0);
+    CHECK(global.input.ports[1] == NES_PORT_GAMEPAD);
+    CHECK(effective.saved_input_overrides & NES_INPUT_OVERRIDE_PORT2);
+    CHECK(effective.input.ports[1] == NES_PORT_ZAPPER);
+    CHECK(joypad_port_device(1) == NES_PORT_ZAPPER);
+    CHECK(frontend_settings_load(settings_path, &saved, &report));
+    CHECK(saved.saved_input_overrides == 0);
+    CHECK(saved.input.ports[1] == NES_PORT_GAMEPAD);
+    CHECK(configuration.applied_input_overrides == NES_INPUT_OVERRIDE_PORT2);
+    CHECK(configuration.config.present & (UINT64_C(1) << port2));
+    CHECK(!strcmp(configuration.config.values[port2], "5"));
+
+    /* Launch-only input fields remain excluded from the global settings file. */
+    frontend_settings_defaults(&global);
+    global.cli_overrides = FRONTEND_OVERRIDE_PORT2;
+    effective = global;
+    configuration.applied_input_overrides = 0;
+    CHECK(frontend_settings_apply_core(&effective, error, sizeof(error)));
+    ui.settings = &effective;
+    ui.staged = effective;
+    ui.settings_path = settings_path;
+    desktop_setting_choose(&ui, 3, NES_PORT_ZAPPER);
+    desktop_settings_button(&ui, 0);
+    CHECK(global.saved_input_overrides == 0);
+    CHECK(global.input.ports[1] == NES_PORT_GAMEPAD);
+    CHECK(frontend_settings_load(settings_path, &saved, &report));
+    CHECK(saved.saved_input_overrides == 0);
+    CHECK(saved.input.ports[1] == NES_PORT_GAMEPAD);
+
+    (void)nes_file_remove(settings_path);
+    CHECK(unload_rom());
 }
 
 static void ntsc_picture_choices(FrontendDesktopUi *ui) {
@@ -1182,6 +1326,8 @@ int test_desktop_accuracy(void) {
     SDL_SetWindowSize(window, 1280, 960);
     SDL_RenderSetLogicalSize(renderer, 1280, 960);
     typed_settings(&ui);
+    input_override_choices(&ui);
+    input_override_global_choice();
     path_controls(&ui);
     mouse_controls(&ui);
     ui.info_open = ui.log_open = true;

@@ -219,6 +219,7 @@ static bool restore_previous_session(FrontendSessionActions *actions, const Fron
             return false;
         }
     }
+    debugger_invalidate_memory();
     sync_active_session(actions, false);
     return true;
 }
@@ -231,9 +232,11 @@ static bool activate_request(FrontendSessionActions *actions, const FrontendImag
     FrontendSession previous = *actions->session;
     FrontendSettings previous_settings;
     GameConfig previous_config;
+    uint8_t previous_input_overrides = 0;
     char previous_key[41] = {0};
     if (actions->game_config) {
         previous_config = actions->game_config->config;
+        previous_input_overrides = actions->game_config->applied_input_overrides;
         strcpy(previous_key, actions->game_config->key);
     }
     if (actions->settings) {
@@ -283,6 +286,7 @@ static bool activate_request(FrontendSessionActions *actions, const FrontendImag
     if (!opened) {
         if (actions->game_config) {
             actions->game_config->config = previous_config;
+            actions->game_config->applied_input_overrides = previous_input_overrides;
             strcpy(actions->game_config->key, previous_key);
         }
         FrontendImageEnvironment *environment =
@@ -347,6 +351,7 @@ static bool activate_request(FrontendSessionActions *actions, const FrontendImag
         }
         if (actions->game_config) {
             actions->game_config->config = previous_config;
+            actions->game_config->applied_input_overrides = previous_input_overrides;
             strcpy(actions->game_config->key, previous_key);
         }
         bool rolled_back =

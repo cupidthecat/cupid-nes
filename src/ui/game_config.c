@@ -76,6 +76,21 @@ static const Field fields[] = {
 #undef FIELD
 _Static_assert(sizeof(fields) / sizeof(fields[0]) <= GAME_CONFIG_FIELDS, "field capacity");
 
+static uint8_t input_override(const Field *field) {
+    switch (field->cli) {
+    case FRONTEND_OVERRIDE_ADAPTER:
+        return NES_INPUT_OVERRIDE_ADAPTER;
+    case FRONTEND_OVERRIDE_PORT1:
+        return NES_INPUT_OVERRIDE_PORT1;
+    case FRONTEND_OVERRIDE_PORT2:
+        return NES_INPUT_OVERRIDE_PORT2;
+    case FRONTEND_OVERRIDE_EXPANSION:
+        return NES_INPUT_OVERRIDE_EXPANSION;
+    default:
+        return 0;
+    }
+}
+
 size_t game_config_field_count(void) {
     return sizeof(fields) / sizeof(fields[0]);
 }
@@ -182,18 +197,7 @@ bool game_config_resolve(const FrontendSettings *global, const GameConfig *confi
         if (!strcmp(fields[i].name, "shader_path")) {
             result.shader_parameter_count = 0;
         }
-        if (!strcmp(fields[i].name, "adapter")) {
-            result.saved_input_overrides |= NES_INPUT_OVERRIDE_ADAPTER;
-        }
-        if (!strcmp(fields[i].name, "port1")) {
-            result.saved_input_overrides |= NES_INPUT_OVERRIDE_PORT1;
-        }
-        if (!strcmp(fields[i].name, "port2")) {
-            result.saved_input_overrides |= NES_INPUT_OVERRIDE_PORT2;
-        }
-        if (!strcmp(fields[i].name, "expansion")) {
-            result.saved_input_overrides |= NES_INPUT_OVERRIDE_EXPANSION;
-        }
+        result.saved_input_overrides |= input_override(&fields[i]);
     }
     result.audio_mix.muted = result.muted;
     if (!frontend_settings_validate(&result, error, error_size)) {
@@ -319,7 +323,13 @@ bool game_config_prepare(GameConfigFrontend *frontend, const FrontendImageResult
               game_config_resolve(frontend->global, config, frontend->cli_fields, effective, cheat_path, cheat_capacity,
                                   error, error_size);
     if (ok) {
+        frontend->applied_input_overrides = 0;
         for (size_t i = 0; i < game_config_field_count(); ++i) {
+            uint64_t bit = UINT64_C(1) << i;
+            if ((config->present & bit) && !(frontend->cli_fields & bit) &&
+                !(frontend->global->cli_overrides & fields[i].cli)) {
+                frontend->applied_input_overrides |= input_override(&fields[i]);
+            }
             if ((frontend->cli_fields & (UINT64_C(1) << i)) && fields[i].type != FIELD_CHEAT) {
                 memcpy((char *)effective + fields[i].offset, (char *)&frontend->launch + fields[i].offset,
                        fields[i].size);
@@ -447,6 +457,20 @@ bool game_config_init(GameConfigFrontend *r, FrontendSettings *global, const cha
     return true;
 }
 
+void game_config_preserve_input_overrides(const GameConfigFrontend *r, FrontendSettings *settings,
+                                          const FrontendSettings *previous) {
+    if (!r || !settings || !previous) {
+        return;
+    }
+    uint8_t restore = r->applied_input_overrides & (uint8_t)~settings->saved_input_overrides;
+    for (size_t i = 0; i < game_config_field_count(); ++i) {
+        if (restore & input_override(&fields[i])) {
+            memcpy((char *)settings + fields[i].offset, (const char *)previous + fields[i].offset, fields[i].size);
+        }
+    }
+    settings->saved_input_overrides |= restore;
+}
+
 bool game_config_register_ui(GameConfigFrontend *r, FrontendSettings *global, const char *directory) {
     if (!r || !global || !directory) {
         return false;
@@ -460,8 +484,9 @@ void game_config_unregister_ui(void) {
     frontend_panel_unregister(GAME_CONFIG_PANEL);
 }
 
-bool game_config_save_globals(GameConfigFrontend *r, const char *path, const FrontendSettings *effective,
-                              FrontendSettingsReport *report) {
+bool game_config_save_globals_with_input_changes(GameConfigFrontend *r, const char *path,
+                                                 const FrontendSettings *effective, uint8_t input_changes,
+                                                 FrontendSettingsReport *report) {
     if (!r || !r->global || !effective) {
         return false;
     }
@@ -470,9 +495,15 @@ bool game_config_save_globals(GameConfigFrontend *r, const char *path, const Fro
         if (fields[i].type == FIELD_CHEAT) {
             continue;
         }
-        if ((r->config.present & (UINT64_C(1) << i)) || (r->cli_fields & (UINT64_C(1) << i)) ||
+        uint8_t input = input_override(&fields[i]);
+        uint64_t bit = UINT64_C(1) << i;
+        bool game_override = (r->config.present & bit) || (input && (r->applied_input_overrides & input));
+        bool input_changed = input && (input_changes & input);
+        if ((game_override && !input_changed) || (r->cli_fields & bit) ||
             (effective->cli_overrides & fields[i].cli)) {
             memcpy((char *)&global + fields[i].offset, (char *)r->global + fields[i].offset, fields[i].size);
+            global.saved_input_overrides =
+                (global.saved_input_overrides & (uint8_t)~input) | (r->global->saved_input_overrides & input);
         }
     }
     int shader_field = game_config_find_field("shader_path");
@@ -485,4 +516,9 @@ bool game_config_save_globals(GameConfigFrontend *r, const char *path, const Fro
     }
     *r->global = global;
     return true;
+}
+
+bool game_config_save_globals(GameConfigFrontend *r, const char *path, const FrontendSettings *effective,
+                              FrontendSettingsReport *report) {
+    return game_config_save_globals_with_input_changes(r, path, effective, 0, report);
 }

@@ -191,9 +191,7 @@ static bool action(void *context, unsigned id, const char *value, int selected, 
         if (result != NES_REPLAY_OK) {
             return fail(history, error, size, nes_replay_result_string(result));
         }
-        if (history->execution->restore_handler) {
-            history->execution->restore_handler(history->execution->restore_userdata);
-        }
+        frontend_execution_timeline_restored(history->execution);
         frontend_history_close(history);
         execution_control_set_paused(&history->execution->execution, false);
         frontend_execution_refresh_audio(history->execution);

@@ -346,6 +346,16 @@ static int multiline_programs(void) {
     BOARD_CHECK(
         debugger_assemble_program(0, "BNE next\nNOP\nnext: RTS", &result, assembly_error, sizeof(assembly_error)));
     BOARD_CHECK(result.bytes[1] == 1);
+    BOARD_CHECK(
+        debugger_assemble_program(0x8000, "A: NOP\nBNE A", &result, assembly_error, sizeof(assembly_error)));
+    BOARD_CHECK(result.length == 3 && result.bytes[0] == 0xEA && result.bytes[1] == 0xD0 && result.bytes[2] == 0xFD);
+    BOARD_CHECK(debugger_assemble_program(0x8000, "A: NOP\nASL A\nLDA A", &result, assembly_error,
+                                         sizeof(assembly_error)));
+    BOARD_CHECK(result.length == 5 && result.bytes[0] == 0xEA && result.bytes[1] == 0x0A &&
+                result.bytes[2] == 0xAD && result.bytes[3] == 0x00 && result.bytes[4] == 0x80);
+    BOARD_CHECK(debugger_assemble_program(0x9000, "JMP A\nA: RTS", &result, assembly_error, sizeof(assembly_error)));
+    BOARD_CHECK(result.length == 4 && result.bytes[0] == 0x4C && result.bytes[1] == 0x03 &&
+                result.bytes[2] == 0x90 && result.bytes[3] == 0x60);
     before = result;
     const char *invalid[] = {"NOP\nLDA #256", "same: NOP\nsame: RTS", "JMP missing", "; empty\n", "LDA #<label"};
     for (size_t i = 0; i < sizeof(invalid) / sizeof(*invalid); ++i) {
