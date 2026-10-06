@@ -4,6 +4,20 @@
 
 Cupid prints loader, SDL, persistence, and option errors to the terminal that launched it. Keep that output when diagnosing a failure because the final `Failed to load ROM` line is often preceded by the more specific cause.
 
+## State dialogs and status messages
+
+Load a game before using the save-state commands. Save State File and Load State
+File in File > Save states, or Ctrl+F5 and Ctrl+F6, open file choosers. F5 and F6 use the selected
+quick slot. In Tools > Save States, Save state file and Load state file use the
+displayed path; Choose save destination and Choose existing state change it.
+Cancel leaves the path and current machine unchanged.
+
+Recent action messages expire after six seconds. The main bar then shows the
+current execution or connection status. The selected slot and enabled FPS counter
+remain visible during messages. Hover over shortened text to read it in full;
+Help > Recent messages keeps the message history. A tool-panel error clears after
+a successful action, so it cannot hide that action's result.
+
 ## Linux build errors
 
 If compilation fails because `SDL2/SDL.h` or the SDL2 library cannot be found, install the development package and rebuild:
@@ -59,6 +73,12 @@ The draw row counts new images drawn by the game viewport. It does not measure
 the monitor's refresh rate. Pending GTK work is serviced during frame waits;
 the high-resolution clock controls when the next emulated frame starts.
 
+If an FM2 runs at normal speed until the TAS editor opens, update to a build
+with the playback-following fix. Older builds could keep starting scroll
+animations while the movie advanced, repeatedly redrawing the input grid.
+Current builds move the grid directly and reuse its drawing between changes.
+The live preview keeps updating alongside the game.
+
 Open Game Information and check **Video renderer**. On Windows, Cupid uses an
 accelerated SDL game viewport, preferring Direct3D 11. GTK can continue to use
 `GskCairoRenderer` for desktop widgets; that appears separately under **Desktop
@@ -74,6 +94,10 @@ produce black borders around windows with GL or Vulkan, so Cupid does not
 enable it automatically.
 
 Existing `GDK_DEBUG` and `GSK_RENDERER` environment overrides are preserved.
+On Linux, GTK selects the renderer for both the game and desktop widgets.
+With GTK 4.10 or later, the Cairo path prepares a software image and accelerated
+renderers prepare a texture. Each path retains its submitted image while GTK
+finishes drawing it. GTK 4.8 uses the Cairo drawing path for the game.
 If windows have thick black outer margins, remove `dcomp` from `GDK_DEBUG`
 and restart Cupid. This affects the native window surface, so changing widget
 border styles does not fix it.
@@ -142,6 +166,21 @@ An EPSM cartridge does not require the file to start. Without it, Cupid reports 
 ## SDL window or renderer errors
 
 `SDL_Init Error`, `SDL_CreateWindow Error`, `SDL_CreateRenderer Error`, and `SDL_CreateTexture Error` come from SDL setup before emulation starts. On Linux, confirm a working graphical session and SDL2 installation. On Windows, make sure the `SDL2.dll` copied by the build script remains beside `cupid-nes.exe` and that the executable is running in a desktop session with a usable graphics driver.
+
+## Linux launch stops at a graphics-context warning
+
+`gdk_gl_context_make_current() failed` means GTK could not activate its graphics
+context. GTK builds use a software SDL renderer and window surface for the
+hidden input host so that it does not hold a competing OpenGL context. This
+selection also applies when `SDL_RENDER_DRIVER=opengl` or
+`SDL_FRAMEBUFFER_ACCELERATION=1` is set. The visible game view still follows
+GTK's renderer selection.
+
+If the warning persists with a current build, try `GSK_RENDERER=cairo cupid-nes`
+and include the GTK version, graphics driver, renderer environment variables,
+and complete launch log in the report. An SDL shader uses its own context;
+Cupid releases and restores GTK's context around shader operations, including
+a rejected preset reload.
 
 ## Controller is ignored
 

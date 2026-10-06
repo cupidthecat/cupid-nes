@@ -7,6 +7,7 @@
 #include "../ui/gtk_desktop.h"
 #include "../ui/frontend_commands.h"
 #include "../ui/debug_frontend.h"
+#include "../ui/tas_frontend.h"
 #include "../cpu/cpu.h"
 #include "../ppu/ppu.h"
 #include "../apu/apu.h"
@@ -25,7 +26,7 @@ static void settle(FrontendDesktopUi *ui) {
     }
 }
 
-int benchmark_gtk(const char *path) {
+int benchmark_gtk(const char *path, const char *movie) {
     uint8_t *image = NULL;
     size_t size = 0;
     if (nes_file_read_all(path, 64u * 1024u * 1024u, &image, &size) != NES_FILE_OK) {
@@ -63,7 +64,7 @@ int benchmark_gtk(const char *path) {
     frontend_execution_init(&execution, &audio, have.freq, NULL, NULL, NULL, NULL);
     frontend_execution_set_rewind_seconds(&execution, settings.rewind_seconds);
     SDL_Window *window = SDL_CreateWindow("Presentation benchmark", 0, 0, 900, 700, SDL_WINDOW_HIDDEN);
-    SDL_Renderer *renderer = window ? SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE) : NULL;
+    SDL_Renderer *renderer = frontend_desktop_create_renderer(window, SDL_RENDERER_SOFTWARE);
     if (!renderer) {
         return 2;
     }
@@ -85,10 +86,23 @@ int benchmark_gtk(const char *path) {
         return 2;
     }
     SDL_PauseAudioDevice(audio, 0);
-    const char *names[] = {"window", "maximized", "fullscreen", "maximized-ppu"};
+    const char *names[] = {"window", "maximized", "fullscreen", "maximized-ppu", "movie", "tas-editor"};
     double frequency = (double)SDL_GetPerformanceFrequency();
     int result = 0;
-    for (unsigned mode = 0; mode < G_N_ELEMENTS(names); ++mode) {
+    for (unsigned mode = 0; mode < (movie ? G_N_ELEMENTS(names) : 4); ++mode) {
+        if (mode == 4) {
+            for (CupidGtkTool *tool = ui.gtk->tools; tool; tool = tool->next) {
+                gtk_widget_set_visible(tool->window, FALSE);
+            }
+            if (!frontend_execution_movie_set_path(&execution, movie, error, sizeof(error)) ||
+                !frontend_execution_movie_play(&execution, error, sizeof(error))) {
+                result = 1;
+                break;
+            }
+        }
+        if (mode == 5) {
+            cupid_gtk_open(&ui, 1, TAS_PANEL);
+        }
         settings.fullscreen = mode == 2;
         settle(&ui);
         if (mode == 1 || mode == 3) {

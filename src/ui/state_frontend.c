@@ -127,6 +127,25 @@ static bool load_file(void *context, char *error, size_t error_size) {
     return result == NES_STATE_OK;
 }
 
+static bool choose_state_file(FrontendStateRuntime *runtime, bool save, char *error, size_t error_size) {
+    char path[FRONTEND_SETTINGS_PATH_TEXT];
+    snprintf(path, sizeof(path), "%s", runtime->settings->state_file_path);
+    bool chosen = save ? frontend_save_file_dialog(FRONTEND_SAVE_STATE, path, sizeof(path), error, error_size)
+                       : frontend_open_file_dialog(FRONTEND_OPEN_STATE, path, sizeof(path), error, error_size);
+    if (chosen) strcpy(runtime->settings->state_file_path, path);
+    return chosen;
+}
+
+static bool save_file_dialog(void *context, char *error, size_t error_size) {
+    FrontendStateRuntime *runtime = context;
+    return choose_state_file(runtime, true, error, error_size) && save_file(runtime, error, error_size);
+}
+
+static bool load_file_dialog(void *context, char *error, size_t error_size) {
+    FrontendStateRuntime *runtime = context;
+    return choose_state_file(runtime, false, error, error_size) && load_file(runtime, error, error_size);
+}
+
 static bool state_snapshot(void *context, FrontendPanelModel *model,
                            char *error, size_t error_size) {
     FrontendStateRuntime *runtime = context;
@@ -172,12 +191,7 @@ static bool state_action(void *context, unsigned id, const char *value, int sele
         return true;
     }
     if (id==STATE_CONTROL_BROWSE_SAVE || id==STATE_CONTROL_BROWSE_LOAD) {
-        char path[FRONTEND_SETTINGS_PATH_TEXT]={0};
-        bool chosen=id==STATE_CONTROL_BROWSE_SAVE
-            ? frontend_save_file_dialog(FRONTEND_SAVE_STATE,path,sizeof(path),error,error_size)
-            : frontend_open_file_dialog(FRONTEND_OPEN_STATE,path,sizeof(path),error,error_size);
-        if(chosen)strcpy(runtime->settings->state_file_path,path);
-        return chosen;
+        return choose_state_file(runtime, id == STATE_CONTROL_BROWSE_SAVE, error, error_size);
     }
     switch (id) {
         case STATE_CONTROL_SAVE_SLOT: return save_slot(runtime, error, error_size);
@@ -223,10 +237,10 @@ bool frontend_state_register_ui(FrontendStateRuntime *runtime) {
          FRONTEND_COMMAND_NEEDS_SESSION, save_slot, runtime},
         {STATE_COMMAND_LOAD_SLOT, "Quick Load State", "File", "F6",
          FRONTEND_COMMAND_NEEDS_SESSION, load_slot, runtime},
-        {STATE_COMMAND_SAVE_FILE, "Save State File", "File", "Ctrl+F5",
-         FRONTEND_COMMAND_NEEDS_SESSION, save_file, runtime},
-        {STATE_COMMAND_LOAD_FILE, "Load State File", "File", "Ctrl+F6",
-         FRONTEND_COMMAND_NEEDS_SESSION, load_file, runtime}
+        {STATE_COMMAND_SAVE_FILE, "Save State File...", "File", "Ctrl+F5",
+         FRONTEND_COMMAND_NEEDS_SESSION, save_file_dialog, runtime},
+        {STATE_COMMAND_LOAD_FILE, "Load State File...", "File", "Ctrl+F6",
+         FRONTEND_COMMAND_NEEDS_SESSION, load_file_dialog, runtime}
     };
     for (size_t i = 0; i < sizeof(commands) / sizeof(commands[0]); ++i) {
         if (!frontend_command_register(&commands[i])) {

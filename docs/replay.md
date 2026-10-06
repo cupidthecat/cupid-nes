@@ -6,8 +6,15 @@
 
 Use File > Quick Save State and Quick Load State, or F5 and F6, for the selected
 slot. Tools > Save States selects one of ten slots and opens or saves a named
-state file. Ctrl+F5 and Ctrl+F6 use that file path. The panel includes file pickers.
+state file. File > Save states > Save State File and Load State File, or Ctrl+F5 and Ctrl+F6,
+open a file chooser every time. Cancel leaves the stored path and machine intact.
+The panel's Save state file and Load state file buttons use its displayed path;
+its file pickers let you change that path separately.
 Settings > Files and storage also exposes the slot and state path.
+
+Successful saves and loads display a confirmation in the status bar. The selected
+quick slot stays visible beside the FPS counter. State files use `.cst`, `.cstate`,
+or `.state`; an extension does not make another emulator's state compatible.
 
 States contain CPU, PPU, APU, cartridge, controller, disk, and supported peripheral
 state. They identify the loaded image and validate all sections before restoring

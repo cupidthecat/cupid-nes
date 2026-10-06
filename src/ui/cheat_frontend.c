@@ -25,6 +25,7 @@ struct CheatFrontend {
     char draft_code[32];
     char draft_description[96];
     bool draft_enabled;
+    CheatRecord selected_snapshot;
     char storage_directory[NES_FILE_PATH_LIMIT];
     char path[NES_FILE_PATH_LIMIT];
     char status[256];
@@ -136,16 +137,16 @@ static bool snapshot(void *context, FrontendPanelModel *model,
     const char *code = frontend->draft_code;
     const char *description = frontend->draft_description;
     bool enabled = frontend->draft_enabled;
-    CheatRecord record;
-    if (selected_record(frontend, &record, NULL)) {
-        code = record.code;
-        description = record.description;
-        enabled = record.enabled;
+    CheatRecord *record = &frontend->selected_snapshot;
+    if (selected_record(frontend, record, NULL)) {
+        code = record->code;
+        description = record->description;
+        enabled = record->enabled;
         snprintf(frontend->info, sizeof(frontend->info),
-                 "#%u %s | $%04X = $%02X%s", record.id,
-                 record.format == CHEAT_FORMAT_GAME_GENIE ? "Game Genie"
-                 : record.format == CHEAT_FORMAT_PAR ? "Pro Action Replay" : "Raw",
-                 record.address, record.value, record.has_compare ? " | compare active" : "");
+                 "#%u %s | $%04X = $%02X%s", record->id,
+                 record->format == CHEAT_FORMAT_GAME_GENIE ? "Game Genie"
+                 : record->format == CHEAT_FORMAT_PAR ? "Pro Action Replay" : "Raw",
+                 record->address, record->value, record->has_compare ? " | compare active" : "");
     } else {
         CheatRecord parsed;
         CheatResult result = cheats_parse(frontend->draft_code, &parsed);

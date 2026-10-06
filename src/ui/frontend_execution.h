@@ -110,6 +110,7 @@ size_t frontend_execution_rewind_available(const FrontendExecutionRuntime *runti
 bool frontend_execution_rewind_step(FrontendExecutionRuntime *runtime,
                                     char *error, size_t error_size);
 void frontend_execution_clear_timeline(FrontendExecutionRuntime *runtime);
+void frontend_execution_timeline_restored(FrontendExecutionRuntime *runtime);
 void frontend_execution_shutdown(FrontendExecutionRuntime *runtime);
 
 bool frontend_execution_set_run_ahead(FrontendExecutionRuntime *runtime, unsigned frames);

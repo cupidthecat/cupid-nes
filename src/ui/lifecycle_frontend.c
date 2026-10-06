@@ -158,6 +158,7 @@ static bool snapshot(void *context, FrontendPanelModel *model, char *error, size
     LifecycleFrontend *r = context;
     bool active = r->actions->session->active;
     bool live = active && nes_execution_policy() == NES_EXECUTION_LIVE;
+    bool recordable = live && r->recorder.key[0];
     snprintf(r->interval, sizeof(r->interval), "%u", r->recorder.options.interval);
     snprintf(r->retain, sizeof(r->retain), "%u", r->recorder.options.retain);
     for (size_t i = 0; i < r->recorder.count; ++i) {
@@ -177,8 +178,8 @@ static bool snapshot(void *context, FrontendPanelModel *model, char *error, size
         {INTERVAL, FRONTEND_PANEL_TEXT, "Interval (frames or milliseconds)", r->interval, NULL, 0, 0, true, false},
         {RETAIN, FRONTEND_PANEL_TEXT, "Snapshots to retain (1-64)", r->retain, NULL, 0, 0, true, false},
         {SAVE, FRONTEND_PANEL_ACTION, "Save preferences", NULL, NULL, 0, 0, true, false},
-        {RUN, FRONTEND_PANEL_CHECKBOX, "Recorder running", NULL, NULL, 0, r->recorder.running, live, false},
-        {CAPTURE, FRONTEND_PANEL_ACTION, "Record snapshot now", NULL, NULL, 0, 0, live, false},
+        {RUN, FRONTEND_PANEL_CHECKBOX, "Recorder running", NULL, NULL, 0, r->recorder.running, recordable, false},
+        {CAPTURE, FRONTEND_PANEL_ACTION, "Record snapshot now", NULL, NULL, 0, 0, recordable, false},
         {SNAPSHOTS, FRONTEND_PANEL_LIST, "Recovery history (oldest first)", NULL, r->items, r->recorder.count,
          r->selected, live, true},
         {RESTORE, FRONTEND_PANEL_ACTION, "Restore selected snapshot", NULL, NULL, 0, 0, live && r->recorder.count != 0,
@@ -214,7 +215,7 @@ static bool action(void *context, unsigned id, const char *value, int selected, 
         return true;
     }
     if (id == RUN) {
-        if (!r->actions->session->active || nes_execution_policy() != NES_EXECUTION_LIVE) {
+        if (!r->actions->session->active || !r->recorder.key[0] || nes_execution_policy() != NES_EXECUTION_LIVE) {
             return false;
         }
         r->recorder.running = selected != 0;

@@ -231,14 +231,18 @@ static NesFileResult stop_with_error(NesCaptureSession *session, NesFileResult r
     return result;
 }
 
+static bool capture_session_matches(const CaptureImplementation *implementation) {
+    return implementation->image_crc == rom_file_crc32() && implementation->region == nes_timing()->region &&
+           implementation->machines == (vs_dual_system() ? 2u : 1u) &&
+           !(nes_execution_policy() & (NES_EXECUTION_SPECULATIVE | NES_EXECUTION_REWIND));
+}
+
 bool nes_capture_session_begin_frame(NesCaptureSession *session) {
     if (!session || !session->implementation) {
         return false;
     }
     CaptureImplementation *implementation = session->implementation;
-    if (implementation->image_crc != rom_file_crc32() || implementation->region != nes_timing()->region ||
-        implementation->machines != (vs_dual_system() ? 2u : 1u) ||
-        (nes_execution_policy() & (NES_EXECUTION_SPECULATIVE | NES_EXECUTION_REWIND))) {
+    if (!capture_session_matches(implementation)) {
         (void)stop_with_error(session, NES_FILE_INVALID_ARGUMENT,
                               "Recording stopped when the emulation session changed");
         return false;
@@ -317,7 +321,7 @@ NesFileResult nes_capture_session_end_frame(NesCaptureSession *session, const Ne
         return stop_with_error(session, implementation->frame_error,
                                "Recording stopped because its input buffer or clock changed");
     }
-    if (implementation->image_crc != rom_file_crc32() || implementation->region != nes_timing()->region) {
+    if (!capture_session_matches(implementation)) {
         return stop_with_error(session, NES_FILE_INVALID_ARGUMENT,
                                "Recording stopped when the emulation session changed");
     }

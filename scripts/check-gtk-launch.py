@@ -11,6 +11,31 @@ import tempfile
 import time
 
 
+def check_launch(executable, arguments, environment):
+    with tempfile.TemporaryFile() as log:
+        process = subprocess.Popen([str(executable), *arguments], env=environment, stdout=log, stderr=log)
+        try:
+            time.sleep(5)
+            if process.poll() is not None:
+                raise RuntimeError(f'Desktop exited during startup: {process.returncode}')
+        finally:
+            if process.poll() is None:
+                process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+            log.seek(0)
+            output = log.read().decode('utf-8', errors='replace')
+            if output:
+                print(output)
+        if any(marker in output for marker in ('Gtk-CRITICAL', 'GLib-GObject-CRITICAL',
+                                                'Gtk-ERROR', 'GLib-ERROR', 'Gdk-ERROR',
+                                                'gdk_gl_context_make_current() failed')):
+            raise RuntimeError('GTK startup reported a rendering or critical error')
+
+
 def main():
     executable = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix='cupid-gtk-smoke-') as temporary:
@@ -23,28 +48,15 @@ def main():
         for name in ('HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'XDG_CONFIG_HOME',
                      'XDG_DATA_HOME', 'XDG_CACHE_HOME'):
             environment[name] = temporary
-        with tempfile.TemporaryFile() as log:
-            process = subprocess.Popen([str(executable)], env=environment, stdout=log, stderr=log)
-            try:
-                time.sleep(5)
-                if process.poll() is not None:
-                    raise RuntimeError(f'Desktop exited during startup: {process.returncode}')
-            finally:
-                if process.poll() is None:
-                    process.terminate()
-                try:
-                    process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait()
-                log.seek(0)
-                output = log.read().decode('utf-8', errors='replace')
-                if output:
-                    print(output)
-            if any(marker in output for marker in ('Gtk-CRITICAL', 'GLib-GObject-CRITICAL',
-                                                    'Gtk-ERROR', 'GLib-ERROR', 'Gdk-ERROR')):
-                raise RuntimeError('GTK startup reported a critical error')
-    print('GTK launch smoke: PASS (desktop survived five seconds)')
+        # Owned NROM fixture: disable IRQs and loop at $8001, with CHR RAM.
+        prg = bytearray(16384)
+        prg[:4] = bytes((0x78, 0x4c, 0x01, 0x80))
+        prg[-6:] = bytes((0x00, 0x80)) * 3
+        rom = Path(temporary) / 'startup.nes'
+        rom.write_bytes(b'NES\x1a\x01' + bytes(11) + prg)
+        check_launch(executable, [], environment)
+        check_launch(executable, [str(rom)], environment)
+    print('GTK launch smoke: PASS (idle and cartridge launch each survived five seconds)')
 
 
 if __name__ == '__main__':

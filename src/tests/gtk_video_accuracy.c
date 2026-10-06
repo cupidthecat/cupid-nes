@@ -5,9 +5,11 @@
  */
 #include "../ui/gtk_internal.h"
 #include "../ui/gtk_desktop.h"
+#include "../video/shader_preset.h"
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
+#include <glib/gstdio.h>
 #ifdef _WIN32
 #include <gdk/win32/gdkwin32.h>
 #endif
@@ -36,6 +38,181 @@ static bool contains(GtkWidget *view, const char *expected) {
     if (!found) fprintf(stderr, "Expected '%s' in: %s\n", expected, text);
     g_free(text);
     return found;
+}
+
+static void picture_invalidated(GdkPaintable *paintable, gpointer data) {
+    (void)paintable;
+    ++*(unsigned *)data;
+}
+
+bool test_gtk_picture_pixels(void) {
+    GtkWidget *picture = g_object_ref_sink(gtk_picture_new());
+    /* Packed RGB, partial alpha and padded rows must all remain opaque. */
+    uint32_t pixels[8] = {0x00112233, 0x80445566, 0, 0, 0x00778899, 0xffaabbcc, 0, 0};
+    cupid_gtk_picture(picture, pixels, 2, 2, 4 * sizeof(uint32_t));
+    GdkPaintable *paintable = gtk_picture_get_paintable(GTK_PICTURE(picture));
+    GdkPaintable *image = gdk_paintable_get_current_image(paintable);
+    CHECK(GDK_IS_TEXTURE(image));
+    GdkTexture *texture = GDK_TEXTURE(image);
+    CHECK(texture && gdk_texture_get_width(texture) == 2 && gdk_texture_get_height(texture) == 2);
+    CHECK(gdk_paintable_get_intrinsic_aspect_ratio(paintable) == 1.0);
+    unsigned contents = 0, sizes = 0;
+    g_signal_connect(paintable, "invalidate-contents", G_CALLBACK(picture_invalidated), &contents);
+    g_signal_connect(paintable, "invalidate-size", G_CALLBACK(picture_invalidated), &sizes);
+    uint32_t download[4];
+    gdk_texture_download(texture, (guchar *)download, 2 * sizeof(uint32_t));
+    CHECK(download[0] == 0xff112233 && download[1] == 0xff445566);
+    CHECK(download[2] == 0xff778899 && download[3] == 0xffaabbcc);
+    memset(pixels, 0, sizeof(pixels));
+    cupid_gtk_picture(picture, pixels, 2, 2, 4 * sizeof(uint32_t));
+    CHECK(gtk_picture_get_paintable(GTK_PICTURE(picture)) == paintable && contents == 1 && sizes == 0);
+    gdk_texture_download(texture, (guchar *)download, 2 * sizeof(uint32_t));
+    CHECK(download[0] == 0xff112233 && download[3] == 0xffaabbcc);
+    GdkPaintable *current = gdk_paintable_get_current_image(paintable);
+    CHECK(GDK_IS_TEXTURE(current));
+    gdk_texture_download(GDK_TEXTURE(current), (guchar *)download, 2 * sizeof(uint32_t));
+    CHECK(download[0] == 0xff000000 && download[3] == 0xff000000);
+    g_object_unref(current);
+    cupid_gtk_picture(picture, pixels, 3, 2, 4 * sizeof(uint32_t));
+    CHECK(gtk_picture_get_paintable(GTK_PICTURE(picture)) == paintable && contents == 2 && sizes == 1);
+    CHECK(gdk_paintable_get_intrinsic_width(paintable) == 3 && gdk_paintable_get_intrinsic_height(paintable) == 2);
+    CHECK(gdk_paintable_get_intrinsic_aspect_ratio(paintable) == 1.5);
+    g_signal_handlers_disconnect_by_data(paintable, &contents);
+    g_signal_handlers_disconnect_by_data(paintable, &sizes);
+    g_object_unref(texture);
+    g_object_unref(picture);
+    puts("GTK preview opacity, stable layout, resize and retained texture: PASS");
+    return true;
+}
+
+bool test_gtk_shader_context(FrontendDesktopUi *ui) {
+    if (GSK_IS_CAIRO_RENDERER(gtk_native_get_renderer(GTK_NATIVE(ui->gtk->window)))) return true;
+    GError *error = NULL;
+    GdkSurface *surface = gtk_native_get_surface(GTK_NATIVE(ui->gtk->window));
+    GdkGLContext *context = gdk_surface_create_gl_context(surface, &error);
+    CHECK(context && gdk_gl_context_realize(context, &error));
+    gdk_gl_context_make_current(context);
+    CHECK(gdk_gl_context_get_current() == context);
+    char *directory = g_dir_make_tmp("cupid-gtk-shader-XXXXXX", &error);
+    CHECK(directory);
+    char *source = g_build_filename(directory, "pass.glsl", NULL);
+    char *preset = g_build_filename(directory, "preset.glslp", NULL);
+    const char *glsl =
+        "#version 130\n#ifdef VERTEX\n"
+        "in vec4 VertexCoord; in vec2 TexCoord; out vec2 uv; uniform mat4 MVPMatrix;\n"
+        "void main() { gl_Position=MVPMatrix*VertexCoord; uv=TexCoord; }\n"
+        "#elif defined(FRAGMENT)\n"
+        "in vec2 uv; out vec4 FragColor; uniform sampler2D Texture;\n"
+        "void main() { FragColor=vec4(texture(Texture,uv).rgb,1.0); }\n#endif\n";
+    CHECK(g_file_set_contents(source, glsl, -1, &error));
+    CHECK(g_file_set_contents(preset, "shaders=1\nshader0=pass.glsl\n", -1, &error));
+    NesShaderPreset *shader = nes_shader_create();
+    char why[512] = {0};
+    bool loaded = nes_shader_load(shader, preset, why, sizeof(why));
+    if (!loaded) fprintf(stderr, "GTK shader load: %s\n", why);
+    CHECK(loaded && gdk_gl_context_get_current() == context);
+    uint32_t pixels[4] = {0xff2266aa, 0xffaa6633, 0xff33aa66, 0xffaa3366};
+    NesVideoPresentationFrame input = {0}, output = {0};
+    input.pixels = pixels;
+    input.width = input.height = 2;
+    input.screens = 1;
+    for (unsigned i = 0; i < 3; ++i) {
+        CHECK(nes_shader_render(shader, &input, 2, 2, &output, why, sizeof(why)));
+        CHECK(output.width == 2 && output.height == 2 && !memcmp(output.pixels, pixels, sizeof(pixels)));
+        CHECK(gdk_gl_context_get_current() == context);
+    }
+    /* A rejected replacement destroys its partial GPU state and restores GTK. */
+    CHECK(g_file_set_contents(source, "invalid GLSL", -1, &error));
+    CHECK(!nes_shader_reload(shader, why, sizeof(why)) && gdk_gl_context_get_current() == context);
+    CHECK(nes_shader_render(shader, &input, 2, 2, &output, why, sizeof(why)));
+    CHECK(!memcmp(output.pixels, pixels, sizeof(pixels)) && gdk_gl_context_get_current() == context);
+    CHECK(g_file_set_contents(source, glsl, -1, &error));
+    CHECK(nes_shader_reload(shader, why, sizeof(why)) && gdk_gl_context_get_current() == context);
+    nes_shader_destroy(shader);
+    CHECK(gdk_gl_context_get_current() == context);
+    gdk_gl_context_clear_current();
+    g_object_unref(context);
+    CHECK(remove(preset) == 0 && remove(source) == 0);
+    CHECK(g_rmdir(directory) == 0);
+    g_free(preset);
+    g_free(source);
+    g_free(directory);
+    puts("GTK shader pixels and GL context restoration: PASS");
+    return true;
+}
+
+static bool check_snapshot_pixels(FrontendDesktopUi *ui, GskRenderNode *node) {
+    CupidGtkDesktop *d = ui->gtk;
+    unsigned width = (unsigned)gtk_widget_get_width(d->picture);
+    unsigned height = (unsigned)gtk_widget_get_height(d->picture);
+    graphene_rect_t viewport = GRAPHENE_RECT_INIT(0, 0, width, height);
+    GskRenderer *renderer = gtk_native_get_renderer(GTK_NATIVE(d->window));
+    GdkTexture *texture = gsk_renderer_render_texture(renderer, node, &viewport);
+    CHECK(texture && gdk_texture_get_width(texture) == (int)width && gdk_texture_get_height(texture) == (int)height);
+    uint32_t *pixels = g_new(uint32_t, (size_t)width *height);
+    gdk_texture_download(texture, (guchar *)pixels, width * sizeof(*pixels));
+    SDL_Rect game;
+    frontend_desktop_game_rect(ui, (int)width, (int)height, 64, 48, ui->settings->integer_scaling, &game);
+    const uint32_t colors[] = {0xff2266aa, 0xffaa6633, 0xff33aa66, 0xffaa3366};
+    bool same = true;
+    for (unsigned quadrant = 0; quadrant < 4; ++quadrant) {
+        unsigned x = game.x + game.w * (quadrant % 2 ? 3 : 1) / 4;
+        unsigned y = game.y + game.h * (quadrant / 2 ? 3 : 1) / 4;
+        if (pixels[(size_t)y * width + x] != colors[quadrant]) {
+            fprintf(stderr, "Snapshot quadrant %u at %u,%u: %08x expected %08x\n", quadrant, x, y,
+                    pixels[(size_t)y * width + x], colors[quadrant]);
+        }
+        same &= pixels[(size_t)y * width + x] == colors[quadrant];
+    }
+    if (game.x > 0 || game.y > 0) {
+        /* Cairo and GPU compositors round the float background differently. */
+        same &= pixels[0] == 0xff060708 || pixels[0] == 0xff060709;
+    }
+    g_free(pixels);
+    g_object_unref(texture);
+    CHECK(same);
+    return true;
+}
+
+bool test_gtk_game_pixels(FrontendDesktopUi *ui) {
+    uint32_t source[64 * 48];
+    const uint32_t colors[] = {0x002266aa, 0x80aa6633, 0x0033aa66, 0xffaa3366};
+    const uint32_t *saved = ui->video->frame.pixels;
+    unsigned width = ui->video->frame.width, height = ui->video->frame.height;
+    bool integer = ui->settings->integer_scaling, linear = ui->settings->bilinear_interpolation;
+    FrontendAspectMode aspect = ui->settings->aspect_mode;
+    ui->video->frame.pixels = source;
+    ui->video->frame.width = 64;
+    ui->video->frame.height = 48;
+    ui->settings->aspect_mode = FRONTEND_ASPECT_SOURCE;
+    for (unsigned mode = 0; mode < 2; ++mode) {
+        for (unsigned y = 0; y < 48; ++y) {
+            for (unsigned x = 0; x < 64; ++x) {
+                source[y * 64 + x] = colors[(y >= 24) * 2 + (x >= 32)];
+            }
+        }
+        ui->settings->integer_scaling = mode == 0;
+        ui->settings->bilinear_interpolation = mode == 1;
+        pump(ui);
+        GtkSnapshot *snapshot = gtk_snapshot_new();
+        GTK_WIDGET_GET_CLASS(ui->gtk->picture)->snapshot(ui->gtk->picture, snapshot);
+        GskRenderNode *node = gtk_snapshot_free_to_node(snapshot);
+        CHECK(node && check_snapshot_pixels(ui, node));
+        /* GTK may retain a snapshot across the next emulated frame. */
+        memset(source, 0, sizeof(source));
+        pump(ui);
+        CHECK(check_snapshot_pixels(ui, node));
+        gsk_render_node_unref(node);
+    }
+    ui->settings->integer_scaling = integer;
+    ui->settings->bilinear_interpolation = linear;
+    ui->settings->aspect_mode = aspect;
+    ui->video->frame.pixels = saved;
+    ui->video->frame.width = width;
+    ui->video->frame.height = height;
+    pump(ui);
+    puts("GTK rendered colors, letterboxing, filtering and retained snapshots: PASS");
+    return true;
 }
 
 bool test_gtk_information(FrontendDesktopUi *ui) {

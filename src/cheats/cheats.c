@@ -7,6 +7,7 @@
  * GNU General Public License, version 3 or any later version.
  */
 #include "cheats.h"
+#include "cheat_text.h"
 
 #include "../system/execution_policy.h"
 #include "../util/file_io.h"
@@ -261,28 +262,6 @@ void cheats_set_game_identity(uint32_t crc32) {
 }
 uint32_t cheats_game_identity(void) { return game_identity; }
 
-static bool valid_utf8(const uint8_t *data, size_t size) {
-    for (size_t i = 0; i < size;) {
-        uint8_t c = data[i++];
-        if (!c) return false;
-        if (c < 0x80) continue;
-        unsigned extra; uint32_t code;
-        if ((c & 0xE0) == 0xC0) { extra = 1; code = c & 0x1F; if (code < 2) return false; }
-        else if ((c & 0xF0) == 0xE0) { extra = 2; code = c & 0x0F; }
-        else if ((c & 0xF8) == 0xF0) { extra = 3; code = c & 0x07; }
-        else return false;
-        if (i + extra > size) return false;
-        for (unsigned j = 0; j < extra; ++j) {
-            uint8_t tail = data[i++];
-            if ((tail & 0xC0) != 0x80) return false;
-            code = (code << 6) | (tail & 0x3F);
-        }
-        if ((extra == 2 && code < 0x800) || (extra == 3 && code < 0x10000)
-            || code > 0x10FFFF || (code >= 0xD800 && code <= 0xDFFF)) return false;
-    }
-    return true;
-}
-
 static size_t escaped_size(const char *text) {
     size_t size = 0;
     for (const unsigned char *p = (const unsigned char *)text; *p; ++p)
@@ -322,7 +301,7 @@ CheatResult cheats_save_file(const char *path) {
     if (!path || !*path) return CHEAT_INVALID_ARGUMENT;
     size_t size = 32;
     for (size_t i = 0; i < record_count; ++i)
-        size += 3 + strlen(records[i].code) + escaped_size(records[i].description);
+        size += 4 + strlen(records[i].code) + escaped_size(records[i].description);
     char *buffer = malloc(size + 1);
     if (!buffer) return CHEAT_FILE_ERROR;
     char *cursor = buffer;
@@ -355,7 +334,7 @@ CheatResult cheats_load_file(const char *path) {
     uint8_t *data = NULL; size_t size = 0;
     NesFileResult file_result = nes_file_read_all(path, CHEAT_FILE_LIMIT, &data, &size);
     if (file_result != NES_FILE_OK) return CHEAT_FILE_ERROR;
-    if (!valid_utf8(data, size)) { free(data); return CHEAT_INVALID_CODE; }
+    if (!cheat_text_valid_utf8(data, size)) { free(data); return CHEAT_INVALID_CODE; }
     char *text = malloc(size + 1);
     if (!text) { free(data); return CHEAT_FILE_ERROR; }
     memcpy(text, data, size); text[size] = '\0'; free(data);

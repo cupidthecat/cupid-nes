@@ -129,6 +129,60 @@ static void tas_rows_interface(GtkTreeModelIface *iface) {
     iface->iter_parent = rows_parent;
 }
 
+typedef struct {
+    GtkTreeView parent;
+} CupidTasGrid;
+
+typedef GtkTreeViewClass CupidTasGridClass;
+G_DEFINE_TYPE(CupidTasGrid, cupid_tas_grid, GTK_TYPE_TREE_VIEW)
+
+static void grid_snapshot(GtkWidget *widget, GtkSnapshot *snapshot) {
+    int width = gtk_widget_get_width(widget), height = gtk_widget_get_height(widget);
+    if (width <= 0 || height <= 0) {
+        return;
+    }
+    GtkSnapshot *contents = gtk_snapshot_new();
+    GTK_WIDGET_CLASS(cupid_tas_grid_parent_class)->snapshot(widget, contents);
+    GskRenderNode *node = gtk_snapshot_free_to_node(contents);
+    if (!node) {
+        return;
+    }
+
+    /* GTK retains this snapshot until the grid changes. Rasterize its text
+     * and dotted separators once, so each live preview frame can reuse one
+     * texture instead of submitting every cell and repeated line to the GPU. */
+    int scale = gtk_widget_get_scale_factor(widget);
+    cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width * scale, height * scale);
+    if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) {
+        gtk_snapshot_append_node(snapshot, node);
+        cairo_surface_destroy(surface);
+        gsk_render_node_unref(node);
+        return;
+    }
+    cairo_t *cr = cairo_create(surface);
+    cairo_scale(cr, scale, scale);
+    gsk_render_node_draw(node, cr);
+    cairo_destroy(cr);
+    gsk_render_node_unref(node);
+    cairo_surface_flush(surface);
+    int stride = cairo_image_surface_get_stride(surface);
+    GBytes *bytes = g_bytes_new(cairo_image_surface_get_data(surface), (size_t)stride * height * scale);
+    GdkTexture *texture = gdk_memory_texture_new(width * scale, height * scale, GDK_MEMORY_DEFAULT, bytes, stride);
+    graphene_rect_t bounds = GRAPHENE_RECT_INIT(0, 0, width, height);
+    gtk_snapshot_append_texture(snapshot, texture, &bounds);
+    g_object_unref(texture);
+    g_bytes_unref(bytes);
+    cairo_surface_destroy(surface);
+}
+
+static void cupid_tas_grid_class_init(CupidTasGridClass *klass) {
+    GTK_WIDGET_CLASS(klass)->snapshot = grid_snapshot;
+}
+
+static void cupid_tas_grid_init(CupidTasGrid *grid) {
+    (void)grid;
+}
+
 enum { COLUMN_FRAME = -2, COLUMN_MARKER = -1, COLUMN_ZAPPER = 64, PAGE_ROWS = 8 };
 
 typedef struct {
@@ -1047,8 +1101,14 @@ void cupid_gtk_tas_refresh(GtkWidget *root) {
     size_t previous_scroll = editor->scroll;
     desktop_tas_follow_playback(ui, &progress);
     if (count && previous_scroll != editor->scroll) {
-        GtkTreePath *path = gtk_tree_path_new_from_indices((int)MIN(progress.frame, count - 1), -1);
-        gtk_tree_view_scroll_to_cell(GTK_TREE_VIEW(tas->tree), path, NULL, FALSE, 0, 0);
+        /* Animated scrolling never settles when playback moves the target
+         * every metadata refresh. Move the viewport directly to its new row. */
+        GtkTreePath *path = gtk_tree_path_new_from_indices((int)editor->scroll, -1);
+        GdkRectangle cell;
+        int x, y;
+        gtk_tree_view_get_background_area(GTK_TREE_VIEW(tas->tree), path, NULL, &cell);
+        gtk_tree_view_convert_bin_window_to_tree_coords(GTK_TREE_VIEW(tas->tree), 0, cell.y, &x, &y);
+        gtk_adjustment_set_value(gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(tas->tree)), y);
         gtk_tree_path_free(path);
     }
     const NesFm2Movie *movie = nes_tas_project_movie(project);
@@ -1166,7 +1226,7 @@ GtkWidget *cupid_gtk_tas_new(CupidGtkTool *tool) {
     tas->empty = cupid_gtk_label("Open or create a TAS project. Insert frames or record input to begin.");
     gtk_label_set_wrap(GTK_LABEL(tas->empty), TRUE);
     gtk_box_append(GTK_BOX(left), tas->empty);
-    tas->tree = gtk_tree_view_new();
+    tas->tree = g_object_new(cupid_tas_grid_get_type(), NULL);
     g_signal_connect(tas->tree, "unmap", G_CALLBACK(grid_unmap), tas);
     gtk_tree_view_set_fixed_height_mode(GTK_TREE_VIEW(tas->tree), TRUE);
     gtk_tree_view_set_enable_search(GTK_TREE_VIEW(tas->tree), FALSE);

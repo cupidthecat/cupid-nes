@@ -346,13 +346,19 @@ static bool file_text(const char *path, const char *expected) {
 
 static int test_backup(const char *directory) {
     int failed = 0;
-    char path[256], backup[NES_FILE_PATH_LIMIT], custom[256];
+    char path[256], gap_path[256], backup[NES_FILE_PATH_LIMIT], blocked[NES_FILE_PATH_LIMIT], custom[256];
     snprintf(path, sizeof(path), "%s/movie.fm2", directory);
+    snprintf(gap_path, sizeof(gap_path), "%s/gapped.fm2", directory);
     snprintf(custom, sizeof(custom), "%s/recovery", directory);
     FILE *locked = NULL;
-    NesMovieBackupOptions options;
+    bool gap_blocked = false;
+    uint8_t *data = NULL;
+    size_t size = 0;
+    NesMovieBackupOptions options, gap_options;
     nes_movie_backup_defaults(&options);
     options.retained = 2;
+    gap_options = options;
+    gap_options.retained = 3;
     REQUIRE(nes_movie_backup_write(path, "one", 3, &options) == NES_FILE_OK);
     REQUIRE(nes_movie_backup_write(path, "two", 3, &options) == NES_FILE_OK);
     REQUIRE(nes_movie_backup_write(path, "three", 5, &options) == NES_FILE_OK);
@@ -361,6 +367,40 @@ static int test_backup(const char *directory) {
     REQUIRE(nes_movie_backup_path(path, &options, 2, backup, sizeof(backup)) == NES_FILE_OK &&
             file_text(backup, "one"));
     REQUIRE(file_text(path, "three"));
+
+    REQUIRE(nes_movie_backup_write(gap_path, "one", 3, &gap_options) == NES_FILE_OK);
+    REQUIRE(nes_movie_backup_write(gap_path, "two", 3, &gap_options) == NES_FILE_OK);
+    REQUIRE(nes_movie_backup_write(gap_path, "three", 5, &gap_options) == NES_FILE_OK);
+    REQUIRE(nes_movie_backup_write(gap_path, "four", 4, &gap_options) == NES_FILE_OK);
+    REQUIRE(nes_movie_backup_path(gap_path, &gap_options, 1, blocked, sizeof(blocked)) == NES_FILE_OK);
+    REQUIRE(nes_file_remove(blocked) == NES_FILE_OK && mkdir_test(blocked) == 0);
+    gap_blocked = true;
+    REQUIRE(nes_movie_backup_write(gap_path, "failed", 6, &gap_options) != NES_FILE_OK);
+    REQUIRE(file_text(gap_path, "four"));
+    REQUIRE(nes_movie_backup_path(gap_path, &gap_options, 3, backup, sizeof(backup)) == NES_FILE_OK);
+    REQUIRE(file_text(backup, "one"));
+    REQUIRE(rmdir_test(blocked) == 0);
+    gap_blocked = false;
+    REQUIRE(nes_file_write_atomic(blocked, "three", 5) == NES_FILE_OK);
+    REQUIRE(nes_movie_backup_path(gap_path, &gap_options, 2, backup, sizeof(backup)) == NES_FILE_OK);
+    REQUIRE(nes_file_remove(backup) == NES_FILE_OK);
+    REQUIRE(nes_movie_backup_path(gap_path, &gap_options, 1, blocked, sizeof(blocked)) == NES_FILE_OK);
+    REQUIRE(nes_file_remove(blocked) == NES_FILE_OK && mkdir_test(blocked) == 0);
+    gap_blocked = true;
+    REQUIRE(nes_movie_backup_write(gap_path, "failed", 6, &gap_options) != NES_FILE_OK);
+    REQUIRE(file_text(gap_path, "four"));
+    REQUIRE(nes_movie_backup_path(gap_path, &gap_options, 3, backup, sizeof(backup)) == NES_FILE_OK);
+    REQUIRE(file_text(backup, "one"));
+    REQUIRE(rmdir_test(blocked) == 0);
+    gap_blocked = false;
+    REQUIRE(nes_file_write_atomic(blocked, "three", 5) == NES_FILE_OK);
+    REQUIRE(nes_movie_backup_write(gap_path, "five", 4, &gap_options) == NES_FILE_OK);
+    REQUIRE(nes_movie_backup_path(gap_path, &gap_options, 1, backup, sizeof(backup)) == NES_FILE_OK &&
+            file_text(backup, "four"));
+    REQUIRE(nes_movie_backup_path(gap_path, &gap_options, 2, backup, sizeof(backup)) == NES_FILE_OK &&
+            file_text(backup, "three"));
+    REQUIRE(nes_movie_backup_path(gap_path, &gap_options, 3, backup, sizeof(backup)) == NES_FILE_OK);
+    REQUIRE(nes_file_read_all(backup, 100, &data, &size) == NES_FILE_NOT_FOUND);
 #ifdef _WIN32
     /* An open read handle denies replacement while recovery copies are saved. */
     locked = nes_file_open(path, "rb");
@@ -383,14 +423,16 @@ static int test_backup(const char *directory) {
     options.retained = 1;
     REQUIRE(nes_movie_backup_write(path, "five", 4, &options) == NES_FILE_OK);
     REQUIRE(nes_movie_backup_path(path, &options, 2, backup, sizeof(backup)) == NES_FILE_OK);
-    uint8_t *data = NULL;
-    size_t size = 0;
     REQUIRE(nes_file_read_all(backup, 100, &data, &size) == NES_FILE_NOT_FOUND);
     options.enabled = false;
     REQUIRE(nes_movie_backup_write(path, "six", 3, &options) == NES_FILE_OK && file_text(path, "six"));
     REQUIRE(nes_movie_backup_path(path, &options, 1, backup, sizeof(backup)) == NES_FILE_OK &&
             file_text(backup, "three"));
 cleanup:
+    free(data);
+    if (gap_blocked) {
+        (void)rmdir_test(blocked);
+    }
     if (locked) {
         fclose(locked);
     }
@@ -402,7 +444,14 @@ cleanup:
             }
         }
     }
+    options = gap_options;
+    for (unsigned i = 1; i <= 5; ++i) {
+        if (nes_movie_backup_path(gap_path, &options, i, backup, sizeof(backup)) == NES_FILE_OK) {
+            (void)nes_file_remove(backup);
+        }
+    }
     (void)nes_file_remove(path);
+    (void)nes_file_remove(gap_path);
     (void)rmdir_test(custom);
     return failed;
 }

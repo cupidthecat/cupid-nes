@@ -15,6 +15,7 @@
 #include "../ui/frontend_commands.h"
 #include "../ui/frontend_panels.h"
 #include "../ui/output_guard.h"
+#include "../ui/platform_frontend.h"
 #include "../ui/state_runtime.h"
 #include "../util/file_io.h"
 #include <SDL2/SDL.h>
@@ -40,6 +41,26 @@ static bool stop_capture_probe(void *context, char *error, size_t error_size) {
     ++*calls;
     if (error && error_size) error[0] = '\0';
     return true;
+}
+
+typedef struct {
+    FrontendSettings *settings;
+    const char *selection;
+    unsigned calls;
+    bool cancel, save;
+    unsigned type;
+} StateChooser;
+
+static bool choose_state(bool save, unsigned type, char *path, size_t path_size,
+                         char *error, size_t error_size, void *context) {
+    StateChooser *chooser = context;
+    ++chooser->calls;
+    chooser->save = save;
+    chooser->type = type;
+    if (error && error_size) error[0] = 0;
+    if (chooser->cancel) return false;
+    const char *selected = chooser->selection ? chooser->selection : chooser->settings->state_file_path;
+    return frontend_parse_dialog_output(selected, strlen(selected), path, path_size, error, error_size);
 }
 
 static bool advance_frame(void) {
@@ -87,6 +108,7 @@ static int state_controls_preserve_audio(const char *directory) {
     BoardImage image = {0};
     NesStateBlob expected = {0}, actual = {0};
     FrontendSettings settings;
+    StateChooser chooser = {.settings = &settings, .selection = state_path};
     FrontendExecutionRuntime execution = {0};
     StateRuntime state = {0};
     SDL_AudioDeviceID audio = 0;
@@ -108,7 +130,7 @@ static int state_controls_preserve_audio(const char *directory) {
     CHECK(audio != 0);
     CHECK(SDL_GetAudioDeviceStatus(audio) == SDL_AUDIO_PAUSED);
     frontend_settings_defaults(&settings);
-    strcpy(settings.state_file_path, state_path);
+    frontend_set_file_chooser(choose_state, &chooser);
     frontend_execution_init(&execution, &audio, have.freq, rom_path, NULL, NULL, NULL);
     execution_control_set_paused(&execution.execution, true);
     execution.before_machine_change = stop_capture_probe;
@@ -119,7 +141,19 @@ static int state_controls_preserve_audio(const char *directory) {
     CHECK(atomic_load_explicit(&apu.ring_w, memory_order_relaxed) > 0);
     CHECK(apu.audio_transition_count > 0);
     CHECK(nes_state_capture(&expected) == NES_STATE_OK);
+    chooser.cancel = true;
+    CHECK(!frontend_command_invoke(STATE_COMMAND_SAVE_FILE, error, sizeof(error)) && !error[0]);
+    CHECK(chooser.calls == 1 && chooser.save && chooser.type == FRONTEND_SAVE_STATE);
+    CHECK(!settings.state_file_path[0] && capture_stops == 0 && state.save_audio_device == 0);
+    CHECK(!frontend_command_invoke(STATE_COMMAND_LOAD_FILE, error, sizeof(error)) && !error[0]);
+    CHECK(chooser.calls == 2 && !chooser.save && chooser.type == FRONTEND_OPEN_STATE);
+    CHECK(!settings.state_file_path[0] && capture_stops == 0 && !state.machine_locked);
+    CHECK(nes_state_capture(&actual) == NES_STATE_OK && same_state(&expected, &actual));
+    nes_state_blob_free(&actual);
+    chooser.cancel = false;
     CHECK(frontend_command_invoke(STATE_COMMAND_SAVE_FILE, error, sizeof(error)));
+    CHECK(chooser.calls == 3 && chooser.save && !strcmp(settings.state_file_path, state_path));
+    chooser.selection = NULL;
     CHECK(capture_stops == 0 && state.save_audio_device == 0);
     CHECK(nes_state_capture(&actual) == NES_STATE_OK && same_state(&expected, &actual));
     nes_state_blob_free(&actual);
@@ -127,6 +161,7 @@ static int state_controls_preserve_audio(const char *directory) {
     write_mem(0x0010, (uint8_t)(read_mem(0x0010) ^ 0xA5));
     CHECK(advance_frame());
     CHECK(frontend_command_invoke(STATE_COMMAND_LOAD_FILE, error, sizeof(error)));
+    CHECK(chooser.calls == 4 && !chooser.save);
     CHECK(capture_stops == 1 && !state.machine_locked);
     CHECK(frontend_execution_paused(&execution) && SDL_GetAudioDeviceStatus(audio) == SDL_AUDIO_PAUSED);
     CHECK(nes_state_capture(&actual) == NES_STATE_OK && same_state(&expected, &actual));
@@ -178,6 +213,7 @@ static int state_controls_preserve_audio(const char *directory) {
     CHECK(capture_stops == before && !state.machine_locked);
 
 cleanup:
+    frontend_set_file_chooser(NULL, NULL);
     (void)nes_execution_set_policy(NES_EXECUTION_LIVE);
     state_runtime_shutdown(&state);
     frontend_execution_shutdown(&execution);

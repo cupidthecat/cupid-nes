@@ -16,9 +16,19 @@ The top menu bar contains File, Emulation, View, Audio, Media, Tools, and Help.
 A compact icon toolbar below it provides Open, Pause/Resume, Frame advance,
 Reset, and Settings. Hover over a button to see its name.
 Commands are grouped into native submenus. Keyboard navigation, focus, text
-selection, and scrolling use GTK controls. The main status bar shows the region,
-execution state, and recent action message. Netplay supplies its connection
-status while listening or connected.
+selection, and scrolling use GTK controls. The main status bar shows the region
+and execution state, including recording and active input movies. A recent action
+message appears for six seconds, then the bar returns to the current session
+status. Netplay supplies its connection status while listening or connected.
+The selected quick-state slot and optional FPS counter remain visible beside
+messages. Long messages shorten to fit the window; hover to read the full text.
+Successful tool actions clear a preceding temporary error before the panel shows
+its current result. Temporary tool messages also expire after six seconds.
+
+File > Save states > Save State File and Load State File open native file choosers. F5 and F6
+use the selected quick slot; Ctrl+F5 and Ctrl+F6 choose a named state file.
+Tool-panel file pickers use the file type's title and filters, with an All files
+option. Canceling a chooser keeps the current path.
 
 The startup screen, menus, settings, feature panels, palette editor, and text
 entry use GTK4. On Windows, the light/dark appearance follows the system

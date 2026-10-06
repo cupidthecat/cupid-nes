@@ -21,6 +21,7 @@ typedef struct {
     GameConfig config;
     char directory[2048], key[41];
     uint64_t cli_fields;
+    uint8_t applied_input_overrides;
     int selected;
     char names[GAME_CONFIG_FIELDS][128];
     const char *items[GAME_CONFIG_FIELDS];
@@ -41,8 +42,13 @@ bool game_config_resolve(const FrontendSettings *global, const GameConfig *confi
 bool game_config_prepare(GameConfigFrontend *frontend, const FrontendImageResult *image, FrontendSettings *effective,
                          char *cheat_path, size_t cheat_capacity, char *error, size_t error_size);
 bool game_config_init(GameConfigFrontend *frontend, FrontendSettings *global, const char *directory);
+void game_config_preserve_input_overrides(const GameConfigFrontend *frontend, FrontendSettings *settings,
+                                          const FrontendSettings *previous);
 bool game_config_save_globals(GameConfigFrontend *frontend, const char *path, const FrontendSettings *effective,
                               FrontendSettingsReport *report);
+bool game_config_save_globals_with_input_changes(GameConfigFrontend *frontend, const char *path,
+                                                 const FrontendSettings *effective, uint8_t input_changes,
+                                                 FrontendSettingsReport *report);
 bool game_config_register_ui(GameConfigFrontend *frontend, FrontendSettings *global, const char *directory);
 void game_config_unregister_ui(void);
 #endif

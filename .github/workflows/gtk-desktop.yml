@@ -12,6 +12,9 @@ jobs:
   linux-gtk:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    env:
+      GDK_BACKEND: x11
+      SDL_VIDEODRIVER: x11
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -24,6 +27,27 @@ jobs:
         run: xvfb-run -a env GSK_RENDERER=cairo G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-settings-test
       - name: Exercise GTK desktop under Xvfb
         run: xvfb-run -a env GSK_RENDERER=cairo G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke build/gtk-smoke
+      - name: Check save-state dialogs and status refresh with accelerated compositors
+        run: |
+          xvfb-run -a env GSK_RENDERER=gl G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke --session-ui-check
+          xvfb-run -a env GSK_RENDERER=ngl G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke --session-ui-check
+          xvfb-run -a env GSK_RENDERER=ngl GDK_SCALE=2 G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke --session-ui-check
+      - name: Check Linux software and accelerated frame pixels
+        run: |
+          xvfb-run -a env GSK_RENDERER=cairo G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke --native-video-check
+          xvfb-run -a env GSK_RENDERER=gl G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke --native-video-check
+          xvfb-run -a env GSK_RENDERER=ngl SDL_RENDER_DRIVER=opengl SDL_FRAMEBUFFER_ACCELERATION=1 G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke --native-video-check
+          xvfb-run -a env -u GSK_RENDERER G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke --startup-check
+      - name: Check production Linux launch with conflicting driver hints
+        run: |
+          xvfb-run -a env GSK_RENDERER=ngl SDL_RENDER_DRIVER=opengl SDL_FRAMEBUFFER_ACCELERATION=1 G_DEBUG=fatal-criticals python3 scripts/check-gtk-launch.py ./cupid-nes
+          xvfb-run -a env -u GSK_RENDERER SDL_RENDER_DRIVER=opengl SDL_FRAMEBUFFER_ACCELERATION=1 G_DEBUG=fatal-criticals python3 scripts/check-gtk-launch.py ./cupid-nes
+      - name: Check Linux TAS grid pixels and playback following
+        run: |
+          xvfb-run -a env GSK_RENDERER=cairo G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke --tas-video-check
+          xvfb-run -a env GSK_RENDERER=gl G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke --tas-video-check
+          xvfb-run -a env GSK_RENDERER=ngl G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke --tas-video-check
+          xvfb-run -a env GSK_RENDERER=ngl GDK_SCALE=2 G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke --tas-video-check
       - name: Package Linux preview
         run: python3 scripts/package-gtk-linux.py --executable cupid-nes --revision '${{ github.sha }}'
       - name: Verify extracted Linux desktop

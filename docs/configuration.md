@@ -4,6 +4,10 @@
 
 Cupid loads saved application settings and input profiles, then applies explicit command-line choices for the current launch. Use the desktop Settings window for the same supported options and **Controllers and shortcuts** for bindings.
 
+Choices made in global Settings are saved as global controller preferences even while a per-game override is active. They do not rewrite the game's saved configuration. Defaults clears the global choices while keeping the running game's active device and override flag together. Changes made in Game Configuration take effect when the image is reopened.
+
+Saving preferences preserves automatic controller selection for fields you have not chosen explicitly. Applying an unrelated setting keeps the running game's automatically selected devices, including after a failed settings save. Selecting an adapter, controller port, or expansion device fixes that field, including when you select its currently displayed value. Other fields can still follow supported image metadata. Resetting the Controllers and shortcuts category clears those explicit choices for the next image load. Existing settings files with `adapter`, `port1`, `port2`, or `expansion` entries retain their explicit selections; removing an entry restores automatic selection for that field on the next load. Per-game overrides do not become global controller choices when you save other preferences.
+
 Audio > Output device lists detected playback devices and the system default.
 Click Browse beside a BIOS or other file path to choose it in the native file
 dialog. Cancel keeps the current path; Clear removes an optional setting.

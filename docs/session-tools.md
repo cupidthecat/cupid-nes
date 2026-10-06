@@ -30,6 +30,8 @@ Only completed live emulation frames advance the interval. Pause time, rewind, a
 
 Recorder files are separate from numbered save slots and rewind. A capture writes a spare file, commits the history index, and then removes unreferenced recorder files. An interrupted write keeps the committed history. A failed snapshot or index write stops recording and reports the error. Cleanup retries when that game's history is loaded again.
 
+An unreadable or corrupt history index disables both automatic and manual capture. Existing snapshots and the rejected index stay intact. Repair or restore the index, then reopen the game to load its history before recording again.
+
 ## Updates and command-line help
 
 **Help > Check for Updates** checks releases while the desktop remains responsive.

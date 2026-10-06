@@ -26,6 +26,7 @@ int desktop_menu_level(FrontendDesktopUi *ui, int depth, DesktopMenuItem items[1
 int desktop_menu_items(FrontendDesktopUi *ui, DesktopMenuItem items[128]);
 void desktop_layout(FrontendDesktopUi *ui, const char *title, const char *region, const char *run_state);
 void desktop_copy_status(FrontendDesktopUi *ui, const char *text);
+bool desktop_status_active(const FrontendDesktopUi *ui, uint32_t now);
 bool desktop_invoke_command(FrontendDesktopUi *ui, unsigned id);
 bool desktop_shortcut_event(FrontendDesktopUi *ui, const SDL_Event *event, bool allow_press);
 void desktop_settings_open(FrontendDesktopUi *ui, bool open);

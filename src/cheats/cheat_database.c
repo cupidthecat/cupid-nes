@@ -5,6 +5,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "cheat_database.h"
+#include "cheat_text.h"
 #include "../rom/rom.h"
 #include "../util/file_io.h"
 #include "../util/sha1.h"
@@ -73,8 +74,8 @@ void cheat_database_destroy(CheatDatabase *database) {
 }
 
 bool cheat_database_parse(CheatDatabase *database, const void *data, size_t length, char *error, size_t size) {
-    if (!database || !data || !length || length > DATABASE_LIMIT || memchr(data, 0, length)) {
-        return fail(error, size, "Invalid or oversized cheat database");
+    if (!database || !data || !length || length > DATABASE_LIMIT || !cheat_text_valid_utf8(data, length)) {
+        return fail(error, size, "Invalid UTF-8 or oversized cheat database");
     }
     char *text = malloc(length + 1);
     if (!text) {

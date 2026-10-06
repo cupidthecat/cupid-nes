@@ -16,13 +16,12 @@ Results from a modified working tree should be identified as such. A passing his
 On Linux, use the strict GCC flags from CI:
 
 ```sh
-make clean
-make -j2 CC=gcc CXX=g++ CFLAGS='-std=c11 -Wall -Wextra -Werror -O2' all test
+make -j2 GTK=0 CC=gcc CXX=g++ CFLAGS='-std=c11 -Wall -Wextra -Werror -O2' all test
 ```
 
 The application is `./cupid-nes` and the runner is `build/accuracy-tests`. Running the test executable without arguments executes CPU, APU, PPU, cartridge, media, input, VS, and EPSM groups and returns failure if any group fails. Media tests include disk transport, StudyBox, and NSF/NSFe execution and sound. The C core uses C11; cartridge board modules, the metadata database, the EPSM wrapper, and ymfm use C++17.
 
-The Makefile defaults to `CC=gcc` and `CFLAGS='-std=c11 -Wall -Wextra -O2'`. When `CXX` still has GNU Make's built-in default, the Makefile selects `g++` for GCC and `clang++` when `CC` contains `clang`. An explicitly supplied `CXX` is kept. Unless `CXXFLAGS` is supplied separately, the Makefile derives it from `CFLAGS`, removes any C language-standard flag, and appends `-std=c++17`. `LDLIBS` defaults to `-lSDL2 -lm`. Use `make clean` before changing compiler families or flag sets because those settings are not tracked as object-file dependencies.
+The Makefile defaults to `CC=gcc` and `CFLAGS='-std=c11 -Wall -Wextra -O2'`. When `CXX` still has GNU Make's built-in default, the Makefile selects `g++` for GCC and `clang++` when `CC` contains `clang`. An explicitly supplied `CXX` is kept. Unless `CXXFLAGS` is supplied separately, the Makefile derives it from `CFLAGS`, removes any C language-standard flag, and appends `-std=c++17`. `LDLIBS` defaults to `-lSDL2 -lm`, with platform and GTK libraries added as needed. The Makefile tracks compiler settings and rebuilds affected objects when they change. Set separate `BUILD_DIR`, `TARGET`, and `TEST_TARGET` paths to retain multiple compiler configurations. `GTK=0` builds the hardware runner without GTK; the desktop build uses `GTK=1`.
 
 On Windows:
 
@@ -39,6 +38,8 @@ Tests use the device code listed in [Makefile](../Makefile) and [test-windows.ps
 `python3 scripts/check-region-cli.py ./cupid-nes` checks the production launch parser and loader with a synthetic PAL cartridge. On Windows, use `python scripts/check-region-cli.py build/windows/cupid-nes.exe`. Its eleven cases cover Auto, explicit regions, independent console wiring, repeated selectors and invalid values. The fixture adds `--barcode` to an NROM image. The ROM loads, then the option is rejected because it requires a Datach cartridge, before SDL starts. CI runs the check with both compiler configurations and treats sanitizer diagnostics as failures.
 
 Archive tests include owned synthetic cartridges in ZIP, LZMA 7z, and solid LZMA2 7z files. They exercise Unicode paths, member selection, corrupt archives, unsupported compression, size limits, separate cartridge saves, and database lookup after patching. The fixed patch examples cover every BPS command, reversible UPS changes, IPS records and generation, invalid offsets, and checksum failures. Disk-overlay tests drive real disk registers through writes and reloads for headered and headerless FDS and QD images, including read-only sources and failed save replacement.
+
+Archive detection uses complete format signatures. Regression fixtures load database-recognized headerless cartridges beginning with `PK` or `7z` through the image loader and verify their mapped bytes. Corrupt files with complete archive signatures remain rejected. Movie backup tests cover gaps in the numbered history and preservation of recovery files when a later save step fails.
 
 The fixtures are checked into `src/tests/media_fixtures.h`; running the suite does not require an archive program. To regenerate those owned fixtures, run `python scripts/generate-media-fixtures.py --seven-zip /path/to/7z`. The generator uses only its own temporary directory under `build`. The bundled decoders, licenses, and local portability change are described in [archive codecs](../src/third_party/archive-codecs.md).
 
@@ -204,8 +205,7 @@ memory, and screen APIs. Its emulation code does not need instrumentation.
 Build a fresh Linux binary with Clang AddressSanitizer and UndefinedBehaviorSanitizer:
 
 ```sh
-make clean
-ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 make -j2 CC=clang CXX=clang++ CFLAGS='-std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer' all test
+ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 make -j2 GTK=0 CC=clang CXX=clang++ CFLAGS='-std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer' all test
 ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 python3 scripts/run-diagnostics.py build/accuracy-tests build/diagnostic-roms
 ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 build/accuracy-tests --accuracycoin 12000 build/accuracycoin/AccuracyCoin.nes
 ```
@@ -248,6 +248,26 @@ Do not lower pass requirements, substitute expected output, add cartridge-specif
 
 ## Desktop performance
 
+The GTK smoke executable exercises Save State File and Load State File through
+their real menu actions and Ctrl+F5/Ctrl+F6 shortcuts. It checks that native
+choosers have a parent, are modal, use state-file filters, and preserve the stored
+path and pause state when canceled. The hardware suite checks accepted paths,
+canceling before capture or restore, protected destinations, audio ownership,
+and movie-bound states.
+Before sending a shortcut after cancellation, the fixture waits for the game
+view to regain focus. A chooser that keeps focus beyond the deadline fails the
+check.
+
+Status checks cover message expiry while running and paused, FPS changes during
+a message, quick-slot display, repeated unchanged captions, long-message layout,
+and successful retries after panel errors. The shared expiry check also crosses
+the SDL tick counter's wrap. These checks use synthetic cartridges and actual
+GTK controls.
+
+Run `build/gtk-ui-smoke --session-ui-check` under Xvfb for the state-dialog and
+status checks alone. CI repeats them with GL, NGL, and display scale two, and
+includes them in the complete Linux and Windows desktop run.
+
 The GTK interaction fixture disables animations and checks the target row and
 column before sending TAS clicks. It exercises horizontal scrolling, distant
 frames, undo, and read-only input. Column widths and the current scroll adjustment
@@ -269,20 +289,43 @@ allocation with the window's decoration inset. Readback captures are written
 to `build/gtk-native-video/`. Both paths
 check that Game Information refreshes after reopening, live replacement, and unload.
 
+Linux with GTK 4.10 or later also runs `--native-video-check` with Cairo and GL.
+The checks render the game snapshot and read back its colors, letterboxing, integer scaling,
+and bilinear output. Retained snapshots must keep their original pixels after
+the next frame. The shared preview test includes unused alpha bits and padded
+rows. Deadline tests use a deterministic clock to check that GTK servicing
+continues during the final spin wait and when a frame is already late.
+
 The GTK fixture sends key-press and key-release signals through the desktop event
 dispatcher for every configurable shortcut. Command counters check save, load,
 reset, and open without showing file dialogs. Hold actions use the execution
 runtime. Checks cover key repeat, remapping, releasing a modifier first, losing
 focus, and the fixed Settings, fullscreen, and palette keys.
-The startup check rejects changes to `GDK_DEBUG`. Also run the fixture without
-`GSK_RENDERER` to exercise the default renderer on a desktop display. Widget
+The startup check rejects changes to `GDK_DEBUG` and `GSK_RENDERER`. Also run the
+fixture without `GSK_RENDERER` to exercise the default renderer on a desktop display. Widget
 snapshots do not capture the native window's transparent margins; inspect those
 on screen when checking for black borders.
+
+The startup fixture uses the production SDL renderer selector and checks that
+the hidden host uses a software surface without a GL context, even with OpenGL
+driver and framebuffer acceleration hints. It dispatches GTK until a rendered
+window is mapped. The launch script checks both
+the idle window and an owned synthetic NROM cartridge for five seconds each;
+graphics-context failures fail the check even when the process stays alive.
+Linux CI runs these launch paths with the default compositor and `ngl`, with
+`SDL_RENDER_DRIVER=opengl` set.
+
+The accelerated pixel check also loads a shader while a GTK GL context is
+current. It checks exact shader output, context restoration after successive
+frames, successful and rejected reloads, retained output after a rejected
+reload, and GPU cleanup. The software renderer skips this GPU-specific check.
+Game snapshot checks cover both the texture widget and the GTK 4.8 drawing path.
 
 Build the GTK smoke executable with `make GTK=1 gtk-smoke`, then run:
 
 ```sh
 SDL_AUDIODRIVER=dummy build/gtk-ui-smoke --benchmark /path/to/game.nes
+SDL_AUDIODRIVER=dummy build/gtk-ui-smoke --benchmark /path/to/game.nes /path/to/run.fm2
 ```
 
 On Windows, run the same command in the UCRT64 shell with
@@ -302,8 +345,17 @@ Late display updates can be skipped without skipping
 emulation. Run timing measurements without a concurrent build or test suite;
 CPU contention changes both core and presentation costs. Windowed,
 maximized, fullscreen, and maximized with a live PPU viewer are measured.
+An optional movie adds playback measurements with the editor closed and open,
+including Follow Playback and the live preview. Use a movie with at least 1,320
+frames remaining across those two views. The movie must match the supplied ROM.
 Uncapped throughput measures spare capacity; it is not the game's playback
 speed. The test reports measurements without a machine-dependent pass threshold.
+
+`build/gtk-ui-smoke --tas-video-check` runs the synthetic TAS window regressions
+without capturing the other tools. It compares the cached grid pixels with the
+native table drawing, checks that preview updates preserve layout and retained
+images, and verifies immediate playback following with animations enabled.
+Linux CI runs this check with Cairo, GL, NGL, and a scale factor of two.
 
 ## Documentation-only changes
 

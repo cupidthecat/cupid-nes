@@ -13,7 +13,7 @@ typedef struct CupidGtkTool CupidGtkTool;
 
 typedef struct CupidGtkDesktop {
     FrontendDesktopUi *ui;
-    GtkWidget *window, *picture, *status, *menubar, *empty;
+    GtkWidget *window, *picture, *status, *status_info, *menubar, *empty;
     GSimpleActionGroup *actions;
     CupidGtkTool *tools;
     size_t commands, panels, recent;
@@ -66,6 +66,7 @@ SDL_Keymod cupid_gtk_modifiers(GdkModifierType state);
 /* Install after main window creation; shut down before destroying that window. */
 void cupid_gtk_files_install(GtkWindow *parent);
 void cupid_gtk_files_shutdown(void);
+void cupid_gtk_file_filters(GtkFileChooser *chooser, bool save, unsigned type);
 bool cupid_gtk_native_video_present(CupidGtkDesktop *desktop, const uint32_t *pixels,
                                    unsigned width, unsigned height, unsigned stride);
 void cupid_gtk_native_video_hide(CupidGtkDesktop *desktop);

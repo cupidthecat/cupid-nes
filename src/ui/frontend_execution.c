@@ -37,7 +37,7 @@ static void set_error(char *error, size_t error_size, const char *message) {
 static bool movie_result_ok(FrontendExecutionRuntime *runtime, NesMovieResult result,
                             const char *success, char *error, size_t error_size);
 
-static void notify_timeline_restored(FrontendExecutionRuntime *runtime) {
+void frontend_execution_timeline_restored(FrontendExecutionRuntime *runtime) {
     ++runtime->timing_revision;
     bool paused = runtime->execution.paused;
     debugger_reset_session();
@@ -750,7 +750,7 @@ bool frontend_execution_rewind_step(FrontendExecutionRuntime *runtime,
         runtime->replay_status = nes_rewind_step(&runtime->rewind, &runtime->replay_state_status);
     } while(runtime->replay_status==NES_REPLAY_OK && --steps && nes_rewind_count(&runtime->rewind));
     if (runtime->replay_status == NES_REPLAY_OK) {
-        notify_timeline_restored(runtime);
+        frontend_execution_timeline_restored(runtime);
     }
     unlock_audio_without_refresh(runtime);
     replay_frontend_refresh(runtime);
@@ -828,7 +828,7 @@ static bool movie_can_start(FrontendExecutionRuntime *runtime, char *error, size
 
 static void movie_state_restored(FrontendExecutionRuntime *runtime) {
     frontend_execution_clear_timeline(runtime);
-    notify_timeline_restored(runtime);
+    frontend_execution_timeline_restored(runtime);
 }
 
 bool frontend_execution_movie_set_path(FrontendExecutionRuntime *runtime, const char *path,

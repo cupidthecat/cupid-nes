@@ -209,6 +209,8 @@ OBJ = $(CORE_OBJ) $(TEST_OBJ) $(BUILD_DIR)/src/main.o
 ifeq ($(GTK),1)
 GTK_SMOKE_OBJ = $(BUILD_DIR)/src/tests/gtk_ui_smoke.o $(BUILD_DIR)/src/tests/gtk_input_accuracy.o $(BUILD_DIR)/src/tests/gtk_benchmark.o $(BUILD_DIR)/src/tests/gtk_video_accuracy.o $(BUILD_DIR)/src/tests/gtk_shortcut_accuracy.o
 GTK_SETTINGS_TEST_OBJ = $(BUILD_DIR)/src/tests/gtk_settings_accuracy.o
+GTK_SMOKE_OBJ += $(BUILD_DIR)/src/tests/gtk_state_accuracy.o
+GTK_SMOKE_OBJ += $(BUILD_DIR)/src/tests/gtk_status_accuracy.o
 OBJ += $(GTK_SMOKE_OBJ) $(GTK_SETTINGS_TEST_OBJ)
 endif
 
