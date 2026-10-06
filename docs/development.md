@@ -248,6 +248,23 @@ Do not lower pass requirements, substitute expected output, add cartridge-specif
 
 ## Desktop performance
 
+The GTK smoke executable exercises Save State File and Load State File through
+their real menu actions and Ctrl+F5/Ctrl+F6 shortcuts. It checks that native
+choosers have a parent, are modal, use state-file filters, and preserve the stored
+path and pause state when canceled. The hardware suite checks accepted paths,
+canceling before capture or restore, protected destinations, audio ownership,
+and movie-bound states.
+
+Status checks cover message expiry while running and paused, FPS changes during
+a message, quick-slot display, repeated unchanged captions, long-message layout,
+and successful retries after panel errors. The shared expiry check also crosses
+the SDL tick counter's wrap. These checks use synthetic cartridges and actual
+GTK controls.
+
+Run `build/gtk-ui-smoke --session-ui-check` under Xvfb for the state-dialog and
+status checks alone. CI repeats them with GL, NGL, and display scale two, and
+includes them in the complete Linux and Windows desktop run.
+
 The GTK interaction fixture disables animations and checks the target row and
 column before sending TAS clicks. It exercises horizontal scrolling, distant
 frames, undo, and read-only input. Column widths and the current scroll adjustment

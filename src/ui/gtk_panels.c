@@ -42,8 +42,9 @@ static bool invoke(Control *c, const char *text, int selected) {
     char error[256] = {0};
     bool ok = frontend_panel_action(c->panel->tool->id, c->id, text, selected, error, sizeof(error));
     if (!ok) {
-        cupid_gtk_tool_status(c->panel->tool, error);
+        if (error[0]) cupid_gtk_tool_status(c->panel->tool, error);
     } else {
+        c->panel->tool->ui.status[0] = 0;
         unsigned panel = c->panel->tool->id, destination = 0;
         if ((panel == CHEATS_GAME_GENIE_PANEL && c->id == GAME_GENIE_SEND) ||
             (memory_tools_panel(panel) && (c->id == MEMORY_SEARCH_SEND || c->id == MEMORY_SEARCH_TEST))) {
@@ -148,8 +149,17 @@ static void browse(GtkButton *button, gpointer data) {
     GtkFileChooserAction action = c->type == FRONTEND_PANEL_DIRECTORY   ? GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER
                                   : c->type == FRONTEND_PANEL_FILE_SAVE ? GTK_FILE_CHOOSER_ACTION_SAVE
                                                                         : GTK_FILE_CHOOSER_ACTION_OPEN;
-    GtkFileChooserNative *dialog =
-        gtk_file_chooser_native_new("Choose a file", GTK_WINDOW(c->panel->tool->window), action, "Select", "Cancel");
+    bool save = c->type == FRONTEND_PANEL_FILE_SAVE;
+    unsigned type = c->type == FRONTEND_PANEL_DIRECTORY ? FRONTEND_OPEN_FOLDER : (unsigned)c->file_type;
+    const FrontendFileDialogInfo *kind = frontend_file_dialog_info(save, type);
+    if (!kind) {
+        cupid_gtk_tool_status(c->panel->tool, "Unknown file type");
+        return;
+    }
+    GtkFileChooserNative *dialog = gtk_file_chooser_native_new(
+        kind->title, GTK_WINDOW(c->panel->tool->window), action, save ? "Save" : "Open", "Cancel");
+    gtk_native_dialog_set_modal(GTK_NATIVE_DIALOG(dialog), TRUE);
+    cupid_gtk_file_filters(GTK_FILE_CHOOSER(dialog), save, type);
     c->dialog = GTK_NATIVE_DIALOG(dialog);
     g_signal_connect(dialog, "response", G_CALLBACK(file_response), c);
     gtk_native_dialog_show(GTK_NATIVE_DIALOG(dialog));

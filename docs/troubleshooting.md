@@ -4,6 +4,20 @@
 
 Cupid prints loader, SDL, persistence, and option errors to the terminal that launched it. Keep that output when diagnosing a failure because the final `Failed to load ROM` line is often preceded by the more specific cause.
 
+## State dialogs and status messages
+
+Load a game before using the save-state commands. Save State File and Load State
+File in File > Save states, or Ctrl+F5 and Ctrl+F6, open file choosers. F5 and F6 use the selected
+quick slot. In Tools > Save States, Save state file and Load state file use the
+displayed path; Choose save destination and Choose existing state change it.
+Cancel leaves the path and current machine unchanged.
+
+Recent action messages expire after six seconds. The main bar then shows the
+current execution or connection status. The selected slot and enabled FPS counter
+remain visible during messages. Hover over shortened text to read it in full;
+Help > Recent messages keeps the message history. A tool-panel error clears after
+a successful action, so it cannot hide that action's result.
+
 ## Linux build errors
 
 If compilation fails because `SDL2/SDL.h` or the SDL2 library cannot be found, install the development package and rebuild:

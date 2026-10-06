@@ -57,6 +57,8 @@ bool test_gtk_picture_pixels(void);
 bool test_gtk_game_pixels(FrontendDesktopUi *ui);
 bool test_gtk_shader_context(FrontendDesktopUi *ui);
 bool test_gtk_shortcuts(FrontendDesktopUi *ui);
+bool test_gtk_state_dialogs(FrontendDesktopUi *ui);
+bool test_gtk_status_accuracy(FrontendDesktopUi *ui);
 
 static void pump(FrontendDesktopUi *ui) {
     for (unsigned i = 0; i < 20; i++) {
@@ -730,7 +732,8 @@ int main(int argc, char **argv) {
     bool startup_check = argc == 2 && !strcmp(argv[1], "--startup-check");
     bool native_check = argc == 2 && !strcmp(argv[1], "--native-video-check");
     bool tas_check = argc == 2 && !strcmp(argv[1], "--tas-video-check");
-    const char *out = tas_check ? "build/gtk-tas-check" : native_check ? "build/gtk-native-video" : startup_check ? "build/gtk-startup-check" : argc > 1 ? argv[1] : "build/gtk-smoke";
+    bool session_check = argc == 2 && !strcmp(argv[1], "--session-ui-check");
+    const char *out = session_check ? "build/gtk-session-check" : tas_check ? "build/gtk-tas-check" : native_check ? "build/gtk-native-video" : startup_check ? "build/gtk-startup-check" : argc > 1 ? argv[1] : "build/gtk-smoke";
     g_mkdir_with_parents(out, 0755);
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_TIMER) != 0) {
         return 1;
@@ -852,6 +855,25 @@ int main(int argc, char **argv) {
         puts(passed ? "GTK TAS grid pixels, preview and playback following: PASS" : "GTK TAS playback: FAIL");
         return passed ? 0 : 1;
     }
+    if (session_check) {
+        StateRuntime states;
+        state_runtime_init(&states, &settings, out, &execution);
+        frontend_panel_set_session_active(true);
+        frontend_command_set_session_active(true);
+        bool passed = frontend_execution_register_commands(&execution) &&
+                      frontend_desktop_register_commands(&ui) && state_runtime_register_ui(&states);
+        pump(&ui);
+        passed = passed && test_gtk_state_dialogs(&ui) && test_gtk_status_accuracy(&ui);
+        frontend_desktop_shutdown(&ui);
+        state_runtime_shutdown(&states);
+        frontend_execution_shutdown(&execution);
+        unload_rom();
+        SDL_DestroyRenderer(renderer);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        puts(passed ? "GTK save-state dialogs and live status: PASS" : "GTK session controls: FAIL");
+        return passed ? 0 : 1;
+    }
     DebugFrontend *debug = debug_frontend_create(&execution);
     CheatFrontend *cheats = cheat_frontend_create(out);
     MemoryToolsFrontend *memory = memory_tools_create(cheats);
@@ -925,7 +947,8 @@ int main(int argc, char **argv) {
              test_gtk_input_accuracy(&ui) && test_gtk_information(&ui);
     }
     if (ok) {
-        ok = file_dialog_interactions(&ui) && register_interactions(&ui);
+        ok = file_dialog_interactions(&ui) && test_gtk_state_dialogs(&ui) &&
+             test_gtk_status_accuracy(&ui) && register_interactions(&ui);
     }
     if (ok) {
         ok = assembler_interactions(&ui);

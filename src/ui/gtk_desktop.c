@@ -878,9 +878,15 @@ bool cupid_gtk_init(FrontendDesktopUi *ui) {
     d->empty = gtk_label_new("Cupid NES\n\nOpen a game or drop a ROM here");
     gtk_overlay_add_overlay(GTK_OVERLAY(overlay), d->empty);
     d->status = cupid_gtk_label("Ready");
-    gtk_widget_add_css_class(d->status, "tool-status");
-    cupid_gtk_margins(d->status, 6);
-    gtk_box_append(GTK_BOX(box), d->status);
+    gtk_label_set_ellipsize(GTK_LABEL(d->status), PANGO_ELLIPSIZE_END);
+    gtk_widget_set_hexpand(d->status, TRUE);
+    d->status_info = cupid_gtk_label("");
+    GtkWidget *status_bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    gtk_widget_add_css_class(status_bar, "tool-status");
+    cupid_gtk_margins(status_bar, 6);
+    gtk_box_append(GTK_BOX(status_bar), d->status);
+    gtk_box_append(GTK_BOX(status_bar), d->status_info);
+    gtk_box_append(GTK_BOX(box), status_bar);
     GtkEventController *keys = gtk_event_controller_key_new();
     g_signal_connect(keys, "key-pressed", G_CALLBACK(key_down), d);
     g_signal_connect(keys, "key-released", G_CALLBACK(key_up), d);
@@ -1142,14 +1148,25 @@ void cupid_gtk_render(FrontendDesktopUi *ui, const char *title, const char *regi
     if (g_strcmp0(gtk_window_get_title(GTK_WINDOW(d->window)), caption)) {
         gtk_window_set_title(GTK_WINDOW(d->window), caption);
     }
-    g_snprintf(caption, sizeof(caption), "%s%s%s%s%s", state ? state : "Ready", region ? " | " : "",
-               region ? region : "", ui->status[0] ? " | " : "", ui->status);
-    if (ui->settings->show_fps) {
-        size_t n = strlen(caption);
-        g_snprintf(caption + n, sizeof(caption) - n, " | %.1f fps", ui->fps);
+    if (desktop_status_active(ui, SDL_GetTicks())) {
+        g_strlcpy(caption, ui->status, sizeof(caption));
+    } else {
+        g_snprintf(caption, sizeof(caption), "%s%s%s%s%s", state ? state : "Ready", region ? " | " : "",
+                   region ? region : "", ui->capture && ui->capture->session.info.recording ? " | Recording" : "",
+                   ui->execution && nes_movie_mode(ui->execution->movie) != NES_MOVIE_IDLE ? " | Movie active" : "");
     }
     if (strcmp(gtk_label_get_text(GTK_LABEL(d->status)), caption)) {
         gtk_label_set_text(GTK_LABEL(d->status), caption);
+        gtk_widget_set_tooltip_text(d->status, caption);
+    }
+    caption[0] = 0;
+    if (session) g_snprintf(caption, sizeof(caption), "Slot %u", ui->settings->state_slot + 1u);
+    if (ui->settings->show_fps && session) {
+        size_t n = strlen(caption);
+        g_snprintf(caption + n, sizeof(caption) - n, " | %.1f fps", ui->fps);
+    }
+    if (strcmp(gtk_label_get_text(GTK_LABEL(d->status_info)), caption)) {
+        gtk_label_set_text(GTK_LABEL(d->status_info), caption);
     }
     for (CupidGtkTool *t = d->tools; t; t = t->next) {
         if (t->kind == 1 && t->id == TAS_PANEL && gtk_widget_get_visible(t->window)) {
@@ -1162,6 +1179,10 @@ void cupid_gtk_render(FrontendDesktopUi *ui, const char *title, const char *regi
         for (CupidGtkTool *t = d->tools; t; t = t->next) {
             if (!gtk_widget_get_visible(t->window)) {
                 continue;
+            }
+            if (t->ui.status[0] && !desktop_status_active(&t->ui, SDL_GetTicks())) {
+                t->ui.status[0] = 0;
+                gtk_label_set_text(GTK_LABEL(t->status), "");
             }
             t->ui.audio = ui->audio;
             t->ui.video = ui->video;

@@ -17,14 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct {
-    const char *title;
-    const char *label;
-    const char *pattern;
-    const char *extension;
-    bool save;
-    bool directory;
-} FileDialog;
+typedef FrontendFileDialogInfo FileDialog;
 
 static const FileDialog open_dialogs[] = {
     {"Open Game", "Supported images", "*.nes;*.unf;*.unif;*.fds;*.qd;*.nsf;*.nsfe;*.stbx;*.bin;*.zip;*.7z", NULL, false, false},
@@ -55,13 +48,17 @@ static const FileDialog save_dialogs[] = {
     {"Save Cheats", "Cheat files", "*.txt;*.cht", "txt", true, false},
     {"Choose Disk Overlay", "Disk overlays", "*.ips", "ips", true, false},
     {"Save TAS Project", "Editable TAS projects", "*.ctas", "ctas", true, false},
-    {"Export TAS Movie", "FCEUX movies and projects", "*.fm2;*.fm3", "fm2", true, false},
+    {"Export TAS Movie", "Input movies and projects", "*.fm2;*.fm3", "fm2", true, false},
     {"Export Table", "CSV tables", "*.csv", "csv", true, false},
     {"Export Memory", "Binary memory dumps", "*.bin;*.dump", "bin", true, false}
 };
 
 static FrontendFileChooser file_chooser;
 static void *file_chooser_context;
+const FrontendFileDialogInfo *frontend_file_dialog_info(bool save, unsigned type) {
+    if (save) return type < sizeof(save_dialogs) / sizeof(save_dialogs[0]) ? &save_dialogs[type] : NULL;
+    return type < sizeof(open_dialogs) / sizeof(open_dialogs[0]) ? &open_dialogs[type] : NULL;
+}
 void frontend_set_file_chooser(FrontendFileChooser chooser, void *context) {
     file_chooser = chooser;
     file_chooser_context = context;

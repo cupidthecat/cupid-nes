@@ -1207,6 +1207,15 @@ static void modifier_bindings(void) {
 
 int test_desktop_accuracy(void) {
     failures = 0;
+    FrontendDesktopUi status = {0};
+    desktop_copy_status(&status, "Status expiry fixture");
+    status.status_until = 10;
+    CHECK(desktop_status_active(&status, UINT32_MAX - 5));
+    CHECK(desktop_status_active(&status, 9));
+    CHECK(!desktop_status_active(&status, 10));
+    CHECK(!desktop_status_active(&status, 11));
+    status.status[0] = 0;
+    CHECK(!desktop_status_active(&status, 9));
     audio_settings();
     storage_settings();
     SDL_setenv("SDL_VIDEODRIVER", "dummy", 1);

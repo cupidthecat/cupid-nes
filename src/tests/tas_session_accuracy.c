@@ -18,6 +18,7 @@
 #include "../ui/frontend_panels.h"
 #include "../ui/tas_frontend.h"
 #include "../ui/state_runtime.h"
+#include "../ui/platform_frontend.h"
 #include "../ui/machine_actions.h"
 #include "../cpu/cpu.h"
 #include "../ppu/ppu.h"
@@ -635,6 +636,15 @@ cleanup:
     return failures;
 }
 
+static bool choose_bound_state(bool save, unsigned type, char *path, size_t capacity,
+                               char *error, size_t error_size, void *context) {
+    (void)save;
+    (void)type;
+    FrontendSettings *settings = context;
+    return frontend_parse_dialog_output(settings->state_file_path, strlen(settings->state_file_path),
+                                         path, capacity, error, error_size);
+}
+
 static int bound_states_and_dirty_close(void) {
     int failures = 0;
     BoardImage image = {0};
@@ -651,6 +661,7 @@ static int bound_states_and_dirty_close(void) {
     initialized = true;
     CHECK(frontend_execution_register_commands(&runtime));
     frontend_settings_defaults(&settings);
+    frontend_set_file_chooser(choose_bound_state, &settings);
     snprintf(settings.state_file_path, sizeof(settings.state_file_path), "%s", state_path);
     state_runtime_init(&states, &settings, "build", &runtime);
     state_initialized = true;
@@ -680,6 +691,7 @@ static int bound_states_and_dirty_close(void) {
     CHECK(progress.dirty && !strcmp(progress.path, path));
     CHECK(nes_tas_session_discard(session) == NES_MOVIE_OK);
 cleanup:
+    frontend_set_file_chooser(NULL, NULL);
     if (state_initialized) {
         state_runtime_shutdown(&states);
     }

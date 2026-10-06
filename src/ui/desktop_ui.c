@@ -20,6 +20,7 @@
 #include "frontend_commands.h"
 #include "frontend_panels.h"
 #include "platform_frontend.h"
+#include "state_frontend.h"
 #include "desktop_internal.h"
 #include "palette_tool.h"
 #include "../joypad/joypad.h"
@@ -39,6 +40,10 @@ void desktop_copy_status(FrontendDesktopUi *ui, const char *text) {
         if(ui->log_count==12){memmove(ui->log_lines,ui->log_lines+1,11*sizeof(ui->log_lines[0]));--ui->log_count;}
         snprintf(ui->log_lines[ui->log_count++],sizeof(ui->log_lines[0]),"%s",text);
     }
+}
+
+bool desktop_status_active(const FrontendDesktopUi *ui, uint32_t now) {
+    return ui && ui->status[0] && (int32_t)(ui->status_until - now) > 0;
 }
 
 static void visible_text(char *target,size_t capacity,const char *text) {
@@ -138,6 +143,12 @@ bool desktop_invoke_command(FrontendDesktopUi *ui, unsigned id) {
     }
     bool ok = frontend_command_invoke(id, error, sizeof(error));
     if (error[0]) desktop_copy_status(ui, error);
+    if (ok && id >= STATE_COMMAND_SAVE_SLOT && id <= STATE_COMMAND_LOAD_FILE) {
+        FrontendPanelControl controls[8];
+        FrontendPanelModel model = {.controls = controls, .capacity = 8};
+        if (frontend_panel_snapshot(STATE_PANEL, &model, NULL, 0) && model.status)
+            desktop_copy_status(ui, model.status);
+    }
     if (ok && ui->execution && ui->settings &&
         (id == FRONTEND_COMMAND_SPEED_HALF || id == FRONTEND_COMMAND_SPEED_NORMAL || id == FRONTEND_COMMAND_SPEED_DOUBLE))
         ui->settings->speed = ui->execution->execution.speed;

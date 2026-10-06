@@ -100,6 +100,7 @@ explains the menus, individual windows, and settings.
 | Ctrl+P / Ctrl+. | Pause or resume / advance one frame |
 | Ctrl+R / Ctrl+Shift+R | Soft reset / power cycle |
 | F5 / F6 | Save / load the selected state slot |
+| Ctrl+F5 / Ctrl+F6 | Choose a file to save / load a state |
 | F12 | Screenshot |
 | Ctrl+F12 / Shift+F12 | Audio / video recording |
 | Ctrl+Shift+F12 | Stop and finalize recording |
