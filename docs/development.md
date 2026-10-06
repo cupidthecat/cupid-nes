@@ -254,6 +254,9 @@ choosers have a parent, are modal, use state-file filters, and preserve the stor
 path and pause state when canceled. The hardware suite checks accepted paths,
 canceling before capture or restore, protected destinations, audio ownership,
 and movie-bound states.
+Before sending a shortcut after cancellation, the fixture waits for the game
+view to regain focus. A chooser that keeps focus beyond the deadline fails the
+check.
 
 Status checks cover message expiry while running and paused, FPS changes during
 a message, quick-slot display, repeated unchanged captions, long-message layout,

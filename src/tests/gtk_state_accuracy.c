@@ -15,6 +15,7 @@
 typedef struct {
     GtkWindow *parent;
     bool seen, save, correct;
+    unsigned checks;
 } DialogProbe;
 
 static gboolean cancel_state_dialog(gpointer data) {
@@ -22,17 +23,19 @@ static gboolean cancel_state_dialog(gpointer data) {
     GtkNativeDialog *dialog = g_object_get_data(G_OBJECT(probe->parent), "cupid-file-dialog");
     if (dialog) {
         probe->seen = true;
-        probe->correct = gtk_native_dialog_get_modal(dialog) &&
-            gtk_native_dialog_get_transient_for(dialog) == probe->parent &&
-            !strcmp(gtk_native_dialog_get_title(dialog), probe->save ? "Save State" : "Load State") &&
-            gtk_file_chooser_get_action(GTK_FILE_CHOOSER(dialog)) ==
-                (probe->save ? GTK_FILE_CHOOSER_ACTION_SAVE : GTK_FILE_CHOOSER_ACTION_OPEN);
+        if (gtk_native_dialog_get_modal(dialog)) probe->checks |= 1;
+        if (gtk_native_dialog_get_transient_for(dialog) == probe->parent) probe->checks |= 2;
+        if (!g_strcmp0(gtk_native_dialog_get_title(dialog), probe->save ? "Save State" : "Load State"))
+            probe->checks |= 4;
+        if (gtk_file_chooser_get_action(GTK_FILE_CHOOSER(dialog)) ==
+            (probe->save ? GTK_FILE_CHOOSER_ACTION_SAVE : GTK_FILE_CHOOSER_ACTION_OPEN)) probe->checks |= 8;
         GListModel *filters = gtk_file_chooser_get_filters(GTK_FILE_CHOOSER(dialog));
         GtkFileFilter *states = g_list_model_get_item(filters, 0);
         GtkFileFilter *all = g_list_model_get_item(filters, 1);
-        probe->correct &= g_list_model_get_n_items(filters) == 2 && states && all &&
+        if (g_list_model_get_n_items(filters) == 2 && states && all &&
             !g_strcmp0(gtk_file_filter_get_name(states), "Save states") &&
-            !g_strcmp0(gtk_file_filter_get_name(all), "All files");
+            !g_strcmp0(gtk_file_filter_get_name(all), "All files")) probe->checks |= 16;
+        probe->correct = probe->checks == 31;
         g_clear_object(&states);
         g_clear_object(&all);
         g_object_unref(filters);
@@ -71,12 +74,17 @@ bool test_gtk_state_dialogs(FrontendDesktopUi *ui) {
         g_strlcpy(ui->settings->state_file_path, mode < 2 ? "" : "remembered.cst",
                   sizeof(ui->settings->state_file_path));
         if (mode >= 2) {
-            gtk_window_present(GTK_WINDOW(ui->gtk->window));
-            gtk_widget_grab_focus(ui->gtk->picture);
-            for (unsigned i = 0; i < 20; ++i) {
+            /* A canceled native chooser can still own focus while it closes.
+             * Wait for the game view before sending the next shortcut. */
+            gint64 deadline = g_get_monotonic_time() + 3000000;
+            do {
+                gtk_window_present(GTK_WINDOW(ui->gtk->window));
+                gtk_widget_grab_focus(ui->gtk->picture);
                 cupid_gtk_dispatch();
+                if (!cupid_gtk_captured(ui)) break;
                 SDL_Delay(10);
-            }
+            } while (g_get_monotonic_time() < deadline);
+            CHECK(!cupid_gtk_captured(ui));
         }
         DialogProbe probe = {.parent = GTK_WINDOW(ui->gtk->window), .save = save};
         guint source = g_idle_add(cancel_state_dialog, &probe);
@@ -97,6 +105,11 @@ bool test_gtk_state_dialogs(FrontendDesktopUi *ui) {
             (void)frontend_desktop_handle_event(ui, &event);
         }
         if (g_main_context_find_source_by_id(NULL, source)) g_source_remove(source);
+        if (!invoked || !probe.seen || !probe.correct) {
+            fprintf(stderr, "State dialog mode %u: invoked=%d seen=%d checks=%u active=%d focus=%d\n",
+                    mode, invoked, probe.seen, probe.checks,
+                    gtk_window_is_active(GTK_WINDOW(ui->gtk->window)), gtk_widget_has_focus(ui->gtk->picture));
+        }
         CHECK(invoked && probe.seen && probe.correct);
         CHECK(!strcmp(ui->settings->state_file_path, mode < 2 ? "" : "remembered.cst"));
         CHECK(!g_object_get_data(G_OBJECT(ui->gtk->window), "cupid-file-dialog"));
