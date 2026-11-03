@@ -25,6 +25,7 @@ FrontendIdleResult frontend_desktop_idle_open(FrontendSettings *settings,const F
     const char *settings_path,FrontendImageRequest *request,SDL_Window **window,SDL_Renderer **renderer,
     char *error,size_t error_size) {
     if(!settings||!request||!window||!renderer)return FRONTEND_IDLE_ERROR;
+    frontend_desktop_prepare_video();
     if(!(SDL_WasInit(SDL_INIT_VIDEO)&SDL_INIT_VIDEO)&&SDL_InitSubSystem(SDL_INIT_VIDEO)!=0)goto failure;
     if(!*window)*window=SDL_CreateWindow("Cupid NES",SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED,
         (int)settings->window_width,(int)settings->window_height,SDL_WINDOW_SHOWN|SDL_WINDOW_RESIZABLE|SDL_WINDOW_ALLOW_HIGHDPI);

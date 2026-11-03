@@ -171,6 +171,7 @@ static void live_overclock_changed(void *context, const NesOverclockConfig *conf
 }
 
 static int application_main(int argc, char *argv[]) {
+    frontend_desktop_prepare_video();
     SDL_AudioSpec have;
     SDL_AudioDeviceID audio_dev = 0; SDL_Window *window = NULL;
     SDL_Renderer *renderer = NULL;

@@ -527,10 +527,23 @@ static void count_model_change(GtkTreeModel *model, GtkTreePath *path, GtkTreeIt
     ++*(unsigned *)data;
 }
 
-static bool tas_grid_pixels(GtkWidget *tree) {
-    GtkSnapshot *snapshot = gtk_snapshot_new();
-    GTK_WIDGET_GET_CLASS(tree)->snapshot(tree, snapshot);
-    GskRenderNode *cached = gtk_snapshot_free_to_node(snapshot);
+static bool tas_grid_pixels(FrontendDesktopUi *ui, GtkWidget *tree) {
+    GtkSnapshot *snapshot;
+    GskRenderNode *cached = NULL;
+    gint64 deadline = g_get_monotonic_time() + 3000000;
+    /* A newly presented toplevel can still be allocating its TreeView on
+     * Windows. Wait for its first real snapshot before comparing pixels. */
+    do {
+        pump(ui);
+        snapshot = gtk_snapshot_new();
+        GTK_WIDGET_GET_CLASS(tree)->snapshot(tree, snapshot);
+        cached = gtk_snapshot_free_to_node(snapshot);
+    } while (!cached && g_get_monotonic_time() < deadline);
+    if (!cached || gsk_render_node_get_node_type(cached) != GSK_TEXTURE_NODE) {
+        fprintf(stderr, "TAS grid snapshot: node %d, mapped %d, allocation %dx%d\n",
+            cached ? (int)gsk_render_node_get_node_type(cached) : -1, gtk_widget_get_mapped(tree),
+            gtk_widget_get_width(tree), gtk_widget_get_height(tree));
+    }
     CHECK(cached && gsk_render_node_get_node_type(cached) == GSK_TEXTURE_NODE);
     GdkTexture *texture = gsk_texture_node_get_texture(cached);
     int scale = gtk_widget_get_scale_factor(tree);
@@ -570,7 +583,7 @@ static bool tas_interactions(FrontendDesktopUi *ui) {
     GtkWidget *picture = find_widget(tool->content, GTK_TYPE_PICTURE);
     GtkWidget *entry = find_widget(tool->content, GTK_TYPE_ENTRY);
     CHECK(tree && picture && entry);
-    CHECK(tas_grid_pixels(tree));
+    CHECK(tas_grid_pixels(ui, tree));
     GtkTreeModel *rows = gtk_tree_view_get_model(GTK_TREE_VIEW(tree));
     CHECK(gtk_tree_model_iter_n_children(rows, NULL) == 10000);
     GtkTreeIter iter;
@@ -676,7 +689,7 @@ static bool tas_interactions(FrontendDesktopUi *ui) {
     gtk_tree_path_free(first);
     gtk_tree_path_free(last);
     CHECK(nes_tas_selection_count(project) == selected && tool->ui.tas_editor->cursor == cursor);
-    CHECK(tas_grid_pixels(tree));
+    CHECK(tas_grid_pixels(ui, tree));
     g_object_set(gtk_settings_get_default(), "gtk-enable-animations", animations, NULL);
     preview_pattern();
     cupid_gtk_tas_video(tool->content);
@@ -844,6 +857,7 @@ static bool palette_layout_check(FrontendDesktopUi *ui, const char *out) {
 }
 
 int main(int argc, char **argv) {
+    frontend_desktop_prepare_video();
     if ((argc == 3 || argc == 4) && !strcmp(argv[1], "--benchmark")) {
         return benchmark_gtk(argv[2], argc == 4 ? argv[3] : NULL);
     }
@@ -927,6 +941,12 @@ int main(int argc, char **argv) {
         return 1;
     }
     if (startup_check) {
+#ifndef _WIN32
+        if (SDL_GetHintBoolean("SDL_VIDEO_WAYLAND_ALLOW_LIBDECOR", SDL_TRUE)) {
+            fprintf(stderr, "GTK's hidden SDL host must not load libdecor\n");
+            return 1;
+        }
+#endif
         pump(&ui);
         if (!gtk_widget_get_mapped(ui.gtk->window) ||
             !gtk_native_get_renderer(GTK_NATIVE(ui.gtk->window))) {

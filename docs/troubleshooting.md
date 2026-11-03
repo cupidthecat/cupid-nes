@@ -176,6 +176,11 @@ competing OpenGL context. This selection also applies when `SDL_RENDER_DRIVER=op
 `SDL_FRAMEBUFFER_ACCELERATION=1` is set. The visible game view still follows
 GTK's renderer selection.
 
+The GTK desktop disables libdecor for its hidden SDL host before SDL video
+starts. Some libdecor decoration plugins load GTK 3, which conflicts with
+Cupid's GTK 4 types and prevents startup. GTK draws the visible window's
+decorations independently.
+
 If the warning persists with a current build, try `GSK_RENDERER=cairo cupid-nes`
 and include the GTK version, graphics driver, renderer environment variables,
 and complete launch log in the report. An SDL shader uses its own context;

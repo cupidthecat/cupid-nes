@@ -57,7 +57,7 @@ jobs:
             sleep 0.1
           done
           test -S "$XDG_RUNTIME_DIR/cupid-wayland"
-          WAYLAND_DISPLAY=cupid-wayland GSK_RENDERER=cairo python3 scripts/check-gtk-launch.py ./cupid-nes --backend wayland
+          WAYLAND_DISPLAY=cupid-wayland GSK_RENDERER=cairo G_DEBUG=fatal-criticals SDL_VIDEO_WAYLAND_ALLOW_LIBDECOR=1 python3 scripts/check-gtk-launch.py ./cupid-nes --backend wayland
       - name: Check Linux TAS grid pixels and playback following
         run: |
           xvfb-run -a env GSK_RENDERER=cairo G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke --tas-video-check

@@ -394,6 +394,14 @@ static bool command_mute(void *context, char *error, size_t error_size) {
     return true;
 }
 
+void frontend_desktop_prepare_video(void) {
+#if defined(CUPID_GTK) && !defined(_WIN32)
+    /* The hidden host needs no decorations. libdecor can load GTK 3 into our
+     * GTK 4 process on Wayland, causing duplicate type registration. */
+    SDL_SetHintWithPriority("SDL_VIDEO_WAYLAND_ALLOW_LIBDECOR", "0", SDL_HINT_OVERRIDE);
+#endif
+}
+
 SDL_Renderer *frontend_desktop_create_renderer(SDL_Window *window, Uint32 flags) {
     if (!window) return NULL;
 #ifdef CUPID_GTK
