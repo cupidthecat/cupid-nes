@@ -36,6 +36,8 @@ static void silence_callback(void *context, Uint8 *stream, int length) {
     memset(stream, 0, (size_t)length);
 }
 
+static void reset_audio_probe(void *context) { ++*(unsigned *)context; }
+
 static bool stop_capture_probe(void *context, char *error, size_t error_size) {
     unsigned *calls = context;
     ++*calls;
@@ -113,7 +115,7 @@ static int state_controls_preserve_audio(const char *directory) {
     StateRuntime state = {0};
     SDL_AudioDeviceID audio = 0;
     bool audio_initialized = false;
-    unsigned capture_stops = 0;
+    unsigned capture_stops = 0, audio_resets = 0;
     char error[256] = {0};
     uint32_t old_policy = nes_execution_policy();
     CHECK(nes_execution_set_policy(NES_EXECUTION_LIVE));
@@ -138,6 +140,8 @@ static int state_controls_preserve_audio(const char *directory) {
     CHECK(frontend_execution_register_commands(&execution));
     state_runtime_init(&state, &settings, directory, &execution);
     CHECK(state_runtime_register_ui(&state));
+    execution.audio_reset = reset_audio_probe;
+    execution.audio_reset_context = &audio_resets;
     CHECK(atomic_load_explicit(&apu.ring_w, memory_order_relaxed) > 0);
     CHECK(apu.audio_transition_count > 0);
     CHECK(nes_state_capture(&expected) == NES_STATE_OK);
@@ -161,7 +165,7 @@ static int state_controls_preserve_audio(const char *directory) {
     write_mem(0x0010, (uint8_t)(read_mem(0x0010) ^ 0xA5));
     CHECK(advance_frame());
     CHECK(frontend_command_invoke(STATE_COMMAND_LOAD_FILE, error, sizeof(error)));
-    CHECK(chooser.calls == 4 && !chooser.save);
+    CHECK(chooser.calls == 4 && !chooser.save && audio_resets == 1);
     CHECK(capture_stops == 1 && !state.machine_locked);
     CHECK(frontend_execution_paused(&execution) && SDL_GetAudioDeviceStatus(audio) == SDL_AUDIO_PAUSED);
     CHECK(nes_state_capture(&actual) == NES_STATE_OK && same_state(&expected, &actual));
@@ -170,7 +174,7 @@ static int state_controls_preserve_audio(const char *directory) {
     /* Failed loading must leave the producer queue and filter history intact. */
     strcpy(settings.state_file_path, missing_path);
     CHECK(!frontend_command_invoke(STATE_COMMAND_LOAD_FILE, error, sizeof(error)));
-    CHECK(!state.machine_locked && frontend_execution_paused(&execution));
+    CHECK(!state.machine_locked && frontend_execution_paused(&execution) && audio_resets == 1);
     CHECK(nes_state_capture(&actual) == NES_STATE_OK && same_state(&expected, &actual));
     nes_state_blob_free(&actual);
     CHECK(!frontend_command_invoke(STATE_COMMAND_SAVE_FILE, error, sizeof(error)));
@@ -188,6 +192,7 @@ static int state_controls_preserve_audio(const char *directory) {
     nes_state_blob_free(&actual);
     CHECK(advance_frame());
     CHECK(frontend_command_invoke(STATE_COMMAND_LOAD_SLOT, error, sizeof(error)));
+    CHECK(audio_resets == 2);
     CHECK(nes_state_capture(&actual) == NES_STATE_OK && same_state(&expected, &actual));
     nes_state_blob_free(&actual);
 

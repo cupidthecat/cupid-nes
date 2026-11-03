@@ -58,7 +58,7 @@ CORE_SRC = src/system/timing.c src/system/hardware.c src/system/vs_system.c src/
            src/ui/idle_frontend.c src/ui/image_open.c src/ui/session_actions.c \
            src/ui/clay_backend.c src/ui/font_atlas.c src/ui/desktop_ppu.c src/ui/desktop_layout.c src/ui/desktop_events.c src/ui/desktop_windows.c src/ui/desktop_settings_model.c src/ui/desktop_menus.c src/third_party/clay/clay.c src/third_party/stb/stb_truetype.c src/ui/desktop_ui.c src/ui/desktop_idle.c src/ui/desktop_features.c src/ui/state_frontend.c src/ui/state_runtime.c \
            src/ui/debug_frontend.c src/ui/output_guard.c src/ui/host_input.c src/ui/peripheral_input.c src/ui/cheat_frontend.c \
-           src/ui/video_runtime.c src/ui/audio_runtime.c
+           src/ui/video_runtime.c src/ui/audio_runtime.c src/audio/audio_output.c
 CORE_SRC += src/system/execution_policy.c src/replay/rewind.c src/video/frame_snapshot.c \
             src/replay/input_event.c src/replay/movie.c \
             src/replay/netplay.c src/replay/netplay_hash.c src/replay/netplay_transport.c \
@@ -202,7 +202,7 @@ TEST_SRC += src/tests/lifecycle_accuracy.c src/tests/update_cli_accuracy.c \
             src/tests/debug_tools_accuracy.c src/tests/presentation_frontend_accuracy.c
 TEST_SRC += src/tests/header_editor_accuracy.c
 TEST_SRC += src/tests/overclock_accuracy.c src/tests/desktop_menu_accuracy.c
-TEST_SRC += src/tests/presentation_history_accuracy.c src/tests/presentation_audio_accuracy.c
+TEST_SRC += src/tests/presentation_history_accuracy.c src/tests/presentation_audio_accuracy.c src/tests/audio_output_accuracy.c
 TEST_CXX_SRC += src/tests/hd_builder_accuracy.cpp src/tests/shader_preset_accuracy.cpp
 TEST_OBJ = $(addprefix $(BUILD_DIR)/,$(TEST_SRC:.c=.o) $(TEST_CXX_SRC:.cpp=.o))
 OBJ = $(CORE_OBJ) $(TEST_OBJ) $(BUILD_DIR)/src/main.o

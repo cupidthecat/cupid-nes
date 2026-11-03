@@ -80,6 +80,23 @@ int run_frame_timing_accuracy_tests(void) {
     CHECK(nes_frame_timing_present(150, 110, 100, 1000));
     CHECK(nes_frame_timing_present(120, 110, 0, 1000));
     CHECK(nes_frame_timing_present(90, 80, 100, 1000));
+    /* A cheap upload remains useful during catch-up; costly presentation can
+     * still be skipped to protect emulation throughput. */
+    CHECK(nes_frame_timing_present_cost(120, 110, 100, 1000, 0.5));
+    CHECK(!nes_frame_timing_present_cost(120, 110, 100, 1000, 8));
+    CHECK(!nes_frame_timing_present_cost(120, 110, 100, 1000, NAN));
+    CHECK(!nes_frame_timing_present_cost(120, 110, 100, 1000, -1));
+    double stalled = 1, due = 1, submitted = 0, maximum_gap = 0;
+    for (unsigned i = 0; i < 300; ++i) {
+        stalled += 13 + (i == 120 ? 12 : 0);
+        due += 1000.0 / 60;
+        CHECK(nes_frame_timing_present_cost(stalled, due, submitted, 1000, 0.5));
+        if (submitted && stalled - submitted > maximum_gap) maximum_gap = stalled - submitted;
+        submitted = stalled;
+        stalled += 0.5;
+        if (stalled < due) stalled = due;
+    }
+    CHECK(maximum_gap < 30);
     /* The same emulation work keeps its rate as presentation gets more costly. */
     for (unsigned cost = 2; cost <= 26; cost += 12) {
         double now = 1, deadline = 1, last = 0;
@@ -87,7 +104,7 @@ int run_frame_timing_accuracy_tests(void) {
         for (unsigned frame = 0; frame < 600; ++frame) {
             now += 3;
             deadline += 1000.0 / 60;
-            if (nes_frame_timing_present(now, deadline, last, 1000)) {
+            if (nes_frame_timing_present_cost(now, deadline, last, 1000, cost)) {
                 last = now;
                 now += cost;
                 ++presentations;

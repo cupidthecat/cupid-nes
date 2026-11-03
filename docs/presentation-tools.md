@@ -57,7 +57,7 @@ fractional frame deadlines and lets the display update between emulated frames.
 GTK drawing that happens during a wait is included in pacing time; drawing
 during submission is included in presentation time.
 
-These are host wall-clock measurements, not emulated CPU or PPU cycles. Idle/pause transitions reset the measurements. Callback audio does not expose trustworthy queue depth or underrun counters, so those fields are marked unavailable. **Reset measurements** clears both sets of retained samples.
+These are host wall-clock measurements, not emulated CPU or PPU cycles. Idle/pause transitions reset the measurements. The audio row shows the host playback queue and the number of underrun callbacks since the output device was opened. Startup prefill is excluded. Playback retains a short reservoir and adjusts host resampling by at most 0.5% to follow the device clock; emulated clocks, recorded samples, and movie input are unchanged. **Reset measurements** clears both sets of retained samples.
 
 ## Existing video controls
 

@@ -86,6 +86,11 @@ bool nes_frame_timing_present(double now, double deadline, double last_present, 
         now <= deadline + frequency * 0.002 || now - last_present >= frequency * 0.050;
 }
 
+bool nes_frame_timing_present_cost(double now, double deadline, double last_present, double frequency, double cost) {
+    return (isfinite(cost) && cost >= 0 && cost <= frequency * 0.002)
+        || nes_frame_timing_present(now, deadline, last_present, frequency);
+}
+
 unsigned nes_frame_timing_sleep_ms(double remaining_ms) {
     if (!isfinite(remaining_ms) || remaining_ms < 2) return 0;
     return remaining_ms >= 5 ? 4 : (unsigned)(remaining_ms - 1);

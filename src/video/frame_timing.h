@@ -42,6 +42,9 @@ typedef struct {
 
 /* Drop only host presentation when late; service the UI at least every 50 ms. */
 bool nes_frame_timing_present(double now, double deadline, double last_present, double frequency);
+/* Cost is the last display update in counter ticks. Cheap updates should not
+ * be withheld throughout recovery from an unrelated emulation stall. */
+bool nes_frame_timing_present_cost(double now, double deadline, double last_present, double frequency, double cost);
 void nes_frame_timing_reset(NesFrameTiming *timing);
 bool nes_frame_timing_push(NesFrameTiming *timing, const NesHostFrameSample *sample);
 bool nes_frame_timing_summary(const NesFrameTiming *timing, NesFrameTimingSummary *summary);

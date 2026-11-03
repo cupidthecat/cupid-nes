@@ -18,6 +18,7 @@
 #include "../video/frame_timing.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 
 static void settle(FrontendDesktopUi *ui) {
     for (unsigned i = 0; i < 30; ++i) {
@@ -55,19 +56,19 @@ int benchmark_gtk(const char *path, const char *movie) {
     frontend_settings_defaults(&settings);
     settings.pause_on_focus_loss = false;
     settings.show_fps = true;
-    SDL_AudioSpec want = {0}, have;
-    want.freq = 44100;
-    want.format = AUDIO_F32SYS;
-    want.channels = 2;
-    want.samples = 1024;
-    want.callback = vs_audio_stereo_callback;
-    SDL_AudioDeviceID audio = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
+    SDL_AudioSpec have = {0};
+    SDL_AudioDeviceID audio = 0;
+    FrontendAudioRuntime audio_runtime;
+    frontend_audio_runtime_bind(&audio_runtime, &audio, &have);
+    char error[256] = {0};
+    if (!frontend_audio_runtime_apply(&audio_runtime, &settings, false, error, sizeof(error))) return 2;
     if (!audio) {
         return 2;
     }
     vs_audio_init(have.freq);
     FrontendExecutionRuntime execution;
     frontend_execution_init(&execution, &audio, have.freq, NULL, NULL, NULL, NULL);
+    frontend_audio_runtime_set_execution(&audio_runtime, &execution);
     frontend_execution_set_rewind_seconds(&execution, settings.rewind_seconds);
     SDL_Window *window = SDL_CreateWindow("Presentation benchmark", 0, 0, 900, 700, SDL_WINDOW_HIDDEN);
     SDL_Renderer *renderer = frontend_desktop_create_renderer(window, SDL_RENDERER_SOFTWARE);
@@ -75,7 +76,6 @@ int benchmark_gtk(const char *path, const char *movie) {
         return 2;
     }
     FrontendVideoRuntime video;
-    char error[256] = {0};
     if (!frontend_video_runtime_init(&video, renderer, &settings, false, error, sizeof(error))) {
         return 2;
     }
@@ -139,6 +139,7 @@ int benchmark_gtk(const char *path, const char *movie) {
                 result = 1;
                 break;
             }
+            frontend_audio_runtime_submit(&audio_runtime);
             uint64_t emulated = SDL_GetPerformanceCounter();
             if (!frontend_video_runtime_refresh(&video, error, sizeof(error))) {
                 result = 1;
@@ -165,7 +166,7 @@ int benchmark_gtk(const char *path, const char *movie) {
          * 60 does not by itself establish stable normal-speed playback. */
         begin = SDL_GetPerformanceCounter();
         double deadline = (double)begin;
-        double last_present = 0;
+        double last_present = 0, present_cost = 0;
         unsigned presented = 0;
         NesFrameTiming pacing;
         nes_frame_timing_reset(&pacing);
@@ -182,14 +183,16 @@ int benchmark_gtk(const char *path, const char *movie) {
                 result = 1;
                 break;
             }
+            frontend_audio_runtime_submit(&audio_runtime);
             deadline += (cpu_total_cycles - cycles) * frequency / nes_timing()->cpu_hz;
             double now = (double)SDL_GetPerformanceCounter();
-            if (nes_frame_timing_present(now, deadline, last_present, frequency)) {
+            if (nes_frame_timing_present_cost(now, deadline, last_present, frequency, present_cost)) {
                 if (!frontend_video_runtime_refresh(&video, error, sizeof(error))) {
                     result = 1;
                     break;
                 }
                 frontend_desktop_render(&ui, 256, 240, "Presentation benchmark", "NTSC", "Running");
+                present_cost = fmax(present_cost * 0.8, (double)SDL_GetPerformanceCounter() - now);
                 last_present = now;
                 ++presented;
             } else {
@@ -226,7 +229,7 @@ int benchmark_gtk(const char *path, const char *movie) {
     debug_frontend_destroy(debug);
     frontend_execution_shutdown(&execution);
     frontend_video_runtime_shutdown(&video);
-    SDL_CloseAudioDevice(audio);
+    frontend_audio_runtime_shutdown(&audio_runtime);
     frontend_desktop_destroy_renderer(window, renderer);
     SDL_DestroyWindow(window);
     unload_rom();

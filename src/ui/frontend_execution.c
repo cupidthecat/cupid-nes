@@ -39,6 +39,7 @@ static bool movie_result_ok(FrontendExecutionRuntime *runtime, NesMovieResult re
 
 void frontend_execution_timeline_restored(FrontendExecutionRuntime *runtime) {
     ++runtime->timing_revision;
+    if (runtime->audio_reset) runtime->audio_reset(runtime->audio_reset_context);
     bool paused = runtime->execution.paused;
     debugger_reset_session();
     runtime->debugger_pause_revision = debugger_pause_revision();
@@ -65,7 +66,10 @@ static bool tas_active(const FrontendExecutionRuntime *runtime) {
 static void update_audio_pause(FrontendExecutionRuntime *runtime);
 
 void frontend_execution_refresh_audio(FrontendExecutionRuntime *runtime) {
-    if (runtime) ++runtime->timing_revision;
+    if (runtime) {
+        ++runtime->timing_revision;
+        if (runtime->audio_reset) runtime->audio_reset(runtime->audio_reset_context);
+    }
     if (runtime && deterministic_session_owned()) {
         update_audio_pause(runtime);
         return;
@@ -91,7 +95,10 @@ static void update_audio_pause(FrontendExecutionRuntime *runtime) {
     if(!runtime||runtime->machine_change_depth||!runtime->audio_device||!*runtime->audio_device)return;
     bool paused=frontend_execution_paused(runtime)||runtime->rewind_held||runtime->muted;
     SDL_AudioStatus desired=paused?SDL_AUDIO_PAUSED:SDL_AUDIO_PLAYING;
-    if(SDL_GetAudioDeviceStatus(*runtime->audio_device)!=desired)SDL_PauseAudioDevice(*runtime->audio_device,paused?1:0);
+    if (SDL_GetAudioDeviceStatus(*runtime->audio_device) != desired) {
+        if (runtime->audio_reset) runtime->audio_reset(runtime->audio_reset_context);
+        SDL_PauseAudioDevice(*runtime->audio_device, paused ? 1 : 0);
+    }
 }
 
 void frontend_execution_set_suspension(FrontendExecutionRuntime *runtime, unsigned reasons) {

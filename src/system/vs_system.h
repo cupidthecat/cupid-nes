@@ -98,6 +98,7 @@ const NesVideoTraceFrame *vs_video_completed_trace(unsigned side);
 APU *vs_side_apu(unsigned side);
 PPU *vs_side_ppu(unsigned side);
 void vs_audio_init(int sample_rate);
+unsigned vs_audio_available(void);
 void vs_audio_callback(void *userdata, uint8_t *stream, int len);
 void vs_audio_stereo_callback(void *userdata, uint8_t *stream, int len);
 

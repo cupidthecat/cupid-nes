@@ -84,5 +84,11 @@ bool frontend_presentation_host_record(FrontendPresentationHost *host, uint64_t 
     uint64_t begin = host->previous_end && host->previous_end <= pacing_end ? host->previous_end : emulation_start;
     sample.milliseconds[NES_HOST_INTERVAL] = nes_frame_timing_elapsed(begin, pacing_end, host->frequency);
     host->previous_end = pacing_end;
+    NesAudioOutputStats audio;
+    if (host->audio && nes_audio_output_stats(host->audio->output, &audio)) {
+        sample.audio_available = true;
+        sample.audio_queue_ms = audio.queue_ms;
+        sample.audio_underruns = audio.underruns;
+    }
     return nes_frame_timing_push(&host->timing.timing, &sample);
 }

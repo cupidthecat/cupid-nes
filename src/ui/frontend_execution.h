@@ -32,6 +32,8 @@ typedef struct FrontendExecutionRuntime {
     SDL_AudioDeviceID machine_audio_device;
     unsigned machine_change_depth;
     int audio_output_rate;
+    void (*audio_reset)(void *context);
+    void *audio_reset_context;
     bool muted;
     bool rewind_held;
     unsigned suspend_reasons;

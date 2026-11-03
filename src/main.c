@@ -801,7 +801,7 @@ static int application_main(int argc, char *argv[]) {
     const double performance_frequency = (double)SDL_GetPerformanceFrequency();
     double frame_deadline = (double)SDL_GetPerformanceCounter();
     double fps_started = frame_deadline;
-    double last_desktop_present = 0;
+    double last_desktop_present = 0, desktop_present_cost = 0;
     unsigned fps_frames = 0;
     uint64_t timing_revision = UINT64_MAX;
     double paced_speed = 0;
@@ -1161,7 +1161,10 @@ static int application_main(int argc, char *argv[]) {
         uint64_t host_emulation_start = SDL_GetPerformanceCounter();
         uint64_t frame_start_cycles = cpu_total_cycles;
         bool ran_frame = frontend_execution_run_frame(&execution_runtime);
-        if (ran_frame) frontend_devices_frame_complete(&device_runtime);
+        if (ran_frame) {
+            frontend_devices_frame_complete(&device_runtime);
+            frontend_audio_runtime_submit(&audio_runtime);
+        }
         if (ran_frame && !execution_runtime.rewind_held) {
             recorder_fraction_ms += 1000.0 / nes_timing()->fps;
             uint64_t elapsed_ms = (uint64_t)recorder_fraction_ms;
@@ -1173,8 +1176,8 @@ static int application_main(int argc, char *argv[]) {
             ? cpu_total_cycles - frame_start_cycles : 0;
         double next_deadline = frame_deadline + (double)frame_elapsed_cycles * performance_frequency
             / (nes_timing()->cpu_hz * frontend_execution_speed(&execution_runtime));
-        bool present_frame = !desktop_ui.gtk || !ran_frame || nes_frame_timing_present(
-            (double)SDL_GetPerformanceCounter(), next_deadline, last_desktop_present, performance_frequency);
+        bool present_frame = !desktop_ui.gtk || !ran_frame || nes_frame_timing_present_cost(
+            (double)SDL_GetPerformanceCounter(), next_deadline, last_desktop_present, performance_frequency, desktop_present_cost);
         uint64_t host_render_start = SDL_GetPerformanceCounter();
         char video_error[192] = {0};
         /* Record every completed frame, but avoid filters, HD rendering and
@@ -1187,6 +1190,7 @@ static int application_main(int argc, char *argv[]) {
         } else {
             nes_shader_skip_frame(video_runtime.shader);
         }
+        uint64_t host_render_end = SDL_GetPerformanceCounter();
         nes_capture_frontend_end_frame(&capture_runtime.frontend, ran_frame && video_ready);
         if (!video_ready) {
             fprintf(stderr, "Video output: %s\n",
@@ -1246,6 +1250,12 @@ static int application_main(int argc, char *argv[]) {
             SDL_RenderPresent(renderer);
         }
         uint64_t host_present_end = SDL_GetPerformanceCounter();
+        if (present_frame) {
+            double cost = (double)(host_render_end - host_render_start + host_present_end - host_present_start);
+            /* React immediately to costly filters; recover gradually when their
+             * cost drops so a single fast upload does not restart an overload. */
+            desktop_present_cost = fmax(cost, desktop_present_cost * 0.8);
+        }
     
         double fps_now = (double)SDL_GetPerformanceCounter();
         if (ran_frame) ++fps_frames;

@@ -100,6 +100,7 @@ int test_capture_frontend_extensions_accuracy(void);
 int run_frame_timing_accuracy_tests(void);
 int run_presentation_history_accuracy_tests(void);
 int run_presentation_audio_accuracy_tests(void);
+int run_audio_output_accuracy_tests(void);
 int run_hd_builder_accuracy_tests(void);
 int run_shader_preset_accuracy_tests(void);
 int run_native_audio_backend_tests(void);
@@ -367,6 +368,7 @@ int main(int argc, char **argv) {
     failures += test_capture_frontend_extensions_accuracy();
     failures += run_frame_timing_accuracy_tests();
     failures += run_presentation_history_accuracy_tests();
+    failures += run_audio_output_accuracy_tests();
     failures += run_presentation_audio_accuracy_tests();
     failures += run_hd_builder_accuracy_tests();
     failures += run_shader_preset_accuracy_tests();

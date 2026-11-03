@@ -69,6 +69,15 @@ frame. A machine that cannot run the core fast enough can still fall behind.
 Open **Tools > Picture, sound and timing > Frame Timing Statistics** to compare
 the emulation rate with the display draw rate. High jitter or a large maximum frame
 interval can explain choppy motion even when average FPS is near the target.
+The audio row shows queued playback time and underrun callbacks. Playback
+prefills a reservoir before starting or resuming sound and after an underrun.
+The target holds at least 60 ms after one device block, or two blocks for very
+large device buffers. This adds audio latency in exchange for surviving brief
+stalls. Host resampling follows small device-clock differences without changing
+recorded audio or emulated timing. Sustained CPU slowdown can still exhaust it.
+On Linux, check the CPU power policy if core time spikes in both windowed and
+fullscreen modes; reducing display size cannot fix a core that misses its budget.
+
 The draw row counts new images drawn by the game viewport. It does not measure
 the monitor's refresh rate. Pending GTK work is serviced during frame waits;
 the high-resolution clock controls when the next emulated frame starts.

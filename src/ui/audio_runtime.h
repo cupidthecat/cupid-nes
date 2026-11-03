@@ -14,11 +14,13 @@
 #include <stddef.h>
 #include "frontend_execution.h"
 #include "settings.h"
+#include "../audio/audio_output.h"
 
 typedef struct {
     SDL_AudioDeviceID *device;
     SDL_AudioSpec *have;
     FrontendExecutionRuntime *execution;
+    NesAudioOutput *output;
     char device_name[256];
     unsigned sample_rate;
     unsigned buffer_samples;
@@ -32,6 +34,7 @@ typedef struct {
     unsigned sample_rate;
     unsigned buffer_samples;
     bool replacement;
+    NesAudioOutput *output;
 } FrontendAudioPrepared;
 
 void frontend_audio_runtime_bind(FrontendAudioRuntime *runtime,
@@ -49,6 +52,9 @@ void frontend_audio_runtime_cancel(FrontendAudioPrepared *prepared);
 void frontend_audio_runtime_commit(FrontendAudioRuntime *runtime,
                                    FrontendAudioPrepared *prepared);
 void frontend_audio_runtime_shutdown(FrontendAudioRuntime *runtime);
+
+/* Submit completed emulation audio on the host thread, before video work. */
+void frontend_audio_runtime_submit(FrontendAudioRuntime *runtime);
 
 /* SDL's native output drivers consume the same final stereo mix. Backend
  * changes reopen the global SDL audio subsystem; call on the host thread. */
