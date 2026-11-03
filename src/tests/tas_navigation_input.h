@@ -104,6 +104,9 @@ static bool navigation_finish_seek(NesTasSession *session, size_t target) {
 
 static int navigation_detail_visibility(FrontendDesktopUi *ui, const char *head, const char *tail,
                                         const char *token_format, unsigned tokens, unsigned percent, unsigned height) {
+    if (!token_format) {
+        return 1;
+    }
     int failures = 0;
     DesktopTasEditor *editor = ui->tas_editor;
     uint64_t revision = nes_tas_project_revision(desktop_tas_project_const(ui));

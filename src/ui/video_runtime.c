@@ -180,14 +180,23 @@ bool frontend_video_runtime_refresh(FrontendVideoRuntime *runtime,
     }
     if (!nes_pixel_filter_render(runtime->pixel_filter, &runtime->settings->pixel_filter,
                                   &runtime->frame, &runtime->frame, error, error_size)) return false;
+    runtime->shader_rendered = false;
     if (nes_shader_enabled(runtime->shader)) {
         int width = 0, height = 0;
         SDL_GetRendererOutputSize(runtime->renderer, &width, &height);
+        unsigned viewport_width = width > 0 ? (unsigned)width : runtime->frame.width;
+        unsigned viewport_height = height > 0 ? (unsigned)height : runtime->frame.height;
+        if (runtime->viewport_size) {
+            runtime->viewport_size(runtime->viewport_context, &runtime->frame, &viewport_width, &viewport_height);
+        }
+        runtime->shader_source_width = runtime->frame.width;
+        runtime->shader_source_height = runtime->frame.height;
         if (!nes_shader_render(runtime->shader, &runtime->frame,
-                               width > 0 ? (unsigned)width : runtime->frame.width,
-                               height > 0 ? (unsigned)height : runtime->frame.height,
+                               viewport_width, viewport_height,
                                &runtime->frame, runtime->shader_error, sizeof(runtime->shader_error))) {
             nes_shader_enable(runtime->shader, false);
+        } else {
+            runtime->shader_rendered = true;
         }
     }
     if (runtime->pixels_only) {
@@ -240,6 +249,10 @@ void frontend_video_runtime_display_size(const FrontendVideoRuntime *runtime,
                                          unsigned *width, unsigned *height) {
     unsigned w = runtime && runtime->frame.width ? runtime->frame.width : 256;
     unsigned h = runtime && runtime->frame.height ? runtime->frame.height : 240;
+    if (runtime && runtime->shader_rendered) {
+        w = runtime->shader_source_width;
+        h = runtime->shader_source_height;
+    }
     if (runtime && runtime->settings && runtime->settings->aspect_mode == FRONTEND_ASPECT_4_3
         && runtime->frame.screens) {
         w = (unsigned)(((uint64_t)h * 4u * runtime->frame.screens + 2u) / 3u);
@@ -277,6 +290,7 @@ void frontend_video_runtime_unload_image(FrontendVideoRuntime *runtime) {
     nes_hd_builder_clear_game(runtime->builder);
     runtime->source_pixels = NULL;
     runtime->source_width = runtime->source_height = 0;
+    runtime->shader_rendered = false;
     memset(&runtime->frame, 0, sizeof(runtime->frame));
     if (runtime->texture) SDL_DestroyTexture(runtime->texture);
     runtime->texture = NULL;

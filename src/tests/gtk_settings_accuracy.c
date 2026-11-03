@@ -189,6 +189,7 @@ int main(void) {
     assert(!s->rows[7].dirty && !strcmp(gtk_editable_get_text(GTK_EDITABLE(radius)), "12") &&
            s->rows[6].widget == player);
     gtk_list_box_select_row(GTK_LIST_BOX(s->categories), gtk_list_box_get_row_at_index(GTK_LIST_BOX(s->categories), 2));
+    assert(!gtk_widget_get_sensitive(s->rows[2].widget));
     GtkWidget *hue = s->rows[26].widget;
     gtk_editable_set_text(GTK_EDITABLE(hue), "7");
     gtk_drop_down_set_selected(GTK_DROP_DOWN(s->rows[25].widget), 2);

@@ -1170,10 +1170,22 @@ static int application_main(int argc, char *argv[]) {
         }
         uint64_t frame_elapsed_cycles = ran_frame && cpu_total_cycles >= frame_start_cycles
             ? cpu_total_cycles - frame_start_cycles : 0;
+        double next_deadline = frame_deadline + (double)frame_elapsed_cycles * performance_frequency
+            / (nes_timing()->cpu_hz * frontend_execution_speed(&execution_runtime));
+        bool present_frame = !desktop_ui.gtk || !ran_frame || nes_frame_timing_present(
+            (double)SDL_GetPerformanceCounter(), next_deadline, last_desktop_present, performance_frequency);
         uint64_t host_render_start = SDL_GetPerformanceCounter();
         char video_error[192] = {0};
-        bool video_ready = frontend_video_runtime_refresh(&video_runtime,
-                                                          video_error, sizeof(video_error));
+        /* Record every completed frame, but avoid filters, HD rendering and
+         * shader readback for display frames that will never be submitted. */
+        bool refresh_video = present_frame || capture_runtime.frontend.session.info.recording
+            || video_runtime.builder_preview || nes_hd_frontend_capture_armed(video_runtime.hd_frontend);
+        bool video_ready = true;
+        if (refresh_video) {
+            video_ready = frontend_video_runtime_refresh(&video_runtime, video_error, sizeof(video_error));
+        } else {
+            nes_shader_skip_frame(video_runtime.shader);
+        }
         nes_capture_frontend_end_frame(&capture_runtime.frontend, ran_frame && video_ready);
         if (!video_ready) {
             fprintf(stderr, "Video output: %s\n",
@@ -1218,10 +1230,7 @@ static int application_main(int argc, char *argv[]) {
 
         uint64_t host_present_start = SDL_GetPerformanceCounter();
         double presentation_now = (double)host_present_start;
-        double next_deadline = frame_deadline + (double)frame_elapsed_cycles * performance_frequency
-            / (nes_timing()->cpu_hz * frontend_execution_speed(&execution_runtime));
-        if (!desktop_ui.gtk || !ran_frame || nes_frame_timing_present(presentation_now,
-                next_deadline, last_desktop_present, performance_frequency)) {
+        if (present_frame) {
             last_desktop_present = presentation_now;
             frontend_desktop_render(&desktop_ui, video_width, video_height,
                 frontend_session.current_result.title,
@@ -1302,7 +1311,7 @@ static int application_main(int argc, char *argv[]) {
     frontend_desktop_shutdown(&desktop_ui);
     debugger_shutdown();
     frontend_video_runtime_shutdown(&video_runtime);
-    SDL_DestroyRenderer(renderer);
+    frontend_desktop_destroy_renderer(window, renderer);
     SDL_DestroyWindow(window);
     frontend_audio_runtime_shutdown(&audio_runtime);
     apu_audio_shutdown_state(&apu);

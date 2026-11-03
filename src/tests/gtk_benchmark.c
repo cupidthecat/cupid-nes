@@ -24,6 +24,12 @@ static void settle(FrontendDesktopUi *ui) {
         frontend_desktop_render(ui, 256, 240, "Presentation benchmark", "NTSC", "Running");
         SDL_Delay(10);
     }
+    uint64_t until = SDL_GetTicks64() + 10000;
+    while ((!gtk_widget_get_mapped(ui->gtk->picture) || gtk_widget_get_width(ui->gtk->picture) <= 0 ||
+            gtk_widget_get_height(ui->gtk->picture) <= 0) && SDL_GetTicks64() < until) {
+        frontend_desktop_render(ui, 256, 240, "Presentation benchmark", "NTSC", "Running");
+        SDL_Delay(10);
+    }
 }
 
 int benchmark_gtk(const char *path, const char *movie) {
@@ -112,6 +118,12 @@ int benchmark_gtk(const char *path, const char *movie) {
             cupid_gtk_open(&ui, 1, DEBUG_PPU_PATTERNS);
         }
         settle(&ui);
+        if (!gtk_widget_get_mapped(ui.gtk->picture) || gtk_widget_get_width(ui.gtk->picture) <= 0 ||
+            gtk_widget_get_height(ui.gtk->picture) <= 0) {
+            fprintf(stderr, "Benchmark viewport is not allocated; keep the game window visible\n");
+            result = 1;
+            break;
+        }
         uint64_t begin = 0;
         double core = 0, presentation = 0;
         unsigned frames = 300;
@@ -166,17 +178,22 @@ int benchmark_gtk(const char *path, const char *movie) {
             while (SDL_PollEvent(&event)) {
             }
             uint64_t cycles = cpu_total_cycles;
-            if (!frontend_execution_run_frame(&execution) ||
-                !frontend_video_runtime_refresh(&video, error, sizeof(error))) {
+            if (!frontend_execution_run_frame(&execution)) {
                 result = 1;
                 break;
             }
             deadline += (cpu_total_cycles - cycles) * frequency / nes_timing()->cpu_hz;
             double now = (double)SDL_GetPerformanceCounter();
             if (nes_frame_timing_present(now, deadline, last_present, frequency)) {
+                if (!frontend_video_runtime_refresh(&video, error, sizeof(error))) {
+                    result = 1;
+                    break;
+                }
                 frontend_desktop_render(&ui, 256, 240, "Presentation benchmark", "NTSC", "Running");
                 last_present = now;
                 ++presented;
+            } else {
+                nes_shader_skip_frame(video.shader);
             }
             frontend_desktop_wait(&ui, deadline, frequency);
             uint64_t end = SDL_GetPerformanceCounter();
@@ -186,6 +203,11 @@ int benchmark_gtk(const char *path, const char *movie) {
             previous = end;
         }
         elapsed = (SDL_GetPerformanceCounter() - begin) / frequency;
+        if (!ui.gtk->drawn_frames) {
+            fprintf(stderr, "Benchmark viewport did not draw; keep the game window visible\n");
+            result = 1;
+            break;
+        }
         printf("GTK paced: %s, %.2f fps (target %.2f), %u/%u presentations\n", names[mode], frames / elapsed, nes_timing()->fps, presented, frames);
         NesFrameTimingSummary paced, drawn;
         (void)nes_frame_timing_summary(&pacing, &paced);
@@ -205,7 +227,7 @@ int benchmark_gtk(const char *path, const char *movie) {
     frontend_execution_shutdown(&execution);
     frontend_video_runtime_shutdown(&video);
     SDL_CloseAudioDevice(audio);
-    SDL_DestroyRenderer(renderer);
+    frontend_desktop_destroy_renderer(window, renderer);
     SDL_DestroyWindow(window);
     unload_rom();
     SDL_Quit();

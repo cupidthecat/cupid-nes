@@ -80,8 +80,10 @@ bool nes_frame_timing_summary(const NesFrameTiming *timing, NesFrameTimingSummar
 }
 
 bool nes_frame_timing_present(double now, double deadline, double last_present, double frequency) {
+    /* Small scheduler overruns should not discard an otherwise usable
+     * image and turn a slight overrun into a 50 ms display gap. */
     return frequency <= 0 || last_present <= 0 || now < last_present ||
-        now <= deadline || now - last_present >= frequency * 0.050;
+        now <= deadline + frequency * 0.002 || now - last_present >= frequency * 0.050;
 }
 
 unsigned nes_frame_timing_sleep_ms(double remaining_ms) {

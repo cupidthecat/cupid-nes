@@ -75,6 +75,7 @@ int run_frame_timing_accuracy_tests(void) {
     CHECK(nes_frame_timing_sleep_ms(4.99) == 3 && nes_frame_timing_sleep_ms(5) == 4);
     CHECK(nes_frame_timing_sleep_ms(100000) == 4);
     CHECK(nes_frame_timing_present(100, 110, 90, 1000));
+    CHECK(nes_frame_timing_present(111, 110, 100, 1000));
     CHECK(!nes_frame_timing_present(120, 110, 100, 1000));
     CHECK(nes_frame_timing_present(150, 110, 100, 1000));
     CHECK(nes_frame_timing_present(120, 110, 0, 1000));

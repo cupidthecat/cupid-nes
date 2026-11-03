@@ -301,24 +301,40 @@ dispatcher for every configurable shortcut. Command counters check save, load,
 reset, and open without showing file dialogs. Hold actions use the execution
 runtime. Checks cover key repeat, remapping, releasing a modifier first, losing
 focus, and the fixed Settings, fullscreen, and palette keys.
+
+`build/gtk-ui-smoke --input-check` runs the shortcut and input checks without
+opening file dialogs. It also compares toolbar pixels when keyboard focus
+indicators appear: gameplay must leave the toolbar unchanged, while a focused
+toolbar button must retain its indicator.
+
+`build/gtk-ui-smoke --palette-check` checks palette controls at three window
+widths, rejects horizontal or vertical clipping, and saves snapshots of dropdown
+hover and adjacent selected tabs under `build/gtk-palette-check`. It opens a
+menu before the palette editor and verifies that the menu closes, releasing its
+input grab before the modeless tool appears.
+
 The startup check rejects changes to `GDK_DEBUG` and `GSK_RENDERER`. Also run the
 fixture without `GSK_RENDERER` to exercise the default renderer on a desktop display. Widget
 snapshots do not capture the native window's transparent margins; inspect those
 on screen when checking for black borders.
 
 The startup fixture uses the production SDL renderer selector and checks that
-the hidden host uses a software surface without a GL context, even with OpenGL
-driver and framebuffer acceleration hints. It dispatches GTK until a rendered
+the hidden host uses an offscreen software surface without a GL context, even
+with OpenGL driver and framebuffer acceleration hints. It dispatches GTK until a rendered
 window is mapped. The launch script checks both
 the idle window and an owned synthetic NROM cartridge for five seconds each;
 graphics-context failures fail the check even when the process stays alive.
 Linux CI runs these launch paths with the default compositor and `ngl`, with
-`SDL_RENDER_DRIVER=opengl` set.
+`SDL_RENDER_DRIVER=opengl` set. A separate headless Weston session checks native
+Wayland idle and cartridge startup with `--backend wayland`. On a Wayland
+desktop, reproduce it with `python3 scripts/check-gtk-launch.py ./cupid-nes --backend wayland`.
 
 The accelerated pixel check also loads a shader while a GTK GL context is
 current. It checks exact shader output, context restoration after successive
 frames, successful and rejected reloads, retained output after a rejected
-reload, and GPU cleanup. The software renderer skips this GPU-specific check.
+reload, and GPU cleanup. Viewport-scaled passes also check resize, aspect ratio,
+integer scaling, physical display pixels, and pointer mapping. The software
+renderer skips this GPU-specific check.
 Game snapshot checks cover both the texture widget and the GTK 4.8 drawing path.
 
 Build the GTK smoke executable with `make GTK=1 gtk-smoke`, then run:

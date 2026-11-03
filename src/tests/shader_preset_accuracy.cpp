@@ -147,6 +147,20 @@ extern "C" int run_shader_gpu_accuracy_tests(void) {
     CHECK(cupid::hd::decode_png(bytes, "lut.png", {}, lookup, why));
     CHECK(nes_shader_render(shader, &input, 4, 4, &output, error, sizeof(error)));
     CHECK((output.pixels[0] & 0xffffffu) == (lookup.argb32[0] & 0xffffffu));
+    std::string counted_source(source);
+    counted_source.insert(counted_source.find("uniform float Gain;"), "uniform int FrameCount;\n");
+    counted_source.replace(counted_source.find("texture(Texture,uv).rgb*Gain"),
+                           std::strlen("texture(Texture,uv).rgb*Gain"), "vec3(float(FrameCount % 4) / 3.0, 0.0, 0.0)");
+    CHECK(write("count.glsl", counted_source) && write("count.glslp", "shaders=1\nshader0=count.glsl\n"));
+    CHECK(nes_shader_load(shader, "build/shader-regression/count.glslp", error, sizeof(error)));
+    CHECK(nes_shader_render(shader, &input, 4, 4, &output, error, sizeof(error)) && output.pixels[0] == 0xff000000u);
+    nes_shader_skip_frame(shader);
+    nes_shader_skip_frame(shader);
+    CHECK(nes_shader_render(shader, &input, 4, 4, &output, error, sizeof(error)) && output.pixels[0] == 0xffff0000u);
+    nes_shader_enable(shader, false);
+    nes_shader_skip_frame(shader);
+    nes_shader_enable(shader, true);
+    CHECK(nes_shader_render(shader, &input, 4, 4, &output, error, sizeof(error)) && output.pixels[0] == 0xff000000u);
     nes_shader_destroy(shader);
     SDL_QuitSubSystem(SDL_INIT_VIDEO);
     std::puts("Actual OpenGL multi-pass output, orientation, parameters, failed-reload retention and disable passed");

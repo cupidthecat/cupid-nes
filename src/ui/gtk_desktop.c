@@ -405,11 +405,24 @@ typedef struct {
     DesktopMenuItem item;
 } MenuAction;
 
+static void dismiss_popovers(GtkWidget *widget) {
+    if (GTK_IS_POPOVER(widget)) {
+        gtk_popover_popdown(GTK_POPOVER(widget));
+    }
+    for (GtkWidget *child = gtk_widget_get_first_child(widget); child;
+         child = gtk_widget_get_next_sibling(child)) {
+        dismiss_popovers(child);
+    }
+}
+
 static void menu_action(GSimpleAction *action, GVariant *value, gpointer data) {
     (void)action;
     (void)value;
     MenuAction *a = data;
     FrontendDesktopUi *ui = a->desktop->ui;
+    /* Release the menu's input grab before a command presents another window. */
+    dismiss_popovers(a->desktop->menubar);
+    gtk_widget_grab_focus(a->desktop->picture);
     char error[256] = {0};
     switch (a->item.kind) {
     case 0:
@@ -444,7 +457,6 @@ static void menu_action(GSimpleAction *action, GVariant *value, gpointer data) {
     default:
         break;
     }
-    gtk_widget_grab_focus(a->desktop->picture);
 }
 
 static void free_menu(gpointer p, GClosure *closure) {
@@ -567,8 +579,8 @@ static void sync_actions(CupidGtkDesktop *d) {
 
 static void toolbar_action(GtkButton *button, gpointer data) {
     CupidGtkDesktop *d = data;
-    desktop_invoke_command(d->ui, GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(button), "command")));
     gtk_widget_grab_focus(d->picture);
+    desktop_invoke_command(d->ui, GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(button), "command")));
 }
 
 void cupid_gtk_record_draw(CupidGtkDesktop *d) {
@@ -919,13 +931,32 @@ bool cupid_gtk_init(FrontendDesktopUi *ui) {
         ".cupid-desktop checkbutton check:checked, .cupid-desktop checkbutton check:indeterminate,"
         ".cupid-desktop checkbutton radio:checked {"
         " background-color: @theme_selected_bg_color; color: @theme_selected_fg_color; }"
-        ".cupid-desktop button:checked, .cupid-desktop notebook > header tab:checked {"
+        ".cupid-desktop button:checked {"
         " background-color: alpha(@theme_selected_bg_color, 0.22); }"
         ".cupid-desktop spinbutton entry { background-color: transparent; }"
-        ".cupid-desktop *:focus-visible { outline: 1px solid @theme_selected_bg_color; outline-offset: -2px; }"
+        ".cupid-desktop *:focus:focus-visible { outline: 1px solid @theme_selected_bg_color; outline-offset: -2px; }"
+        ".cupid-desktop .game-view:focus { outline: none; }"
         ".cupid-desktop entry { min-height: 24px; padding: 2px 6px; border-radius: 2px; }"
-        ".cupid-desktop dropdown button { min-height: 24px; }"
-        ".cupid-desktop notebook > header tab { min-height: 24px; padding: 3px 9px; }"
+        ".cupid-desktop dropdown { background-color: alpha(@theme_fg_color, 0.07); border-radius: 3px; }"
+        ".cupid-desktop dropdown:hover { background-color: alpha(@theme_fg_color, 0.12); }"
+        ".cupid-desktop dropdown > button, .cupid-desktop dropdown > button:hover {"
+        " min-height: 24px; margin: 0; background-image: none; background-color: transparent; color: @theme_fg_color; }"
+        ".cupid-desktop dropdown > button:checked { background-color: alpha(@theme_fg_color, 0.12); }"
+        ".cupid-desktop dropdown > button row, .cupid-desktop dropdown > button row:selected {"
+        " background-image: none; background-color: transparent; color: @theme_fg_color; }"
+        ".cupid-desktop dropdown popover row:hover {"
+        " background-color: alpha(@theme_fg_color, 0.09); color: @theme_fg_color; }"
+        ".cupid-desktop notebook > header { padding: 2px; background-color: alpha(@theme_fg_color, 0.035); }"
+        ".cupid-desktop notebook > header tab { min-height: 24px; padding: 3px 9px; margin: 2px 3px; border-radius: 3px;"
+        " background-image: none; background-color: transparent; color: alpha(@theme_fg_color, 0.75); }"
+        ".cupid-desktop notebook > header tab:hover { background-color: alpha(@theme_fg_color, 0.06); }"
+        ".cupid-desktop notebook > header tab:checked {"
+        " background-image: none; background-color: alpha(@theme_fg_color, 0.10); color: @theme_fg_color;"
+        " box-shadow: inset 0 -2px alpha(@theme_fg_color, 0.55); }"
+        ".cupid-desktop .navigation-sidebar row:hover { background-color: alpha(@theme_fg_color, 0.06); }"
+        ".cupid-desktop .navigation-sidebar row:selected {"
+        " background-color: alpha(@theme_fg_color, 0.10); color: @theme_fg_color;"
+        " box-shadow: inset 3px 0 alpha(@theme_fg_color, 0.55); }"
         ".cupid-desktop frame { border-radius: 2px; }"
         ".cupid-desktop frame > label { margin: 2px 8px; font-weight: bold; }"
         ".cupid-desktop flowboxchild { padding: 0; }"
@@ -1018,6 +1049,7 @@ static void refresh_information(CupidGtkTool *t) {
 
 FrontendDesktopUi *cupid_gtk_open(FrontendDesktopUi *ui, int kind, unsigned id) {
     CupidGtkDesktop *d = ui->gtk;
+    dismiss_popovers(d->menubar);
     for (CupidGtkTool *t = d->tools; t; t = t->next) {
         if (t->kind == kind && (t->id == id || kind == 3)) {
             if (kind == 2) refresh_information(t);
@@ -1064,7 +1096,7 @@ FrontendDesktopUi *cupid_gtk_open(FrontendDesktopUi *ui, int kind, unsigned id) 
         gtk_window_set_default_size(GTK_WINDOW(t->window), id ? 760 : 540, id ? 480 : 300);
     }
     if (kind == 3) {
-        gtk_window_set_default_size(GTK_WINDOW(t->window), 760, 510);
+        gtk_window_set_default_size(GTK_WINDOW(t->window), 800, 620);
     }
     gtk_window_set_transient_for(GTK_WINDOW(t->window), GTK_WINDOW(d->window));
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
@@ -1109,9 +1141,29 @@ FrontendDesktopUi *cupid_gtk_open(FrontendDesktopUi *ui, int kind, unsigned id) 
     return &t->ui;
 }
 
+static void shader_viewport(void *context, const NesVideoPresentationFrame *input, unsigned *width, unsigned *height) {
+    CupidGtkDesktop *d = context;
+    unsigned w = input->width, h = input->height;
+    if (d->ui->settings->aspect_mode == FRONTEND_ASPECT_4_3 && input->screens) {
+        w = (unsigned)(((uint64_t)h * 4u * input->screens + 2u) / 3u);
+    }
+    SDL_Rect game;
+    frontend_desktop_game_rect(d->ui, gtk_widget_get_width(d->picture), gtk_widget_get_height(d->picture),
+                              (int)w, (int)h, d->ui->settings->integer_scaling, &game);
+    if (game.w > 0 && game.h > 0) {
+        unsigned scale = (unsigned)gtk_widget_get_scale_factor(d->picture);
+        *width = (unsigned)game.w * scale;
+        *height = (unsigned)game.h * scale;
+    }
+}
+
 void cupid_gtk_render(FrontendDesktopUi *ui, const char *title, const char *region, const char *state) {
     CupidGtkDesktop *d = ui->gtk;
-    if (ui->video) ui->video->pixels_only = true;
+    if (ui->video) {
+        ui->video->pixels_only = true;
+        ui->video->viewport_size = shader_viewport;
+        ui->video->viewport_context = d;
+    }
     theme(d);
     size_t recent = frontend_session_recent_count(ui->sessions ? ui->sessions->session : ui->idle_session);
     bool session = frontend_panel_session_active();
@@ -1315,7 +1367,11 @@ void cupid_gtk_save_size(FrontendDesktopUi *ui) {
 void cupid_gtk_shutdown(FrontendDesktopUi *ui) {
     CupidGtkDesktop *d = ui->gtk;
     cupid_gtk_native_video_destroy(d);
-    if (ui->video) ui->video->pixels_only = false;
+    if (ui->video) {
+        ui->video->pixels_only = false;
+        ui->video->viewport_size = NULL;
+        ui->video->viewport_context = NULL;
+    }
     cupid_gtk_files_shutdown();
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, d->joystick_background ? "1" : "0");
     release_keys(d);

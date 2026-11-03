@@ -43,6 +43,11 @@ typedef struct {
     bool composite;
     /* Pixel consumers do not need a duplicate upload to the hidden SDL host. */
     bool pixels_only;
+    /* Native frontends supply the game destination in physical pixels. */
+    void (*viewport_size)(void *context, const NesVideoPresentationFrame *input, unsigned *width, unsigned *height);
+    void *viewport_context;
+    unsigned shader_source_width, shader_source_height;
+    bool shader_rendered;
 } FrontendVideoRuntime;
 
 bool frontend_video_runtime_init(FrontendVideoRuntime *runtime, SDL_Renderer *renderer,

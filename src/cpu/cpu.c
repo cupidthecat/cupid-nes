@@ -233,8 +233,15 @@ static void clock_ppu_master(unsigned clocks) {
     const NesTiming *timing = nes_timing();
     epsm_clock_master(clocks, (uint32_t)(timing->cpu_hz * timing->cpu_divider));
     unsigned phase = ppu_master_phase + clocks;
-    ppu_step_dots((int)(phase / timing->ppu_divider));
-    ppu_master_phase = (uint8_t)(phase % timing->ppu_divider);
+    /* NTSC uses a power-of-two divider. Avoid two variable
+     * divisions on every half CPU clock without changing any bus phase. */
+    if (timing->ppu_divider == 4) {
+        ppu_step_dots((int)(phase >> 2));
+        ppu_master_phase = (uint8_t)(phase & 3u);
+    } else {
+        ppu_step_dots((int)(phase / timing->ppu_divider));
+        ppu_master_phase = (uint8_t)(phase % timing->ppu_divider);
+    }
 }
 
 static void begin_cpu_cycle(bool read) {

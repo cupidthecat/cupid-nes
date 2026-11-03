@@ -231,10 +231,12 @@ editor with an error beside the input. Load cheat file, Save cheat file, and
 Load Lua Script open file choosers. Canceling a chooser leaves the active
 cheats or script unchanged.
 
-View > Palette > Palette editor (F7) opens a separate window with all 64 colors. Select a swatch, drag an RGB
-slider, or use its minus/plus buttons. Load palette opens a `.pal` file; Reset
-palette restores the default colors. Ctrl+V accepts palette text while the
-editor is open. Escape or Close returns to the game.
+View > Palette > Palette editor (F7) opens a separate window with all 64 colors.
+The grid sits above two expanding control groups. Select a swatch or enter its
+index, choose a color with the color button, then press Apply color. Undo last
+edit restores the preceding colors. Import PAL and Export PAL read and write
+`.pal` files containing 64 RGB colors or eight emphasis tables. Restore default
+palette returns to the built-in colors. These edits affect displayed colors.
 
 ![Debugger in its own window](images/desktop-debugger-window.png)
 
@@ -243,8 +245,10 @@ editor is open. Escape or Close returns to the game.
 Settings and menus follow the pause-on-UI preference. This automatic pause is
 separate from manual pause, so closing a window or returning from another app
 does not undo a manual pause. Returning to the game resets its pacing deadline
-and audio output buffer. Selecting a speed ends held or toggled fast-forward;
-VSync is suspended at speeds other than 100%. Tool windows refresh at most
+and audio output buffer. Selecting a speed ends held or toggled fast-forward.
+The native desktop leaves synchronization to the desktop compositor. Its VSync
+setting is labeled as managed by the desktop and cannot be changed. The SDL
+frontend suspends VSync at speeds other than 100%. Tool windows refresh at most
 30 times per second and do not wait for VSync.
 
 Rewind snapshots lock audio state briefly without pausing and restarting the

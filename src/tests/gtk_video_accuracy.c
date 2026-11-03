@@ -85,6 +85,50 @@ bool test_gtk_picture_pixels(void) {
     return true;
 }
 
+static bool viewport_shader(FrontendDesktopUi *ui, const char *preset) {
+    GError *error = NULL;
+    CHECK(g_file_set_contents(preset, "shaders=1\nshader0=pass.glsl\nscale_type0=viewport\nscale0=1.0\n", -1, &error));
+    FrontendVideoRuntime video;
+    char why[512] = {0};
+    CHECK(frontend_video_runtime_init(&video, ui->renderer, ui->settings, false, why, sizeof(why)));
+    CHECK(frontend_video_runtime_load_shader(&video, preset, why, sizeof(why)));
+    FrontendVideoRuntime *previous = ui->video;
+    ui->video = &video;
+    bool integer = ui->settings->integer_scaling;
+    FrontendAspectMode aspect = ui->settings->aspect_mode;
+    int saved_w, saved_h;
+    gtk_window_get_default_size(GTK_WINDOW(ui->gtk->window), &saved_w, &saved_h);
+    for (unsigned mode = 0; mode < 3; ++mode) {
+        ui->settings->integer_scaling = mode == 2;
+        ui->settings->aspect_mode = mode == 1 ? FRONTEND_ASPECT_4_3 : FRONTEND_ASPECT_SOURCE;
+        gtk_window_set_default_size(GTK_WINDOW(ui->gtk->window), mode ? 1200 : 800, mode ? 850 : 600);
+        pump(ui);
+        CHECK(frontend_video_runtime_refresh(&video, why, sizeof(why)) && video.shader_rendered);
+        unsigned w, h;
+        frontend_video_runtime_display_size(&video, &w, &h);
+        CHECK(h == video.shader_source_height);
+        if (mode != 1) CHECK(w == video.shader_source_width);
+        SDL_Rect destination;
+        frontend_desktop_game_rect(ui, gtk_widget_get_width(ui->gtk->picture), gtk_widget_get_height(ui->gtk->picture),
+                                  (int)w, (int)h, ui->settings->integer_scaling, &destination);
+        unsigned scale = (unsigned)gtk_widget_get_scale_factor(ui->gtk->picture);
+        CHECK(video.frame.width == (unsigned)destination.w * scale);
+        CHECK(video.frame.height == (unsigned)destination.h * scale);
+        unsigned side;
+        int x, y;
+        CHECK(frontend_video_runtime_aim(&video, (int)video.frame.width - 1, (int)video.frame.height - 1, &side, &x, &y));
+        CHECK(side == 0 && x == 255 - (int)video.frame.overscan.right && y == 239 - (int)video.frame.overscan.bottom);
+    }
+    ui->video = previous;
+    ui->settings->integer_scaling = integer;
+    ui->settings->aspect_mode = aspect;
+    gtk_window_set_default_size(GTK_WINDOW(ui->gtk->window), saved_w, saved_h);
+    frontend_video_runtime_shutdown(&video);
+    pump(ui);
+    puts("GTK viewport shaders follow resize, aspect, integer scaling and physical pixels: PASS");
+    return true;
+}
+
 bool test_gtk_shader_context(FrontendDesktopUi *ui) {
     if (GSK_IS_CAIRO_RENDERER(gtk_native_get_renderer(GTK_NATIVE(ui->gtk->window)))) return true;
     GError *error = NULL;
@@ -132,6 +176,7 @@ bool test_gtk_shader_context(FrontendDesktopUi *ui) {
     CHECK(gdk_gl_context_get_current() == context);
     gdk_gl_context_clear_current();
     g_object_unref(context);
+    CHECK(viewport_shader(ui, preset));
     CHECK(remove(preset) == 0 && remove(source) == 0);
     CHECK(g_rmdir(directory) == 0);
     g_free(preset);

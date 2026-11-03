@@ -225,8 +225,7 @@ static void describe(Ppu *v) {
     if (v->runtime_palette) {
         uint32_t c = v->pixels[v->selected];
         snprintf(text, sizeof(text),
-                 "Color $%02X\nRGB #%06X\n\nChanges affect display colors, not game memory.\nPAL files contain 64 RGB "
-                 "colors or eight emphasis tables.",
+                 "Color $%02X\nRGB #%06X\n\nEdits update displayed game colors.",
                  v->selected, c & 0xffffff);
         GdkRGBA color = {(float)((c >> 16) & 255) / 255, (float)((c >> 8) & 255) / 255, (float)(c & 255) / 255, 1};
         if (!v->color_initialized || v->color_selected != v->selected) {
@@ -844,16 +843,20 @@ GtkWidget *cupid_gtk_ppu_new(CupidGtkTool *tool) {
     if (v->runtime_palette || (v->panel != DEBUG_PPU_REGISTERS && v->panel != DEBUG_PPU_VRAM)) {
         button(bar, "Export PNG", G_CALLBACK(file_clicked), v);
     }
-    GtkWidget *split = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
+    GtkWidget *split = gtk_paned_new(v->runtime_palette ? GTK_ORIENTATION_VERTICAL : GTK_ORIENTATION_HORIZONTAL);
     gtk_widget_set_vexpand(split, TRUE);
     gtk_box_append(GTK_BOX(v->root), split);
-    GtkWidget *side = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    GtkWidget *side = gtk_box_new(v->runtime_palette ? GTK_ORIENTATION_HORIZONTAL : GTK_ORIENTATION_VERTICAL, 8);
     cupid_gtk_margins(side, 8);
-    gtk_widget_set_size_request(side, 260, -1);
+    if (v->runtime_palette) {
+        gtk_box_set_homogeneous(GTK_BOX(side), TRUE);
+    } else {
+        gtk_widget_set_size_request(side, 260, -1);
+    }
     gtk_paned_set_end_child(GTK_PANED(split), cupid_gtk_scroll(side));
     gtk_paned_set_resize_end_child(GTK_PANED(split), FALSE);
     gtk_paned_set_shrink_start_child(GTK_PANED(split), FALSE);
-    gtk_paned_set_position(GTK_PANED(split), 550);
+    gtk_paned_set_position(GTK_PANED(split), v->runtime_palette ? 190 : 550);
     GtkWidget *sidebar = side;
     const char *selection_title = v->runtime_palette || v->panel == DEBUG_PPU_PALETTE ? "Selected color"
                                   : v->panel == DEBUG_PPU_SPRITES                     ? "Selected sprite"
@@ -864,7 +867,7 @@ GtkWidget *cupid_gtk_ppu_new(CupidGtkTool *tool) {
         side = cupid_gtk_group(sidebar, selection_title);
     }
     v->canvas = gtk_drawing_area_new();
-    gtk_widget_set_size_request(v->canvas, 256, 240);
+    gtk_widget_set_size_request(v->canvas, 256, v->runtime_palette ? 128 : 240);
     gtk_widget_set_hexpand(v->canvas, TRUE);
     gtk_widget_set_vexpand(v->canvas, TRUE);
     gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(v->canvas), draw, v, NULL);
@@ -928,16 +931,25 @@ GtkWidget *cupid_gtk_ppu_new(CupidGtkTool *tool) {
                                NULL};
         v->mode = dropdown(side, "View", modes, v);
     }
+    GtkWidget *edit_actions = NULL;
     if (v->runtime_palette) {
         v->color = gtk_color_button_new();
         gtk_color_chooser_set_use_alpha(GTK_COLOR_CHOOSER(v->color), FALSE);
         gtk_box_append(GTK_BOX(side), v->color);
-        v->apply = button(side, "Apply color", G_CALLBACK(apply), v);
-        button(side, "Restore default palette", G_CALLBACK(reset_palette), v);
-        GtkWidget *load = button(side, "Import PAL", G_CALLBACK(file_clicked), v);
+        edit_actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+        gtk_box_set_homogeneous(GTK_BOX(edit_actions), TRUE);
+        gtk_box_append(GTK_BOX(side), edit_actions);
+        v->apply = button(edit_actions, "Apply color", G_CALLBACK(apply), v);
+        GtkWidget *files = cupid_gtk_group(sidebar, "Palette files");
+        GtkWidget *hint = cupid_gtk_label("PAL files contain 64 RGB colors or eight emphasis tables.");
+        gtk_label_set_wrap(GTK_LABEL(hint), TRUE);
+        gtk_label_set_max_width_chars(GTK_LABEL(hint), 32);
+        gtk_box_append(GTK_BOX(files), hint);
+        GtkWidget *load = button(files, "Import PAL", G_CALLBACK(file_clicked), v);
         g_object_set_data(G_OBJECT(load), "mode", GUINT_TO_POINTER(1));
-        GtkWidget *save = button(side, "Export PAL", G_CALLBACK(file_clicked), v);
+        GtkWidget *save = button(files, "Export PAL", G_CALLBACK(file_clicked), v);
         g_object_set_data(G_OBJECT(save), "mode", GUINT_TO_POINTER(2));
+        button(files, "Restore default palette", G_CALLBACK(reset_palette), v);
     } else if (v->panel == DEBUG_PPU_VRAM || v->panel == DEBUG_PPU_PALETTE) {
         v->value = gtk_entry_new();
         gtk_entry_set_placeholder_text(GTK_ENTRY(v->value), "Hex byte, 00–FF");
@@ -948,8 +960,10 @@ GtkWidget *cupid_gtk_ppu_new(CupidGtkTool *tool) {
     if (!v->runtime_palette && v->panel == DEBUG_PPU_PATTERNS) {
         button(side, "Open tile editor", G_CALLBACK(open_tile), v);
     }
-    v->undo = button(side, "Undo last edit", G_CALLBACK(undo), v);
-    side = cupid_gtk_group(sidebar, v->panel == DEBUG_PPU_REGISTERS ? "PPU registers" : "Selection details");
+    v->undo = button(edit_actions ? edit_actions : side, "Undo last edit", G_CALLBACK(undo), v);
+    if (!v->runtime_palette) {
+        side = cupid_gtk_group(sidebar, v->panel == DEBUG_PPU_REGISTERS ? "PPU registers" : "Selection details");
+    }
     v->detail = cupid_gtk_label("");
     gtk_label_set_wrap(GTK_LABEL(v->detail), TRUE);
     gtk_label_set_selectable(GTK_LABEL(v->detail), TRUE);

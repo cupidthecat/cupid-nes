@@ -20,7 +20,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install GTK development dependencies
-        run: sudo apt-get update && sudo apt-get install -y build-essential libgtk-4-dev libsdl2-dev libcurl4-openssl-dev xvfb
+        run: sudo apt-get update && sudo apt-get install -y build-essential libgtk-4-dev libsdl2-dev libcurl4-openssl-dev xvfb weston
       - name: Build production GTK desktop
         run: make -j2 GTK=1 BUILD_REVISION=${{ github.sha }} all gtk-smoke
       - name: Validate GTK settings transactions under Xvfb
@@ -42,6 +42,20 @@ jobs:
         run: |
           xvfb-run -a env GSK_RENDERER=ngl SDL_RENDER_DRIVER=opengl SDL_FRAMEBUFFER_ACCELERATION=1 G_DEBUG=fatal-criticals python3 scripts/check-gtk-launch.py ./cupid-nes
           xvfb-run -a env -u GSK_RENDERER SDL_RENDER_DRIVER=opengl SDL_FRAMEBUFFER_ACCELERATION=1 G_DEBUG=fatal-criticals python3 scripts/check-gtk-launch.py ./cupid-nes
+      - name: Check palette layout, popup dismissal and hover styling
+        run: xvfb-run -a env GSK_RENDERER=cairo SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke --palette-check
+      - name: Check native Wayland startup
+        run: |
+          export XDG_RUNTIME_DIR=$(mktemp -d)
+          weston --backend=headless-backend.so --socket=cupid-wayland --idle-time=0 > build/weston.log 2>&1 &
+          weston_pid=$!
+          trap 'kill "$weston_pid"; rm -rf "$XDG_RUNTIME_DIR"' EXIT
+          for attempt in $(seq 1 50); do
+            test -S "$XDG_RUNTIME_DIR/cupid-wayland" && break
+            sleep 0.1
+          done
+          test -S "$XDG_RUNTIME_DIR/cupid-wayland"
+          WAYLAND_DISPLAY=cupid-wayland GSK_RENDERER=cairo python3 scripts/check-gtk-launch.py ./cupid-nes --backend wayland
       - name: Check Linux TAS grid pixels and playback following
         run: |
           xvfb-run -a env GSK_RENDERER=cairo G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke --tas-video-check

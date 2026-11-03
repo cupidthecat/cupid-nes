@@ -397,25 +397,31 @@ static bool command_mute(void *context, char *error, size_t error_size) {
 SDL_Renderer *frontend_desktop_create_renderer(SDL_Window *window, Uint32 flags) {
     if (!window) return NULL;
 #ifdef CUPID_GTK
-    /* GTK owns the visible surface. An unused SDL GL renderer on its hidden
-     * host can prevent GTK's EGL context from becoming current on X11.
-     * Select the software driver explicitly, including when SDL has a hint. */
+    /* The hidden GTK host needs no native window framebuffer. Wayland has no
+     * unaccelerated window surface, and an SDL GL surface conflicts with GTK's
+     * current context on X11. Keep software rendering entirely offscreen. */
     (void)flags;
-    /* SDL can back even a software renderer with an accelerated window surface.
-     * The hidden host needs neither that surface's GL context nor its texture. */
-    SDL_SetHintWithPriority(SDL_HINT_FRAMEBUFFER_ACCELERATION, "0", SDL_HINT_OVERRIDE);
-    for (int i = 0; i < SDL_GetNumRenderDrivers(); ++i) {
-        SDL_RendererInfo info;
-        if (SDL_GetRenderDriverInfo(i, &info) == 0 && (info.flags & SDL_RENDERER_SOFTWARE)) {
-            return SDL_CreateRenderer(window, i, SDL_RENDERER_SOFTWARE);
-        }
+    int width, height;
+    SDL_GetWindowSize(window, &width, &height);
+    SDL_Surface *surface = SDL_CreateRGBSurfaceWithFormat(0, width, height, 32, SDL_PIXELFORMAT_ARGB8888);
+    if (!surface) return NULL;
+    SDL_Renderer *renderer = SDL_CreateSoftwareRenderer(surface);
+    if (!renderer) {
+        SDL_FreeSurface(surface);
+        return NULL;
     }
-    SDL_SetError("No software renderer is available for the GTK host");
-    return NULL;
+
+    SDL_SetWindowData(window, "cupid-host-surface", surface);
+    return renderer;
 #else
     SDL_Renderer *renderer = SDL_CreateRenderer(window, -1, flags);
     return renderer ? renderer : SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
 #endif
+}
+
+void frontend_desktop_destroy_renderer(SDL_Window *window, SDL_Renderer *renderer) {
+    SDL_DestroyRenderer(renderer);
+    if (window) SDL_FreeSurface(SDL_SetWindowData(window, "cupid-host-surface", NULL));
 }
 
 void frontend_desktop_init(FrontendDesktopUi *ui, SDL_Window *window,
@@ -581,6 +587,7 @@ void desktop_setting_text(FrontendDesktopUi *ui, int row, char *label, size_t lc
             const char *labels[] = {"Fullscreen", "Integer scaling", "VSync", "Aspect ratio",
                 "Composite output", "Background layer", "Sprite layer"};
             snprintf(label, lc, "%s", labels[row]);
+            if (row == 2 && ui->gtk) snprintf(label, lc, "VSync (managed by desktop)");
             if (row == 0) snprintf(value, vc, "%s", on_off(s->fullscreen));
             else if (row == 1) snprintf(value, vc, "%s", on_off(s->integer_scaling));
             else if (row == 2) snprintf(value, vc, "%s", on_off(s->vsync));
@@ -910,7 +917,7 @@ void desktop_commit_edit(FrontendDesktopUi *ui) {
                 desktop_copy_status(ui, "Audio device name is too long");
                 return;
             }
-            snprintf(s->audio_device, sizeof(s->audio_device), "%s", ui->edit_text);
+            memcpy(s->audio_device, ui->edit_text, strlen(ui->edit_text) + 1);
         } else if (ui->settings_category == 4 && row == 7) {
             size_t size = strlen(ui->edit_text);
             if (size >= FRONTEND_SETTINGS_GUID_TEXT) {

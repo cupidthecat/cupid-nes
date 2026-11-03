@@ -363,6 +363,12 @@ bool nes_shader_enabled(const NesShaderPreset *shader) {
     return shader && shader->enabled;
 }
 
+void nes_shader_skip_frame(NesShaderPreset *shader) {
+    if (nes_shader_enabled(shader)) {
+        ++shader->frame;
+    }
+}
+
 const char *nes_shader_path(const NesShaderPreset *shader) {
     return shader ? shader->path.c_str() : "";
 }

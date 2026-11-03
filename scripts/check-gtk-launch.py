@@ -3,6 +3,7 @@
 # Author: @frankischilling
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Start the desktop on a real display (or Xvfb); fail on early exit or GTK errors."""
+import argparse
 import os
 from pathlib import Path
 import subprocess
@@ -37,13 +38,17 @@ def check_launch(executable, arguments, environment):
 
 
 def main():
-    executable = Path(sys.argv[1]).resolve()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('executable', type=Path)
+    parser.add_argument('--backend', choices=('x11', 'wayland'), default='x11')
+    arguments = parser.parse_args()
+    executable = arguments.executable.resolve()
     with tempfile.TemporaryDirectory(prefix='cupid-gtk-smoke-') as temporary:
         environment = dict(os.environ, SDL_AUDIODRIVER='dummy')
         environment.pop('SDL_VIDEODRIVER', None)
         if sys.platform != 'win32':
-            environment['GDK_BACKEND'] = 'x11'
-            environment['SDL_VIDEODRIVER'] = 'x11'
+            environment['GDK_BACKEND'] = arguments.backend
+            environment['SDL_VIDEODRIVER'] = arguments.backend
         # Isolate all preferences and prevent the smoke test changing user data.
         for name in ('HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'XDG_CONFIG_HOME',
                      'XDG_DATA_HOME', 'XDG_CACHE_HOME'):

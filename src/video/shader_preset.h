@@ -37,6 +37,8 @@ bool nes_shader_load(NesShaderPreset *shader, const char *path, char *error, siz
 bool nes_shader_reload(NesShaderPreset *shader, char *error, size_t size);
 void nes_shader_enable(NesShaderPreset *shader, bool enabled);
 bool nes_shader_enabled(const NesShaderPreset *shader);
+/* Preserve FrameCount when a completed display frame is discarded. */
+void nes_shader_skip_frame(NesShaderPreset *shader);
 const char *nes_shader_path(const NesShaderPreset *shader);
 size_t nes_shader_parameter_count(const NesShaderPreset *shader);
 /* Sorted regular .glslp files in one directory; no recursive or symlink scan. */

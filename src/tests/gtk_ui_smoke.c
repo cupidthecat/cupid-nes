@@ -725,15 +725,81 @@ static bool capture_tool(FrontendDesktopUi *ui, CupidGtkTool *tool, unsigned pan
     return true;
 }
 
+static bool palette_layout_check(FrontendDesktopUi *ui, const char *out) {
+    GtkWidget *menu = find_widget(ui->gtk->menubar, GTK_TYPE_POPOVER);
+    CHECK(menu);
+    gtk_popover_popup(GTK_POPOVER(menu));
+    CHECK(gtk_widget_get_visible(menu));
+    CupidGtkTool *tool = find_tool(ui, cupid_gtk_open(ui, 3, 0));
+    CHECK(tool);
+    pump(ui);
+    CHECK(!gtk_widget_get_visible(menu));
+    CHECK(!gtk_window_get_modal(GTK_WINDOW(tool->window)));
+    GtkWidget *split = find_widget(tool->content, GTK_TYPE_PANED);
+    CHECK(split && gtk_orientable_get_orientation(GTK_ORIENTABLE(split)) == GTK_ORIENTATION_VERTICAL);
+    GtkWidget *scroll = gtk_paned_get_end_child(GTK_PANED(split));
+    GtkWidget *color = find_widget(tool->content, GTK_TYPE_COLOR_BUTTON);
+    CHECK(color && GTK_IS_SCROLLED_WINDOW(scroll));
+    int previous_width = 0;
+    for (unsigned size = 0; size < 3; ++size) {
+        gtk_window_set_default_size(GTK_WINDOW(tool->window), 620 + (int)size * 240, 620);
+        pump(ui);
+        GtkAdjustment *horizontal = gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(scroll));
+        CHECK(gtk_adjustment_get_upper(horizontal) <= gtk_adjustment_get_page_size(horizontal) + 1);
+        GtkAdjustment *vertical = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroll));
+        CHECK(gtk_adjustment_get_upper(vertical) <= gtk_adjustment_get_page_size(vertical) + 1);
+        int width = gtk_widget_get_width(color);
+        CHECK(width > previous_width && width >= 200);
+        previous_width = width;
+        char path[4096];
+        g_snprintf(path, sizeof(path), "%s/palette-%u.png", out, size);
+        CHECK(capture_ready(ui, tool->window, path));
+    }
+    gtk_widget_set_visible(tool->window, FALSE);
+    CupidGtkTool *preferences = find_tool(ui, cupid_gtk_open(ui, 0, 0));
+    CHECK(preferences);
+    preferences->ui.settings_category = 2;
+    cupid_gtk_settings_reset(preferences->content);
+    pump(ui);
+    GtkWidget *dropdown = find_widget(preferences->content, GTK_TYPE_DROP_DOWN);
+    GtkWidget *tabs = find_widget(preferences->content, GTK_TYPE_NOTEBOOK);
+    CHECK(dropdown && tabs);
+    GtkWidget *toggle = find_widget(dropdown, GTK_TYPE_BUTTON);
+    CHECK(toggle);
+    guint selected = gtk_drop_down_get_selected(GTK_DROP_DOWN(dropdown));
+    gtk_widget_set_state_flags(dropdown, GTK_STATE_FLAG_PRELIGHT, FALSE);
+    gtk_widget_set_state_flags(toggle, GTK_STATE_FLAG_PRELIGHT, FALSE);
+    char path[4096];
+    g_snprintf(path, sizeof(path), "%s/dropdown-hover.png", out);
+    CHECK(capture_ready(ui, preferences->window, path));
+    CHECK(gtk_drop_down_get_selected(GTK_DROP_DOWN(dropdown)) == selected);
+    gtk_widget_unset_state_flags(toggle, GTK_STATE_FLAG_PRELIGHT);
+    gtk_widget_unset_state_flags(dropdown, GTK_STATE_FLAG_PRELIGHT);
+    gtk_notebook_set_current_page(GTK_NOTEBOOK(tabs), 1);
+    pump(ui);
+    GtkWidget *neighbor = gtk_widget_get_parent(gtk_notebook_get_tab_label(GTK_NOTEBOOK(tabs),
+        gtk_notebook_get_nth_page(GTK_NOTEBOOK(tabs), 0)));
+    gtk_widget_set_state_flags(neighbor, GTK_STATE_FLAG_PRELIGHT, FALSE);
+    g_snprintf(path, sizeof(path), "%s/selected-tab.png", out);
+    CHECK(capture_ready(ui, preferences->window, path));
+    CHECK(gtk_notebook_get_current_page(GTK_NOTEBOOK(tabs)) == 1);
+    gtk_widget_unset_state_flags(neighbor, GTK_STATE_FLAG_PRELIGHT);
+    gtk_widget_set_visible(preferences->window, FALSE);
+    puts("GTK palette layout: controls expand at three widths without horizontal scrolling: PASS");
+    return true;
+}
+
 int main(int argc, char **argv) {
     if ((argc == 3 || argc == 4) && !strcmp(argv[1], "--benchmark")) {
         return benchmark_gtk(argv[2], argc == 4 ? argv[3] : NULL);
     }
     bool startup_check = argc == 2 && !strcmp(argv[1], "--startup-check");
+    bool input_check = argc == 2 && !strcmp(argv[1], "--input-check");
+    bool palette_check = argc == 2 && !strcmp(argv[1], "--palette-check");
     bool native_check = argc == 2 && !strcmp(argv[1], "--native-video-check");
     bool tas_check = argc == 2 && !strcmp(argv[1], "--tas-video-check");
     bool session_check = argc == 2 && !strcmp(argv[1], "--session-ui-check");
-    const char *out = session_check ? "build/gtk-session-check" : tas_check ? "build/gtk-tas-check" : native_check ? "build/gtk-native-video" : startup_check ? "build/gtk-startup-check" : argc > 1 ? argv[1] : "build/gtk-smoke";
+    const char *out = palette_check ? "build/gtk-palette-check" : input_check ? "build/gtk-input-check" : session_check ? "build/gtk-session-check" : tas_check ? "build/gtk-tas-check" : native_check ? "build/gtk-native-video" : startup_check ? "build/gtk-startup-check" : argc > 1 ? argv[1] : "build/gtk-smoke";
     g_mkdir_with_parents(out, 0755);
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_TIMER) != 0) {
         return 1;
@@ -780,6 +846,14 @@ int main(int argc, char **argv) {
         fprintf(stderr, "GTK host did not select an SDL software surface without a GL context: %s\n", SDL_GetError());
         return 1;
     }
+    /* The hidden host must own no native framebuffer or graphics context.
+     * Exercise software drawing independently of the selected window backend. */
+    if (SDL_RenderGetWindow(renderer) != NULL || SDL_SetRenderDrawColor(renderer, 32, 64, 96, 255) != 0 ||
+        SDL_RenderClear(renderer) != 0) return 1;
+    uint32_t host_pixel = 0;
+    SDL_Rect host_sample = {0, 0, 1, 1};
+    if (SDL_RenderReadPixels(renderer, &host_sample, SDL_PIXELFORMAT_ARGB8888, &host_pixel, sizeof(host_pixel)) != 0 ||
+        host_pixel != 0xff204060u) return 1;
     FrontendDesktopUi ui;
     char *debug_override = g_strdup(g_getenv("GDK_DEBUG"));
     char *renderer_override = g_strdup(g_getenv("GSK_RENDERER"));
@@ -807,7 +881,7 @@ int main(int argc, char **argv) {
         frontend_desktop_shutdown(&ui);
         frontend_execution_shutdown(&execution);
         unload_rom();
-        SDL_DestroyRenderer(renderer);
+        frontend_desktop_destroy_renderer(window, renderer);
         SDL_DestroyWindow(window);
         SDL_Quit();
         puts("GTK default compositor selection: PASS");
@@ -824,8 +898,19 @@ int main(int argc, char **argv) {
     video.frame.screens = 1;
     ui.video = &video;
     preview_pattern();
-    if (!test_gtk_picture_pixels() || !test_gtk_shortcuts(&ui)) {
+    if (!test_gtk_picture_pixels() || (!palette_check && !test_gtk_shortcuts(&ui))) {
         return 1;
+    }
+    if (input_check || palette_check) {
+        pump(&ui);
+        bool passed = palette_check ? palette_layout_check(&ui, out) : test_gtk_input_accuracy(&ui);
+        frontend_desktop_shutdown(&ui);
+        frontend_execution_shutdown(&execution);
+        unload_rom();
+        frontend_desktop_destroy_renderer(window, renderer);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return passed ? 0 : 1;
     }
     if (native_check) {
         frontend_panel_set_session_active(true);
@@ -835,7 +920,7 @@ int main(int argc, char **argv) {
         frontend_desktop_shutdown(&ui);
         frontend_execution_shutdown(&execution);
         unload_rom();
-        SDL_DestroyRenderer(renderer);
+        frontend_desktop_destroy_renderer(window, renderer);
         SDL_DestroyWindow(window);
         SDL_Quit();
         puts(passed ? "GTK accelerated game view: PASS" : "GTK accelerated game view: FAIL");
@@ -849,7 +934,7 @@ int main(int argc, char **argv) {
         tas_frontend_unregister();
         frontend_execution_shutdown(&execution);
         unload_rom();
-        SDL_DestroyRenderer(renderer);
+        frontend_desktop_destroy_renderer(window, renderer);
         SDL_DestroyWindow(window);
         SDL_Quit();
         puts(passed ? "GTK TAS grid pixels, preview and playback following: PASS" : "GTK TAS playback: FAIL");
@@ -868,7 +953,7 @@ int main(int argc, char **argv) {
         state_runtime_shutdown(&states);
         frontend_execution_shutdown(&execution);
         unload_rom();
-        SDL_DestroyRenderer(renderer);
+        frontend_desktop_destroy_renderer(window, renderer);
         SDL_DestroyWindow(window);
         SDL_Quit();
         puts(passed ? "GTK save-state dialogs and live status: PASS" : "GTK session controls: FAIL");
@@ -1060,7 +1145,7 @@ int main(int argc, char **argv) {
     desktop_ppu_unregister();
     frontend_execution_shutdown(&execution);
     unload_rom();
-    SDL_DestroyRenderer(renderer);
+    frontend_desktop_destroy_renderer(window, renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();
     printf("GTK: register/TAS/assembler interactions; %u tool windows rendered at two sizes; settings rendered: %s\n",

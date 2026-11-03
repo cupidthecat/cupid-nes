@@ -313,6 +313,10 @@ static void build(Settings *s) {
             break;
         }
         gtk_widget_set_hexpand(r->widget, r->kind != SETTING_TOGGLE && r->kind != SETTING_NUMBER);
+        if (ui->settings_category == 2 && i == 2) {
+            gtk_widget_set_sensitive(r->widget, FALSE);
+            gtk_widget_set_tooltip_text(row, "The desktop compositor controls synchronization in the native desktop.");
+        }
         gtk_accessible_update_property(GTK_ACCESSIBLE(r->widget), GTK_ACCESSIBLE_PROPERTY_LABEL, label, -1);
         if (r->kind == SETTING_NUMBER) {
             gtk_editable_set_width_chars(GTK_EDITABLE(r->widget), 12);
