@@ -369,6 +369,7 @@ void frontend_execution_init(FrontendExecutionRuntime *runtime,
     runtime->movie_start_kind = NES_MOVIE_START_STATE;
     runtime->tas_pause_frame = SIZE_MAX;
     nes_rewind_init(&runtime->rewind);
+    nes_rewind_track_inputs(&runtime->rewind);
     (void)frontend_execution_set_rewind_seconds(runtime, 10);
     if (rom_path && *rom_path) {
         int length = snprintf(runtime->movie_path, sizeof(runtime->movie_path), "%s.movie", rom_path);
@@ -609,6 +610,7 @@ static bool run_emulation_frame(void *userdata) {
 
 bool frontend_execution_run_frame(FrontendExecutionRuntime *runtime) {
     if (!runtime) return false;
+    runtime->rewind_frame_captured = false;
     replay_frontend_refresh(runtime);
     frontend_execution_sync_debugger(runtime);
     bool loading_fast_forward = fds_loading_fast_forward();
@@ -657,6 +659,9 @@ bool frontend_execution_run_frame(FrontendExecutionRuntime *runtime) {
         lock_audio_for_machine_change(runtime);
         runtime->replay_status = nes_rewind_capture(&runtime->rewind,
                                                     &runtime->replay_state_status);
+        runtime->rewind_frame_captured = runtime->replay_status == NES_REPLAY_OK;
+        /* A missing boundary breaks the continuity of the previous transition. */
+        if (!runtime->rewind_frame_captured) nes_rewind_complete(&runtime->rewind, false);
         unlock_audio_without_refresh(runtime);
         if (runtime->replay_status == NES_REPLAY_DISABLED)
             runtime->replay_status = NES_REPLAY_OK;
@@ -674,6 +679,7 @@ bool frontend_execution_run_frame(FrontendExecutionRuntime *runtime) {
         ran = run_emulation_frame(NULL);
     }
     frontend_netplay_after_frame(runtime->network, ran);
+    if (runtime->rewind_frame_captured) nes_rewind_complete(&runtime->rewind, ran);
     if (ran) execution_control_frame_complete(&runtime->execution);
     if (runtime->movie && nes_movie_mode(runtime->movie) != NES_MOVIE_IDLE) {
         lock_audio_for_machine_change(runtime);

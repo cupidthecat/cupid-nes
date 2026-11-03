@@ -5,6 +5,7 @@
  */
 #include "gtk_desktop.h"
 #include "gtk_internal.h"
+#include "history_frontend.h"
 #include "gtk_layout.h"
 #include "gtk_assembler.h"
 #include "gtk_keyboard.h"
@@ -923,6 +924,9 @@ bool cupid_gtk_init(FrontendDesktopUi *ui) {
         css,
         ".game-view { background: #08090b; } .monospace { font-family: monospace; }"
         ".cupid-desktop { font-size: 12px; }"
+        ".history-video { background: #08090b; }"
+        ".history-viewer scale slider { min-width: 14px; min-height: 14px; margin: 0; padding: 0; }"
+        ".history-viewer scale trough, .history-viewer scale highlight { min-width: 0; min-height: 4px; }"
         ".cupid-desktop, .cupid-desktop * { border-style: none; box-shadow: none; }"
         ".cupid-desktop button { min-height: 22px; padding: 3px 8px; border-radius: 3px; }"
         ".cupid-desktop button, .cupid-desktop entry, .cupid-desktop spinbutton {"
@@ -982,6 +986,8 @@ static gboolean tool_close(GtkWindow *window, gpointer data) {
     gtk_widget_set_visible(t->window, FALSE);
     t->ui.capture_binding = false;
     t->ui.edit_text_active = false;
+    if (t->kind == 1 && t->id == HISTORY_PANEL && t->ui.execution)
+        frontend_history_close(t->ui.execution->history_viewer);
     if (t->prompt) {
         gtk_window_destroy(GTK_WINDOW(t->prompt));
         t->prompt = NULL;
@@ -1055,6 +1061,8 @@ FrontendDesktopUi *cupid_gtk_open(FrontendDesktopUi *ui, int kind, unsigned id) 
     for (CupidGtkTool *t = d->tools; t; t = t->next) {
         if (t->kind == kind && (t->id == id || kind == 3)) {
             if (kind == 2) refresh_information(t);
+            if (kind == 1 && id == HISTORY_PANEL && !gtk_widget_get_visible(t->window))
+                cupid_gtk_history_open(t->content);
             if (kind == 0 && !gtk_widget_get_visible(t->window)) {
                 t->ui.settings_open = false;
                 desktop_settings_open(&t->ui, true);
@@ -1116,6 +1124,8 @@ FrontendDesktopUi *cupid_gtk_open(FrontendDesktopUi *ui, int kind, unsigned id) 
         t->content = cupid_gtk_keyboard_new(t);
     } else if (kind == 1 && id == ASSEMBLER_FRONTEND_PANEL) {
         t->content = cupid_gtk_assembler_new(id);
+    } else if (kind == 1 && id == HISTORY_PANEL) {
+        t->content = cupid_gtk_history_new(t);
     } else if (kind == 1 && id == TAS_PANEL) {
         t->content = cupid_gtk_tas_new(t);
     } else if (kind == 3 || (kind == 1 && desktop_ppu_panel(id))) {
@@ -1237,6 +1247,8 @@ void cupid_gtk_render(FrontendDesktopUi *ui, const char *title, const char *regi
         gtk_label_set_text(GTK_LABEL(d->status_info), caption);
     }
     for (CupidGtkTool *t = d->tools; t; t = t->next) {
+        if (t->kind == 1 && t->id == HISTORY_PANEL && gtk_widget_get_visible(t->window))
+            cupid_gtk_history_refresh(t->content);
         if (t->kind == 1 && t->id == TAS_PANEL && gtk_widget_get_visible(t->window)) {
             cupid_gtk_tas_video(t->content);
         }
@@ -1265,6 +1277,8 @@ void cupid_gtk_render(FrontendDesktopUi *ui, const char *title, const char *regi
                 cupid_gtk_ppu_refresh(t->content);
             } else if (t->kind == 1 && t->id == ASSEMBLER_FRONTEND_PANEL) {
                 cupid_gtk_assembler_refresh(t->content);
+            } else if (t->kind == 1 && t->id == HISTORY_PANEL) {
+                cupid_gtk_history_refresh(t->content);
             } else if (t->kind == 1 && t->id == TAS_PANEL) {
                 cupid_gtk_tas_refresh(t->content);
             } else if (t->kind == 1) {

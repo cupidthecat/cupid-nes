@@ -60,6 +60,7 @@ bool test_gtk_shortcuts(FrontendDesktopUi *ui);
 bool test_gtk_state_dialogs(FrontendDesktopUi *ui);
 bool test_gtk_status_accuracy(FrontendDesktopUi *ui);
 bool test_gtk_workflows(FrontendDesktopUi *ui);
+bool test_gtk_history(FrontendDesktopUi *ui, const char *out);
 
 static void pump(FrontendDesktopUi *ui) {
     for (unsigned i = 0; i < 20; i++) {
@@ -961,6 +962,7 @@ int main(int argc, char **argv) {
     if ((argc == 3 || argc == 4) && !strcmp(argv[1], "--benchmark")) {
         return benchmark_gtk(argv[2], argc == 4 ? argv[3] : NULL);
     }
+    bool history_check = argc == 2 && !strcmp(argv[1], "--history-check");
     bool startup_check = argc == 2 && !strcmp(argv[1], "--startup-check");
     bool input_check = argc == 2 && !strcmp(argv[1], "--input-check");
     bool palette_check = argc == 2 && !strcmp(argv[1], "--palette-check");
@@ -968,7 +970,7 @@ int main(int argc, char **argv) {
     bool native_check = argc == 2 && !strcmp(argv[1], "--native-video-check");
     bool tas_check = argc == 2 && !strcmp(argv[1], "--tas-video-check");
     bool session_check = argc == 2 && !strcmp(argv[1], "--session-ui-check");
-    const char *out = windows_check ? "build/gtk-windows-check" : palette_check ? "build/gtk-palette-check" : input_check ? "build/gtk-input-check" : session_check ? "build/gtk-session-check" : tas_check ? "build/gtk-tas-check" : native_check ? "build/gtk-native-video" : startup_check ? "build/gtk-startup-check" : argc > 1 ? argv[1] : "build/gtk-smoke";
+    const char *out = history_check ? "build/gtk-history-check" : windows_check ? "build/gtk-windows-check" : palette_check ? "build/gtk-palette-check" : input_check ? "build/gtk-input-check" : session_check ? "build/gtk-session-check" : tas_check ? "build/gtk-tas-check" : native_check ? "build/gtk-native-video" : startup_check ? "build/gtk-startup-check" : argc > 1 ? argv[1] : "build/gtk-smoke";
     g_mkdir_with_parents(out, 0755);
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_TIMER) != 0) {
         return 1;
@@ -1073,6 +1075,16 @@ int main(int argc, char **argv) {
     video.frame.screens = 1;
     ui.video = &video;
     preview_pattern();
+    if (history_check) {
+        bool passed = test_gtk_history(&ui, out);
+        frontend_desktop_shutdown(&ui);
+        frontend_execution_shutdown(&execution);
+        unload_rom();
+        frontend_desktop_destroy_renderer(window, renderer);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return passed ? 0 : 1;
+    }
     if (!test_gtk_picture_pixels() || (!palette_check && !windows_check && !test_gtk_shortcuts(&ui))) {
         return 1;
     }

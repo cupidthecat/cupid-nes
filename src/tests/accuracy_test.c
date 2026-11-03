@@ -99,6 +99,7 @@ int test_capture_extensions_accuracy(void);
 int test_capture_frontend_extensions_accuracy(void);
 int run_frame_timing_accuracy_tests(void);
 int run_presentation_history_accuracy_tests(void);
+int run_history_media_accuracy_tests(void);
 int run_presentation_audio_accuracy_tests(void);
 int run_audio_output_accuracy_tests(void);
 int run_hd_builder_accuracy_tests(void);
@@ -168,6 +169,7 @@ int test_netplay_peer(const char *role, unsigned port, const char *scenario);
 int benchmark_frontend(unsigned frames, const char *path);
 
 int main(int argc, char **argv) {
+    if (argc == 2 && !strcmp(argv[1], "--history")) return run_history_media_accuracy_tests() + run_presentation_history_accuracy_tests();
     if (argc == 2 && !strcmp(argv[1], "--native-audio")) return run_native_audio_backend_tests() ? 1 : 0;
     if (argc == 2 && !strcmp(argv[1], "--shader-gpu")) return run_shader_gpu_accuracy_tests() ? 1 : 0;
     if (argc == 2 && !strcmp(argv[1], "--keyboard")) {
@@ -368,6 +370,7 @@ int main(int argc, char **argv) {
     failures += test_capture_frontend_extensions_accuracy();
     failures += run_frame_timing_accuracy_tests();
     failures += run_presentation_history_accuracy_tests();
+    failures += run_history_media_accuracy_tests();
     failures += run_audio_output_accuracy_tests();
     failures += run_presentation_audio_accuracy_tests();
     failures += run_hd_builder_accuracy_tests();

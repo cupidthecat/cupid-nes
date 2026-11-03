@@ -8,6 +8,7 @@
  */
 #include "audio_runtime.h"
 #include "../system/vs_system.h"
+#include "../system/execution_policy.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -253,6 +254,8 @@ void frontend_audio_runtime_submit(FrontendAudioRuntime *runtime) {
     while (available) {
         unsigned count = available < 256 ? available : 256;
         vs_audio_stereo_callback(NULL, (Uint8 *)stereo, (int)(count * 2 * sizeof(float)));
+        if (runtime->execution && runtime->execution->rewind_frame_captured && nes_execution_policy() == NES_EXECUTION_LIVE)
+            nes_rewind_append_audio(&runtime->execution->rewind, stereo, count, runtime->sample_rate);
         if (!should_pause(runtime)) nes_audio_output_push(runtime->output, stereo, count);
         available -= count;
     }

@@ -58,6 +58,9 @@ GtkWidget *cupid_gtk_tas_new(CupidGtkTool *tool);
 void cupid_gtk_tas_refresh(GtkWidget *widget);
 /* Update only the live preview; safe to call once per presentation frame. */
 void cupid_gtk_tas_video(GtkWidget *widget);
+GtkWidget *cupid_gtk_history_new(CupidGtkTool *tool);
+void cupid_gtk_history_refresh(GtkWidget *widget);
+void cupid_gtk_history_open(GtkWidget *widget);
 GtkWidget *cupid_gtk_ppu_new(CupidGtkTool *tool);
 void cupid_gtk_ppu_refresh(GtkWidget *widget);
 GtkWidget *cupid_gtk_hex_new(CupidGtkTool *tool, GtkWidget *controls);

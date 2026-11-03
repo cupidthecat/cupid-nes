@@ -2,13 +2,21 @@
 
 These tools change host video and audio output. They do not change CPU/PPU timing, controller input, light-gun sensing, or deterministic machine state.
 
-## Rewind History
+## History Viewer
 
-Open **Rewind History** with a game loaded and rewind enabled, then choose **Open video timeline**. The window shows retained frame boundaries. Click or drag its bottom bar to scrub, use Left/Right to step, and press Space to play or pause the retained history. The position starts at 1 for the oldest retained frame.
+Open **Tools → Rewind and movies → History Viewer** with a game loaded and rewind enabled. The native GTK window shows the retained history, starting at its oldest frame. Drag the timeline or enter a frame number to seek. Left/Right step one frame; Home/End jump to the boundaries; Space or a click on the video toggles playback. Playback uses the game's regional frame rate, pauses at the end, and starts again at the beginning when Play is pressed. Volume controls historical audio separately. The scale selector resizes the preview while preserving its aspect ratio.
 
-Browsing pauses live execution. Each preview restores the selected authoritative rewind snapshot temporarily, copies its video, and restores the live machine. **Save selected state** writes that snapshot as a normal save state. **Resume from selection** restores it and discards the selected boundary and every later rewind entry, matching ordinary rewind. Closing the window leaves the live position unchanged.
+**File → Create save state** saves the selected boundary. **Resume gameplay** continues from it and discards that boundary and all later rewind entries, matching ordinary rewind. Closing the viewer returns to the unchanged live position and preserves the previous pause state.
 
-Movie export is unavailable because the rewind ring stores snapshots, not the controller input stream needed to reproduce a range. Movie/netplay ownership and unreplayable host state prevent browsing. Reset, game replacement, and rewind reconfiguration close the viewer.
+Use **Set start** and **Set end** to select an inclusive range, then **File → Export movie range** to write a Cupid state-start input movie. The export embeds the first boundary and the accepted controller/peripheral input events for subsequent frames. The first frame's actions are already part of that boundary and are not applied twice. Incomplete frames or input logs disable export for ranges containing them.
+
+The **Bookmarks** sidebar stores ten temporary positions with preview images. Ctrl+0–9 stores a position; 0–9 jumps to one. Bookmarks belong to the open history and are cleared when it is reopened.
+
+Browsing pauses live execution. Each preview temporarily restores an authoritative rewind snapshot, copies its video, then restores the live machine and its completed display frame. The viewer plays retained final stereo samples through a separate output device. It never runs the core, saves battery data, or injects preview inputs. Snapshots, input events and audio share the configured rewind memory limit; shorter retention is possible when that limit is reached. A missing audio device leaves video navigation available.
+
+Movie/netplay ownership and unreplayable host state prevent browsing. Reset, game replacement and rewind reconfiguration invalidate the viewer. Cupid uses its existing single machine core and freezes the live timeline while browsing; Mesen uses a separate playback emulator. Movie exports use Cupid's `.movie` format. Mesen's `.mmo` format is not supported. The SDL fallback retains its separate preview window and shared panel controls.
+
+The behavior follows [Mesen 2's viewer UI](https://github.com/SourMesen/Mesen2/blob/b9fa69ddc6d0a331fb103fdb5eef6904305703c2/UI/Windows/HistoryViewerWindow.axaml), [playback and export controller](https://github.com/SourMesen/Mesen2/blob/b9fa69ddc6d0a331fb103fdb5eef6904305703c2/Core/Shared/HistoryViewer.cpp), and [view model](https://github.com/SourMesen/Mesen2/blob/b9fa69ddc6d0a331fb103fdb5eef6904305703c2/UI/ViewModels/HistoryViewerViewModel.cs). The older NES behavior was checked against [original Mesen](https://github.com/SourMesen/Mesen/blob/e1180957b31979d4b82d613af9263fcb9442a685/Core/HistoryViewer.cpp). Frame navigation and bookmark previews follow [FCEUX playback](https://github.com/TASEmulators/fceux/blob/8cc753da0b8e6924089ed76ce6a2a93997492264/src/drivers/Qt/TasEditor/playback.cpp) and [bookmarks](https://github.com/TASEmulators/fceux/blob/8cc753da0b8e6924089ed76ce6a2a93997492264/src/drivers/Qt/TasEditor/bookmarks.cpp).
 
 ## Shader Presets
 

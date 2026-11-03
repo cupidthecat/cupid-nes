@@ -577,6 +577,45 @@ static NesMovieResult movie_write_file(NesMovieSession *movie) {
     return file == NES_FILE_OK ? NES_MOVIE_OK : NES_MOVIE_IO_ERROR;
 }
 
+NesMovieResult nes_movie_export_history(const NesRewindHistory *history, size_t first, size_t end, const char *path) {
+    if (!history || !history->entries || !history->capacity || !path || !*path || first >= end || end > history->count)
+        return NES_MOVIE_INVALID_ARGUMENT;
+    if (nes_execution_policy() != NES_EXECUTION_LIVE || !nes_replay_host_state_supported()) return NES_MOVIE_CONFLICT;
+    size_t events = 0;
+    for (size_t i = first; i < end; ++i) {
+        const NesRewindMedia *media = nes_rewind_media(history, i);
+        if (!media || !media->complete || !media->inputs_valid) return NES_MOVIE_UNSUPPORTED_HOST_STATE;
+        if (i != first) events += media->event_count;
+        if (events > MOVIE_MAX_EVENTS) return NES_MOVIE_LIMIT_REACHED;
+    }
+    NesStateBlob start = history->entries[(history->head + first) % history->capacity];
+    NesStateRestore *validated = NULL;
+    NesStateResult state = nes_state_prepare_restore(start.data, start.size, &validated);
+    nes_state_restore_free(validated);
+    if (state != NES_STATE_OK) return NES_MOVIE_STATE_ERROR;
+    MovieEvent *records = events ? calloc(events, sizeof(*records)) : NULL;
+    if (events && !records) return NES_MOVIE_OUT_OF_MEMORY;
+    size_t cursor = 0;
+    /* The first boundary already contains its host actions. Reapplying relative
+     * mouse motion there would apply it twice. Later boundaries need their log. */
+    for (size_t i = first + 1; i < end; ++i) {
+        const NesRewindMedia *media = nes_rewind_media(history, i);
+        for (size_t j = 0; j < media->event_count; ++j)
+            records[cursor++] = (MovieEvent){i - first, media->events[j]};
+    }
+    NesMovieSession export = {0};
+    export.path = (char *)path;
+    export.start_kind = NES_MOVIE_START_STATE;
+    export.start_state = start;
+    export.frame = end - first;
+    export.events = records;
+    export.event_count = events;
+    export.compatibility = movie_current_compatibility();
+    NesMovieResult result = movie_write_file(&export);
+    free(records);
+    return result;
+}
+
 typedef struct {
     NesMovieStartKind start_kind;
     MovieCompatibility compatibility;

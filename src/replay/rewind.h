@@ -12,6 +12,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include "../state/state.h"
+#include "input_event.h"
 #include "../video/video_trace.h"
 
 #ifdef __cplusplus
@@ -37,13 +38,34 @@ typedef enum {
 typedef bool (*NesReplayFrameRunner)(void *userdata);
 
 typedef struct {
+    NesInputEvent *events;
+    size_t event_count;
+    float *audio;
+    unsigned audio_frames, audio_rate;
+    bool inputs_valid, complete;
+} NesRewindMedia;
+
+typedef struct NesRewindHistory {
     NesStateBlob *entries;
+    NesRewindMedia *media;
     size_t capacity;
     size_t count;
     size_t head;
     size_t total_bytes;
     size_t max_bytes;
 } NesRewindHistory;
+
+/* The frontend tracks accepted live events and marks completed transitions.
+ * Media shares the rewind memory budget and is discarded with its snapshot. */
+void nes_rewind_track_inputs(NesRewindHistory *history);
+void nes_rewind_untrack_inputs(NesRewindHistory *history);
+void nes_rewind_capture_inputs(NesRewindHistory *history, size_t slot);
+void nes_rewind_complete(NesRewindHistory *history, bool completed);
+void nes_rewind_append_audio(NesRewindHistory *history, const float *stereo, unsigned frames, unsigned rate);
+const NesRewindMedia *nes_rewind_media(const NesRewindHistory *history, size_t index);
+void nes_rewind_free_media(NesRewindHistory *history, size_t slot);
+void nes_rewind_reset_inputs(NesRewindHistory *history);
+void nes_rewind_truncate(NesRewindHistory *history, size_t count);
 
 void nes_rewind_init(NesRewindHistory *history);
 void nes_rewind_destroy(NesRewindHistory *history);

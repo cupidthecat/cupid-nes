@@ -36,6 +36,7 @@ typedef struct FrontendExecutionRuntime {
     void *audio_reset_context;
     bool muted;
     bool rewind_held;
+    bool rewind_frame_captured;
     unsigned suspend_reasons;
     uint64_t timing_revision;
     const char *rom_path;
@@ -45,6 +46,7 @@ typedef struct FrontendExecutionRuntime {
     size_t *fds_side;
     uint64_t debugger_pause_revision;
     NesRewindHistory rewind;
+    struct FrontendHistory *history_viewer;
     unsigned rewind_seconds;
     unsigned run_ahead_frames;
     NesReplayResult replay_status;
