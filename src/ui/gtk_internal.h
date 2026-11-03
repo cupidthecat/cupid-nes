@@ -14,6 +14,7 @@ typedef struct CupidGtkTool CupidGtkTool;
 typedef struct CupidGtkDesktop {
     FrontendDesktopUi *ui;
     GtkWidget *window, *picture, *status, *status_info, *menubar, *empty;
+    GtkWindowGroup *window_group;
     GSimpleActionGroup *actions;
     CupidGtkTool *tools;
     size_t commands, panels, recent;
@@ -35,6 +36,7 @@ struct CupidGtkTool {
     CupidGtkTool *next;
     FrontendDesktopUi ui;
     GtkWidget *window, *content, *status, *prompt, *prompt_entry, *info_view;
+    GtkWindowGroup *window_group;
     int kind;
     unsigned id;
 };

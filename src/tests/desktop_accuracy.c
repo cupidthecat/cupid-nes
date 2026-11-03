@@ -1023,6 +1023,16 @@ static void window_regressions(FrontendDesktopUi *ui) {
     focus_event(ui, tool->window, true);
     frontend_desktop_update_activity(ui);
     CHECK(!frontend_execution_paused(&runtime));
+    ui->settings->pause_on_main_focus_loss = true;
+    frontend_desktop_update_activity(ui);
+    CHECK(runtime.suspend_reasons & FRONTEND_SUSPEND_FOCUS);
+    focus_event(ui, ui->window, true);
+    frontend_desktop_update_activity(ui);
+    CHECK(!(runtime.suspend_reasons & FRONTEND_SUSPEND_FOCUS));
+    focus_event(ui, ui->window, false);
+    ui->settings->pause_on_main_focus_loss = false;
+    frontend_desktop_update_activity(ui);
+    CHECK(!frontend_execution_paused(&runtime));
     frontend_execution_set_suspension(&runtime, 1u << 8);
     frontend_desktop_update_activity(ui);
     CHECK(runtime.suspend_reasons & (1u << 8));

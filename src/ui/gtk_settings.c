@@ -226,7 +226,11 @@ static void build(Settings *s) {
     const char *last_group = NULL;
     GtkWidget *group = NULL;
     GtkWidget *matrix = NULL;
-    for (int i = 0; i < s->count; i++) {
+    for (int position = 0; position < s->count; position++) {
+        int i = position;
+        if (ui->settings_category == 0 && position >= 5) {
+            i = position == 5 ? 10 : position - 1;
+        }
         const char *title = cupid_gtk_setting_group(ui->settings_category, i);
         if (!last_group || strcmp(last_group, title)) {
             if (notebook) {
@@ -316,6 +320,10 @@ static void build(Settings *s) {
         if (ui->settings_category == 2 && i == 2) {
             gtk_widget_set_sensitive(r->widget, FALSE);
             gtk_widget_set_tooltip_text(row, "The desktop compositor controls synchronization in the native desktop.");
+        }
+        if (ui->settings_category == 0 && i == 10) {
+            gtk_widget_set_tooltip_text(row,
+                "Pause whenever the main emulator window is inactive, including while using another Cupid window.");
         }
         gtk_accessible_update_property(GTK_ACCESSIBLE(r->widget), GTK_ACCESSIBLE_PROPERTY_LABEL, label, -1);
         if (r->kind == SETTING_NUMBER) {

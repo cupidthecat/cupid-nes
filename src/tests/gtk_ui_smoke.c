@@ -725,6 +725,60 @@ static bool capture_tool(FrontendDesktopUi *ui, CupidGtkTool *tool, unsigned pan
     return true;
 }
 
+static bool independent_windows_check(FrontendDesktopUi *ui) {
+    CupidGtkTool *settings = find_tool(ui, cupid_gtk_open(ui, 0, 0));
+    CupidGtkTool *debug = find_tool(ui, cupid_gtk_open(ui, 1, DEBUGGER_FRONTEND_PANEL));
+    CupidGtkTool *palette = find_tool(ui, cupid_gtk_open(ui, 3, 0));
+    CHECK(settings && debug && palette);
+    bool pause_on_main = settings->ui.staged.pause_on_main_focus_loss;
+    desktop_adjust_setting(&settings->ui, 10, 1);
+    CHECK(settings->ui.staged.pause_on_main_focus_loss != pause_on_main);
+    desktop_adjust_setting(&settings->ui, 10, 1);
+    CHECK(settings->ui.staged.pause_on_main_focus_loss == pause_on_main);
+    CupidGtkTool *tools[] = {settings, debug, palette};
+    for (unsigned i = 0; i < G_N_ELEMENTS(tools); ++i) {
+        CHECK(gtk_widget_get_visible(tools[i]->window));
+        CHECK(!gtk_window_get_modal(GTK_WINDOW(tools[i]->window)));
+        CHECK(!gtk_window_get_transient_for(GTK_WINDOW(tools[i]->window)));
+        CHECK(tools[i]->window_group != ui->gtk->window_group);
+        for (unsigned j = 0; j < i; ++j) {
+            CHECK(tools[i]->window_group != tools[j]->window_group);
+        }
+    }
+    /* An owner-modal prompt must stay in that owner's input group. */
+    GtkWidget *dialog = gtk_dialog_new_with_buttons("Window group fixture", GTK_WINDOW(settings->window),
+        GTK_DIALOG_MODAL, "Close", GTK_RESPONSE_CLOSE, NULL);
+    CHECK(gtk_window_get_group(GTK_WINDOW(dialog)) == settings->window_group);
+    gtk_window_present(GTK_WINDOW(dialog));
+    pump(ui);
+    GtkWidget *check = find_widget(palette->content, GTK_TYPE_CHECK_BUTTON);
+    CHECK(check);
+    gboolean active = gtk_check_button_get_active(GTK_CHECK_BUTTON(check));
+    CHECK(gtk_widget_activate(check));
+    CHECK(gtk_check_button_get_active(GTK_CHECK_BUTTON(check)) != active);
+    CHECK(gtk_widget_activate(check));
+    CHECK(gtk_check_button_get_active(GTK_CHECK_BUTTON(check)) == active);
+    gtk_window_destroy(GTK_WINDOW(dialog));
+    for (unsigned i = 0; i < G_N_ELEMENTS(tools); ++i) {
+        gtk_window_present(GTK_WINDOW(tools[i]->window));
+        pump(ui);
+        CHECK(gtk_widget_get_sensitive(tools[i]->window));
+        GtkWidget *input = find_widget(tools[i]->content, GTK_TYPE_ENTRY);
+        if (input) {
+            CHECK(gtk_widget_grab_focus(input));
+            GtkWidget *focus = gtk_window_get_focus(GTK_WINDOW(tools[i]->window));
+            CHECK(focus && (focus == input || gtk_widget_is_ancestor(focus, input)));
+        }
+    }
+    for (unsigned i = 0; i < G_N_ELEMENTS(tools); ++i) {
+        gtk_widget_set_visible(tools[i]->window, FALSE);
+    }
+    gtk_window_present(GTK_WINDOW(ui->gtk->window));
+    CHECK(gtk_widget_grab_focus(ui->gtk->picture));
+    puts("GTK independent windows: modeless tools, separate dialog groups, controls and focus: PASS");
+    return true;
+}
+
 static bool palette_layout_check(FrontendDesktopUi *ui, const char *out) {
     GtkWidget *menu = find_widget(ui->gtk->menubar, GTK_TYPE_POPOVER);
     CHECK(menu);
@@ -796,10 +850,11 @@ int main(int argc, char **argv) {
     bool startup_check = argc == 2 && !strcmp(argv[1], "--startup-check");
     bool input_check = argc == 2 && !strcmp(argv[1], "--input-check");
     bool palette_check = argc == 2 && !strcmp(argv[1], "--palette-check");
+    bool windows_check = argc == 2 && !strcmp(argv[1], "--windows-check");
     bool native_check = argc == 2 && !strcmp(argv[1], "--native-video-check");
     bool tas_check = argc == 2 && !strcmp(argv[1], "--tas-video-check");
     bool session_check = argc == 2 && !strcmp(argv[1], "--session-ui-check");
-    const char *out = palette_check ? "build/gtk-palette-check" : input_check ? "build/gtk-input-check" : session_check ? "build/gtk-session-check" : tas_check ? "build/gtk-tas-check" : native_check ? "build/gtk-native-video" : startup_check ? "build/gtk-startup-check" : argc > 1 ? argv[1] : "build/gtk-smoke";
+    const char *out = windows_check ? "build/gtk-windows-check" : palette_check ? "build/gtk-palette-check" : input_check ? "build/gtk-input-check" : session_check ? "build/gtk-session-check" : tas_check ? "build/gtk-tas-check" : native_check ? "build/gtk-native-video" : startup_check ? "build/gtk-startup-check" : argc > 1 ? argv[1] : "build/gtk-smoke";
     g_mkdir_with_parents(out, 0755);
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_TIMER) != 0) {
         return 1;
@@ -898,7 +953,7 @@ int main(int argc, char **argv) {
     video.frame.screens = 1;
     ui.video = &video;
     preview_pattern();
-    if (!test_gtk_picture_pixels() || (!palette_check && !test_gtk_shortcuts(&ui))) {
+    if (!test_gtk_picture_pixels() || (!palette_check && !windows_check && !test_gtk_shortcuts(&ui))) {
         return 1;
     }
     if (input_check || palette_check) {
@@ -1027,6 +1082,11 @@ int main(int argc, char **argv) {
     frontend_panel_set_session_active(true);
     frontend_command_set_session_active(true);
     pump(&ui);
+    unsigned count = 0;
+    if (windows_check) {
+        ok = independent_windows_check(&ui);
+        goto cleanup;
+    }
     if (ok) {
         ok = game_window_interactions(&ui) && game_texture_interactions(&ui) && test_gtk_game_pixels(&ui) &&
              test_gtk_input_accuracy(&ui) && test_gtk_information(&ui);
@@ -1041,7 +1101,6 @@ int main(int argc, char **argv) {
     if (ok) {
         ok = tas_fixture(&ui, out) && tas_interactions(&ui);
     }
-    unsigned count = 0;
     pause_fixture(&execution);
     /* Capture the populated TAS timeline while its session is active. Restore
      * live mode for the debugger/assembler captures; pausing alone deliberately
@@ -1121,6 +1180,7 @@ int main(int argc, char **argv) {
     pump(&ui);
     g_snprintf(path, sizeof(path), "%s/desktop.png", out);
     ok = capture_ready(&ui, ui.gtk->window, path) && ok;
+cleanup:
     frontend_desktop_shutdown(&ui);
     frontend_history_destroy(history);
     frontend_timing_unregister();

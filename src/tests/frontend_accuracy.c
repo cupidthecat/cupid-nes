@@ -336,6 +336,7 @@ static int settings_round_trip(void) {
     saved.fast_forward_speed = 5.0;
     saved.reopen_last_image = true;
     saved.pause_on_focus_loss = false;
+    saved.pause_on_main_focus_loss = true;
     saved.pause_on_ui = false;
     saved.show_fps = true;
     saved.ppu_viewer_live = saved.ppu_viewer_grid = false;
@@ -392,7 +393,7 @@ static int settings_round_trip(void) {
     CHECK(loaded.region_mode == saved.region_mode);
     CHECK(loaded.console_model == saved.console_model);
     CHECK(loaded.ntsc_composite && loaded.speed == 1.25 && loaded.fast_forward_speed == 5.0);
-    CHECK(loaded.reopen_last_image && !loaded.pause_on_focus_loss && !loaded.pause_on_ui
+    CHECK(loaded.reopen_last_image && !loaded.pause_on_focus_loss && loaded.pause_on_main_focus_loss && !loaded.pause_on_ui
           && loaded.show_fps && !loaded.ppu_viewer_live && !loaded.ppu_viewer_grid);
     CHECK(loaded.fullscreen && loaded.integer_scaling && loaded.muted);
     CHECK(loaded.bilinear_interpolation);

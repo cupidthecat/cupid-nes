@@ -283,6 +283,7 @@ void frontend_settings_defaults(FrontendSettings *settings) {
     settings->remember_window_size = true;
     settings->recent_file_limit = FRONTEND_RECENT_MAX;
     settings->pause_on_focus_loss = true;
+    settings->pause_on_main_focus_loss = false;
     settings->pause_on_ui = true;
     settings->ppu_viewer_live = true;
     settings->ppu_viewer_grid = true;
@@ -699,6 +700,8 @@ static bool set_known_setting(FrontendSettings *settings, const char *key,
         if (!parse_unsigned_range(value, FRONTEND_RECENT_MAX, &settings->recent_file_limit)) return false;
     } else if (strcmp(key, "pause_on_focus_loss") == 0) {
         if (!parse_boolean(value, &settings->pause_on_focus_loss)) return false;
+    } else if (strcmp(key, "pause_on_main_focus_loss") == 0) {
+        if (!parse_boolean(value, &settings->pause_on_main_focus_loss)) return false;
     } else if (strcmp(key, "pause_on_ui") == 0) {
         if (!parse_boolean(value, &settings->pause_on_ui)) return false;
     } else if (strcmp(key, "ppu_viewer_live") == 0) {
@@ -1131,7 +1134,7 @@ bool frontend_settings_save(const char *path, const FrontendSettings *settings,
                           "version=%u\nregion=%s\nconsole=%s\nvideo_filter=%s\n"
                           "speed=%.6g\nfast_forward_speed=%.6g\n"
                           "reopen_last_image=%s\nremember_window_size=%s\nrecent_file_limit=%u\n"
-                          "pause_on_focus_loss=%s\npause_on_ui=%s\n"
+                          "pause_on_focus_loss=%s\npause_on_main_focus_loss=%s\npause_on_ui=%s\n"
                           "ppu_viewer_live=%s\nppu_viewer_grid=%s\nshow_fps=%s\nfullscreen=%s\ninteger_scaling=%s\nmuted=%s\n"
                           "window_width=%u\nwindow_height=%u\n"
                           "disk_save_mode=%s\ndisk_overlay_path=%s\n"
@@ -1155,6 +1158,7 @@ bool frontend_settings_save(const char *path, const FrontendSettings *settings,
                           settings->remember_window_size ? "true" : "false",
                           settings->recent_file_limit,
                           settings->pause_on_focus_loss ? "true" : "false",
+                          settings->pause_on_main_focus_loss ? "true" : "false",
                           settings->pause_on_ui ? "true" : "false",
                           settings->ppu_viewer_live ? "true" : "false",
                           settings->ppu_viewer_grid ? "true" : "false",

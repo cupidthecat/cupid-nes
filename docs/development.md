@@ -313,6 +313,10 @@ hover and adjacent selected tabs under `build/gtk-palette-check`. It opens a
 menu before the palette editor and verifies that the menu closes, releasing its
 input grab before the modeless tool appears.
 
+`build/gtk-ui-smoke --windows-check` opens Settings, the debugger, and the
+palette editor together. It checks normal top-level ownership, separate dialog
+input groups, control activation, and text focus in each tool.
+
 The startup check rejects changes to `GDK_DEBUG` and `GSK_RENDERER`. Also run the
 fixture without `GSK_RENDERER` to exercise the default renderer on a desktop display. Widget
 snapshots do not capture the native window's transparent margins; inspect those

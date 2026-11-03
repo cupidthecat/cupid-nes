@@ -165,6 +165,7 @@ const char *cupid_gtk_control_group(unsigned panel, unsigned id) {
 const char *cupid_gtk_setting_group(int category, int row) {
     switch (category) {
     case 0:
+        if (row == 10) return "Focus";
         return row < 3 ? "Startup" : row < 5 ? "Focus" : row < 8 ? "Window" : "PPU viewers";
     case 1:
         return row < 3 ? "Speed and timing" : "Rewind and latency";

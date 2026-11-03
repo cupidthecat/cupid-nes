@@ -846,6 +846,8 @@ bool cupid_gtk_init(FrontendDesktopUi *ui) {
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
     ui->gtk = d;
     d->window = gtk_window_new();
+    d->window_group = gtk_window_group_new();
+    gtk_window_group_add_window(d->window_group, GTK_WINDOW(d->window));
     gtk_widget_add_css_class(d->window, "cupid-desktop");
     gtk_window_set_title(GTK_WINDOW(d->window), "Cupid NES");
     gtk_window_set_default_size(GTK_WINDOW(d->window), (int)ui->settings->window_width,
@@ -1088,6 +1090,10 @@ FrontendDesktopUi *cupid_gtk_open(FrontendDesktopUi *ui, int kind, unsigned id) 
         title = info.title;
     }
     t->window = gtk_window_new();
+    /* Tools are independent top-level windows. Only their own dialogs share
+     * an input group; they must not block or stay above the emulator. */
+    t->window_group = gtk_window_group_new();
+    gtk_window_group_add_window(t->window_group, GTK_WINDOW(t->window));
     gtk_widget_add_css_class(t->window, "cupid-desktop");
     gtk_window_set_title(GTK_WINDOW(t->window), title);
     CupidGtkLayout layout = cupid_gtk_layout(id);
@@ -1098,7 +1104,6 @@ FrontendDesktopUi *cupid_gtk_open(FrontendDesktopUi *ui, int kind, unsigned id) 
     if (kind == 3) {
         gtk_window_set_default_size(GTK_WINDOW(t->window), 800, 620);
     }
-    gtk_window_set_transient_for(GTK_WINDOW(t->window), GTK_WINDOW(d->window));
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
     gtk_window_set_child(GTK_WINDOW(t->window), box);
     t->status = cupid_gtk_label("");
@@ -1288,20 +1293,32 @@ bool cupid_gtk_captured(const FrontendDesktopUi *ui) {
     return false;
 }
 
+static bool group_active(GtkWindowGroup *group) {
+    GList *windows = gtk_window_group_list_windows(group);
+    bool active = false;
+    for (GList *window = windows; window; window = window->next) {
+        active |= gtk_window_is_active(GTK_WINDOW(window->data));
+    }
+    g_list_free(windows);
+    return active;
+}
+
 void cupid_gtk_activity(FrontendDesktopUi *ui) {
     if (!ui->execution) {
         return;
     }
     CupidGtkDesktop *d = ui->gtk;
-    bool focused = gtk_window_is_active(GTK_WINDOW(d->window)), modal = false;
+    bool focused = group_active(d->window_group), modal = false;
     for (CupidGtkTool *t = d->tools; t; t = t->next) {
         if (gtk_widget_get_visible(t->window)) {
-            focused |= gtk_window_is_active(GTK_WINDOW(t->window));
-            modal |= t->kind == 0;
+            bool active = group_active(t->window_group);
+            focused |= active;
+            modal |= t->kind == 0 && active;
         }
     }
     unsigned reasons = ui->execution->suspend_reasons & ~(FRONTEND_SUSPEND_UI | FRONTEND_SUSPEND_FOCUS);
-    if (!focused && ui->settings->pause_on_focus_loss) {
+    if ((!focused && ui->settings->pause_on_focus_loss) ||
+        (!gtk_window_is_active(GTK_WINDOW(d->window)) && ui->settings->pause_on_main_focus_loss)) {
         reasons |= FRONTEND_SUSPEND_FOCUS;
     }
     if (modal && ui->settings->pause_on_ui) {
@@ -1344,7 +1361,8 @@ bool cupid_gtk_event(FrontendDesktopUi *ui, const SDL_Event *event) {
         }
     }
     for (CupidGtkTool *t = ui->gtk->tools; t; t = t->next) {
-        if (t->ui.capture_binding && event->type == SDL_CONTROLLERBUTTONDOWN) {
+        if (t->ui.capture_binding && gtk_widget_get_visible(t->window) && group_active(t->window_group) &&
+            event->type == SDL_CONTROLLERBUTTONDOWN) {
             desktop_binding_gamepad(&t->ui, (SDL_GameControllerButton)event->cbutton.button);
             return true;
         }
@@ -1379,10 +1397,12 @@ void cupid_gtk_shutdown(FrontendDesktopUi *ui) {
         CupidGtkTool *t = d->tools;
         d->tools = t->next;
         gtk_window_destroy(GTK_WINDOW(t->window));
+        g_clear_object(&t->window_group);
         desktop_tas_destroy(&t->ui);
         g_free(t);
     }
     gtk_window_destroy(GTK_WINDOW(d->window));
+    g_clear_object(&d->window_group);
     if (d->frame) {
         cairo_surface_destroy(d->frame);
     }

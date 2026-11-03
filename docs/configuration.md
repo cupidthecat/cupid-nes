@@ -259,6 +259,13 @@ retain precedence. The selected movie path is saved as `movie_file_path`. See th
 
 ## PPU viewer preferences
 
+Settings > General > Focus has separate controls for pausing when you leave
+Cupid and when you leave the main emulation window. Pause when leaving main
+window is off by default and is saved as `pause_on_main_focus_loss`. Enable it
+to pause while using another Cupid window. Pause when leaving Cupid retains
+the existing `pause_on_focus_loss` setting. Pause while using Settings applies
+while that window or one of its dialogs has focus.
+
 Settings > General includes Live PPU viewers and PPU viewer grid. Both default
 to on and are saved as `ppu_viewer_live` and `ppu_viewer_grid`. They set the initial
 state of newly opened viewers; Live and Grid in each window control that window.

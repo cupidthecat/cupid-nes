@@ -44,6 +44,8 @@ jobs:
           xvfb-run -a env -u GSK_RENDERER SDL_RENDER_DRIVER=opengl SDL_FRAMEBUFFER_ACCELERATION=1 G_DEBUG=fatal-criticals python3 scripts/check-gtk-launch.py ./cupid-nes
       - name: Check palette layout, popup dismissal and hover styling
         run: xvfb-run -a env GSK_RENDERER=cairo SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke --palette-check
+      - name: Check independent tool windows and dialog input groups
+        run: xvfb-run -a env GSK_RENDERER=cairo SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke --windows-check
       - name: Check native Wayland startup
         run: |
           export XDG_RUNTIME_DIR=$(mktemp -d)

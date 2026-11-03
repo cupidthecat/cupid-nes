@@ -536,7 +536,7 @@ static const char *on_off(bool enabled) { return enabled ? "On" : "Off"; }
 
 int desktop_setting_rows(const FrontendDesktopUi *ui) {
     switch (ui->settings_category) {
-        case 0: return 10;
+        case 0: return 11;
         case 1: return 6;
         case 2: return 36;
         case 3: return 5 + NES_AUDIO_CHANNEL_COUNT * 2;
@@ -561,8 +561,9 @@ void desktop_setting_text(FrontendDesktopUi *ui, int row, char *label, size_t lc
     label[0] = value[0] = '\0';
     if (ui->settings_category == 0) {
         const char *labels[] = {"Reopen last image", "Remember window size", "Recent image count",
-            "Pause on focus loss", "Pause while UI is open", "Show frame rate",
-            "Window width", "Window height", "Live PPU viewers", "PPU viewer grid"};
+            "Pause when leaving Cupid", "Pause while using Settings", "Show frame rate",
+            "Window width", "Window height", "Live PPU viewers", "PPU viewer grid",
+            "Pause when leaving main window"};
         snprintf(label, lc, "%s", labels[row]);
         if (row == 0) snprintf(value, vc, "%s", on_off(s->reopen_last_image));
         else if (row == 1) snprintf(value, vc, "%s", on_off(s->remember_window_size));
@@ -570,6 +571,7 @@ void desktop_setting_text(FrontendDesktopUi *ui, int row, char *label, size_t lc
         else if (row == 3) snprintf(value, vc, "%s", on_off(s->pause_on_focus_loss));
         else if (row == 4) snprintf(value, vc, "%s", on_off(s->pause_on_ui));
         else if (row == 5) snprintf(value, vc, "%s", on_off(s->show_fps));
+        else if (row == 10) snprintf(value, vc, "%s", on_off(s->pause_on_main_focus_loss));
         else if (row >= 8) snprintf(value, vc, "%s", on_off(row == 8 ? s->ppu_viewer_live : s->ppu_viewer_grid));
         else snprintf(value, vc, "%u", row == 6 ? s->window_width : s->window_height);
     } else if (ui->settings_category == 1) {
@@ -773,6 +775,7 @@ void desktop_adjust_setting(FrontendDesktopUi *ui, int row, int direction) {
         else if (row == 6) { int v = (int)s->window_width + direction * 32; s->window_width = (unsigned)(v < 320 ? 320 : v > 16384 ? 16384 : v); }
         else if (row == 8) s->ppu_viewer_live = !s->ppu_viewer_live;
         else if (row == 9) s->ppu_viewer_grid = !s->ppu_viewer_grid;
+        else if (row == 10) s->pause_on_main_focus_loss = !s->pause_on_main_focus_loss;
         else { int v = (int)s->window_height + direction * 24; s->window_height = (unsigned)(v < 240 ? 240 : v > 16384 ? 16384 : v); }
     } else if (ui->settings_category == 1) {
         if (row == 0) s->region_mode = (NesRegionMode)(((int)s->region_mode + direction + 4) % 4);
@@ -1045,6 +1048,7 @@ static void category_defaults(FrontendDesktopUi *ui) {
             memcpy(&ui->staged.remember_window_size, &d.remember_window_size, sizeof(d.remember_window_size));
             memcpy(&ui->staged.recent_file_limit, &d.recent_file_limit, sizeof(d.recent_file_limit));
             memcpy(&ui->staged.pause_on_focus_loss, &d.pause_on_focus_loss, sizeof(d.pause_on_focus_loss));
+            ui->staged.pause_on_main_focus_loss = d.pause_on_main_focus_loss;
             memcpy(&ui->staged.pause_on_ui, &d.pause_on_ui, sizeof(d.pause_on_ui));
             memcpy(&ui->staged.show_fps, &d.show_fps, sizeof(d.show_fps));
             ui->staged.ppu_viewer_live = d.ppu_viewer_live;

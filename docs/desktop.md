@@ -39,10 +39,16 @@ Short tasks use compact forms. Longer tools use tabs or scroll their controls.
 ![Desktop](images/desktop-main.png)
 
 Settings, game information, the palette editor, and feature panels open in separate native windows.
+Each window has normal stacking and its own dialog input group. A tool window
+does not stay above the emulator, and its dialogs only block that tool.
 Use the operating system's window frame to close or resize them, or drag the title bar to move them beside the game or onto another display.
 Opening a debugger or inspection tool leaves emulation running. A breakpoint,
 Pause, or a stepping command can still stop it. Moving focus between Cupid
-windows does not trigger the pause-on-focus-loss preference. Tool status areas
+windows does not trigger Pause when leaving Cupid. Enable General > Focus >
+Pause when leaving main window to pause when you switch to a tool or another
+application. This option is off by default. Pause while using Settings applies
+while Settings has focus; returning to the game releases that automatic pause.
+Tool status areas
 show selection details, validation failures, and the result of the last action.
 
 File controls in tool windows also open native choosers. Scripts, cheat files,
