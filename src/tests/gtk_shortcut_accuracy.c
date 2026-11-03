@@ -50,6 +50,18 @@ bool test_gtk_shortcuts(FrontendDesktopUi *ui) {
     }
     g_object_unref(controllers);
     CHECK(keys);
+    GdkKeymapKey *mapped = NULL;
+    int key_count = 0;
+    CHECK(gdk_display_map_keyval(gtk_widget_get_display(ui->gtk->picture), GDK_KEY_1, &mapped, &key_count));
+    bool shifted_number = false;
+    for (int i = 0; i < key_count; ++i) {
+        if (mapped[i].group == 0 && mapped[i].level == 0) {
+            shifted_number |= cupid_gtk_scancode(cupid_gtk_base_key(GTK_EVENT_CONTROLLER_KEY(keys), GDK_KEY_exclam,
+                                                                    mapped[i].keycode)) == SDL_SCANCODE_1;
+        }
+    }
+    g_free(mapped);
+    CHECK(shifted_number);
     gtk_window_present(GTK_WINDOW(ui->gtk->window));
     CHECK(gtk_widget_grab_focus(ui->gtk->picture));
     for (unsigned i = 0; i < 30; ++i) { cupid_gtk_dispatch(); SDL_Delay(10); }

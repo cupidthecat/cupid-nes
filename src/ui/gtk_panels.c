@@ -160,6 +160,10 @@ static void browse(GtkButton *button, gpointer data) {
         kind->title, GTK_WINDOW(c->panel->tool->window), action, save ? "Save" : "Open", "Cancel");
     gtk_native_dialog_set_modal(GTK_NATIVE_DIALOG(dialog), TRUE);
     cupid_gtk_file_filters(GTK_FILE_CHOOSER(dialog), save, type);
+    const char *path = gtk_button_get_label(GTK_BUTTON(c->widget));
+    if (g_strcmp0(path, "Browse...")) {
+        cupid_gtk_file_location(GTK_FILE_CHOOSER(dialog), path);
+    }
     c->dialog = GTK_NATIVE_DIALOG(dialog);
     g_signal_connect(dialog, "response", G_CALLBACK(file_response), c);
     gtk_native_dialog_show(GTK_NATIVE_DIALOG(dialog));

@@ -26,6 +26,7 @@
 #include "../ui/frontend_session.h"
 #include "../ui/session_actions.h"
 #include "../ui/settings.h"
+#include "../ui/host_input.h"
 #include "../util/file_io.h"
 #include <SDL2/SDL.h>
 #include <math.h>
@@ -912,6 +913,66 @@ static int image_identity_hash(void) {
     return 0;
 }
 
+static int controller_shortcut_disconnect(void) {
+    CHECK(SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) == 0);
+    FrontendSettings settings;
+    frontend_settings_defaults(&settings);
+    FrontendBindingProfile *profile = frontend_settings_active_profile(&settings);
+    for (unsigned i = 0; i < FRONTEND_SHORTCUT_COUNT; ++i) {
+        profile->shortcuts[i].gamepad_button = SDL_CONTROLLER_BUTTON_INVALID;
+    }
+    profile->shortcuts[FRONTEND_SHORTCUT_FAST_FORWARD_HOLD].gamepad_button = SDL_CONTROLLER_BUTTON_RIGHTSHOULDER;
+    profile->shortcuts[FRONTEND_SHORTCUT_REWIND].gamepad_button = SDL_CONTROLLER_BUTTON_LEFTSHOULDER;
+    FrontendExecutionRuntime runtime;
+    frontend_execution_init(&runtime, NULL, 44100, NULL, NULL, NULL, NULL);
+    int devices[2];
+    SDL_JoystickID ids[2];
+    for (unsigned p = 0; p < 2; ++p) {
+        devices[p] = SDL_JoystickAttachVirtual(SDL_JOYSTICK_TYPE_GAMECONTROLLER, SDL_CONTROLLER_AXIS_MAX,
+                                               SDL_CONTROLLER_BUTTON_MAX, 0);
+        CHECK(devices[p] >= 0 && SDL_IsGameController(devices[p]));
+        ids[p] = SDL_JoystickGetDeviceInstanceID(devices[p]);
+    }
+    frontend_host_input_open_controllers(&settings);
+    for (unsigned p = 0; p < 2; ++p) {
+        SDL_Event event = {.type = SDL_CONTROLLERBUTTONDOWN};
+        event.cbutton.which = ids[p];
+        event.cbutton.button = SDL_CONTROLLER_BUTTON_RIGHTSHOULDER;
+        frontend_host_input_event(&event, &settings, &runtime);
+    }
+    CHECK(runtime.execution.fast_forward_held);
+    SDL_Event event = {.type = SDL_CONTROLLERDEVICEREMOVED};
+    event.cdevice.which = ids[0];
+    frontend_host_input_event(&event, &settings, &runtime);
+    CHECK(runtime.execution.fast_forward_held);
+    event.type = SDL_CONTROLLERBUTTONUP;
+    event.cbutton.which = ids[1];
+    event.cbutton.button = SDL_CONTROLLER_BUTTON_RIGHTSHOULDER;
+    /* The release must use the original action even after a binding change. */
+    profile->shortcuts[FRONTEND_SHORTCUT_FAST_FORWARD_HOLD].gamepad_button = SDL_CONTROLLER_BUTTON_INVALID;
+    frontend_host_input_event(&event, &settings, &runtime);
+    CHECK(!runtime.execution.fast_forward_held);
+    event.type = SDL_CONTROLLERBUTTONDOWN;
+    event.cbutton.button = SDL_CONTROLLER_BUTTON_LEFTSHOULDER;
+    frontend_host_input_event(&event, &settings, &runtime);
+    CHECK(runtime.rewind_held);
+    profile->shortcuts[FRONTEND_SHORTCUT_FAST_FORWARD_HOLD].gamepad_button = SDL_CONTROLLER_BUTTON_RIGHTSHOULDER;
+    event.cbutton.button = SDL_CONTROLLER_BUTTON_RIGHTSHOULDER;
+    frontend_host_input_event(&event, &settings, &runtime);
+    CHECK(runtime.execution.fast_forward_held);
+    event.type = SDL_CONTROLLERDEVICEREMOVED;
+    event.cdevice.which = ids[1];
+    frontend_host_input_event(&event, &settings, &runtime);
+    CHECK(!runtime.rewind_held && !runtime.execution.fast_forward_held);
+    frontend_host_input_shutdown();
+    frontend_execution_shutdown(&runtime);
+    for (int p = 1; p >= 0; --p) {
+        CHECK(SDL_JoystickDetachVirtual(devices[p]) == 0);
+    }
+    SDL_QuitSubSystem(SDL_INIT_GAMECONTROLLER);
+    return 0;
+}
+
 int test_frontend_accuracy(void) {
     const NesRegionMode saved_mode = nes_region_mode();
     const NesRegion saved_region = nes_timing()->region;
@@ -932,6 +993,7 @@ int test_frontend_accuracy(void) {
     failures += session_transitions_and_recents();
     failures += settings_text_editing();
     failures += session_replacement_rollback();
+    failures += controller_shortcut_disconnect();
     unload_rom();
     frontend_commands_reset();
     nes_set_region_mode(saved_mode);

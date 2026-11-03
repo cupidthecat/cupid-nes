@@ -59,6 +59,7 @@ bool test_gtk_shader_context(FrontendDesktopUi *ui);
 bool test_gtk_shortcuts(FrontendDesktopUi *ui);
 bool test_gtk_state_dialogs(FrontendDesktopUi *ui);
 bool test_gtk_status_accuracy(FrontendDesktopUi *ui);
+bool test_gtk_workflows(FrontendDesktopUi *ui);
 
 static void pump(FrontendDesktopUi *ui) {
     for (unsigned i = 0; i < 20; i++) {
@@ -298,24 +299,123 @@ static GtkWidget *find_register_entry(GtkWidget *root) {
     return NULL;
 }
 
+typedef struct {
+    GtkWindow *parent;
+    bool owned;
+    unsigned polls;
+} FileOwnerProbe;
+
 static gboolean cancel_file_dialog(gpointer data) {
-    GtkNativeDialog *dialog = g_object_get_data(G_OBJECT(data), "cupid-file-dialog");
+    FileOwnerProbe *probe = data;
+    GtkNativeDialog *dialog = g_object_get_data(G_OBJECT(probe->parent), "cupid-file-dialog");
+    if (!dialog) {
+        GListModel *windows = gtk_window_get_toplevels();
+        for (guint i = 0; !dialog && i < g_list_model_get_n_items(windows); ++i) {
+            GtkWindow *window = g_list_model_get_item(windows, i);
+            dialog = g_object_get_data(G_OBJECT(window), "cupid-file-dialog");
+            g_object_unref(window);
+        }
+    }
     if (dialog) {
+#ifndef _WIN32
+        GListModel *windows = gtk_window_get_toplevels();
+        bool ready = false;
+        for (guint i = 0; i < g_list_model_get_n_items(windows); ++i) {
+            GtkWindow *window = g_list_model_get_item(windows, i);
+            ready |= GTK_IS_FILE_CHOOSER(window) && gtk_widget_get_mapped(GTK_WIDGET(window));
+            g_object_unref(window);
+        }
+        if (!ready) {
+            if (++probe->polls < 300) {
+                return G_SOURCE_CONTINUE;
+            }
+            g_signal_emit_by_name(dialog, "response", GTK_RESPONSE_CANCEL);
+            return G_SOURCE_REMOVE;
+        }
+#endif
+        probe->owned =
+            gtk_native_dialog_get_modal(dialog) && gtk_native_dialog_get_transient_for(dialog) == probe->parent;
         g_signal_emit_by_name(dialog, "response", GTK_RESPONSE_CANCEL);
     }
     return G_SOURCE_REMOVE;
 }
 
+static bool focus_window(GtkWidget *window) {
+    gint64 deadline = g_get_monotonic_time() + 3000000;
+    do {
+        gtk_window_present(GTK_WINDOW(window));
+        cupid_gtk_dispatch();
+        if (gtk_window_is_active(GTK_WINDOW(window))) {
+            return true;
+        }
+        SDL_Delay(10);
+    } while (g_get_monotonic_time() < deadline);
+    return false;
+}
+
 static bool file_dialog_interactions(FrontendDesktopUi *ui) {
     char path[128] = "unchanged", error[128] = "";
     cupid_gtk_files_install(GTK_WINDOW(ui->gtk->window));
-    guint source = g_idle_add(cancel_file_dialog, ui->gtk->window);
+    CHECK(focus_window(ui->gtk->window));
+    gtk_widget_grab_focus(ui->gtk->picture);
+    pump(ui);
+    CHECK(!cupid_gtk_captured(ui));
+    FileOwnerProbe probe = {.parent = GTK_WINDOW(ui->gtk->window)};
+    guint source = g_timeout_add(10, cancel_file_dialog, &probe);
     bool accepted = frontend_open_file_dialog(FRONTEND_OPEN_IMAGE, path, sizeof(path), error, sizeof(error));
     if (g_main_context_find_source_by_id(NULL, source)) {
         g_source_remove(source);
     }
-    CHECK(!accepted && !error[0] && !strcmp(path, "unchanged"));
+    CHECK(!accepted && probe.owned && !error[0] && !strcmp(path, "unchanged"));
     CHECK(!g_object_get_data(G_OBJECT(ui->gtk->window), "cupid-file-dialog"));
+    CupidGtkTool *tool = find_tool(ui, cupid_gtk_open(ui, 0, 0));
+    CHECK(tool);
+    pump(ui);
+    CHECK(focus_window(tool->window));
+    /* Capture the shifted symbol through Settings' real event controller. */
+    GListModel *controllers = gtk_widget_observe_controllers(tool->content);
+    GdkKeymapKey *mapped = NULL;
+    int mapped_count = 0;
+    CHECK(gdk_display_map_keyval(gtk_widget_get_display(tool->content), GDK_KEY_1, &mapped, &mapped_count));
+    bool bound = false;
+    FrontendBindingProfile *profile = frontend_settings_active_profile(&tool->ui.staged);
+    FrontendHostBinding saved = profile->shortcuts[FRONTEND_SHORTCUT_PAUSE];
+    for (guint i = 0; i < g_list_model_get_n_items(controllers); ++i) {
+        GtkEventController *controller = g_list_model_get_item(controllers, i);
+        if (GTK_IS_EVENT_CONTROLLER_KEY(controller)) {
+            for (int k = 0; k < mapped_count; ++k) {
+                if (mapped[k].group != 0 || mapped[k].level != 0) {
+                    continue;
+                }
+                tool->ui.capture_binding = tool->ui.capture_shortcut = true;
+                tool->ui.capture_index = FRONTEND_SHORTCUT_PAUSE;
+                gboolean handled = FALSE;
+                g_signal_emit_by_name(controller, "key-pressed", GDK_KEY_exclam, mapped[k].keycode, GDK_SHIFT_MASK,
+                                      &handled);
+                bound |= handled && !tool->ui.capture_binding &&
+                         profile->shortcuts[FRONTEND_SHORTCUT_PAUSE].key == SDL_SCANCODE_1 &&
+                         (profile->shortcuts[FRONTEND_SHORTCUT_PAUSE].modifiers & KMOD_SHIFT);
+            }
+        }
+        g_object_unref(controller);
+    }
+    profile->shortcuts[FRONTEND_SHORTCUT_PAUSE] = saved;
+    g_object_unref(controllers);
+    g_free(mapped);
+    CHECK(bound);
+    probe = (FileOwnerProbe){.parent = GTK_WINDOW(tool->window)};
+    source = g_timeout_add(10, cancel_file_dialog, &probe);
+    accepted = frontend_open_file_dialog(FRONTEND_OPEN_IMAGE, path, sizeof(path), error, sizeof(error));
+    if (g_main_context_find_source_by_id(NULL, source)) {
+        g_source_remove(source);
+    }
+    CHECK(!accepted && probe.owned && !error[0] && !strcmp(path, "unchanged"));
+    CHECK(!g_object_get_data(G_OBJECT(tool->window), "cupid-file-dialog"));
+    gtk_widget_set_visible(tool->window, FALSE);
+    gtk_window_present(GTK_WINDOW(ui->gtk->window));
+    gtk_widget_grab_focus(ui->gtk->picture);
+    pump(ui);
+    puts("GTK chooser ownership, cancellation and shifted binding capture: PASS");
     return true;
 }
 
@@ -1023,7 +1123,7 @@ int main(int argc, char **argv) {
         bool passed = frontend_execution_register_commands(&execution) &&
                       frontend_desktop_register_commands(&ui) && state_runtime_register_ui(&states);
         pump(&ui);
-        passed = passed && test_gtk_state_dialogs(&ui) && test_gtk_status_accuracy(&ui);
+        passed = passed && test_gtk_workflows(&ui) && test_gtk_state_dialogs(&ui) && test_gtk_status_accuracy(&ui);
         frontend_desktop_shutdown(&ui);
         state_runtime_shutdown(&states);
         frontend_execution_shutdown(&execution);
@@ -1112,7 +1212,7 @@ int main(int argc, char **argv) {
              test_gtk_input_accuracy(&ui) && test_gtk_information(&ui);
     }
     if (ok) {
-        ok = file_dialog_interactions(&ui) && test_gtk_state_dialogs(&ui) &&
+        ok = test_gtk_workflows(&ui) && file_dialog_interactions(&ui) && test_gtk_state_dialogs(&ui) &&
              test_gtk_status_accuracy(&ui) && register_interactions(&ui);
     }
     if (ok) {

@@ -292,7 +292,7 @@ static void key_event(CupidGtkDesktop *d, guint key, GdkModifierType mods, bool 
     SDL_PushEvent(&e);
 }
 
-static guint base_key(GtkEventControllerKey *c, guint key, guint code) {
+guint cupid_gtk_base_key(GtkEventControllerKey *c, guint key, guint code) {
     GdkKeymapKey *keys = NULL;
     guint *values = NULL;
     int count = 0;
@@ -311,12 +311,12 @@ static guint base_key(GtkEventControllerKey *c, guint key, guint code) {
 }
 
 static gboolean key_down(GtkEventControllerKey *c, guint key, guint code, GdkModifierType mods, gpointer data) {
-    key_event(data, base_key(c, key, code), mods, true);
+    key_event(data, cupid_gtk_base_key(c, key, code), mods, true);
     return TRUE;
 }
 
 static void key_up(GtkEventControllerKey *c, guint key, guint code, GdkModifierType mods, gpointer data) {
-    key_event(data, base_key(c, key, code), mods, false);
+    key_event(data, cupid_gtk_base_key(c, key, code), mods, false);
 }
 
 static void release_keys(CupidGtkDesktop *d) {
@@ -1170,14 +1170,25 @@ void cupid_gtk_render(FrontendDesktopUi *ui, const char *title, const char *regi
         ui->video->viewport_context = d;
     }
     theme(d);
-    size_t recent = frontend_session_recent_count(ui->sessions ? ui->sessions->session : ui->idle_session);
+    const FrontendSession *recent_session = ui->sessions ? ui->sessions->session : ui->idle_session;
+    size_t recent = frontend_session_recent_count(recent_session);
+    uint64_t recent_revision = recent_session ? recent_session->recent_revision : 0;
+    const FrontendBindingProfile *profile = frontend_settings_active_profile_const(ui->settings);
+    FrontendHostBinding shortcuts[FRONTEND_SHORTCUT_COUNT] = {0};
+    if (profile) {
+        memcpy(shortcuts, profile->shortcuts, sizeof(shortcuts));
+    }
     bool session = frontend_panel_session_active();
     if (!d->actions || d->commands != frontend_command_count() || d->panels != frontend_panel_count() ||
-        d->session != session || d->recent != recent) {
+        d->session != session || d->recent != recent || d->recent_session != recent_session ||
+        d->recent_revision != recent_revision || memcmp(d->shortcuts, shortcuts, sizeof(shortcuts))) {
         d->commands = frontend_command_count();
         d->panels = frontend_panel_count();
         d->session = session;
         d->recent = recent;
+        d->recent_session = recent_session;
+        d->recent_revision = recent_revision;
+        memcpy(d->shortcuts, shortcuts, sizeof(shortcuts));
         rebuild_menus(d);
     }
     if (d->fullscreen != ui->settings->fullscreen) {

@@ -211,6 +211,7 @@ GTK_SMOKE_OBJ = $(BUILD_DIR)/src/tests/gtk_ui_smoke.o $(BUILD_DIR)/src/tests/gtk
 GTK_SETTINGS_TEST_OBJ = $(BUILD_DIR)/src/tests/gtk_settings_accuracy.o
 GTK_SMOKE_OBJ += $(BUILD_DIR)/src/tests/gtk_state_accuracy.o
 GTK_SMOKE_OBJ += $(BUILD_DIR)/src/tests/gtk_status_accuracy.o
+GTK_SMOKE_OBJ += $(BUILD_DIR)/src/tests/gtk_workflow_accuracy.o
 OBJ += $(GTK_SMOKE_OBJ) $(GTK_SETTINGS_TEST_OBJ)
 endif
 

@@ -16,12 +16,31 @@ typedef struct {
     GtkWindow *parent;
     bool seen, save, correct;
     unsigned checks;
+    const char *name;
+    unsigned polls;
 } DialogProbe;
 
 static gboolean cancel_state_dialog(gpointer data) {
     DialogProbe *probe = data;
     GtkNativeDialog *dialog = g_object_get_data(G_OBJECT(probe->parent), "cupid-file-dialog");
     if (dialog) {
+#ifndef _WIN32
+        /* Wait for the visible chooser before simulating the user's Cancel. */
+        GListModel *windows = gtk_window_get_toplevels();
+        bool ready = false;
+        for (guint i = 0; i < g_list_model_get_n_items(windows); ++i) {
+            GtkWindow *window = g_list_model_get_item(windows, i);
+            ready |= GTK_IS_FILE_CHOOSER(window) && gtk_widget_get_mapped(GTK_WIDGET(window));
+            g_object_unref(window);
+        }
+        if (!ready) {
+            if (++probe->polls < 300) {
+                return G_SOURCE_CONTINUE;
+            }
+            g_signal_emit_by_name(dialog, "response", GTK_RESPONSE_CANCEL);
+            return G_SOURCE_REMOVE;
+        }
+#endif
         probe->seen = true;
         if (gtk_native_dialog_get_modal(dialog)) probe->checks |= 1;
         if (gtk_native_dialog_get_transient_for(dialog) == probe->parent) probe->checks |= 2;
@@ -35,6 +54,13 @@ static gboolean cancel_state_dialog(gpointer data) {
         if (g_list_model_get_n_items(filters) == 2 && states && all &&
             !g_strcmp0(gtk_file_filter_get_name(states), "Save states") &&
             !g_strcmp0(gtk_file_filter_get_name(all), "All files")) probe->checks |= 16;
+        if (probe->save) {
+            char *name = gtk_file_chooser_get_current_name(GTK_FILE_CHOOSER(dialog));
+            if (g_strcmp0(name, probe->name)) {
+                probe->checks = 0;
+            }
+            g_free(name);
+        }
         probe->correct = probe->checks == 31;
         g_clear_object(&states);
         g_clear_object(&all);
@@ -86,8 +112,9 @@ bool test_gtk_state_dialogs(FrontendDesktopUi *ui) {
             } while (g_get_monotonic_time() < deadline);
             CHECK(!cupid_gtk_captured(ui));
         }
-        DialogProbe probe = {.parent = GTK_WINDOW(ui->gtk->window), .save = save};
-        guint source = g_idle_add(cancel_state_dialog, &probe);
+        DialogProbe probe = {
+            .parent = GTK_WINDOW(ui->gtk->window), .save = save, .name = mode < 2 ? "untitled.cst" : "remembered.cst"};
+        guint source = g_timeout_add(10, cancel_state_dialog, &probe);
         bool invoked;
         if (mode < 2) {
             char *action = find_action(gtk_popover_menu_bar_get_menu_model(GTK_POPOVER_MENU_BAR(ui->gtk->menubar)),

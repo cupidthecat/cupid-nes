@@ -11,6 +11,8 @@ Launch Cupid without an image to open the startup window. Use Open, press
 Ctrl+O, drop a game image, or select a recent entry. Recent entries retain the
 archive member, patch, firmware selection, and save identity needed to reopen
 that image. A failed replacement leaves the current machine available.
+The recent-games menu updates when entries move or replace an older entry,
+including when the list has reached its limit.
 
 The top menu bar contains File, Emulation, View, Audio, Media, Tools, and Help.
 A compact icon toolbar below it provides Open, Pause/Resume, Frame advance,
@@ -28,7 +30,10 @@ its current result. Temporary tool messages also expire after six seconds.
 File > Save states > Save State File and Load State File open native file choosers. F5 and F6
 use the selected quick slot; Ctrl+F5 and Ctrl+F6 choose a named state file.
 Tool-panel file pickers use the file type's title and filters, with an All files
-option. Canceling a chooser keeps the current path.
+option. Filters accept uppercase and mixed-case extensions. Choosers start from
+the stored path when one is available; Save also restores its filename.
+Canceling a chooser keeps the current path. A chooser opened from an active
+tool belongs to that tool's window.
 
 The startup screen, menus, settings, feature panels, palette editor, and text
 entry use GTK4. On Windows, the light/dark appearance follows the system
@@ -101,6 +106,10 @@ Overscan uses a row for each region and a column for each edge. The audio mixers
 place volume and pan beside each channel. Controller mapping pairs keyboard and
 gamepad bindings on the same row. If Apply finds an invalid value on another
 tab, it opens that tab and focuses the field without applying the pending edits.
+Shortcut labels in the menus follow the active bindings. Shifted keys use the
+same underlying key during binding capture and gameplay. Disconnecting a
+controller releases its held fast-forward and rewind actions, including after
+a binding change.
 
 ![Video settings](images/desktop-category-2.png)
 Numeric fields accept values such as 1.25 for speed or 44100 for sample rate.

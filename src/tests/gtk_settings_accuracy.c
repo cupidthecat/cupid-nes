@@ -33,6 +33,12 @@ SDL_Scancode cupid_gtk_scancode(guint key) {
     return SDL_SCANCODE_A;
 }
 
+guint cupid_gtk_base_key(GtkEventControllerKey *controller, guint key, guint code) {
+    (void)controller;
+    (void)code;
+    return key;
+}
+
 SDL_Keymod cupid_gtk_modifiers(GdkModifierType mods) {
     (void)mods;
     return KMOD_NONE;

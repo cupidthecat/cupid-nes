@@ -141,8 +141,6 @@ static void activate(GtkButton *w, gpointer data) {
 }
 
 static gboolean binding(GtkEventControllerKey *controller, guint key, guint code, GdkModifierType mods, gpointer data) {
-    (void)controller;
-    (void)code;
     Settings *s = data;
     FrontendDesktopUi *ui = &s->tool->ui;
     if (!ui->capture_binding) {
@@ -153,7 +151,7 @@ static gboolean binding(GtkEventControllerKey *controller, guint key, guint code
         return TRUE;
     }
     SDL_KeyboardEvent event = {.type = SDL_KEYDOWN};
-    event.keysym.scancode = cupid_gtk_scancode(key);
+    event.keysym.scancode = cupid_gtk_scancode(cupid_gtk_base_key(controller, key, code));
     event.keysym.mod = cupid_gtk_modifiers(mods);
     desktop_binding_key(ui, &event);
     return TRUE;

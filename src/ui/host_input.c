@@ -9,8 +9,33 @@
 #include "host_input.h"
 #include "../joypad/joypad.h"
 #include "../rom/mapper.h"
+#include <string.h>
 
 static SDL_GameController *controllers[NES_INPUT_PLAYERS];
+/* Remember the action at press time so changing profiles cannot strand a hold. */
+static unsigned held_shortcuts[NES_INPUT_PLAYERS][SDL_CONTROLLER_BUTTON_MAX];
+static bool controller_fast, controller_rewind;
+
+static void refresh_shortcut_holds(FrontendExecutionRuntime *execution) {
+    if (!execution) {
+        return;
+    }
+    bool fast = false, rewind = false;
+    for (unsigned p = 0; p < NES_INPUT_PLAYERS; ++p) {
+        for (unsigned b = 0; b < SDL_CONTROLLER_BUTTON_MAX; ++b) {
+            fast |= held_shortcuts[p][b] == FRONTEND_SHORTCUT_FAST_FORWARD_HOLD + 1;
+            rewind |= held_shortcuts[p][b] == FRONTEND_SHORTCUT_REWIND + 1;
+        }
+    }
+    if (fast != controller_fast) {
+        (void)frontend_execution_handle_shortcut_action(execution, FRONTEND_SHORTCUT_FAST_FORWARD_HOLD, fast, false);
+    }
+    if (rewind != controller_rewind) {
+        (void)frontend_execution_handle_shortcut_action(execution, FRONTEND_SHORTCUT_REWIND, rewind, false);
+    }
+    controller_fast = fast;
+    controller_rewind = rewind;
+}
 
 static void release_player(unsigned player) {
     if (player >= NES_INPUT_PLAYERS) return;
@@ -38,6 +63,8 @@ static void release_player(unsigned player) {
 }
 
 void frontend_host_input_release_all(void) {
+    memset(held_shortcuts, 0, sizeof(held_shortcuts));
+    controller_fast = controller_rewind = false;
     for (unsigned player = 0; player < NES_INPUT_PLAYERS; ++player) release_player(player);
     joypad_set_microphone(false);
     (void)cart_set_karaoke_input(CART_KARAOKE_MICROPHONE, false);
@@ -96,15 +123,30 @@ void frontend_host_input_event(const SDL_Event *event, const FrontendSettings *s
             SDL_GameControllerClose(controllers[player]);
             controllers[player] = NULL;
             release_player(player);
+            memset(held_shortcuts[player], 0, sizeof(held_shortcuts[player]));
+            refresh_shortcut_holds(execution);
         } else if ((event->type == SDL_CONTROLLERBUTTONDOWN
                     || event->type == SDL_CONTROLLERBUTTONUP)
                    && event->cbutton.which == id) {
             bool down = event->type == SDL_CONTROLLERBUTTONDOWN;
+            unsigned physical = event->cbutton.button;
+            if (!down && physical < SDL_CONTROLLER_BUTTON_MAX && held_shortcuts[player][physical]) {
+                held_shortcuts[player][physical] = 0;
+                refresh_shortcut_holds(execution);
+                continue;
+            }
             FrontendShortcut shortcut;
             if (profile && execution
                 && frontend_profile_shortcut_gamepad(
                     profile, (SDL_GameControllerButton)event->cbutton.button, &shortcut)) {
-                (void)frontend_execution_handle_shortcut_action(execution, shortcut, down, false);
+                if (shortcut == FRONTEND_SHORTCUT_FAST_FORWARD_HOLD || shortcut == FRONTEND_SHORTCUT_REWIND) {
+                    if (physical < SDL_CONTROLLER_BUTTON_MAX) {
+                        held_shortcuts[player][physical] = down ? (unsigned)shortcut + 1 : 0;
+                        refresh_shortcut_holds(execution);
+                    }
+                } else {
+                    (void)frontend_execution_handle_shortcut_action(execution, shortcut, down, false);
+                }
                 continue;
             }
             unsigned button;

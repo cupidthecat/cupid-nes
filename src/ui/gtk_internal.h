@@ -18,6 +18,9 @@ typedef struct CupidGtkDesktop {
     GSimpleActionGroup *actions;
     CupidGtkTool *tools;
     size_t commands, panels, recent;
+    const FrontendSession *recent_session;
+    uint64_t recent_revision;
+    FrontendHostBinding shortcuts[FRONTEND_SHORTCUT_COUNT];
     bool session, held[SDL_NUM_SCANCODES], fullscreen, joystick_background;
     uint32_t refreshed, theme_checked;
     cairo_surface_t *frame;
@@ -64,11 +67,14 @@ void cupid_gtk_debug_refresh(GtkWidget *widget);
 /* Release native host input without depending on window-manager focus reporting. */
 void cupid_gtk_release_input(CupidGtkDesktop *desktop);
 SDL_Scancode cupid_gtk_scancode(guint keyval);
+guint cupid_gtk_base_key(GtkEventControllerKey *controller, guint keyval, guint keycode);
 SDL_Keymod cupid_gtk_modifiers(GdkModifierType state);
 /* Install after main window creation; shut down before destroying that window. */
 void cupid_gtk_files_install(GtkWindow *parent);
 void cupid_gtk_files_shutdown(void);
 void cupid_gtk_file_filters(GtkFileChooser *chooser, bool save, unsigned type);
+GtkFileFilter *cupid_gtk_file_filter(bool save, unsigned type);
+void cupid_gtk_file_location(GtkFileChooser *chooser, const char *path);
 bool cupid_gtk_native_video_present(CupidGtkDesktop *desktop, const uint32_t *pixels,
                                    unsigned width, unsigned height, unsigned stride);
 void cupid_gtk_native_video_hide(CupidGtkDesktop *desktop);
