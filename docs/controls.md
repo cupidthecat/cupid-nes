@@ -245,7 +245,11 @@ Changing or ejecting a side does not flush the disk image. Follow the game's dis
 
 ## Palette controls
 
-Open the palette editor from the desktop controls. Click one of the 64 swatches to open its color picker, then use the saturation/value area or hue strip to edit that color. F6 restores Cupid's built-in 64-color palette. F7 is the default quick-load state shortcut.
+Open the palette editor with F7 or **View > Palette > Palette editor**. Click
+one of the 64 swatches to open its color picker, then use the saturation/value
+area or hue strip to edit that color. **View > Palette > Reset palette** restores
+the built-in palette. F6 is the default quick-load state shortcut; rebinding it
+does not turn the old key into a palette-reset shortcut.
 
 Ctrl+V accepts either 64 six-digit RGB tokens or raw hexadecimal bytes for a 192-byte or 1536-byte palette. Token prefixes may be `#`, `0x`, or `$`. Raw input ignores non-hex separators.
 

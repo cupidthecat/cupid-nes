@@ -974,9 +974,6 @@ static int application_main(int argc, char *argv[]) {
                     case SDLK_F7:
                         if (down) { palette_tool_toggle_overlay(); }
                         break;
-                    case SDLK_F6:
-                        if (down) { ppu_palette_reset_default(); frontend_desktop_set_status(&desktop_ui,"Palette reset"); }
-                        break;
                     case SDLK_5: if (vs_enabled()) vs_set_coin(0, down != 0); break;
                     case SDLK_6: if (vs_enabled()) vs_set_coin(1, down != 0); break;
                     case SDLK_7: if (vs_dual_system()) vs_set_coin(2, down != 0); break;

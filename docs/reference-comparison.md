@@ -75,6 +75,9 @@ Reference names are examples used for comparison, not exclusive support lists.
 - The game view consumed unbound Tab/Shift+Tab presses, preventing normal GTK
   keyboard focus navigation. These now reach GTK unless a profile binding or
   an emulated keyboard owns the key.
+- Rebinding Quick Load exposed a leftover F6 palette-reset handler. The handler
+  is removed; palette reset remains available from View > Palette. The controls
+  guide now describes the current F6/F7 actions.
 
 The numbered quick-slot menu is a usability addition. Selecting a slot changes
 the quick-save/load target without saving or loading a state.
