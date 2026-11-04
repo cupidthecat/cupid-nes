@@ -213,6 +213,7 @@ SDL_Scancode cupid_gtk_scancode(guint key) {
     case GDK_KEY_BackSpace:
         return SDL_SCANCODE_BACKSPACE;
     case GDK_KEY_Tab:
+    case GDK_KEY_ISO_Left_Tab:
         return SDL_SCANCODE_TAB;
     case GDK_KEY_comma:
         return SDL_SCANCODE_COMMA;
@@ -312,6 +313,15 @@ guint cupid_gtk_base_key(GtkEventControllerKey *c, guint key, guint code) {
 }
 
 static gboolean key_down(GtkEventControllerKey *c, guint key, guint code, GdkModifierType mods, gpointer data) {
+    if (key == GDK_KEY_Tab || key == GDK_KEY_ISO_Left_Tab) {
+        const FrontendBindingProfile *profile = frontend_settings_active_profile_const(((CupidGtkDesktop *)data)->ui->settings);
+        SDL_KeyboardEvent event = {.keysym = {.scancode = SDL_SCANCODE_TAB, .mod = cupid_gtk_modifiers(mods)}};
+        unsigned player, button; FrontendShortcut shortcut;
+        NesExpansionDevice expansion = joypad_expansion_device();
+        if (expansion != NES_EXPANSION_FAMILY_BASIC && expansion != NES_EXPANSION_SUBOR_KEYBOARD &&
+            !frontend_profile_player_key(profile, &event, &player, &button) &&
+            !frontend_profile_shortcut_key(profile, &event, &shortcut)) return FALSE;
+    }
     key_event(data, cupid_gtk_base_key(c, key, code), mods, true);
     return TRUE;
 }
@@ -456,6 +466,14 @@ static void menu_action(GSimpleAction *action, GVariant *value, gpointer data) {
     case 3:
         ui->quit_requested = true;
         break;
+    case DESKTOP_MENU_STATE_SLOT:
+        if (a->item.id < NES_STATE_SLOT_COUNT) {
+            ui->settings->state_slot = a->item.id;
+            char message[64];
+            g_snprintf(message, sizeof(message), "Quick state slot %u selected", a->item.id + 1);
+            desktop_copy_status(ui, message);
+        }
+        break;
     case 4:
     case 6:
         cupid_gtk_open(ui, 2, a->item.kind == 6);
@@ -495,10 +513,12 @@ static GMenu *menu_level(CupidGtkDesktop *d, int depth, unsigned *serial) {
         g_snprintf(name, sizeof(name), "item%u", (*serial)++);
         g_snprintf(full, sizeof(full), "desktop.%s", name);
         FrontendCommandInfo command;
-        bool checkable = rows[i].kind == 0 && frontend_command_get(rows[i].id, &command) &&
-                         (command.flags & FRONTEND_COMMAND_CHECKABLE);
+        bool slot = rows[i].kind == DESKTOP_MENU_STATE_SLOT;
+        bool checkable = slot || (rows[i].kind == 0 && frontend_command_get(rows[i].id, &command) &&
+                         (command.flags & FRONTEND_COMMAND_CHECKABLE));
+        bool checked = slot ? d->ui->settings->state_slot == rows[i].id : checkable && command.checked;
         GSimpleAction *act = checkable
-                                 ? g_simple_action_new_stateful(name, NULL, g_variant_new_boolean(command.checked))
+                                 ? g_simple_action_new_stateful(name, NULL, g_variant_new_boolean(checked))
                                  : g_simple_action_new(name, NULL);
         MenuAction *a = g_new0(MenuAction, 1);
         a->desktop = d;
@@ -587,6 +607,9 @@ static void sync_actions(CupidGtkDesktop *d) {
             }
         } else if (a->item.kind == 1 && frontend_panel_get(a->item.id, &panel)) {
             g_simple_action_set_enabled(G_SIMPLE_ACTION(action), panel.enabled);
+        } else if (a->item.kind == DESKTOP_MENU_STATE_SLOT) {
+            g_simple_action_set_state(G_SIMPLE_ACTION(action),
+                g_variant_new_boolean(d->ui->settings->state_slot == a->item.id));
         }
     }
     g_strfreev(names);

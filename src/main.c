@@ -928,34 +928,6 @@ static int application_main(int argc, char *argv[]) {
                 }
             }
             if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
-                && e.key.windowID == SDL_GetWindowID(window)
-                && frontend_devices_handle_tape_key(&device_runtime, &e.key, path_error, sizeof(path_error))) {
-                if (path_error[0]) frontend_desktop_set_status(&desktop_ui, path_error);
-                continue;
-            }
-            if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
-                && e.key.windowID == SDL_GetWindowID(window)
-                && family_basic_key_event(&e.key, NULL, NULL,
-                                          cpu_total_cycles)) continue;
-            if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
-                && e.key.windowID == SDL_GetWindowID(window)
-                && subor_key_event(&e.key)) continue;
-            if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
-                && e.key.windowID == SDL_GetWindowID(window)
-                && party_tap_key_event(&e.key)) continue;
-            if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
-                && e.key.windowID == SDL_GetWindowID(window)
-                && boxing_key_event(&e.key)) continue;
-            if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
-                && e.key.windowID == SDL_GetWindowID(window)
-                && jissen_key_event(&e.key)) continue;
-            if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
-                && e.key.windowID == SDL_GetWindowID(window)
-                && extended_port_key_event(&e.key)) continue;
-            if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
-                && e.key.windowID == SDL_GetWindowID(window)
-                && mat_key_event(&e.key)) continue;
-            if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
                 && e.key.windowID == SDL_GetWindowID(window)) {
                 char capture_error[256] = {0};
                 if (nes_capture_frontend_handle_shortcut(&capture_runtime.frontend, &e.key,

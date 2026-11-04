@@ -122,6 +122,25 @@ bool test_gtk_workflows(FrontendDesktopUi *ui) {
     ui->sessions = previous_actions;
     ui->idle_session = previous_idle;
 
+    /* Selecting a numbered slot must work without opening Settings. */
+    unsigned previous_slot = ui->settings->state_slot;
+    frontend_desktop_render(ui, 256, 240, "Workflow fixture", "NTSC", "Paused");
+    menu = gtk_popover_menu_bar_get_menu_model(GTK_POPOVER_MENU_BAR(ui->gtk->menubar));
+    char *slot_action = menu_attribute(menu, "Slot 4", G_MENU_ATTRIBUTE_ACTION);
+    const char *slot_name = slot_action ? strchr(slot_action, '.') : NULL;
+    bool slots = slot_name != NULL;
+    if (slot_name) {
+        g_action_group_activate_action(G_ACTION_GROUP(ui->gtk->actions), slot_name + 1, NULL);
+        slots &= ui->settings->state_slot == 3;
+        ui->gtk->refreshed = SDL_GetTicks() - 100;
+        frontend_desktop_render(ui, 256, 240, "Workflow fixture", "NTSC", "Paused");
+        GVariant *checked = g_action_group_get_action_state(G_ACTION_GROUP(ui->gtk->actions), slot_name + 1);
+        slots &= checked && g_variant_get_boolean(checked);
+        g_clear_pointer(&checked, g_variant_unref);
+    }
+    g_free(slot_action);
+    ui->settings->state_slot = previous_slot;
+
     FrontendBindingProfile *profile = frontend_settings_active_profile(ui->settings);
     FrontendHostBinding saved = profile->shortcuts[FRONTEND_SHORTCUT_PAUSE];
     profile->shortcuts[FRONTEND_SHORTCUT_PAUSE].key = SDL_SCANCODE_J;
@@ -154,7 +173,7 @@ bool test_gtk_workflows(FrontendDesktopUi *ui) {
     g_object_unref(info);
     g_object_unref(filter);
     bool fair = fair_refresh(ui);
-    printf("GTK workflows: reordered=%d replaced=%d shortcuts=%d file extensions=%d fair refresh=%d\n", reordered,
-           replaced, remapped, filtered, fair);
-    return ok && reordered && replaced && remapped && filtered && fair;
+    printf("GTK workflows: reordered=%d replaced=%d shortcuts=%d file extensions=%d fair refresh=%d slots=%d\n", reordered,
+           replaced, remapped, filtered, fair, slots);
+    return ok && reordered && replaced && remapped && filtered && fair && slots;
 }

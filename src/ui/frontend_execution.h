@@ -38,6 +38,7 @@ typedef struct FrontendExecutionRuntime {
     bool rewind_held;
     bool rewind_frame_captured;
     unsigned suspend_reasons;
+    unsigned fast_forward_sources, rewind_sources;
     uint64_t timing_revision;
     const char *rom_path;
     const char *save_identity;
@@ -93,6 +94,7 @@ unsigned frontend_execution_shortcut_command(FrontendShortcut shortcut);
 bool frontend_execution_handle_shortcut_action(FrontendExecutionRuntime *runtime,
                                                FrontendShortcut shortcut,
                                                bool down, bool repeat);
+void frontend_execution_controller_hold(FrontendExecutionRuntime *runtime, FrontendShortcut shortcut, bool down);
 void frontend_execution_release_host_input(FrontendExecutionRuntime *runtime);
 bool frontend_execution_set_speeds(FrontendExecutionRuntime *runtime,
                                    double speed, double fast_forward_speed);

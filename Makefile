@@ -96,7 +96,7 @@ CORE_CXX_SRC = src/video/pixel_filter.cpp src/apu/epsm.cpp src/third_party/ymfm/
                src/rom/game_db.cpp src/rom/boards/runtime.cpp src/rom/boards/factory.cpp src/rom/boards/state.cpp \
                src/hd/hd_assets.cpp src/hd/hd_pack_loader.cpp src/hd/hd_conditions.cpp \
                src/hd/hd_renderer.cpp src/hd/hd_runtime.cpp src/third_party/stb/stb_vorbis.cpp
-TEST_SRC = src/tests/frontend_benchmark.c src/tests/netplay_accuracy.c src/tests/accuracy_test.c src/tests/cpu_accuracy.c \
+TEST_SRC = src/tests/host_input_accuracy.c src/tests/frontend_benchmark.c src/tests/netplay_accuracy.c src/tests/accuracy_test.c src/tests/cpu_accuracy.c \
            src/tests/cpu_trace.c src/tests/apu_accuracy.c src/tests/file_io_accuracy.c src/tests/persistence_accuracy.c \
            src/tests/ppu_accuracy.c src/tests/mapper_accuracy.c src/tests/region_accuracy.c \
            src/tests/native_flash_geometry_accuracy.c src/tests/mapper30_111_prg_ram_accuracy.c \

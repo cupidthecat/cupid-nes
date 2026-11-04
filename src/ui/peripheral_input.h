@@ -23,6 +23,7 @@ bool subor_key_event(const SDL_KeyboardEvent *event);
 bool party_tap_key_event(const SDL_KeyboardEvent *event);
 bool boxing_key_event(const SDL_KeyboardEvent *event);
 bool jissen_key_event(const SDL_KeyboardEvent *event);
+void frontend_peripheral_release_host_input(void);
 void oeka_kids_pointer_event(int pointer_x, int pointer_y, bool pointer_on_screen,
                              uint32_t buttons);
 

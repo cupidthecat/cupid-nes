@@ -9,12 +9,34 @@
 #include "host_input.h"
 #include "../joypad/joypad.h"
 #include "../rom/mapper.h"
+#include "peripheral_input.h"
 #include <string.h>
 
 static SDL_GameController *controllers[NES_INPUT_PLAYERS];
+static unsigned held_keys[SDL_NUM_SCANCODES];
+static uint8_t held_buttons[NES_INPUT_PLAYERS][SDL_CONTROLLER_BUTTON_MAX];
+static uint8_t held_axes[NES_INPUT_PLAYERS][2];
+/* Netplay can defer mutation of the emulated pad; track host state separately. */
+static uint8_t published_buttons[NES_INPUT_PLAYERS];
 /* Remember the action at press time so changing profiles cannot strand a hold. */
 static unsigned held_shortcuts[NES_INPUT_PLAYERS][SDL_CONTROLLER_BUTTON_MAX];
-static bool controller_fast, controller_rewind;
+
+static void publish_player(unsigned player) {
+    uint8_t buttons = held_axes[player][0] | held_axes[player][1];
+    for (unsigned b = 0; b < SDL_CONTROLLER_BUTTON_MAX; ++b) buttons |= held_buttons[player][b];
+    for (unsigned sc = 1; sc < SDL_NUM_SCANCODES; ++sc) {
+        unsigned target = held_keys[sc];
+        if (target && (target - 1) / 8 == player) buttons |= (uint8_t)(1u << ((target - 1) % 8));
+    }
+    uint8_t changed = buttons ^ published_buttons[player];
+    for (unsigned b = 0; b < 8; ++b)
+        if (changed & (1u << b)) (void)joypad_set_player(player, (int)b, (buttons & (1u << b)) != 0);
+    if (player == 0) {
+        if (changed & (1u << BTN_A)) (void)cart_set_karaoke_input(CART_KARAOKE_A, (buttons & (1u << BTN_A)) != 0);
+        if (changed & (1u << BTN_B)) (void)cart_set_karaoke_input(CART_KARAOKE_B, (buttons & (1u << BTN_B)) != 0);
+    }
+    published_buttons[player] = buttons;
+}
 
 static void refresh_shortcut_holds(FrontendExecutionRuntime *execution) {
     if (!execution) {
@@ -27,23 +49,12 @@ static void refresh_shortcut_holds(FrontendExecutionRuntime *execution) {
             rewind |= held_shortcuts[p][b] == FRONTEND_SHORTCUT_REWIND + 1;
         }
     }
-    if (fast != controller_fast) {
-        (void)frontend_execution_handle_shortcut_action(execution, FRONTEND_SHORTCUT_FAST_FORWARD_HOLD, fast, false);
-    }
-    if (rewind != controller_rewind) {
-        (void)frontend_execution_handle_shortcut_action(execution, FRONTEND_SHORTCUT_REWIND, rewind, false);
-    }
-    controller_fast = fast;
-    controller_rewind = rewind;
+    frontend_execution_controller_hold(execution, FRONTEND_SHORTCUT_FAST_FORWARD_HOLD, fast);
+    frontend_execution_controller_hold(execution, FRONTEND_SHORTCUT_REWIND, rewind);
 }
 
-static void release_player(unsigned player) {
+static void release_extended_player(unsigned player) {
     if (player >= NES_INPUT_PLAYERS) return;
-    joypad_player(player)->buttons = 0;
-    if (player == 0) {
-        (void)cart_set_karaoke_input(CART_KARAOKE_A, false);
-        (void)cart_set_karaoke_input(CART_KARAOKE_B, false);
-    }
     if (player < 2) {
         NesPortDevice device = joypad_port_device(player);
         if (device == NES_PORT_SNES_CONTROLLER || device == NES_PORT_NTT_KEYPAD) {
@@ -64,8 +75,19 @@ static void release_player(unsigned player) {
 
 void frontend_host_input_release_all(void) {
     memset(held_shortcuts, 0, sizeof(held_shortcuts));
-    controller_fast = controller_rewind = false;
-    for (unsigned player = 0; player < NES_INPUT_PLAYERS; ++player) release_player(player);
+    memset(held_keys, 0, sizeof(held_keys));
+    memset(held_buttons, 0, sizeof(held_buttons));
+    memset(held_axes, 0, sizeof(held_axes));
+    for (unsigned player = 0; player < NES_INPUT_PLAYERS; ++player) {
+        uint8_t buttons = published_buttons[player] | joypad_player(player)->buttons;
+        for (unsigned b = 0; b < 8; ++b)
+            if (buttons & (1u << b)) (void)joypad_set_player(player, (int)b, false);
+        published_buttons[player] = 0;
+        release_extended_player(player);
+    }
+    (void)cart_set_karaoke_input(CART_KARAOKE_A, false);
+    (void)cart_set_karaoke_input(CART_KARAOKE_B, false);
+    frontend_peripheral_release_host_input();
     joypad_set_microphone(false);
     (void)cart_set_karaoke_input(CART_KARAOKE_MICROPHONE, false);
 }
@@ -122,7 +144,10 @@ void frontend_host_input_event(const SDL_Event *event, const FrontendSettings *s
         if (event->type == SDL_CONTROLLERDEVICEREMOVED && event->cdevice.which == id) {
             SDL_GameControllerClose(controllers[player]);
             controllers[player] = NULL;
-            release_player(player);
+            release_extended_player(player);
+            memset(held_buttons[player], 0, sizeof(held_buttons[player]));
+            memset(held_axes[player], 0, sizeof(held_axes[player]));
+            publish_player(player);
             memset(held_shortcuts[player], 0, sizeof(held_shortcuts[player]));
             refresh_shortcut_holds(execution);
         } else if ((event->type == SDL_CONTROLLERBUTTONDOWN
@@ -130,6 +155,11 @@ void frontend_host_input_event(const SDL_Event *event, const FrontendSettings *s
                    && event->cbutton.which == id) {
             bool down = event->type == SDL_CONTROLLERBUTTONDOWN;
             unsigned physical = event->cbutton.button;
+            if (physical >= SDL_CONTROLLER_BUTTON_MAX) continue;
+            if (!down && held_buttons[player][physical]) {
+                held_buttons[player][physical] = 0;
+                publish_player(player);
+            }
             if (!down && physical < SDL_CONTROLLER_BUTTON_MAX && held_shortcuts[player][physical]) {
                 held_shortcuts[player][physical] = 0;
                 refresh_shortcut_holds(execution);
@@ -152,11 +182,8 @@ void frontend_host_input_event(const SDL_Event *event, const FrontendSettings *s
             unsigned button;
             if (profile && frontend_profile_player_gamepad(
                     profile, player, (SDL_GameControllerButton)event->cbutton.button, &button)) {
-                joypad_set_player(player, button, down);
-                if (player == 0 && button == BTN_A)
-                    (void)cart_set_karaoke_input(CART_KARAOKE_A, down);
-                else if (player == 0 && button == BTN_B)
-                    (void)cart_set_karaoke_input(CART_KARAOKE_B, down);
+                if (down) held_buttons[player][physical] = (uint8_t)(1u << button);
+                publish_player(player);
             }
             if (player < 2) {
                 NesPortDevice device = joypad_port_device(player);
@@ -176,9 +203,16 @@ void frontend_host_input_event(const SDL_Event *event, const FrontendSettings *s
                         joypad_set_virtual_boy_button(player, VB_BUTTON_R, down);
                 }
             }
-        } else if (event->type == SDL_CONTROLLERAXISMOTION && event->caxis.which == id
-                   && player < 2 && joypad_port_device(player) == NES_PORT_VIRTUAL_BOY) {
+        } else if (event->type == SDL_CONTROLLERAXISMOTION && event->caxis.which == id) {
             const int deadzone = 16000;
+            if (event->caxis.axis == SDL_CONTROLLER_AXIS_LEFTX || event->caxis.axis == SDL_CONTROLLER_AXIS_LEFTY) {
+                bool horizontal = event->caxis.axis == SDL_CONTROLLER_AXIS_LEFTX;
+                unsigned negative = horizontal ? BTN_LEFT : BTN_UP, positive = horizontal ? BTN_RIGHT : BTN_DOWN;
+                held_axes[player][horizontal ? 0 : 1] = event->caxis.value < -deadzone ? (uint8_t)(1u << negative)
+                    : event->caxis.value > deadzone ? (uint8_t)(1u << positive) : 0;
+                publish_player(player);
+            }
+            if (player >= 2 || joypad_port_device(player) != NES_PORT_VIRTUAL_BOY) continue;
             if (event->caxis.axis == SDL_CONTROLLER_AXIS_RIGHTX) {
                 joypad_set_virtual_boy_button(player, VB_BUTTON_LEFT1,
                                               event->caxis.value < -deadzone);
@@ -196,27 +230,20 @@ void frontend_host_input_event(const SDL_Event *event, const FrontendSettings *s
 
 bool frontend_host_input_bound_player_key(const FrontendBindingProfile *profile,
                                           const SDL_KeyboardEvent *event) {
-    if (profile && event && event->type == SDL_KEYUP) {
-        bool released = false;
-        for (unsigned p = 0; p < NES_INPUT_PLAYERS; ++p)
-            for (unsigned b = 0; b < 8; ++b)
-                if (profile->players[p][b].key == event->keysym.scancode) {
-                    (void)joypad_set_player(p, (int)b, false);
-                    if (p == 0 && b == BTN_A) (void)cart_set_karaoke_input(CART_KARAOKE_A, false);
-                    if (p == 0 && b == BTN_B) (void)cart_set_karaoke_input(CART_KARAOKE_B, false);
-                    released = true;
-                }
-        return released;
+    if (!event || (unsigned)event->keysym.scancode >= SDL_NUM_SCANCODES ||
+        (event->type != SDL_KEYDOWN && event->type != SDL_KEYUP)) return false;
+    unsigned sc = (unsigned)event->keysym.scancode;
+    if (held_keys[sc]) {
+        unsigned player = (held_keys[sc] - 1) / 8;
+        if (event->type == SDL_KEYUP) held_keys[sc] = 0;
+        publish_player(player);
+        return true;
     }
     unsigned player, button;
-    if (!profile || !event
-        || !frontend_profile_player_key(profile, event, &player, &button)) return false;
-    bool down = event->type == SDL_KEYDOWN;
-    (void)joypad_set_player(player, (int)button, down);
-    if (player == 0 && button == BTN_A)
-        (void)cart_set_karaoke_input(CART_KARAOKE_A, down);
-    else if (player == 0 && button == BTN_B)
-        (void)cart_set_karaoke_input(CART_KARAOKE_B, down);
+    if (!profile || event->type != SDL_KEYDOWN || event->repeat ||
+        !frontend_profile_player_key(profile, event, &player, &button)) return false;
+    held_keys[sc] = player * 8 + button + 1;
+    publish_player(player);
     return true;
 }
 

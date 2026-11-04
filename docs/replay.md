@@ -2,6 +2,11 @@
 
 [Documentation index](README.md)
 
+Choose **File > Save states > Quick state slot** to select one of the ten quick
+slots without opening Settings. The checkmark and status bar identify the
+selected slot. Selecting a slot does not save or load it; use Quick Save State
+or Quick Load State afterward.
+
 ## Save states
 
 Use File > Quick Save State and Quick Load State, or F5 and F6, for the selected

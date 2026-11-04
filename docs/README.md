@@ -1,5 +1,9 @@
 # Cupid documentation
 
+[NES reference comparison](reference-comparison.md) records the source review,
+input fixes, feature coverage, and remaining differences against the emulator
+snapshots used for PR #206.
+
 Cupid uses GTK4 for its desktop and SDL2 for video, audio, and controllers. A
 separate executable tests the hardware core. Both link the same C11 device code
 and C++17 cartridge and expansion-sound implementations. Start with

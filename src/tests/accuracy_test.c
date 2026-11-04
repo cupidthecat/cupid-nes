@@ -33,6 +33,7 @@ Joypad pad1 = {0};
 Joypad pad2 = {0};
 
 int test_cpu_accuracy(void);
+int test_host_input_accuracy(void);
 int test_apu_accuracy(void);
 int test_ppu_accuracy(void);
 int test_mapper_accuracy(void);
@@ -248,6 +249,9 @@ int main(int argc, char **argv) {
     if (argc == 2 && !strcmp(argv[1], "--desktop")) {
         return (test_desktop_accuracy() + test_desktop_menu_accuracy()) ? 1 : 0;
     }
+    if (argc == 2 && !strcmp(argv[1], "--host-input")) {
+        return test_host_input_accuracy() ? 1 : 0;
+    }
     if (argc == 4 && !strcmp(argv[1], "--benchmark-frontend")) {
         char *end = NULL;
         unsigned long frames = strtoul(argv[2], &end, 10);
@@ -427,6 +431,7 @@ int main(int argc, char **argv) {
     failures += test_hex_frontend_accuracy();
     failures += test_assembler_accuracy();
     failures += test_frontend_accuracy();
+    failures += test_host_input_accuracy();
     failures += test_desktop_accuracy();
     failures += test_desktop_menu_accuracy();
     failures += test_hd_pack_accuracy();

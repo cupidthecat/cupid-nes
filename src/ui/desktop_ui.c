@@ -341,6 +341,7 @@ static bool save_settings(FrontendDesktopUi *ui) {
     frontend_execution_end_machine_change_preserving_audio(ui->execution);
     frontend_audio_runtime_commit(ui->audio, &prepared_audio);
     if (memcmp(previous.device_guid, ui->staged.device_guid, sizeof(previous.device_guid))) {
+        frontend_execution_release_host_input(ui->execution);
         frontend_host_input_shutdown();
         frontend_host_input_open_controllers(&ui->staged);
     }
@@ -1014,6 +1015,10 @@ int desktop_menu_all(FrontendDesktopUi *ui, DesktopMenuItem items[128]) {
         }
     }
     if (ui->open_menu==0) {
+        for (unsigned slot = 0; slot < NES_STATE_SLOT_COUNT && count < 126; ++slot) {
+            items[count] = (DesktopMenuItem){.id = slot, .kind = DESKTOP_MENU_STATE_SLOT, .enabled = true};
+            snprintf(items[count++].label, 128, "%sSlot %u", ui->settings->state_slot == slot ? "[x] " : "", slot + 1);
+        }
         const FrontendSession *recent_session=ui->sessions?ui->sessions->session:ui->idle_session;
         if (recent_session) for (size_t i=0; i<frontend_session_recent_count(recent_session) && count<126; ++i) {
             const FrontendImageRequest *recent=frontend_session_recent(recent_session,i);

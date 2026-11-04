@@ -70,7 +70,16 @@ The first controller is player 1, the second is player 2, the third is player 3,
 | Left / right shoulder | SNES L / R, or Virtual Boy L / R, for those device types |
 | Right analog stick | Virtual Boy second D-pad |
 
-The keyboard writes player 1's button state, so player 1 can be driven by both the keyboard and the first controller. They update the same button state; avoid using both devices for the same button at once.
+The left analog stick also controls the D-pad, with a fixed dead zone of 16,000
+on SDL's signed axis range. Stick, D-pad, and keyboard holds combine: releasing
+one preserves the others. Releases follow the binding active when the button
+was pressed. Disconnecting a controller preserves keyboard buttons held for
+that player. Moving focus away releases peripheral keys and mouse buttons as
+well as pad buttons and held shortcuts.
+
+Open uses its configured shortcut on the startup desktop before a game is loaded.
+Tab and Shift+Tab move focus out of the game view unless a controller/shortcut
+binding or an emulated keyboard uses that key.
 
 Which player slots reach the game depends on the emulated wiring. Supported NES 2.0 default-input metadata can select ordinary devices automatically, and explicit command-line input options override the corresponding automatic fields. Supported VS metadata is decoded separately inside the VS cabinet model.
 

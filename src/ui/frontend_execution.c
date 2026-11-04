@@ -528,26 +528,37 @@ unsigned frontend_execution_shortcut_command(FrontendShortcut shortcut) {
     return (unsigned)shortcut < FRONTEND_SHORTCUT_COUNT ? commands[shortcut] : 0;
 }
 
+static void shortcut_hold(FrontendExecutionRuntime *runtime, FrontendShortcut shortcut, bool down, unsigned source) {
+    if (!runtime) return;
+    unsigned *sources = shortcut == FRONTEND_SHORTCUT_REWIND ? &runtime->rewind_sources : &runtime->fast_forward_sources;
+    /* Releases must still work if a deterministic session began during a hold. */
+    if (down && deterministic_session_owned() && (shortcut == FRONTEND_SHORTCUT_REWIND || !tas_active(runtime))) return;
+    *sources = down ? *sources | source : *sources & ~source;
+    bool held = *sources != 0;
+    if (shortcut == FRONTEND_SHORTCUT_REWIND) {
+        if (runtime->rewind_held != held) {
+            runtime->rewind_held = held;
+            ++runtime->timing_revision;
+            if (held) update_audio_pause(runtime);
+            else frontend_execution_refresh_audio(runtime);
+        }
+    } else if (runtime->execution.fast_forward_held != held) {
+        execution_control_set_fast_forward_held(&runtime->execution, held);
+        frontend_execution_refresh_audio(runtime);
+    }
+}
+
+void frontend_execution_controller_hold(FrontendExecutionRuntime *runtime, FrontendShortcut shortcut, bool down) {
+    if (shortcut == FRONTEND_SHORTCUT_REWIND || shortcut == FRONTEND_SHORTCUT_FAST_FORWARD_HOLD)
+        shortcut_hold(runtime, shortcut, down, 2u);
+}
+
 bool frontend_execution_handle_shortcut_action(FrontendExecutionRuntime *runtime,
                                                FrontendShortcut shortcut,
                                                bool down, bool repeat) {
     if (!runtime || (unsigned)shortcut >= FRONTEND_SHORTCUT_COUNT) return false;
-    if (shortcut == FRONTEND_SHORTCUT_REWIND) {
-        if (deterministic_session_owned()) return true;
-        if (runtime->rewind_held != down) {
-            runtime->rewind_held = down;
-            ++runtime->timing_revision;
-            if (down) update_audio_pause(runtime);
-            else frontend_execution_refresh_audio(runtime);
-        }
-        return true;
-    }
-    if (shortcut == FRONTEND_SHORTCUT_FAST_FORWARD_HOLD) {
-        if (deterministic_session_owned() && !tas_active(runtime)) return true;
-        if (!repeat && runtime->execution.fast_forward_held != down) {
-            execution_control_set_fast_forward_held(&runtime->execution, down);
-            frontend_execution_refresh_audio(runtime);
-        }
+    if (shortcut == FRONTEND_SHORTCUT_REWIND || shortcut == FRONTEND_SHORTCUT_FAST_FORWARD_HOLD) {
+        if (!repeat) shortcut_hold(runtime, shortcut, down, 1u);
         return true;
     }
     if (!down || (repeat && shortcut != FRONTEND_SHORTCUT_REWIND)) return true;
@@ -561,6 +572,7 @@ bool frontend_execution_handle_shortcut_action(FrontendExecutionRuntime *runtime
 void frontend_execution_release_host_input(FrontendExecutionRuntime *runtime) {
     family_basic_release_host_keys();
     if (!runtime) return;
+    runtime->fast_forward_sources = runtime->rewind_sources = 0;
     if (runtime->rewind_held) {
         runtime->rewind_held = false;
         frontend_execution_refresh_audio(runtime);

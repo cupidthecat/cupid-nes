@@ -71,8 +71,7 @@ FrontendIdleResult frontend_desktop_idle_open(FrontendSettings *settings,const F
             }
             if(event.type==SDL_DROPFILE){
                 if(event.drop.file){selection.selected=frontend_image_request_init(request,event.drop.file);SDL_free(event.drop.file);}
-            } else if(event.type==SDL_KEYDOWN&&(event.key.keysym.scancode==SDL_SCANCODE_RETURN
-                || ((event.key.keysym.mod&KMOD_CTRL)&&event.key.keysym.scancode==SDL_SCANCODE_O))){
+            } else if(event.type==SDL_KEYDOWN&&!event.key.repeat&&event.key.keysym.scancode==SDL_SCANCODE_RETURN){
                 if(!choose(&selection,error,error_size)&&error&&error[0])frontend_desktop_set_status(&ui,error);
             }
         }

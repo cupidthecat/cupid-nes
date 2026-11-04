@@ -22,6 +22,8 @@
 #include "frontend_panels.h"
 #include "palette_tool.h"
 #include "platform_frontend.h"
+#include "peripheral_input.h"
+#include "../cpu/cpu.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -72,6 +74,11 @@ static void activate_menu_row(FrontendDesktopUi *ui, int row) {
         if (!frontend_session_action_open_recent(ui->sessions, item->id, error, sizeof(error))) {
             desktop_copy_status(ui, error);
         }
+    } else if (item->kind == DESKTOP_MENU_STATE_SLOT && item->id < NES_STATE_SLOT_COUNT) {
+        ui->settings->state_slot = item->id;
+        char message[64];
+        snprintf(message, sizeof(message), "Quick state slot %u selected", item->id + 1);
+        desktop_copy_status(ui, message);
     } else if (item->kind == 3) {
         SDL_Event quit = {.type = SDL_QUIT};
         SDL_PushEvent(&quit);
@@ -761,10 +768,10 @@ static bool handle_event(FrontendDesktopUi *ui, const SDL_Event *event) {
 }
 
 bool desktop_shortcut_event(FrontendDesktopUi *ui, const SDL_Event *event, bool allow_press) {
-    if (ui && event && ui->execution && ui->settings && (event->type == SDL_KEYDOWN || event->type == SDL_KEYUP)) {
+    if (ui && event && ui->settings && (event->type == SDL_KEYDOWN || event->type == SDL_KEYUP)) {
         const FrontendBindingProfile *profile = frontend_settings_active_profile_const(ui->settings);
         FrontendShortcut shortcut;
-        if (profile && event->type == SDL_KEYUP) {
+        if (profile && ui->execution && event->type == SDL_KEYUP) {
             const FrontendShortcut held[] = {FRONTEND_SHORTCUT_FAST_FORWARD_HOLD, FRONTEND_SHORTCUT_REWIND};
             for (unsigned i = 0; i < 2; ++i) {
                 if (profile->shortcuts[held[i]].key == event->key.keysym.scancode) {
@@ -776,11 +783,13 @@ bool desktop_shortcut_event(FrontendDesktopUi *ui, const SDL_Event *event, bool 
             !desktop_palette_visible(ui) && frontend_profile_shortcut_key(profile, &event->key, &shortcut)) {
             ui->open_menu = -1;
             if (shortcut == FRONTEND_SHORTCUT_FAST_FORWARD_HOLD || shortcut == FRONTEND_SHORTCUT_REWIND) {
-                return frontend_execution_handle_shortcut_action(ui->execution, shortcut, event->type == SDL_KEYDOWN,
+                return !ui->execution || frontend_execution_handle_shortcut_action(ui->execution, shortcut, event->type == SDL_KEYDOWN,
                                                                  event->key.repeat != 0);
             }
             if (event->type == SDL_KEYDOWN && !event->key.repeat) {
-                (void)desktop_invoke_command(ui, frontend_execution_shortcut_command(shortcut));
+                unsigned id = frontend_execution_shortcut_command(shortcut);
+                FrontendCommandInfo command;
+                if (frontend_command_get(id, &command) && command.enabled) (void)desktop_invoke_command(ui, id);
             }
             return true;
         }
@@ -789,6 +798,20 @@ bool desktop_shortcut_event(FrontendDesktopUi *ui, const SDL_Event *event, bool 
 }
 
 bool frontend_desktop_handle_event(FrontendDesktopUi *ui, const SDL_Event *event) {
+    /* The emulated keyboard owns its keys before application accelerators do. */
+    if (ui && event && ui->execution && ui->window &&
+        (event->type == SDL_KEYDOWN || event->type == SDL_KEYUP) &&
+        event->key.windowID == SDL_GetWindowID(ui->window) && !frontend_desktop_input_captured(ui)) {
+        char error[256] = {0};
+        if (frontend_devices_handle_tape_key(ui->devices, &event->key, error, sizeof(error))) {
+            if (error[0]) desktop_copy_status(ui, error);
+            return true;
+        }
+        if (family_basic_key_event(&event->key, NULL, NULL, cpu_total_cycles) ||
+            subor_key_event(&event->key) || party_tap_key_event(&event->key) ||
+            boxing_key_event(&event->key) || jissen_key_event(&event->key) ||
+            extended_port_key_event(&event->key) || mat_key_event(&event->key)) return true;
+    }
 #ifdef CUPID_GTK
     if (ui && ui->gtk) return cupid_gtk_event(ui, event);
 #endif

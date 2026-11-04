@@ -9,7 +9,37 @@
 #include "peripheral_input.h"
 #include "../joypad/joypad.h"
 #include "../joypad/family_basic.h"
+#include "../system/vs_system.h"
 #include <stdio.h>
+#include <string.h>
+
+static bool subor_modifier_sides[3][2];
+
+void frontend_peripheral_release_host_input(void) {
+    family_basic_release_host_keys();
+    memset(subor_modifier_sides, 0, sizeof(subor_modifier_sides));
+    for (unsigned key = 0; key < SUBOR_KEY_COUNT; ++key) joypad_set_subor_key((SuborKey)key, false);
+    for (unsigned key = 0; key < JISSEN_KEY_COUNT; ++key) joypad_set_jissen_key((JissenKey)key, false);
+    for (unsigned key = 0; key < FCNS_KEY_COUNT; ++key) joypad_set_fcns_key((FcnsKey)key, false);
+    for (unsigned button = 0; button < 8; ++button) {
+        if (button < 6) joypad_set_party_tap_button(button, false);
+        joypad_set_boxing_sensor(button, false);
+    }
+    for (unsigned slot = 0; slot < 3; ++slot) {
+        for (unsigned pad = 0; pad < 12; ++pad) joypad_set_mat_pad(slot, pad, false);
+        joypad_set_zapper(slot, -1, -1, false);
+        joypad_set_paddle(slot, 0x54, false);
+    }
+    for (unsigned port = 0; port < 2; ++port) {
+        for (unsigned key = 0; key < NTT_KEY_COUNT; ++key) joypad_set_ntt_key(port, (NttKey)key, false);
+        joypad_set_snes_mouse_buttons(port, false, false);
+    }
+    joypad_set_subor_mouse_buttons(false, false);
+    joypad_set_pachinko_controls(false, false);
+    joypad_set_oeka_kids_tablet(-1, -1, false, false);
+    for (unsigned coin = 0; coin < 4; ++coin) vs_set_coin(coin, false);
+    for (unsigned service = 0; service < 2; ++service) vs_set_service(service, false);
+}
 
 bool extended_port_key_event(const SDL_KeyboardEvent *event) {
     if (!event) return false;
@@ -163,7 +193,6 @@ bool family_basic_key_event(const SDL_KeyboardEvent *event,
 }
 
 static bool subor_modifier_event(SDL_Scancode scancode, bool down) {
-    static bool sides[3][2];
     static const SuborKey keys[] = {SUBOR_KEY_CTRL, SUBOR_KEY_SHIFT, SUBOR_KEY_ALT};
     unsigned key;
     unsigned side;
@@ -176,8 +205,8 @@ static bool subor_modifier_event(SDL_Scancode scancode, bool down) {
         case SDL_SCANCODE_RALT: key = 2; side = 1; break;
         default: return false;
     }
-    sides[key][side] = down;
-    joypad_set_subor_key(keys[key], sides[key][0] || sides[key][1]);
+    subor_modifier_sides[key][side] = down;
+    joypad_set_subor_key(keys[key], subor_modifier_sides[key][0] || subor_modifier_sides[key][1]);
     return true;
 }
 

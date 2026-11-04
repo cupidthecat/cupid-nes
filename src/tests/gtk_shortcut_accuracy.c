@@ -6,6 +6,7 @@
 #include "../ui/gtk_internal.h"
 #include "../ui/gtk_desktop.h"
 #include "../ui/frontend_commands.h"
+#include "../joypad/family_basic.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -72,6 +73,22 @@ bool test_gtk_shortcuts(FrontendDesktopUi *ui) {
     CHECK(G_N_ELEMENTS(keyvals) == FRONTEND_SHORTCUT_COUNT);
     FrontendBindingProfile *profile = frontend_settings_active_profile(ui->settings);
     CHECK(profile);
+    const guint navigation[] = {GDK_KEY_Tab, GDK_KEY_ISO_Left_Tab};
+    for (unsigned i = 0; i < G_N_ELEMENTS(navigation); ++i) {
+        gboolean handled = TRUE;
+        g_signal_emit_by_name(keys, "key-pressed", navigation[i], 0u,
+                              i ? GDK_SHIFT_MASK : 0, &handled);
+        CHECK(!handled); /* Let GTK move focus to the menu and toolbar. */
+        CHECK(!ui->gtk->held[SDL_SCANCODE_TAB]);
+    }
+    FrontendHostBinding pause_binding = profile->shortcuts[FRONTEND_SHORTCUT_PAUSE];
+    profile->shortcuts[FRONTEND_SHORTCUT_PAUSE].key = SDL_SCANCODE_TAB;
+    profile->shortcuts[FRONTEND_SHORTCUT_PAUSE].modifiers = KMOD_NONE;
+    CHECK(send_key(ui, keys, GDK_KEY_Tab, 0, true));
+    CHECK(calls[FRONTEND_SHORTCUT_PAUSE] == 1);
+    (void)send_key(ui, keys, GDK_KEY_Tab, 0, false);
+    calls[FRONTEND_SHORTCUT_PAUSE] = 0;
+    profile->shortcuts[FRONTEND_SHORTCUT_PAUSE] = pause_binding;
     for (unsigned i = 0; i < FRONTEND_SHORTCUT_COUNT; ++i) {
         SDL_Keymod mods = profile->shortcuts[i].modifiers;
         GdkModifierType gmods = (mods & KMOD_CTRL ? GDK_CONTROL_MASK : 0) |
@@ -105,6 +122,40 @@ bool test_gtk_shortcuts(FrontendDesktopUi *ui) {
     (void)send_key(ui, keys, GDK_KEY_q, 0, false);
     CHECK(!ui->execution->rewind_held);
     profile->shortcuts[FRONTEND_SHORTCUT_REWIND] = saved;
+    NesExpansionDevice expansion = joypad_expansion_device();
+    unsigned resets = calls[FRONTEND_SHORTCUT_SOFT_RESET];
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_FAMILY_BASIC));
+    CHECK(send_key(ui, keys, GDK_KEY_r, GDK_CONTROL_MASK, true));
+    CHECK(family_basic_key_pressed(FB_KEY_R));
+    CHECK(calls[FRONTEND_SHORTCUT_SOFT_RESET] == resets);
+    CHECK(send_key(ui, keys, GDK_KEY_r, 0, false));
+    CHECK(!family_basic_key_pressed(FB_KEY_R));
+    CHECK(joypad_set_expansion_device(NES_EXPANSION_SUBOR_KEYBOARD));
+    CHECK(send_key(ui, keys, GDK_KEY_Tab, 0, true));
+    (void)send_key(ui, keys, GDK_KEY_Tab, 0, false);
+    CHECK(send_key(ui, keys, GDK_KEY_r, GDK_CONTROL_MASK, true));
+    CHECK(calls[FRONTEND_SHORTCUT_SOFT_RESET] == resets);
+    (void)send_key(ui, keys, GDK_KEY_r, 0, false);
+    CHECK(joypad_set_expansion_device(expansion));
+    CHECK(send_key(ui, keys, GDK_KEY_r, GDK_CONTROL_MASK, true));
+    CHECK(calls[FRONTEND_SHORTCUT_SOFT_RESET] == resets + 1);
+    (void)send_key(ui, keys, GDK_KEY_r, 0, false);
+    /* The startup desktop has no execution runtime, but still owns Open. */
+    FrontendExecutionRuntime *execution = ui->execution;
+    ui->execution = NULL;
+    unsigned opened = calls[FRONTEND_SHORTCUT_OPEN];
+    CHECK(send_key(ui, keys, GDK_KEY_o, GDK_CONTROL_MASK, true));
+    (void)send_key(ui, keys, GDK_KEY_o, 0, false);
+    CHECK(calls[FRONTEND_SHORTCUT_OPEN] == opened + 1);
+    FrontendHostBinding open_binding = profile->shortcuts[FRONTEND_SHORTCUT_OPEN];
+    profile->shortcuts[FRONTEND_SHORTCUT_OPEN].key = SDL_SCANCODE_J;
+    CHECK(!send_key(ui, keys, GDK_KEY_o, GDK_CONTROL_MASK, true));
+    (void)send_key(ui, keys, GDK_KEY_o, 0, false);
+    CHECK(send_key(ui, keys, GDK_KEY_j, GDK_CONTROL_MASK, true));
+    (void)send_key(ui, keys, GDK_KEY_j, 0, false);
+    CHECK(calls[FRONTEND_SHORTCUT_OPEN] == opened + 2);
+    profile->shortcuts[FRONTEND_SHORTCUT_OPEN] = open_binding;
+    ui->execution = execution;
     const struct {guint key; GdkModifierType mods; unsigned command;} fixed[] = {
         {GDK_KEY_comma, GDK_CONTROL_MASK, FRONTEND_COMMAND_SETTINGS},
         {GDK_KEY_Return, GDK_ALT_MASK, FRONTEND_COMMAND_FULLSCREEN}, {GDK_KEY_F7, 0, 0x1B00}};
