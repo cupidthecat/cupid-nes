@@ -4,10 +4,28 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "frame_timing.h"
+#include "frame_wait.h"
 #include <SDL2/SDL.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+
+double nes_frame_rate_push(NesFrameRate *rate, uint64_t completed, uint64_t frequency) {
+    if (!rate || !frequency) {
+        return 0;
+    }
+    const size_t capacity = sizeof(rate->completed) / sizeof(rate->completed[0]);
+    if (rate->count && completed <= rate->completed[(rate->next + capacity - 1) % capacity]) {
+        memset(rate, 0, sizeof(*rate));
+    }
+    rate->completed[rate->next] = completed;
+    rate->next = (rate->next + 1) % capacity;
+    if (rate->count < capacity) {
+        ++rate->count;
+    }
+    uint64_t oldest = rate->completed[(rate->next + capacity - rate->count) % capacity];
+    return completed > oldest ? (double)(rate->count - 1) * frequency / (double)(completed - oldest) : 0;
+}
 
 void nes_frame_timing_reset(NesFrameTiming *timing) {
     if (timing) {
@@ -79,8 +97,15 @@ bool nes_frame_timing_summary(const NesFrameTiming *timing, NesFrameTimingSummar
 }
 
 bool nes_frame_timing_present(double now, double deadline, double last_present, double frequency) {
+    /* Small scheduler overruns should not discard an otherwise usable
+     * image and turn a slight overrun into a 50 ms display gap. */
     return frequency <= 0 || last_present <= 0 || now < last_present ||
-        now <= deadline || now - last_present >= frequency * 0.050;
+        now <= deadline + frequency * 0.002 || now - last_present >= frequency * 0.050;
+}
+
+bool nes_frame_timing_present_cost(double now, double deadline, double last_present, double frequency, double cost) {
+    return (isfinite(cost) && cost >= 0 && cost <= frequency * 0.002)
+        || nes_frame_timing_present(now, deadline, last_present, frequency);
 }
 
 unsigned nes_frame_timing_sleep_ms(double remaining_ms) {
@@ -89,24 +114,5 @@ unsigned nes_frame_timing_sleep_ms(double remaining_ms) {
 }
 
 void nes_frame_timing_wait(double deadline, double frequency, void (*service)(void *), void *context) {
-    if (!isfinite(deadline) || !isfinite(frequency) || frequency <= 0) return;
-    for (;;) {
-        double now = (double)SDL_GetPerformanceCounter();
-        if (now >= deadline) return;
-        /* Process pending paints before sleeping, including frames queued late
-         * in GTK's update phase. Never upload another image from this callback. */
-        if (service) service(context);
-        now = (double)SDL_GetPerformanceCounter();
-        double remaining = (deadline - now) * 1000.0 / frequency;
-        if (remaining <= 0) return;
-        unsigned delay = nes_frame_timing_sleep_ms(remaining);
-        if (service && delay > 1) delay = 1;
-        if (delay) SDL_Delay(delay);
-        else {
-            while ((double)SDL_GetPerformanceCounter() < deadline) {
-                SDL_CPUPauseInstruction();
-            }
-            return;
-        }
-    }
+    frame_wait(deadline, frequency, service, context, SDL_GetPerformanceCounter, SDL_Delay);
 }

@@ -33,6 +33,12 @@ SDL_Scancode cupid_gtk_scancode(guint key) {
     return SDL_SCANCODE_A;
 }
 
+guint cupid_gtk_base_key(GtkEventControllerKey *controller, guint key, guint code) {
+    (void)controller;
+    (void)code;
+    return key;
+}
+
 SDL_Keymod cupid_gtk_modifiers(GdkModifierType mods) {
     (void)mods;
     return KMOD_NONE;
@@ -189,6 +195,7 @@ int main(void) {
     assert(!s->rows[7].dirty && !strcmp(gtk_editable_get_text(GTK_EDITABLE(radius)), "12") &&
            s->rows[6].widget == player);
     gtk_list_box_select_row(GTK_LIST_BOX(s->categories), gtk_list_box_get_row_at_index(GTK_LIST_BOX(s->categories), 2));
+    assert(!gtk_widget_get_sensitive(s->rows[2].widget));
     GtkWidget *hue = s->rows[26].widget;
     gtk_editable_set_text(GTK_EDITABLE(hue), "7");
     gtk_drop_down_set_selected(GTK_DROP_DOWN(s->rows[25].widget), 2);
@@ -215,6 +222,22 @@ int main(void) {
     cupid_gtk_settings_reset(root);
     assert(s->built_category == 4 && s->rows[7].kind == SETTING_TEXT);
     assert(gtk_list_box_row_get_index(gtk_list_box_get_selected_row(GTK_LIST_BOX(s->categories))) == 4);
+    assert(s->rows[5].widget == radius && s->rows[7].widget == guid);
+    /* Cached pages keep their controls, but reread staged values on return.
+     * Category switches must still validate pending edits atomically. */
+    tool->ui.staged.zapper_radius = 17;
+    gtk_list_box_select_row(GTK_LIST_BOX(s->categories), gtk_list_box_get_row_at_index(GTK_LIST_BOX(s->categories), 2));
+    assert(s->rows[26].widget == hue);
+    gtk_list_box_select_row(GTK_LIST_BOX(s->categories), gtk_list_box_get_row_at_index(GTK_LIST_BOX(s->categories), 4));
+    assert(s->rows[5].widget == radius && !strcmp(gtk_editable_get_text(GTK_EDITABLE(radius)), "17"));
+    gtk_editable_set_text(GTK_EDITABLE(radius), "23");
+    gtk_list_box_select_row(GTK_LIST_BOX(s->categories), gtk_list_box_get_row_at_index(GTK_LIST_BOX(s->categories), 2));
+    assert(tool->ui.staged.zapper_radius == 23);
+    gtk_list_box_select_row(GTK_LIST_BOX(s->categories), gtk_list_box_get_row_at_index(GTK_LIST_BOX(s->categories), 4));
+    assert(!strcmp(gtk_editable_get_text(GTK_EDITABLE(radius)), "23"));
+    gtk_editable_set_text(GTK_EDITABLE(radius), "invalid");
+    gtk_list_box_select_row(GTK_LIST_BOX(s->categories), gtk_list_box_get_row_at_index(GTK_LIST_BOX(s->categories), 2));
+    assert(s->built_category == 4 && tool->ui.staged.zapper_radius == 23);
     g_object_unref(reset);
     g_object_unref(root);
     gtk_window_destroy(GTK_WINDOW(tool->window));

@@ -54,13 +54,18 @@ suffix. Movies with the same basename in different directories therefore use
 separate backup sets. Changing the spelling of a destination path can create a
 separate set in a custom directory.
 
-Cupid stages the new file before it reads and preserves the old one. It rotates
-recovery copies from oldest to newest, replaces each copy atomically, and only
-then atomically replaces the active movie. A write or backup failure leaves the
-active file unchanged. Interrupted replacement leaves either the prior active
-file or its recovery copy available. Partially staged temporary files can remain
+Cupid stages the new movie and every required recovery copy before replacing any
+existing file. A source-read or staging-write failure leaves the active movie and
+backup history unchanged. Once staging succeeds, copies are committed from oldest
+to newest, followed by the active movie. Each replacement is atomic. A failure
+during this commit phase can leave partially rotated history; the active file
+remains unchanged when the save reports an error. Temporary files can remain
 after forced termination. Old backups above a lowered retention limit are pruned
 after a successful save; deletion failures may leave extra recovery copies.
+
+When a numbered backup is missing, rotation removes any stale file in its
+destination slot after the new movie is committed. A failed save leaves that
+older recovery file available.
 
 To recover, copy the desired backup to a new `.fm2`, `.cmv`, or `.ctas` path and
 open that copy. The numbered backups contain the original file bytes, including

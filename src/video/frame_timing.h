@@ -27,6 +27,15 @@ typedef struct {
     size_t count, next;
 } NesFrameTiming;
 
+/* One second of completed frames at normal NTSC speed, without counting a
+ * partial first frame. Clear this state when execution pauses or changes rate. */
+typedef struct {
+    uint64_t completed[61];
+    size_t count, next;
+} NesFrameRate;
+
+double nes_frame_rate_push(NesFrameRate *rate, uint64_t completed, uint64_t frequency);
+
 typedef struct {
     double recent, average, minimum, maximum, p95;
 } NesHostMetric;
@@ -42,6 +51,9 @@ typedef struct {
 
 /* Drop only host presentation when late; service the UI at least every 50 ms. */
 bool nes_frame_timing_present(double now, double deadline, double last_present, double frequency);
+/* Cost is the last display update in counter ticks. Cheap updates should not
+ * be withheld throughout recovery from an unrelated emulation stall. */
+bool nes_frame_timing_present_cost(double now, double deadline, double last_present, double frequency, double cost);
 void nes_frame_timing_reset(NesFrameTiming *timing);
 bool nes_frame_timing_push(NesFrameTiming *timing, const NesHostFrameSample *sample);
 bool nes_frame_timing_summary(const NesFrameTiming *timing, NesFrameTimingSummary *summary);

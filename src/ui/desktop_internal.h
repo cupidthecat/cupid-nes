@@ -18,6 +18,8 @@ typedef struct {
     char label[128], shortcut[80];
 } DesktopMenuItem;
 
+enum { DESKTOP_MENU_STATE_SLOT = 8 };
+
 int desktop_setting_rows(const FrontendDesktopUi *ui);
 void desktop_setting_text(FrontendDesktopUi *ui, int row, char *label, size_t label_size, char *value,
                           size_t value_size);
@@ -26,6 +28,7 @@ int desktop_menu_level(FrontendDesktopUi *ui, int depth, DesktopMenuItem items[1
 int desktop_menu_items(FrontendDesktopUi *ui, DesktopMenuItem items[128]);
 void desktop_layout(FrontendDesktopUi *ui, const char *title, const char *region, const char *run_state);
 void desktop_copy_status(FrontendDesktopUi *ui, const char *text);
+bool desktop_status_active(const FrontendDesktopUi *ui, uint32_t now);
 bool desktop_invoke_command(FrontendDesktopUi *ui, unsigned id);
 bool desktop_shortcut_event(FrontendDesktopUi *ui, const SDL_Event *event, bool allow_press);
 void desktop_settings_open(FrontendDesktopUi *ui, bool open);

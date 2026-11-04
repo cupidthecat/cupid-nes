@@ -115,7 +115,8 @@ static void load_source(FrontendDesktopUi *ui) {
             name = p + 1;
         }
     }
-    snprintf(splice->source_name, sizeof(splice->source_name), "%s", name);
+    snprintf(splice->source_name, sizeof(splice->source_name), "%.*s",
+             (int)sizeof(splice->source_name) - 1, name);
     ++splice->settings_serial;
     desktop_tas_splice_observe(ui);
     desktop_tas_status(ui, "Source loaded. Choose ranges and review the resulting length before applying.");

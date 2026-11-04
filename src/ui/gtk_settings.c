@@ -16,10 +16,17 @@ typedef struct {
     bool dirty;
 } Setting;
 
+typedef struct {
+    GtkWidget *root, *tabs;
+    Setting rows[256];
+    int count;
+} SettingsPage;
+
 struct Settings {
     CupidGtkTool *tool;
     GtkWidget *root, *page, *categories, *tabs;
-    Setting rows[256];
+    SettingsPage pages[8];
+    Setting *rows;
     int count, built_category;
     bool updating;
 };
@@ -141,8 +148,6 @@ static void activate(GtkButton *w, gpointer data) {
 }
 
 static gboolean binding(GtkEventControllerKey *controller, guint key, guint code, GdkModifierType mods, gpointer data) {
-    (void)controller;
-    (void)code;
     Settings *s = data;
     FrontendDesktopUi *ui = &s->tool->ui;
     if (!ui->capture_binding) {
@@ -153,7 +158,7 @@ static gboolean binding(GtkEventControllerKey *controller, guint key, guint code
         return TRUE;
     }
     SDL_KeyboardEvent event = {.type = SDL_KEYDOWN};
-    event.keysym.scancode = cupid_gtk_scancode(key);
+    event.keysym.scancode = cupid_gtk_scancode(cupid_gtk_base_key(controller, key, code));
     event.keysym.mod = cupid_gtk_modifiers(mods);
     desktop_binding_key(ui, &event);
     return TRUE;
@@ -201,10 +206,19 @@ static void build(Settings *s) {
     FrontendDesktopUi *ui = &s->tool->ui;
     s->updating = true;
     s->built_category = ui->settings_category;
-    GtkWidget *child;
-    while ((child = gtk_widget_get_first_child(s->page))) {
-        gtk_box_remove(GTK_BOX(s->page), child);
+    SettingsPage *cached = &s->pages[ui->settings_category];
+    s->rows = cached->rows;
+    if (cached->root) {
+        s->tabs = cached->tabs;
+        s->count = cached->count;
+        gtk_stack_set_visible_child(GTK_STACK(s->page), cached->root);
+        s->updating = false;
+        cupid_gtk_settings_refresh(s->root);
+        return;
     }
+    cached->root = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    gtk_stack_add_child(GTK_STACK(s->page), cached->root);
+    gtk_stack_set_visible_child(GTK_STACK(s->page), cached->root);
     s->count = desktop_setting_rows(ui);
     if (s->count > 256) {
         s->count = 256;
@@ -213,20 +227,26 @@ static void build(Settings *s) {
                   ui->settings_category == 5 || ui->settings_category == 7;
     GtkWidget *notebook = tabbed ? gtk_notebook_new() : NULL;
     s->tabs = notebook;
+    cached->tabs = notebook;
+    cached->count = s->count;
     GtkWidget *plain = NULL;
     if (notebook) {
         gtk_notebook_set_scrollable(GTK_NOTEBOOK(notebook), TRUE);
         gtk_widget_set_vexpand(notebook, TRUE);
-        gtk_box_append(GTK_BOX(s->page), notebook);
+        gtk_box_append(GTK_BOX(cached->root), notebook);
     } else {
         plain = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
         cupid_gtk_margins(plain, 8);
-        gtk_box_append(GTK_BOX(s->page), cupid_gtk_scroll(plain));
+        gtk_box_append(GTK_BOX(cached->root), cupid_gtk_scroll(plain));
     }
     const char *last_group = NULL;
     GtkWidget *group = NULL;
     GtkWidget *matrix = NULL;
-    for (int i = 0; i < s->count; i++) {
+    for (int position = 0; position < s->count; position++) {
+        int i = position;
+        if (ui->settings_category == 0 && position >= 5) {
+            i = position == 5 ? 10 : position - 1;
+        }
         const char *title = cupid_gtk_setting_group(ui->settings_category, i);
         if (!last_group || strcmp(last_group, title)) {
             if (notebook) {
@@ -313,6 +333,14 @@ static void build(Settings *s) {
             break;
         }
         gtk_widget_set_hexpand(r->widget, r->kind != SETTING_TOGGLE && r->kind != SETTING_NUMBER);
+        if (ui->settings_category == 2 && i == 2) {
+            gtk_widget_set_sensitive(r->widget, FALSE);
+            gtk_widget_set_tooltip_text(row, "The desktop compositor controls synchronization in the native desktop.");
+        }
+        if (ui->settings_category == 0 && i == 10) {
+            gtk_widget_set_tooltip_text(row,
+                "Pause whenever the main emulator window is inactive, including while using another Cupid window.");
+        }
         gtk_accessible_update_property(GTK_ACCESSIBLE(r->widget), GTK_ACCESSIBLE_PROPERTY_LABEL, label, -1);
         if (r->kind == SETTING_NUMBER) {
             gtk_editable_set_width_chars(GTK_EDITABLE(r->widget), 12);
@@ -385,7 +413,10 @@ GtkWidget *cupid_gtk_settings_new(CupidGtkTool *tool) {
     gtk_widget_set_size_request(categories, 175, -1);
     gtk_widget_add_css_class(categories, "navigation-sidebar");
     gtk_paned_set_start_child(GTK_PANED(paned), cupid_gtk_scroll(categories));
-    s->page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    s->page = gtk_stack_new();
+    gtk_stack_set_hhomogeneous(GTK_STACK(s->page), FALSE);
+    gtk_stack_set_vhomogeneous(GTK_STACK(s->page), FALSE);
+    gtk_stack_set_transition_type(GTK_STACK(s->page), GTK_STACK_TRANSITION_TYPE_NONE);
     cupid_gtk_margins(s->page, 8);
     gtk_paned_set_end_child(GTK_PANED(paned), s->page);
     gtk_paned_set_position(GTK_PANED(paned), 185);
@@ -432,7 +463,7 @@ void cupid_gtk_settings_refresh(GtkWidget *root) {
         Setting *r = &s->rows[i];
         char label[256], value[4096];
         desktop_setting_text(ui, i, label, sizeof(label), value, sizeof(value));
-        gtk_label_set_text(GTK_LABEL(r->label), label);
+        cupid_gtk_set_label(r->label, label);
         if (r->dirty) {
             continue;
         }
@@ -474,12 +505,12 @@ void cupid_gtk_settings_refresh(GtkWidget *root) {
             }
             break;
         case SETTING_BINDING:
-            gtk_button_set_label(GTK_BUTTON(r->widget), ui->capture_binding && ui->settings_row == i
-                                                            ? "Press a key or controller button..."
-                                                            : value);
+            cupid_gtk_set_button(r->widget, ui->capture_binding && ui->settings_row == i
+                                                ? "Press a key or controller button..."
+                                                : value);
             break;
         default:
-            gtk_label_set_text(GTK_LABEL(r->widget), value);
+            cupid_gtk_set_label(r->widget, value);
             break;
         }
     }

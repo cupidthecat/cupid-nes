@@ -24,7 +24,8 @@ Names and descriptions are limited to 95 bytes; a group contains at most 16
 codes. A file may contain up to 32,768 entries and 16 MiB of text.
 
 Loading a file replaces the previous custom catalog and keeps the built-in
-entries. A malformed file leaves both the previous catalog and active cheats
-unchanged. Catalogs do not affect deterministic compatibility; enabled active
+entries. A malformed file, including invalid UTF-8 in a name or description,
+leaves both the previous catalog and active cheats unchanged. Catalogs do not
+affect deterministic compatibility; enabled active
 codes do. Adding or enabling cheats is unavailable during movies, netplay,
 rewind, and speculative execution.

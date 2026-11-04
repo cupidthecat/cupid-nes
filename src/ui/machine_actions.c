@@ -17,21 +17,24 @@
 bool frontend_machine_soft_reset(void) {
     NesInputEvent event = {.type = NES_INPUT_EVENT_SOFT_RESET};
     if (!nes_input_event_submit(&event)) return false;
-    debugger_invalidate_memory();
     ppu_soft_reset(&ppu);
     apu_soft_reset(&apu);
     cpu_soft_reset(&cpu);
     vs_soft_reset();
+    debugger_invalidate_memory();
     return true;
 }
 
 bool frontend_machine_power_cycle(void) {
     NesInputEvent event = {.type = NES_INPUT_EVENT_POWER_CYCLE};
     if (!nes_input_event_submit(&event)) return false;
-    debugger_invalidate_memory();
     ppu_power_on(&ppu);
     apu_power_on(&apu);
-    if (!cpu_power_on(&cpu)) return false;
-    vs_power_on_secondary();
-    return true;
+    bool powered = cpu_power_on(&cpu);
+    if (powered) {
+        vs_power_on_secondary();
+    }
+
+    debugger_invalidate_memory();
+    return powered;
 }

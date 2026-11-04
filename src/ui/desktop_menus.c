@@ -41,7 +41,8 @@ enum {
     GROUP_SESSION,
     GROUP_INPUT,
     GROUP_PRESENTATION,
-    GROUP_APPLICATION
+    GROUP_APPLICATION,
+    GROUP_STATE_SLOT
 };
 
 static const char *const names[] = {"",
@@ -68,10 +69,12 @@ static const char *const names[] = {"",
                                     "Game and recovery",
                                     "Input tools",
                                     "Picture, sound and timing",
-                                    "Application"};
+                                    "Application",
+                                    "Quick state slot"};
 
 static unsigned group(const DesktopMenuItem *item, int menu, unsigned parent) {
     unsigned id = item->id;
+    if (parent == GROUP_STATES) return item->kind == DESKTOP_MENU_STATE_SLOT ? GROUP_STATE_SLOT : 0;
     if (parent == GROUP_DEBUG) {
         if (desktop_ppu_panel(id)) {
             return GROUP_PPU;
@@ -89,6 +92,7 @@ static unsigned group(const DesktopMenuItem *item, int menu, unsigned parent) {
         return 0;
     }
     if (menu == 0) {
+        if (item->kind == DESKTOP_MENU_STATE_SLOT) return GROUP_STATES;
         if (item->kind == 2) {
             return GROUP_RECENT;
         }

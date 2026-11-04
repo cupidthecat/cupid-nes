@@ -37,8 +37,9 @@ static void set_error(char *error, size_t error_size, const char *message) {
 static bool movie_result_ok(FrontendExecutionRuntime *runtime, NesMovieResult result,
                             const char *success, char *error, size_t error_size);
 
-static void notify_timeline_restored(FrontendExecutionRuntime *runtime) {
+void frontend_execution_timeline_restored(FrontendExecutionRuntime *runtime) {
     ++runtime->timing_revision;
+    if (runtime->audio_reset) runtime->audio_reset(runtime->audio_reset_context);
     bool paused = runtime->execution.paused;
     debugger_reset_session();
     runtime->debugger_pause_revision = debugger_pause_revision();
@@ -65,7 +66,10 @@ static bool tas_active(const FrontendExecutionRuntime *runtime) {
 static void update_audio_pause(FrontendExecutionRuntime *runtime);
 
 void frontend_execution_refresh_audio(FrontendExecutionRuntime *runtime) {
-    if (runtime) ++runtime->timing_revision;
+    if (runtime) {
+        ++runtime->timing_revision;
+        if (runtime->audio_reset) runtime->audio_reset(runtime->audio_reset_context);
+    }
     if (runtime && deterministic_session_owned()) {
         update_audio_pause(runtime);
         return;
@@ -91,7 +95,10 @@ static void update_audio_pause(FrontendExecutionRuntime *runtime) {
     if(!runtime||runtime->machine_change_depth||!runtime->audio_device||!*runtime->audio_device)return;
     bool paused=frontend_execution_paused(runtime)||runtime->rewind_held||runtime->muted;
     SDL_AudioStatus desired=paused?SDL_AUDIO_PAUSED:SDL_AUDIO_PLAYING;
-    if(SDL_GetAudioDeviceStatus(*runtime->audio_device)!=desired)SDL_PauseAudioDevice(*runtime->audio_device,paused?1:0);
+    if (SDL_GetAudioDeviceStatus(*runtime->audio_device) != desired) {
+        if (runtime->audio_reset) runtime->audio_reset(runtime->audio_reset_context);
+        SDL_PauseAudioDevice(*runtime->audio_device, paused ? 1 : 0);
+    }
 }
 
 void frontend_execution_set_suspension(FrontendExecutionRuntime *runtime, unsigned reasons) {
@@ -362,6 +369,7 @@ void frontend_execution_init(FrontendExecutionRuntime *runtime,
     runtime->movie_start_kind = NES_MOVIE_START_STATE;
     runtime->tas_pause_frame = SIZE_MAX;
     nes_rewind_init(&runtime->rewind);
+    nes_rewind_track_inputs(&runtime->rewind);
     (void)frontend_execution_set_rewind_seconds(runtime, 10);
     if (rom_path && *rom_path) {
         int length = snprintf(runtime->movie_path, sizeof(runtime->movie_path), "%s.movie", rom_path);
@@ -520,26 +528,37 @@ unsigned frontend_execution_shortcut_command(FrontendShortcut shortcut) {
     return (unsigned)shortcut < FRONTEND_SHORTCUT_COUNT ? commands[shortcut] : 0;
 }
 
+static void shortcut_hold(FrontendExecutionRuntime *runtime, FrontendShortcut shortcut, bool down, unsigned source) {
+    if (!runtime) return;
+    unsigned *sources = shortcut == FRONTEND_SHORTCUT_REWIND ? &runtime->rewind_sources : &runtime->fast_forward_sources;
+    /* Releases must still work if a deterministic session began during a hold. */
+    if (down && deterministic_session_owned() && (shortcut == FRONTEND_SHORTCUT_REWIND || !tas_active(runtime))) return;
+    *sources = down ? *sources | source : *sources & ~source;
+    bool held = *sources != 0;
+    if (shortcut == FRONTEND_SHORTCUT_REWIND) {
+        if (runtime->rewind_held != held) {
+            runtime->rewind_held = held;
+            ++runtime->timing_revision;
+            if (held) update_audio_pause(runtime);
+            else frontend_execution_refresh_audio(runtime);
+        }
+    } else if (runtime->execution.fast_forward_held != held) {
+        execution_control_set_fast_forward_held(&runtime->execution, held);
+        frontend_execution_refresh_audio(runtime);
+    }
+}
+
+void frontend_execution_controller_hold(FrontendExecutionRuntime *runtime, FrontendShortcut shortcut, bool down) {
+    if (shortcut == FRONTEND_SHORTCUT_REWIND || shortcut == FRONTEND_SHORTCUT_FAST_FORWARD_HOLD)
+        shortcut_hold(runtime, shortcut, down, 2u);
+}
+
 bool frontend_execution_handle_shortcut_action(FrontendExecutionRuntime *runtime,
                                                FrontendShortcut shortcut,
                                                bool down, bool repeat) {
     if (!runtime || (unsigned)shortcut >= FRONTEND_SHORTCUT_COUNT) return false;
-    if (shortcut == FRONTEND_SHORTCUT_REWIND) {
-        if (deterministic_session_owned()) return true;
-        if (runtime->rewind_held != down) {
-            runtime->rewind_held = down;
-            ++runtime->timing_revision;
-            if (down) update_audio_pause(runtime);
-            else frontend_execution_refresh_audio(runtime);
-        }
-        return true;
-    }
-    if (shortcut == FRONTEND_SHORTCUT_FAST_FORWARD_HOLD) {
-        if (deterministic_session_owned() && !tas_active(runtime)) return true;
-        if (!repeat && runtime->execution.fast_forward_held != down) {
-            execution_control_set_fast_forward_held(&runtime->execution, down);
-            frontend_execution_refresh_audio(runtime);
-        }
+    if (shortcut == FRONTEND_SHORTCUT_REWIND || shortcut == FRONTEND_SHORTCUT_FAST_FORWARD_HOLD) {
+        if (!repeat) shortcut_hold(runtime, shortcut, down, 1u);
         return true;
     }
     if (!down || (repeat && shortcut != FRONTEND_SHORTCUT_REWIND)) return true;
@@ -553,6 +572,7 @@ bool frontend_execution_handle_shortcut_action(FrontendExecutionRuntime *runtime
 void frontend_execution_release_host_input(FrontendExecutionRuntime *runtime) {
     family_basic_release_host_keys();
     if (!runtime) return;
+    runtime->fast_forward_sources = runtime->rewind_sources = 0;
     if (runtime->rewind_held) {
         runtime->rewind_held = false;
         frontend_execution_refresh_audio(runtime);
@@ -602,6 +622,7 @@ static bool run_emulation_frame(void *userdata) {
 
 bool frontend_execution_run_frame(FrontendExecutionRuntime *runtime) {
     if (!runtime) return false;
+    runtime->rewind_frame_captured = false;
     replay_frontend_refresh(runtime);
     frontend_execution_sync_debugger(runtime);
     bool loading_fast_forward = fds_loading_fast_forward();
@@ -650,6 +671,9 @@ bool frontend_execution_run_frame(FrontendExecutionRuntime *runtime) {
         lock_audio_for_machine_change(runtime);
         runtime->replay_status = nes_rewind_capture(&runtime->rewind,
                                                     &runtime->replay_state_status);
+        runtime->rewind_frame_captured = runtime->replay_status == NES_REPLAY_OK;
+        /* A missing boundary breaks the continuity of the previous transition. */
+        if (!runtime->rewind_frame_captured) nes_rewind_complete(&runtime->rewind, false);
         unlock_audio_without_refresh(runtime);
         if (runtime->replay_status == NES_REPLAY_DISABLED)
             runtime->replay_status = NES_REPLAY_OK;
@@ -667,6 +691,7 @@ bool frontend_execution_run_frame(FrontendExecutionRuntime *runtime) {
         ran = run_emulation_frame(NULL);
     }
     frontend_netplay_after_frame(runtime->network, ran);
+    if (runtime->rewind_frame_captured) nes_rewind_complete(&runtime->rewind, ran);
     if (ran) execution_control_frame_complete(&runtime->execution);
     if (runtime->movie && nes_movie_mode(runtime->movie) != NES_MOVIE_IDLE) {
         lock_audio_for_machine_change(runtime);
@@ -750,7 +775,7 @@ bool frontend_execution_rewind_step(FrontendExecutionRuntime *runtime,
         runtime->replay_status = nes_rewind_step(&runtime->rewind, &runtime->replay_state_status);
     } while(runtime->replay_status==NES_REPLAY_OK && --steps && nes_rewind_count(&runtime->rewind));
     if (runtime->replay_status == NES_REPLAY_OK) {
-        notify_timeline_restored(runtime);
+        frontend_execution_timeline_restored(runtime);
     }
     unlock_audio_without_refresh(runtime);
     replay_frontend_refresh(runtime);
@@ -828,7 +853,7 @@ static bool movie_can_start(FrontendExecutionRuntime *runtime, char *error, size
 
 static void movie_state_restored(FrontendExecutionRuntime *runtime) {
     frontend_execution_clear_timeline(runtime);
-    notify_timeline_restored(runtime);
+    frontend_execution_timeline_restored(runtime);
 }
 
 bool frontend_execution_movie_set_path(FrontendExecutionRuntime *runtime, const char *path,

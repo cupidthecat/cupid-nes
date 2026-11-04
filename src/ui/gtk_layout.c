@@ -57,7 +57,7 @@ CupidGtkLayout cupid_gtk_layout(unsigned id) {
                                              {0x2640, 560, 380, true, "Update check"},
                                              {0x2680, 800, 600, true, "Command-line reference"},
                                              {0x26a0, 580, 430, true, "Game recovery"},
-                                             {0x2700, 850, 590, true, "History playback"},
+                                             {0x2700, 760, 670, true, "History playback"},
                                              {0x2720, 760, 530, true, "Frame measurements"},
                                              {0x2740, 800, 580, false, "HD draft"},
                                              {0x2780, 650, 510, true, "Shader configuration"},
@@ -165,6 +165,7 @@ const char *cupid_gtk_control_group(unsigned panel, unsigned id) {
 const char *cupid_gtk_setting_group(int category, int row) {
     switch (category) {
     case 0:
+        if (row == 10) return "Focus";
         return row < 3 ? "Startup" : row < 5 ? "Focus" : row < 8 ? "Window" : "PPU viewers";
     case 1:
         return row < 3 ? "Speed and timing" : "Rewind and latency";

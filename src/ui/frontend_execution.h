@@ -32,9 +32,13 @@ typedef struct FrontendExecutionRuntime {
     SDL_AudioDeviceID machine_audio_device;
     unsigned machine_change_depth;
     int audio_output_rate;
+    void (*audio_reset)(void *context);
+    void *audio_reset_context;
     bool muted;
     bool rewind_held;
+    bool rewind_frame_captured;
     unsigned suspend_reasons;
+    unsigned fast_forward_sources, rewind_sources;
     uint64_t timing_revision;
     const char *rom_path;
     const char *save_identity;
@@ -43,6 +47,7 @@ typedef struct FrontendExecutionRuntime {
     size_t *fds_side;
     uint64_t debugger_pause_revision;
     NesRewindHistory rewind;
+    struct FrontendHistory *history_viewer;
     unsigned rewind_seconds;
     unsigned run_ahead_frames;
     NesReplayResult replay_status;
@@ -89,6 +94,7 @@ unsigned frontend_execution_shortcut_command(FrontendShortcut shortcut);
 bool frontend_execution_handle_shortcut_action(FrontendExecutionRuntime *runtime,
                                                FrontendShortcut shortcut,
                                                bool down, bool repeat);
+void frontend_execution_controller_hold(FrontendExecutionRuntime *runtime, FrontendShortcut shortcut, bool down);
 void frontend_execution_release_host_input(FrontendExecutionRuntime *runtime);
 bool frontend_execution_set_speeds(FrontendExecutionRuntime *runtime,
                                    double speed, double fast_forward_speed);
@@ -110,6 +116,7 @@ size_t frontend_execution_rewind_available(const FrontendExecutionRuntime *runti
 bool frontend_execution_rewind_step(FrontendExecutionRuntime *runtime,
                                     char *error, size_t error_size);
 void frontend_execution_clear_timeline(FrontendExecutionRuntime *runtime);
+void frontend_execution_timeline_restored(FrontendExecutionRuntime *runtime);
 void frontend_execution_shutdown(FrontendExecutionRuntime *runtime);
 
 bool frontend_execution_set_run_ahead(FrontendExecutionRuntime *runtime, unsigned frames);

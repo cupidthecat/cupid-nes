@@ -11,6 +11,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include "../rom/rom.h"
 
 enum {
@@ -54,6 +55,7 @@ typedef struct {
     FrontendImageResult current_result;
     FrontendImageRequest recent[FRONTEND_RECENT_MAX];
     size_t recent_count;
+    uint64_t recent_revision;
 } FrontendSession;
 
 bool frontend_image_request_init(FrontendImageRequest *request, const char *path);

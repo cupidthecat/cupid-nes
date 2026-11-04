@@ -44,6 +44,8 @@ static void after_load(void *context, bool loaded) {
         return;
     }
     if (loaded) {
+        if (runtime->execution->audio_reset)
+            runtime->execution->audio_reset(runtime->execution->audio_reset_context);
         ++runtime->execution->timing_revision;
         frontend_execution_clear_timeline(runtime->execution);
         debugger_reset_session();

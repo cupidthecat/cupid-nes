@@ -20,6 +20,7 @@
 #include "frontend_commands.h"
 #include "frontend_panels.h"
 #include "platform_frontend.h"
+#include "state_frontend.h"
 #include "desktop_internal.h"
 #include "palette_tool.h"
 #include "../joypad/joypad.h"
@@ -39,6 +40,10 @@ void desktop_copy_status(FrontendDesktopUi *ui, const char *text) {
         if(ui->log_count==12){memmove(ui->log_lines,ui->log_lines+1,11*sizeof(ui->log_lines[0]));--ui->log_count;}
         snprintf(ui->log_lines[ui->log_count++],sizeof(ui->log_lines[0]),"%s",text);
     }
+}
+
+bool desktop_status_active(const FrontendDesktopUi *ui, uint32_t now) {
+    return ui && ui->status[0] && (int32_t)(ui->status_until - now) > 0;
 }
 
 static void visible_text(char *target,size_t capacity,const char *text) {
@@ -138,6 +143,12 @@ bool desktop_invoke_command(FrontendDesktopUi *ui, unsigned id) {
     }
     bool ok = frontend_command_invoke(id, error, sizeof(error));
     if (error[0]) desktop_copy_status(ui, error);
+    if (ok && id >= STATE_COMMAND_SAVE_SLOT && id <= STATE_COMMAND_LOAD_FILE) {
+        FrontendPanelControl controls[8];
+        FrontendPanelModel model = {.controls = controls, .capacity = 8};
+        if (frontend_panel_snapshot(STATE_PANEL, &model, NULL, 0) && model.status)
+            desktop_copy_status(ui, model.status);
+    }
     if (ok && ui->execution && ui->settings &&
         (id == FRONTEND_COMMAND_SPEED_HALF || id == FRONTEND_COMMAND_SPEED_NORMAL || id == FRONTEND_COMMAND_SPEED_DOUBLE))
         ui->settings->speed = ui->execution->execution.speed;
@@ -162,6 +173,7 @@ void desktop_settings_open(FrontendDesktopUi *ui, bool open) {
         if(ui->devices){snprintf(ui->settings->tape_play_path,sizeof(ui->settings->tape_play_path),"%s",ui->devices->tape_input);snprintf(ui->settings->tape_record_path,sizeof(ui->settings->tape_record_path),"%s",ui->devices->tape_output);}
         if(ui->music)ui->settings->nsf_player=ui->music->options;
         ui->staged = *ui->settings;
+        ui->settings_input_changes = 0;
         if (ui->execution) {
             ui->staged.speed = ui->execution->execution.speed;
             ui->staged.fast_forward_speed = ui->execution->execution.fast_forward_speed;
@@ -235,10 +247,32 @@ static bool save_settings(FrontendDesktopUi *ui) {
     if (ui->sessions && ui->sessions->before_configuration)
         ui->sessions->before_configuration(ui->sessions->configuration_context);
     FrontendSettings previous = *ui->settings;
+    FrontendSettings requested = ui->staged;
+    FrontendSettings applied = ui->staged;
+    FrontendSettings core_settings = applied;
+    if (rom_metadata_source() != ROM_METADATA_NONE) {
+        previous.input = (NesInputConfiguration){
+            joypad_adapter(), {joypad_port_device(0), joypad_port_device(1)}, joypad_expansion_device()};
+        previous.saved_input_overrides = joypad_configuration_overrides();
+        game_config_preserve_input_overrides(ui->sessions ? ui->sessions->game_config : NULL, &applied, &previous);
+        core_settings = applied;
+        /* Preserve this game's automatic devices without saving them as defaults. */
+        uint8_t overrides = core_settings.saved_input_overrides;
+        if (!(overrides & NES_INPUT_OVERRIDE_ADAPTER)) {
+            core_settings.input.adapter = previous.input.adapter;
+        }
+        if (!(overrides & NES_INPUT_OVERRIDE_PORT1)) {
+            core_settings.input.ports[0] = previous.input.ports[0];
+        }
+        if (!(overrides & NES_INPUT_OVERRIDE_PORT2)) {
+            core_settings.input.ports[1] = previous.input.ports[1];
+        }
+        if (!(overrides & NES_INPUT_OVERRIDE_EXPANSION)) {
+            core_settings.input.expansion = previous.input.expansion;
+        }
+    }
     FrontendAudioPrepared prepared_audio = {0};
-    if (ui->audio
-        && !frontend_audio_runtime_prepare(ui->audio, &ui->staged, &prepared_audio,
-                                           error, sizeof(error))) {
+    if (ui->audio && !frontend_audio_runtime_prepare(ui->audio, &ui->staged, &prepared_audio, error, sizeof(error))) {
         desktop_copy_status(ui, error);
         return false;
     }
@@ -272,7 +306,7 @@ static bool save_settings(FrontendDesktopUi *ui) {
                                              error, sizeof(error))) goto rollback;
         ui->capture->preferences = ui->staged.movie_preferences;
     }
-    if (!frontend_settings_apply_core(&ui->staged, error, sizeof(error))) goto rollback;
+    if (!frontend_settings_apply_core(&core_settings, error, sizeof(error))) goto rollback;
     if (ui->execution) {
         if (!frontend_execution_set_speeds(ui->execution, ui->staged.speed,
                                            ui->staged.fast_forward_speed)
@@ -295,7 +329,8 @@ static bool save_settings(FrontendDesktopUi *ui) {
     if (ui->settings_path) {
         FrontendSettingsReport report;
         bool saved = ui->sessions && ui->sessions->game_config
-            ? game_config_save_globals(ui->sessions->game_config, ui->settings_path, &ui->staged, &report)
+            ? game_config_save_globals_with_input_changes(ui->sessions->game_config, ui->settings_path, &requested,
+                                                          ui->settings_input_changes, &report)
             : frontend_settings_save(ui->settings_path, &ui->staged, &report);
         if (!saved) {
             snprintf(error, sizeof(error), "%s", report.message);
@@ -306,10 +341,13 @@ static bool save_settings(FrontendDesktopUi *ui) {
     frontend_execution_end_machine_change_preserving_audio(ui->execution);
     frontend_audio_runtime_commit(ui->audio, &prepared_audio);
     if (memcmp(previous.device_guid, ui->staged.device_guid, sizeof(previous.device_guid))) {
+        frontend_execution_release_host_input(ui->execution);
         frontend_host_input_shutdown();
         frontend_host_input_open_controllers(&ui->staged);
     }
+    ui->staged = applied;
     *ui->settings = ui->staged;
+    ui->settings_input_changes = 0;
     if (ui->video) ui->video->settings = ui->settings;
     (void)frontend_command_set_checked(FRONTEND_COMMAND_FULLSCREEN, ui->settings->fullscreen);
     (void)frontend_command_set_checked(FRONTEND_COMMAND_MUTE, ui->settings->muted);
@@ -319,6 +357,7 @@ static bool save_settings(FrontendDesktopUi *ui) {
 rollback:
     frontend_audio_runtime_cancel(&prepared_audio);
     restore_runtime_settings(ui, &previous);
+    ui->staged = requested;
     frontend_execution_end_machine_change_preserving_audio(ui->execution);
     if (trace_prepared && !previous_layers)
         (void)nes_video_trace_use(NES_VIDEO_TRACE_LAYERS, false);
@@ -354,6 +393,44 @@ static bool command_mute(void *context, char *error, size_t error_size) {
     if (ui->execution) frontend_execution_set_muted(ui->execution, ui->settings->muted);
     (void)frontend_command_set_checked(FRONTEND_COMMAND_MUTE, ui->settings->muted);
     return true;
+}
+
+void frontend_desktop_prepare_video(void) {
+#if defined(CUPID_GTK) && !defined(_WIN32)
+    /* The hidden host needs no decorations. libdecor can load GTK 3 into our
+     * GTK 4 process on Wayland, causing duplicate type registration. */
+    SDL_SetHintWithPriority("SDL_VIDEO_WAYLAND_ALLOW_LIBDECOR", "0", SDL_HINT_OVERRIDE);
+#endif
+}
+
+SDL_Renderer *frontend_desktop_create_renderer(SDL_Window *window, Uint32 flags) {
+    if (!window) return NULL;
+#ifdef CUPID_GTK
+    /* The hidden GTK host needs no native window framebuffer. Wayland has no
+     * unaccelerated window surface, and an SDL GL surface conflicts with GTK's
+     * current context on X11. Keep software rendering entirely offscreen. */
+    (void)flags;
+    int width, height;
+    SDL_GetWindowSize(window, &width, &height);
+    SDL_Surface *surface = SDL_CreateRGBSurfaceWithFormat(0, width, height, 32, SDL_PIXELFORMAT_ARGB8888);
+    if (!surface) return NULL;
+    SDL_Renderer *renderer = SDL_CreateSoftwareRenderer(surface);
+    if (!renderer) {
+        SDL_FreeSurface(surface);
+        return NULL;
+    }
+
+    SDL_SetWindowData(window, "cupid-host-surface", surface);
+    return renderer;
+#else
+    SDL_Renderer *renderer = SDL_CreateRenderer(window, -1, flags);
+    return renderer ? renderer : SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
+#endif
+}
+
+void frontend_desktop_destroy_renderer(SDL_Window *window, SDL_Renderer *renderer) {
+    SDL_DestroyRenderer(renderer);
+    if (window) SDL_FreeSurface(SDL_SetWindowData(window, "cupid-host-surface", NULL));
 }
 
 void frontend_desktop_init(FrontendDesktopUi *ui, SDL_Window *window,
@@ -468,7 +545,7 @@ static const char *on_off(bool enabled) { return enabled ? "On" : "Off"; }
 
 int desktop_setting_rows(const FrontendDesktopUi *ui) {
     switch (ui->settings_category) {
-        case 0: return 10;
+        case 0: return 11;
         case 1: return 6;
         case 2: return 36;
         case 3: return 5 + NES_AUDIO_CHANNEL_COUNT * 2;
@@ -493,8 +570,9 @@ void desktop_setting_text(FrontendDesktopUi *ui, int row, char *label, size_t lc
     label[0] = value[0] = '\0';
     if (ui->settings_category == 0) {
         const char *labels[] = {"Reopen last image", "Remember window size", "Recent image count",
-            "Pause on focus loss", "Pause while UI is open", "Show frame rate",
-            "Window width", "Window height", "Live PPU viewers", "PPU viewer grid"};
+            "Pause when leaving Cupid", "Pause while using Settings", "Show frame rate",
+            "Window width", "Window height", "Live PPU viewers", "PPU viewer grid",
+            "Pause when leaving main window"};
         snprintf(label, lc, "%s", labels[row]);
         if (row == 0) snprintf(value, vc, "%s", on_off(s->reopen_last_image));
         else if (row == 1) snprintf(value, vc, "%s", on_off(s->remember_window_size));
@@ -502,6 +580,7 @@ void desktop_setting_text(FrontendDesktopUi *ui, int row, char *label, size_t lc
         else if (row == 3) snprintf(value, vc, "%s", on_off(s->pause_on_focus_loss));
         else if (row == 4) snprintf(value, vc, "%s", on_off(s->pause_on_ui));
         else if (row == 5) snprintf(value, vc, "%s", on_off(s->show_fps));
+        else if (row == 10) snprintf(value, vc, "%s", on_off(s->pause_on_main_focus_loss));
         else if (row >= 8) snprintf(value, vc, "%s", on_off(row == 8 ? s->ppu_viewer_live : s->ppu_viewer_grid));
         else snprintf(value, vc, "%u", row == 6 ? s->window_width : s->window_height);
     } else if (ui->settings_category == 1) {
@@ -519,6 +598,7 @@ void desktop_setting_text(FrontendDesktopUi *ui, int row, char *label, size_t lc
             const char *labels[] = {"Fullscreen", "Integer scaling", "VSync", "Aspect ratio",
                 "Composite output", "Background layer", "Sprite layer"};
             snprintf(label, lc, "%s", labels[row]);
+            if (row == 2 && ui->gtk) snprintf(label, lc, "VSync (managed by desktop)");
             if (row == 0) snprintf(value, vc, "%s", on_off(s->fullscreen));
             else if (row == 1) snprintf(value, vc, "%s", on_off(s->integer_scaling));
             else if (row == 2) snprintf(value, vc, "%s", on_off(s->vsync));
@@ -704,6 +784,7 @@ void desktop_adjust_setting(FrontendDesktopUi *ui, int row, int direction) {
         else if (row == 6) { int v = (int)s->window_width + direction * 32; s->window_width = (unsigned)(v < 320 ? 320 : v > 16384 ? 16384 : v); }
         else if (row == 8) s->ppu_viewer_live = !s->ppu_viewer_live;
         else if (row == 9) s->ppu_viewer_grid = !s->ppu_viewer_grid;
+        else if (row == 10) s->pause_on_main_focus_loss = !s->pause_on_main_focus_loss;
         else { int v = (int)s->window_height + direction * 24; s->window_height = (unsigned)(v < 240 ? 240 : v > 16384 ? 16384 : v); }
     } else if (ui->settings_category == 1) {
         if (row == 0) s->region_mode = (NesRegionMode)(((int)s->region_mode + direction + 4) % 4);
@@ -758,18 +839,27 @@ void desktop_adjust_setting(FrontendDesktopUi *ui, int row, int direction) {
             if (index & 1u) { int v = s->audio_mix.pan[channel] + direction * 5; s->audio_mix.pan[channel] = v < -100 ? -100 : v > 100 ? 100 : v; }
             else { int v = (int)s->audio_mix.volume[channel] + direction * 5; s->audio_mix.volume[channel] = (unsigned)(v < 0 ? 0 : v > 200 ? 200 : v); }
         }
-    }
-    else if (ui->settings_category == 4) {
+    } else if (ui->settings_category == 4) {
         if (row == 0 && s->profile_count) {
-            size_t index = 0; for (; index < s->profile_count; ++index) if (!strcmp(s->profiles[index].name, s->active_profile)) break;
-            index = (index + s->profile_count + direction) % s->profile_count; strcpy(s->active_profile, s->profiles[index].name);
-        } else if (row == 1) s->input.adapter = (NesInputAdapter)(((int)s->input.adapter + direction + 4) % 4);
-        else if (row == 2 || row == 3) s->input.ports[row - 2] = (NesPortDevice)(((int)s->input.ports[row - 2] + direction + 11) % 11);
-        else if (row == 4) s->input.expansion = (NesExpansionDevice)(((int)s->input.expansion + direction + 19) % 19);
-        else if (row == 5) { int v = (int)s->zapper_radius + direction; s->zapper_radius = (unsigned)(v < 0 ? 0 : v > 255 ? 255 : v); }
-        else if (row == 6) ui->settings_player = (ui->settings_player + NES_INPUT_PLAYERS + direction) % NES_INPUT_PLAYERS;
-        else if (row == 7) desktop_begin_edit(ui, (unsigned)row, s->device_guid[ui->settings_player]);
-        else {
+            size_t index = 0;
+            for (; index < s->profile_count; ++index) {
+                if (!strcmp(s->profiles[index].name, s->active_profile)) {
+                    break;
+                }
+            }
+            index = (index + s->profile_count + direction) % s->profile_count;
+            strcpy(s->active_profile, s->profiles[index].name);
+        } else if (row >= 1 && row <= 4) {
+            int selected, count = desktop_setting_choices(ui, row, &selected);
+            desktop_setting_choose(ui, row, (selected + direction + count) % count);
+        } else if (row == 5) {
+            int v = (int)s->zapper_radius + direction;
+            s->zapper_radius = (unsigned)(v < 0 ? 0 : v > 255 ? 255 : v);
+        } else if (row == 6) {
+            ui->settings_player = (ui->settings_player + NES_INPUT_PLAYERS + direction) % NES_INPUT_PLAYERS;
+        } else if (row == 7) {
+            desktop_begin_edit(ui, (unsigned)row, s->device_guid[ui->settings_player]);
+        } else {
             ui->capture_binding = true;
             ui->capture_gamepad = row >= 16 && row < 24
                 ? true : row >= 24 + FRONTEND_SHORTCUT_COUNT;
@@ -839,7 +929,7 @@ void desktop_commit_edit(FrontendDesktopUi *ui) {
                 desktop_copy_status(ui, "Audio device name is too long");
                 return;
             }
-            snprintf(s->audio_device, sizeof(s->audio_device), "%s", ui->edit_text);
+            memcpy(s->audio_device, ui->edit_text, strlen(ui->edit_text) + 1);
         } else if (ui->settings_category == 4 && row == 7) {
             size_t size = strlen(ui->edit_text);
             if (size >= FRONTEND_SETTINGS_GUID_TEXT) {
@@ -925,6 +1015,10 @@ int desktop_menu_all(FrontendDesktopUi *ui, DesktopMenuItem items[128]) {
         }
     }
     if (ui->open_menu==0) {
+        for (unsigned slot = 0; slot < NES_STATE_SLOT_COUNT && count < 126; ++slot) {
+            items[count] = (DesktopMenuItem){.id = slot, .kind = DESKTOP_MENU_STATE_SLOT, .enabled = true};
+            snprintf(items[count++].label, 128, "%sSlot %u", ui->settings->state_slot == slot ? "[x] " : "", slot + 1);
+        }
         const FrontendSession *recent_session=ui->sessions?ui->sessions->session:ui->idle_session;
         if (recent_session) for (size_t i=0; i<frontend_session_recent_count(recent_session) && count<126; ++i) {
             const FrontendImageRequest *recent=frontend_session_recent(recent_session,i);
@@ -967,6 +1061,7 @@ static void category_defaults(FrontendDesktopUi *ui) {
             memcpy(&ui->staged.remember_window_size, &d.remember_window_size, sizeof(d.remember_window_size));
             memcpy(&ui->staged.recent_file_limit, &d.recent_file_limit, sizeof(d.recent_file_limit));
             memcpy(&ui->staged.pause_on_focus_loss, &d.pause_on_focus_loss, sizeof(d.pause_on_focus_loss));
+            ui->staged.pause_on_main_focus_loss = d.pause_on_main_focus_loss;
             memcpy(&ui->staged.pause_on_ui, &d.pause_on_ui, sizeof(d.pause_on_ui));
             memcpy(&ui->staged.show_fps, &d.show_fps, sizeof(d.show_fps));
             ui->staged.ppu_viewer_live = d.ppu_viewer_live;
@@ -1004,6 +1099,8 @@ static void category_defaults(FrontendDesktopUi *ui) {
             memcpy(&ui->staged.input, &d.input, sizeof(d.input));
             memcpy(&ui->staged.zapper_radius, &d.zapper_radius, sizeof(d.zapper_radius));
             memcpy(&ui->staged.saved_input_overrides, &d.saved_input_overrides, sizeof(d.saved_input_overrides));
+            ui->settings_input_changes |= NES_INPUT_OVERRIDE_ADAPTER | NES_INPUT_OVERRIDE_PORT1 |
+                                          NES_INPUT_OVERRIDE_PORT2 | NES_INPUT_OVERRIDE_EXPANSION;
             memcpy(&ui->staged.active_profile, &d.active_profile, sizeof(d.active_profile));
             memcpy(&ui->staged.profiles, &d.profiles, sizeof(d.profiles));
             memcpy(&ui->staged.profile_count, &d.profile_count, sizeof(d.profile_count));
@@ -1068,6 +1165,8 @@ void desktop_settings_button(FrontendDesktopUi *ui, int button) {
             uint32_t overrides = ui->staged.cli_overrides;
             frontend_settings_defaults(&ui->staged);
             ui->staged.cli_overrides = overrides;
+            ui->settings_input_changes |= NES_INPUT_OVERRIDE_ADAPTER | NES_INPUT_OVERRIDE_PORT1 |
+                                          NES_INPUT_OVERRIDE_PORT2 | NES_INPUT_OVERRIDE_EXPANSION;
             ui->confirm_restore_all = false;
         } else { ui->confirm_restore_all = true; desktop_copy_status(ui, "Activate Reset all again to confirm"); }
     }

@@ -70,6 +70,9 @@ typedef bool (*NesInputEventObserver)(const NesInputEvent *event, void *userdata
  * Returning false blocks the live mutation (movie playback/netplay ownership). */
 void nes_input_event_set_observer(NesInputEventObserver observer, void *userdata);
 void nes_input_event_clear_observer(void);
+/* Passive history listener sees accepted live events without taking ownership
+ * from movie/netplay or blocking input. Injection and nested setters bypass it. */
+void nes_input_event_set_listener(void (*listener)(const NesInputEvent *, void *), void *userdata);
 bool nes_input_event_submit(const NesInputEvent *event);
 bool nes_input_event_validate(const NesInputEvent *event);
 

@@ -2,13 +2,19 @@
 
 These tools change host video and audio output. They do not change CPU/PPU timing, controller input, light-gun sensing, or deterministic machine state.
 
-## Rewind History
+## History Viewer
 
-Open **Rewind History** with a game loaded and rewind enabled, then choose **Open video timeline**. The window shows retained frame boundaries. Click or drag its bottom bar to scrub, use Left/Right to step, and press Space to play or pause the retained history. The position starts at 1 for the oldest retained frame.
+Open **Tools → Rewind and movies → History Viewer** with a game loaded and rewind enabled. The native GTK window shows the retained history, starting at its oldest frame. Drag the timeline or enter a frame number to seek. Left/Right step one frame; Home/End jump to the boundaries; Space or a click on the video toggles playback. Playback uses the game's regional frame rate, pauses at the end, and starts again at the beginning when Play is pressed. Volume controls historical audio separately. The scale selector resizes the preview while preserving its aspect ratio.
 
-Browsing pauses live execution. Each preview restores the selected authoritative rewind snapshot temporarily, copies its video, and restores the live machine. **Save selected state** writes that snapshot as a normal save state. **Resume from selection** restores it and discards the selected boundary and every later rewind entry, matching ordinary rewind. Closing the window leaves the live position unchanged.
+**File → Create save state** saves the selected boundary. **Resume gameplay** continues from it and discards that boundary and all later rewind entries, matching ordinary rewind. Closing the viewer returns to the unchanged live position and preserves the previous pause state.
 
-Movie export is unavailable because the rewind ring stores snapshots, not the controller input stream needed to reproduce a range. Movie/netplay ownership and unreplayable host state prevent browsing. Reset, game replacement, and rewind reconfiguration close the viewer.
+Use **Set start** and **Set end** to select an inclusive range, then **File → Export movie range** to write a Cupid state-start input movie. The export embeds the first boundary and the accepted controller/peripheral input events for subsequent frames. The first frame's actions are already part of that boundary and are not applied twice. Incomplete frames or input logs disable export for ranges containing them.
+
+The **Bookmarks** sidebar stores ten temporary positions with preview images. Ctrl+0–9 stores a position; 0–9 jumps to one. Bookmarks belong to the open history and are cleared when it is reopened.
+
+Browsing pauses live execution. Each preview temporarily restores an authoritative rewind snapshot, copies its video, then restores the live machine and its completed display frame. The viewer plays retained final stereo samples through a separate output device. It never runs the core, saves battery data, or injects preview inputs. Snapshots, input events and audio share the configured rewind memory limit; shorter retention is possible when that limit is reached. A missing audio device leaves video navigation available.
+
+Movie/netplay ownership and unreplayable host state prevent browsing. Reset, game replacement and rewind reconfiguration invalidate the viewer. Cupid freezes its live timeline while browsing. Movie exports use Cupid's `.movie` format; `.mmo` files are not supported. The SDL fallback retains its separate preview window and shared panel controls.
 
 ## Shader Presets
 
@@ -51,13 +57,30 @@ presentation calls. The GTK widget path can combine multiple submissions into on
 this rate can be lower than the emulation rate. These measurements do not report
 when the monitor displays the image. The SDL frontend marks draw timing unavailable.
 
-The desktop sleeps in short steps while servicing pending GTK work, then checks
-the high-resolution clock during the final part of the wait. This preserves
-fractional frame deadlines and lets the display update between emulated frames.
-GTK drawing that happens during a wait is included in pacing time; drawing
-during submission is included in presentation time.
+The desktop prepares each image, then waits for its deadline before submitting
+it to GTK. Variations in emulation and filter time therefore use the available
+frame budget instead of moving each image's submission time. The wait services
+pending GTK work and uses the high-resolution clock for its final fraction of a
+millisecond. Both this wait and any wait after presentation count as pacing time.
+GTK drawing during a wait also counts as pacing time.
 
-These are host wall-clock measurements, not emulated CPU or PPU cycles. Idle/pause transitions reset the measurements. Callback audio does not expose trustworthy queue depth or underrun counters, so those fields are marked unavailable. **Reset measurements** clears both sets of retained samples.
+The main status-bar FPS counter uses the last 60 completed frame intervals,
+about one second at normal NTSC speed. It updates four times per second and
+starts a new measurement after a pause, session change, or speed change.
+It reports the measured rate, including sustained slowdowns and fast-forward;
+it does not clamp the number to the regional target.
+
+The native desktop spreads periodic tool updates across game presentations,
+rotating through visible windows. Each tool waits at least 100 ms between
+these refreshes; with many tools open, updates can be less frequent. Live video
+previews continue to update per frame. Buttons and edits still act immediately.
+Settings categories retain their controls after
+the first visit. Unchanged labels, menu checks, and theme preferences do not
+request another layout or redraw. GTK control animations are suspended during
+gameplay and restored while paused or idle, following the original animation
+preference when the desktop closes.
+
+These are host wall-clock measurements, not emulated CPU or PPU cycles. Idle/pause transitions reset the measurements. The audio row shows the host playback queue and the number of underrun callbacks since the output device was opened. Startup prefill is excluded. Playback retains a short reservoir and adjusts host resampling by at most 0.5% to follow the device clock; emulated clocks, recorded samples, and movie input are unchanged. **Reset measurements** clears both sets of retained samples.
 
 ## Existing video controls
 

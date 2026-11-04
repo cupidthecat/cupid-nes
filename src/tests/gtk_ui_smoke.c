@@ -44,15 +44,23 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 uint32_t framebuffer[SCREEN_WIDTH * SCREEN_HEIGHT];
 Joypad pad1 = {0}, pad2 = {0};
 
 bool test_gtk_input_accuracy(FrontendDesktopUi *ui);
-int benchmark_gtk(const char *path);
+int benchmark_gtk(const char *path, const char *movie);
 bool test_gtk_native_video(FrontendDesktopUi *ui, const char *out);
 bool test_gtk_information(FrontendDesktopUi *ui);
+bool test_gtk_picture_pixels(void);
+bool test_gtk_game_pixels(FrontendDesktopUi *ui);
+bool test_gtk_shader_context(FrontendDesktopUi *ui);
 bool test_gtk_shortcuts(FrontendDesktopUi *ui);
+bool test_gtk_state_dialogs(FrontendDesktopUi *ui);
+bool test_gtk_status_accuracy(FrontendDesktopUi *ui);
+bool test_gtk_workflows(FrontendDesktopUi *ui);
+bool test_gtk_history(FrontendDesktopUi *ui, const char *out);
 
 static void pump(FrontendDesktopUi *ui) {
     for (unsigned i = 0; i < 20; i++) {
@@ -139,8 +147,17 @@ static gboolean pacing_dispatch(gpointer data) {
 static bool game_window_interactions(FrontendDesktopUi *ui) {
     unsigned dispatched = 0;
     uint64_t submitted = ui->gtk->submitted_frames;
-    guint source = g_idle_add(pacing_dispatch, &dispatched);
+    /* The expired wait dispatches once. A normal-priority idle can remain
+     * behind Win32 paints when that dispatch reaches its time budget. */
+    guint source = g_idle_add_full(G_PRIORITY_HIGH, pacing_dispatch, &dispatched, NULL);
     double frequency = (double)SDL_GetPerformanceFrequency();
+    frontend_desktop_wait(ui, 0, frequency);
+    if (!dispatched) {
+        g_source_remove(source);
+    }
+    CHECK(dispatched == 1 && ui->gtk->submitted_frames == submitted);
+    dispatched = 0;
+    source = g_idle_add(pacing_dispatch, &dispatched);
     frontend_desktop_wait(ui, (double)SDL_GetPerformanceCounter() + frequency * 0.030, frequency);
     if (!dispatched) g_source_remove(source);
     CHECK(dispatched == 1 && ui->gtk->submitted_frames == submitted);
@@ -175,26 +192,32 @@ static bool game_texture_interactions(FrontendDesktopUi *ui) {
     const uint32_t *pixels;
     unsigned w, h, stride;
     CHECK(frontend_video_runtime_pixels(ui->video, true, &pixels, &w, &h, &stride));
-    CHECK(d->frame_texture && d->frame);
-    CHECK(gdk_texture_get_width(d->frame_texture) == (int)w);
-    CHECK(gdk_texture_get_height(d->frame_texture) == (int)h);
-    uint32_t *download = g_new(uint32_t, (size_t)w * h);
-    gdk_texture_download(d->frame_texture, (guchar *)download, w * sizeof(*download));
-    bool same = true;
-    for (unsigned y = 0; y < h; ++y) {
-        for (unsigned x = 0; x < w; ++x) {
-            same &= download[(size_t)y * w + x] == (pixels[(size_t)y * stride + x] | 0xff000000u);
+    bool software = GSK_IS_CAIRO_RENDERER(gtk_native_get_renderer(GTK_NATIVE(d->window)));
+    if (software) {
+        CHECK(d->frame && !d->frame_texture);
+        cairo_surface_flush(d->frame);
+        const unsigned char *surface = cairo_image_surface_get_data(d->frame);
+        int pitch = cairo_image_surface_get_stride(d->frame);
+        for (unsigned y = 0; y < h; ++y) {
+            const uint32_t *row = (const uint32_t *)(surface + (size_t)y * pitch);
+            for (unsigned x = 0; x < w; ++x) {
+                CHECK((row[x] & 0xffffffu) == (pixels[(size_t)y * stride + x] & 0xffffffu));
+            }
         }
-    }
-    g_free(download);
-    CHECK(same);
-    cairo_surface_flush(d->frame);
-    const unsigned char *surface = cairo_image_surface_get_data(d->frame);
-    int pitch = cairo_image_surface_get_stride(d->frame);
-    for (unsigned y = 0; y < h; ++y) {
-        const uint32_t *row = (const uint32_t *)(surface + (size_t)y * pitch);
-        for (unsigned x = 0; x < w; ++x)
-            CHECK((row[x] & 0xffffffu) == (pixels[(size_t)y * stride + x] & 0xffffffu));
+    } else {
+        CHECK(d->frame_texture && !d->frame);
+        CHECK(gdk_texture_get_width(d->frame_texture) == (int)w);
+        CHECK(gdk_texture_get_height(d->frame_texture) == (int)h);
+        uint32_t *download = g_new(uint32_t, (size_t)w *h);
+        gdk_texture_download(d->frame_texture, (guchar *)download, w * sizeof(*download));
+        bool same = true;
+        for (unsigned y = 0; y < h; ++y) {
+            for (unsigned x = 0; x < w; ++x) {
+                same &= download[(size_t)y * w + x] == (pixels[(size_t)y * stride + x] | 0xff000000u);
+            }
+        }
+        g_free(download);
+        CHECK(same);
     }
 
     bool old_filter = ui->settings->bilinear_interpolation;
@@ -277,24 +300,123 @@ static GtkWidget *find_register_entry(GtkWidget *root) {
     return NULL;
 }
 
+typedef struct {
+    GtkWindow *parent;
+    bool owned;
+    unsigned polls;
+} FileOwnerProbe;
+
 static gboolean cancel_file_dialog(gpointer data) {
-    GtkNativeDialog *dialog = g_object_get_data(G_OBJECT(data), "cupid-file-dialog");
+    FileOwnerProbe *probe = data;
+    GtkNativeDialog *dialog = g_object_get_data(G_OBJECT(probe->parent), "cupid-file-dialog");
+    if (!dialog) {
+        GListModel *windows = gtk_window_get_toplevels();
+        for (guint i = 0; !dialog && i < g_list_model_get_n_items(windows); ++i) {
+            GtkWindow *window = g_list_model_get_item(windows, i);
+            dialog = g_object_get_data(G_OBJECT(window), "cupid-file-dialog");
+            g_object_unref(window);
+        }
+    }
     if (dialog) {
+#ifndef _WIN32
+        GListModel *windows = gtk_window_get_toplevels();
+        bool ready = false;
+        for (guint i = 0; i < g_list_model_get_n_items(windows); ++i) {
+            GtkWindow *window = g_list_model_get_item(windows, i);
+            ready |= GTK_IS_FILE_CHOOSER(window) && gtk_widget_get_mapped(GTK_WIDGET(window));
+            g_object_unref(window);
+        }
+        if (!ready) {
+            if (++probe->polls < 300) {
+                return G_SOURCE_CONTINUE;
+            }
+            g_signal_emit_by_name(dialog, "response", GTK_RESPONSE_CANCEL);
+            return G_SOURCE_REMOVE;
+        }
+#endif
+        probe->owned =
+            gtk_native_dialog_get_modal(dialog) && gtk_native_dialog_get_transient_for(dialog) == probe->parent;
         g_signal_emit_by_name(dialog, "response", GTK_RESPONSE_CANCEL);
     }
     return G_SOURCE_REMOVE;
 }
 
+static bool focus_window(GtkWidget *window) {
+    gint64 deadline = g_get_monotonic_time() + 3000000;
+    do {
+        gtk_window_present(GTK_WINDOW(window));
+        cupid_gtk_dispatch();
+        if (gtk_window_is_active(GTK_WINDOW(window))) {
+            return true;
+        }
+        SDL_Delay(10);
+    } while (g_get_monotonic_time() < deadline);
+    return false;
+}
+
 static bool file_dialog_interactions(FrontendDesktopUi *ui) {
     char path[128] = "unchanged", error[128] = "";
     cupid_gtk_files_install(GTK_WINDOW(ui->gtk->window));
-    guint source = g_idle_add(cancel_file_dialog, ui->gtk->window);
+    CHECK(focus_window(ui->gtk->window));
+    gtk_widget_grab_focus(ui->gtk->picture);
+    pump(ui);
+    CHECK(!cupid_gtk_captured(ui));
+    FileOwnerProbe probe = {.parent = GTK_WINDOW(ui->gtk->window)};
+    guint source = g_timeout_add(10, cancel_file_dialog, &probe);
     bool accepted = frontend_open_file_dialog(FRONTEND_OPEN_IMAGE, path, sizeof(path), error, sizeof(error));
     if (g_main_context_find_source_by_id(NULL, source)) {
         g_source_remove(source);
     }
-    CHECK(!accepted && !error[0] && !strcmp(path, "unchanged"));
+    CHECK(!accepted && probe.owned && !error[0] && !strcmp(path, "unchanged"));
     CHECK(!g_object_get_data(G_OBJECT(ui->gtk->window), "cupid-file-dialog"));
+    CupidGtkTool *tool = find_tool(ui, cupid_gtk_open(ui, 0, 0));
+    CHECK(tool);
+    pump(ui);
+    CHECK(focus_window(tool->window));
+    /* Capture the shifted symbol through Settings' real event controller. */
+    GListModel *controllers = gtk_widget_observe_controllers(tool->content);
+    GdkKeymapKey *mapped = NULL;
+    int mapped_count = 0;
+    CHECK(gdk_display_map_keyval(gtk_widget_get_display(tool->content), GDK_KEY_1, &mapped, &mapped_count));
+    bool bound = false;
+    FrontendBindingProfile *profile = frontend_settings_active_profile(&tool->ui.staged);
+    FrontendHostBinding saved = profile->shortcuts[FRONTEND_SHORTCUT_PAUSE];
+    for (guint i = 0; i < g_list_model_get_n_items(controllers); ++i) {
+        GtkEventController *controller = g_list_model_get_item(controllers, i);
+        if (GTK_IS_EVENT_CONTROLLER_KEY(controller)) {
+            for (int k = 0; k < mapped_count; ++k) {
+                if (mapped[k].group != 0 || mapped[k].level != 0) {
+                    continue;
+                }
+                tool->ui.capture_binding = tool->ui.capture_shortcut = true;
+                tool->ui.capture_index = FRONTEND_SHORTCUT_PAUSE;
+                gboolean handled = FALSE;
+                g_signal_emit_by_name(controller, "key-pressed", GDK_KEY_exclam, mapped[k].keycode, GDK_SHIFT_MASK,
+                                      &handled);
+                bound |= handled && !tool->ui.capture_binding &&
+                         profile->shortcuts[FRONTEND_SHORTCUT_PAUSE].key == SDL_SCANCODE_1 &&
+                         (profile->shortcuts[FRONTEND_SHORTCUT_PAUSE].modifiers & KMOD_SHIFT);
+            }
+        }
+        g_object_unref(controller);
+    }
+    profile->shortcuts[FRONTEND_SHORTCUT_PAUSE] = saved;
+    g_object_unref(controllers);
+    g_free(mapped);
+    CHECK(bound);
+    probe = (FileOwnerProbe){.parent = GTK_WINDOW(tool->window)};
+    source = g_timeout_add(10, cancel_file_dialog, &probe);
+    accepted = frontend_open_file_dialog(FRONTEND_OPEN_IMAGE, path, sizeof(path), error, sizeof(error));
+    if (g_main_context_find_source_by_id(NULL, source)) {
+        g_source_remove(source);
+    }
+    CHECK(!accepted && probe.owned && !error[0] && !strcmp(path, "unchanged"));
+    CHECK(!g_object_get_data(G_OBJECT(tool->window), "cupid-file-dialog"));
+    gtk_widget_set_visible(tool->window, FALSE);
+    gtk_window_present(GTK_WINDOW(ui->gtk->window));
+    gtk_widget_grab_focus(ui->gtk->picture);
+    pump(ui);
+    puts("GTK chooser ownership, cancellation and shifted binding capture: PASS");
     return true;
 }
 
@@ -506,6 +628,53 @@ static void count_model_change(GtkTreeModel *model, GtkTreePath *path, GtkTreeIt
     ++*(unsigned *)data;
 }
 
+static bool tas_grid_pixels(FrontendDesktopUi *ui, GtkWidget *tree) {
+    GtkSnapshot *snapshot;
+    GskRenderNode *cached = NULL;
+    gint64 deadline = g_get_monotonic_time() + 3000000;
+    /* A newly presented toplevel can still be allocating its TreeView on
+     * Windows. Wait for its first real snapshot before comparing pixels. */
+    do {
+        pump(ui);
+        snapshot = gtk_snapshot_new();
+        GTK_WIDGET_GET_CLASS(tree)->snapshot(tree, snapshot);
+        cached = gtk_snapshot_free_to_node(snapshot);
+    } while (!cached && g_get_monotonic_time() < deadline);
+    if (!cached || gsk_render_node_get_node_type(cached) != GSK_TEXTURE_NODE) {
+        fprintf(stderr, "TAS grid snapshot: node %d, mapped %d, allocation %dx%d\n",
+            cached ? (int)gsk_render_node_get_node_type(cached) : -1, gtk_widget_get_mapped(tree),
+            gtk_widget_get_width(tree), gtk_widget_get_height(tree));
+    }
+    CHECK(cached && gsk_render_node_get_node_type(cached) == GSK_TEXTURE_NODE);
+    GdkTexture *texture = gsk_texture_node_get_texture(cached);
+    int scale = gtk_widget_get_scale_factor(tree);
+    int width = gtk_widget_get_width(tree) * scale, height = gtk_widget_get_height(tree) * scale;
+    CHECK(gdk_texture_get_width(texture) == width && gdk_texture_get_height(texture) == height);
+    GtkWidgetClass *native_class = g_type_class_ref(GTK_TYPE_TREE_VIEW);
+    snapshot = gtk_snapshot_new();
+    native_class->snapshot(tree, snapshot);
+    GskRenderNode *native = gtk_snapshot_free_to_node(snapshot);
+    g_type_class_unref(native_class);
+    CHECK(native);
+    cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+    cairo_t *cr = cairo_create(surface);
+    cairo_scale(cr, scale, scale);
+    gsk_render_node_draw(native, cr);
+    cairo_destroy(cr);
+    cairo_surface_flush(surface);
+    int stride = cairo_image_surface_get_stride(surface);
+    size_t bytes = (size_t)stride * height;
+    guchar *pixels = g_malloc(bytes);
+    gdk_texture_download(texture, pixels, stride);
+    bool equal = !memcmp(pixels, cairo_image_surface_get_data(surface), bytes);
+    g_free(pixels);
+    cairo_surface_destroy(surface);
+    gsk_render_node_unref(native);
+    gsk_render_node_unref(cached);
+    CHECK(equal);
+    return true;
+}
+
 static bool tas_interactions(FrontendDesktopUi *ui) {
     CupidGtkTool *tool = find_tool(ui, cupid_gtk_open(ui, 1, TAS_PANEL));
     CHECK(tool);
@@ -515,6 +684,7 @@ static bool tas_interactions(FrontendDesktopUi *ui) {
     GtkWidget *picture = find_widget(tool->content, GTK_TYPE_PICTURE);
     GtkWidget *entry = find_widget(tool->content, GTK_TYPE_ENTRY);
     CHECK(tree && picture && entry);
+    CHECK(tas_grid_pixels(ui, tree));
     GtkTreeModel *rows = gtk_tree_view_get_model(GTK_TREE_VIEW(tree));
     CHECK(gtk_tree_model_iter_n_children(rows, NULL) == 10000);
     GtkTreeIter iter;
@@ -529,9 +699,11 @@ static bool tas_interactions(FrontendDesktopUi *ui) {
     g_signal_handler_disconnect(rows, observer);
     CHECK(changes == 0 && gtk_tree_view_get_model(GTK_TREE_VIEW(tree)) == rows);
     GdkPaintable *paintable = gtk_picture_get_paintable(GTK_PICTURE(picture));
-    CHECK(GDK_IS_TEXTURE(paintable));
+    GdkPaintable *image = gdk_paintable_get_current_image(paintable);
+    CHECK(GDK_IS_TEXTURE(image));
     uint32_t downloaded[256 * 240];
-    gdk_texture_download(GDK_TEXTURE(paintable), (guchar *)downloaded, 256 * sizeof(uint32_t));
+    gdk_texture_download(GDK_TEXTURE(image), (guchar *)downloaded, 256 * sizeof(uint32_t));
+    g_object_unref(image);
     CHECK(!memcmp(downloaded, framebuffer, sizeof(downloaded)));
     NesTasProject *project = desktop_tas_project_writable(&tool->ui, false);
     CHECK(project);
@@ -587,6 +759,39 @@ static bool tas_interactions(FrontendDesktopUi *ui) {
     CHECK(tool->ui.tas_editor->splice.preview_valid);
     CHECK(tas_action(tool, TAS_ACTION_SIDEBAR_INPUT));
     gtk_adjustment_set_value(gtk_scrollable_get_hadjustment(GTK_SCROLLABLE(tree)), 0);
+    GtkAdjustment *vertical = gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(tree));
+    gtk_adjustment_set_value(vertical, 0);
+    pump(ui);
+    gboolean animations;
+    g_object_get(gtk_settings_get_default(), "gtk-enable-animations", &animations, NULL);
+    g_object_set(gtk_settings_get_default(), "gtk-enable-animations", TRUE, NULL);
+    size_t selected = nes_tas_selection_count(project), cursor = tool->ui.tas_editor->cursor;
+    tool->ui.tas_editor->follow_playback = true;
+    tool->ui.tas_editor->follow_initialized = true;
+    tool->ui.tas_editor->last_playback_frame = 0;
+    char error[256] = {0};
+    CHECK(tas_frontend_seek(ui->execution, 200, error, sizeof(error)));
+    for (unsigned frame = 0; frame < 200; ++frame) {
+        CHECK(frontend_execution_run_frame(ui->execution));
+    }
+    SDL_Delay(110);
+    double previous = gtk_adjustment_get_value(vertical);
+    cupid_gtk_tas_refresh(tool->content);
+    double followed = gtk_adjustment_get_value(vertical);
+    CHECK(followed > previous);
+    for (unsigned i = 0; i < 8; ++i) {
+        cupid_gtk_dispatch();
+        SDL_Delay(10);
+    }
+    CHECK(fabs(gtk_adjustment_get_value(vertical) - followed) < 0.5);
+    GtkTreePath *first = NULL, *last = NULL;
+    CHECK(gtk_tree_view_get_visible_range(GTK_TREE_VIEW(tree), &first, &last));
+    CHECK(gtk_tree_path_get_indices(first)[0] <= 200 && gtk_tree_path_get_indices(last)[0] >= 200);
+    gtk_tree_path_free(first);
+    gtk_tree_path_free(last);
+    CHECK(nes_tas_selection_count(project) == selected && tool->ui.tas_editor->cursor == cursor);
+    CHECK(tas_grid_pixels(ui, tree));
+    g_object_set(gtk_settings_get_default(), "gtk-enable-animations", animations, NULL);
     preview_pattern();
     cupid_gtk_tas_video(tool->content);
     /* Retain a disposed root to verify late presentation/refresh calls are safe. */
@@ -634,13 +839,138 @@ static bool capture_tool(FrontendDesktopUi *ui, CupidGtkTool *tool, unsigned pan
     return true;
 }
 
-int main(int argc, char **argv) {
-    if (argc == 3 && !strcmp(argv[1], "--benchmark")) {
-        return benchmark_gtk(argv[2]);
+static bool independent_windows_check(FrontendDesktopUi *ui) {
+    CupidGtkTool *settings = find_tool(ui, cupid_gtk_open(ui, 0, 0));
+    CupidGtkTool *debug = find_tool(ui, cupid_gtk_open(ui, 1, DEBUGGER_FRONTEND_PANEL));
+    CupidGtkTool *palette = find_tool(ui, cupid_gtk_open(ui, 3, 0));
+    CHECK(settings && debug && palette);
+    bool pause_on_main = settings->ui.staged.pause_on_main_focus_loss;
+    desktop_adjust_setting(&settings->ui, 10, 1);
+    CHECK(settings->ui.staged.pause_on_main_focus_loss != pause_on_main);
+    desktop_adjust_setting(&settings->ui, 10, 1);
+    CHECK(settings->ui.staged.pause_on_main_focus_loss == pause_on_main);
+    CupidGtkTool *tools[] = {settings, debug, palette};
+    for (unsigned i = 0; i < G_N_ELEMENTS(tools); ++i) {
+        CHECK(gtk_widget_get_visible(tools[i]->window));
+        CHECK(!gtk_window_get_modal(GTK_WINDOW(tools[i]->window)));
+        CHECK(!gtk_window_get_transient_for(GTK_WINDOW(tools[i]->window)));
+        CHECK(tools[i]->window_group != ui->gtk->window_group);
+        for (unsigned j = 0; j < i; ++j) {
+            CHECK(tools[i]->window_group != tools[j]->window_group);
+        }
     }
+    /* An owner-modal prompt must stay in that owner's input group. */
+    GtkWidget *dialog = gtk_dialog_new_with_buttons("Window group fixture", GTK_WINDOW(settings->window),
+        GTK_DIALOG_MODAL, "Close", GTK_RESPONSE_CLOSE, NULL);
+    CHECK(gtk_window_get_group(GTK_WINDOW(dialog)) == settings->window_group);
+    gtk_window_present(GTK_WINDOW(dialog));
+    pump(ui);
+    GtkWidget *check = find_widget(palette->content, GTK_TYPE_CHECK_BUTTON);
+    CHECK(check);
+    gboolean active = gtk_check_button_get_active(GTK_CHECK_BUTTON(check));
+    CHECK(gtk_widget_activate(check));
+    CHECK(gtk_check_button_get_active(GTK_CHECK_BUTTON(check)) != active);
+    CHECK(gtk_widget_activate(check));
+    CHECK(gtk_check_button_get_active(GTK_CHECK_BUTTON(check)) == active);
+    gtk_window_destroy(GTK_WINDOW(dialog));
+    for (unsigned i = 0; i < G_N_ELEMENTS(tools); ++i) {
+        gtk_window_present(GTK_WINDOW(tools[i]->window));
+        pump(ui);
+        CHECK(gtk_widget_get_sensitive(tools[i]->window));
+        GtkWidget *input = find_widget(tools[i]->content, GTK_TYPE_ENTRY);
+        if (input) {
+            CHECK(gtk_widget_grab_focus(input));
+            GtkWidget *focus = gtk_window_get_focus(GTK_WINDOW(tools[i]->window));
+            CHECK(focus && (focus == input || gtk_widget_is_ancestor(focus, input)));
+        }
+    }
+    for (unsigned i = 0; i < G_N_ELEMENTS(tools); ++i) {
+        gtk_widget_set_visible(tools[i]->window, FALSE);
+    }
+    gtk_window_present(GTK_WINDOW(ui->gtk->window));
+    CHECK(gtk_widget_grab_focus(ui->gtk->picture));
+    puts("GTK independent windows: modeless tools, separate dialog groups, controls and focus: PASS");
+    return true;
+}
+
+static bool palette_layout_check(FrontendDesktopUi *ui, const char *out) {
+    GtkWidget *menu = find_widget(ui->gtk->menubar, GTK_TYPE_POPOVER);
+    CHECK(menu);
+    gtk_popover_popup(GTK_POPOVER(menu));
+    CHECK(gtk_widget_get_visible(menu));
+    CupidGtkTool *tool = find_tool(ui, cupid_gtk_open(ui, 3, 0));
+    CHECK(tool);
+    pump(ui);
+    CHECK(!gtk_widget_get_visible(menu));
+    CHECK(!gtk_window_get_modal(GTK_WINDOW(tool->window)));
+    GtkWidget *split = find_widget(tool->content, GTK_TYPE_PANED);
+    CHECK(split && gtk_orientable_get_orientation(GTK_ORIENTABLE(split)) == GTK_ORIENTATION_VERTICAL);
+    GtkWidget *scroll = gtk_paned_get_end_child(GTK_PANED(split));
+    GtkWidget *color = find_widget(tool->content, GTK_TYPE_COLOR_BUTTON);
+    CHECK(color && GTK_IS_SCROLLED_WINDOW(scroll));
+    int previous_width = 0;
+    for (unsigned size = 0; size < 3; ++size) {
+        gtk_window_set_default_size(GTK_WINDOW(tool->window), 620 + (int)size * 240, 620);
+        pump(ui);
+        GtkAdjustment *horizontal = gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(scroll));
+        CHECK(gtk_adjustment_get_upper(horizontal) <= gtk_adjustment_get_page_size(horizontal) + 1);
+        GtkAdjustment *vertical = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroll));
+        CHECK(gtk_adjustment_get_upper(vertical) <= gtk_adjustment_get_page_size(vertical) + 1);
+        int width = gtk_widget_get_width(color);
+        CHECK(width > previous_width && width >= 200);
+        previous_width = width;
+        char path[4096];
+        g_snprintf(path, sizeof(path), "%s/palette-%u.png", out, size);
+        CHECK(capture_ready(ui, tool->window, path));
+    }
+    gtk_widget_set_visible(tool->window, FALSE);
+    CupidGtkTool *preferences = find_tool(ui, cupid_gtk_open(ui, 0, 0));
+    CHECK(preferences);
+    preferences->ui.settings_category = 2;
+    cupid_gtk_settings_reset(preferences->content);
+    pump(ui);
+    GtkWidget *dropdown = find_widget(preferences->content, GTK_TYPE_DROP_DOWN);
+    GtkWidget *tabs = find_widget(preferences->content, GTK_TYPE_NOTEBOOK);
+    CHECK(dropdown && tabs);
+    GtkWidget *toggle = find_widget(dropdown, GTK_TYPE_BUTTON);
+    CHECK(toggle);
+    guint selected = gtk_drop_down_get_selected(GTK_DROP_DOWN(dropdown));
+    gtk_widget_set_state_flags(dropdown, GTK_STATE_FLAG_PRELIGHT, FALSE);
+    gtk_widget_set_state_flags(toggle, GTK_STATE_FLAG_PRELIGHT, FALSE);
+    char path[4096];
+    g_snprintf(path, sizeof(path), "%s/dropdown-hover.png", out);
+    CHECK(capture_ready(ui, preferences->window, path));
+    CHECK(gtk_drop_down_get_selected(GTK_DROP_DOWN(dropdown)) == selected);
+    gtk_widget_unset_state_flags(toggle, GTK_STATE_FLAG_PRELIGHT);
+    gtk_widget_unset_state_flags(dropdown, GTK_STATE_FLAG_PRELIGHT);
+    gtk_notebook_set_current_page(GTK_NOTEBOOK(tabs), 1);
+    pump(ui);
+    GtkWidget *neighbor = gtk_widget_get_parent(gtk_notebook_get_tab_label(GTK_NOTEBOOK(tabs),
+        gtk_notebook_get_nth_page(GTK_NOTEBOOK(tabs), 0)));
+    gtk_widget_set_state_flags(neighbor, GTK_STATE_FLAG_PRELIGHT, FALSE);
+    g_snprintf(path, sizeof(path), "%s/selected-tab.png", out);
+    CHECK(capture_ready(ui, preferences->window, path));
+    CHECK(gtk_notebook_get_current_page(GTK_NOTEBOOK(tabs)) == 1);
+    gtk_widget_unset_state_flags(neighbor, GTK_STATE_FLAG_PRELIGHT);
+    gtk_widget_set_visible(preferences->window, FALSE);
+    puts("GTK palette layout: controls expand at three widths without horizontal scrolling: PASS");
+    return true;
+}
+
+int main(int argc, char **argv) {
+    frontend_desktop_prepare_video();
+    if ((argc == 3 || argc == 4) && !strcmp(argv[1], "--benchmark")) {
+        return benchmark_gtk(argv[2], argc == 4 ? argv[3] : NULL);
+    }
+    bool history_check = argc == 2 && !strcmp(argv[1], "--history-check");
     bool startup_check = argc == 2 && !strcmp(argv[1], "--startup-check");
+    bool input_check = argc == 2 && !strcmp(argv[1], "--input-check");
+    bool palette_check = argc == 2 && !strcmp(argv[1], "--palette-check");
+    bool windows_check = argc == 2 && !strcmp(argv[1], "--windows-check");
     bool native_check = argc == 2 && !strcmp(argv[1], "--native-video-check");
-    const char *out = native_check ? "build/gtk-native-video" : startup_check ? "build/gtk-startup-check" : argc > 1 ? argv[1] : "build/gtk-smoke";
+    bool tas_check = argc == 2 && !strcmp(argv[1], "--tas-video-check");
+    bool session_check = argc == 2 && !strcmp(argv[1], "--session-ui-check");
+    const char *out = history_check ? "build/gtk-history-check" : windows_check ? "build/gtk-windows-check" : palette_check ? "build/gtk-palette-check" : input_check ? "build/gtk-input-check" : session_check ? "build/gtk-session-check" : tas_check ? "build/gtk-tas-check" : native_check ? "build/gtk-native-video" : startup_check ? "build/gtk-startup-check" : argc > 1 ? argv[1] : "build/gtk-smoke";
     g_mkdir_with_parents(out, 0755);
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_TIMER) != 0) {
         return 1;
@@ -680,12 +1010,29 @@ int main(int argc, char **argv) {
     frontend_commands_reset();
     frontend_panels_reset();
     SDL_Window *window = SDL_CreateWindow("GTK rendering fixture", 0, 0, 900, 700, SDL_WINDOW_HIDDEN);
-    SDL_Renderer *renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
+    SDL_Renderer *renderer = frontend_desktop_create_renderer(window, SDL_RENDERER_ACCELERATED);
+    SDL_RendererInfo host_info;
+    if (!renderer || SDL_GetRendererInfo(renderer, &host_info) != 0 ||
+        !(host_info.flags & SDL_RENDERER_SOFTWARE) || SDL_GL_GetCurrentContext()) {
+        fprintf(stderr, "GTK host did not select an SDL software surface without a GL context: %s\n", SDL_GetError());
+        return 1;
+    }
+    /* The hidden host must own no native framebuffer or graphics context.
+     * Exercise software drawing independently of the selected window backend. */
+    if (SDL_RenderGetWindow(renderer) != NULL || SDL_SetRenderDrawColor(renderer, 32, 64, 96, 255) != 0 ||
+        SDL_RenderClear(renderer) != 0) return 1;
+    uint32_t host_pixel = 0;
+    SDL_Rect host_sample = {0, 0, 1, 1};
+    if (SDL_RenderReadPixels(renderer, &host_sample, SDL_PIXELFORMAT_ARGB8888, &host_pixel, sizeof(host_pixel)) != 0 ||
+        host_pixel != 0xff204060u) return 1;
     FrontendDesktopUi ui;
     char *debug_override = g_strdup(g_getenv("GDK_DEBUG"));
+    char *renderer_override = g_strdup(g_getenv("GSK_RENDERER"));
     frontend_desktop_init(&ui, window, renderer, &settings, &execution, NULL, NULL);
-    bool compositor_unchanged = g_strcmp0(debug_override, g_getenv("GDK_DEBUG")) == 0;
+    bool compositor_unchanged = g_strcmp0(debug_override, g_getenv("GDK_DEBUG")) == 0 &&
+                                g_strcmp0(renderer_override, g_getenv("GSK_RENDERER")) == 0;
     g_free(debug_override);
+    g_free(renderer_override);
     if (!compositor_unchanged) {
         fprintf(stderr, "Desktop startup changed the GTK compositor override\n");
         return 1;
@@ -696,16 +1043,30 @@ int main(int argc, char **argv) {
         return 1;
     }
     if (startup_check) {
+#ifndef _WIN32
+        if (SDL_GetHintBoolean("SDL_VIDEO_WAYLAND_ALLOW_LIBDECOR", SDL_TRUE)) {
+            fprintf(stderr, "GTK's hidden SDL host must not load libdecor\n");
+            return 1;
+        }
+#endif
+        pump(&ui);
+        if (!gtk_widget_get_mapped(ui.gtk->window) ||
+            !gtk_native_get_renderer(GTK_NATIVE(ui.gtk->window))) {
+            fprintf(stderr, "GTK startup did not map a rendered window\n");
+            return 1;
+        }
         frontend_desktop_shutdown(&ui);
         frontend_execution_shutdown(&execution);
         unload_rom();
-        SDL_DestroyRenderer(renderer);
+        frontend_desktop_destroy_renderer(window, renderer);
         SDL_DestroyWindow(window);
         SDL_Quit();
         puts("GTK default compositor selection: PASS");
         return 0;
     }
-    g_object_set(gtk_settings_get_default(), "gtk-enable-animations", FALSE, NULL);
+    if (!tas_check) {
+        g_object_set(gtk_settings_get_default(), "gtk-enable-animations", FALSE, NULL);
+    }
     FrontendVideoRuntime video = {0};
     video.settings = &settings;
     video.frame.pixels = framebuffer;
@@ -714,18 +1075,75 @@ int main(int argc, char **argv) {
     video.frame.screens = 1;
     ui.video = &video;
     preview_pattern();
-    if (!test_gtk_shortcuts(&ui)) return 1;
-    if (native_check) {
-        frontend_panel_set_session_active(true);
-        frontend_command_set_session_active(true);
-        bool passed = test_gtk_native_video(&ui, out) && test_gtk_information(&ui);
+    if (history_check) {
+        bool passed = test_gtk_history(&ui, out);
         frontend_desktop_shutdown(&ui);
         frontend_execution_shutdown(&execution);
         unload_rom();
-        SDL_DestroyRenderer(renderer);
+        frontend_desktop_destroy_renderer(window, renderer);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return passed ? 0 : 1;
+    }
+    if (!test_gtk_picture_pixels() || (!palette_check && !windows_check && !test_gtk_shortcuts(&ui))) {
+        return 1;
+    }
+    if (input_check || palette_check) {
+        pump(&ui);
+        bool passed = palette_check ? palette_layout_check(&ui, out) : test_gtk_input_accuracy(&ui);
+        frontend_desktop_shutdown(&ui);
+        frontend_execution_shutdown(&execution);
+        unload_rom();
+        frontend_desktop_destroy_renderer(window, renderer);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return passed ? 0 : 1;
+    }
+    if (native_check) {
+        frontend_panel_set_session_active(true);
+        frontend_command_set_session_active(true);
+        bool passed = test_gtk_shader_context(&ui) && test_gtk_native_video(&ui, out) &&
+                      test_gtk_game_pixels(&ui) && test_gtk_information(&ui);
+        frontend_desktop_shutdown(&ui);
+        frontend_execution_shutdown(&execution);
+        unload_rom();
+        frontend_desktop_destroy_renderer(window, renderer);
         SDL_DestroyWindow(window);
         SDL_Quit();
         puts(passed ? "GTK accelerated game view: PASS" : "GTK accelerated game view: FAIL");
+        return passed ? 0 : 1;
+    }
+    if (tas_check) {
+        frontend_panel_set_session_active(true);
+        frontend_command_set_session_active(true);
+        bool passed = frontend_execution_register_commands(&execution) && tas_fixture(&ui, out) && tas_interactions(&ui);
+        frontend_desktop_shutdown(&ui);
+        tas_frontend_unregister();
+        frontend_execution_shutdown(&execution);
+        unload_rom();
+        frontend_desktop_destroy_renderer(window, renderer);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        puts(passed ? "GTK TAS grid pixels, preview and playback following: PASS" : "GTK TAS playback: FAIL");
+        return passed ? 0 : 1;
+    }
+    if (session_check) {
+        StateRuntime states;
+        state_runtime_init(&states, &settings, out, &execution);
+        frontend_panel_set_session_active(true);
+        frontend_command_set_session_active(true);
+        bool passed = frontend_execution_register_commands(&execution) &&
+                      frontend_desktop_register_commands(&ui) && state_runtime_register_ui(&states);
+        pump(&ui);
+        passed = passed && test_gtk_workflows(&ui) && test_gtk_state_dialogs(&ui) && test_gtk_status_accuracy(&ui);
+        frontend_desktop_shutdown(&ui);
+        state_runtime_shutdown(&states);
+        frontend_execution_shutdown(&execution);
+        unload_rom();
+        frontend_desktop_destroy_renderer(window, renderer);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        puts(passed ? "GTK save-state dialogs and live status: PASS" : "GTK session controls: FAIL");
         return passed ? 0 : 1;
     }
     DebugFrontend *debug = debug_frontend_create(&execution);
@@ -796,12 +1214,18 @@ int main(int argc, char **argv) {
     frontend_panel_set_session_active(true);
     frontend_command_set_session_active(true);
     pump(&ui);
-    if (ok) {
-        ok = game_window_interactions(&ui) && game_texture_interactions(&ui) && test_gtk_input_accuracy(&ui) &&
-             test_gtk_information(&ui);
+    unsigned count = 0;
+    if (windows_check) {
+        ok = independent_windows_check(&ui);
+        goto cleanup;
     }
     if (ok) {
-        ok = file_dialog_interactions(&ui) && register_interactions(&ui);
+        ok = game_window_interactions(&ui) && game_texture_interactions(&ui) && test_gtk_game_pixels(&ui) &&
+             test_gtk_input_accuracy(&ui) && test_gtk_information(&ui);
+    }
+    if (ok) {
+        ok = test_gtk_workflows(&ui) && file_dialog_interactions(&ui) && test_gtk_state_dialogs(&ui) &&
+             test_gtk_status_accuracy(&ui) && register_interactions(&ui);
     }
     if (ok) {
         ok = assembler_interactions(&ui);
@@ -809,7 +1233,6 @@ int main(int argc, char **argv) {
     if (ok) {
         ok = tas_fixture(&ui, out) && tas_interactions(&ui);
     }
-    unsigned count = 0;
     pause_fixture(&execution);
     /* Capture the populated TAS timeline while its session is active. Restore
      * live mode for the debugger/assembler captures; pausing alone deliberately
@@ -889,6 +1312,7 @@ int main(int argc, char **argv) {
     pump(&ui);
     g_snprintf(path, sizeof(path), "%s/desktop.png", out);
     ok = capture_ready(&ui, ui.gtk->window, path) && ok;
+cleanup:
     frontend_desktop_shutdown(&ui);
     frontend_history_destroy(history);
     frontend_timing_unregister();
@@ -913,7 +1337,7 @@ int main(int argc, char **argv) {
     desktop_ppu_unregister();
     frontend_execution_shutdown(&execution);
     unload_rom();
-    SDL_DestroyRenderer(renderer);
+    frontend_desktop_destroy_renderer(window, renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();
     printf("GTK: register/TAS/assembler interactions; %u tool windows rendered at two sizes; settings rendered: %s\n",

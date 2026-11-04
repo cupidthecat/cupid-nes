@@ -5,6 +5,7 @@
  */
 #include "board_tests.h"
 #include "../apu/apu.h"
+#include "../debugger/debug_analysis.h"
 #include "../video/history_view.h"
 #include "../video/frame_snapshot.h"
 #include "../system/execution_policy.h"
@@ -86,10 +87,18 @@ int run_presentation_history_accuracy_tests(void) {
     FrontendExecutionRuntime execution = {0};
     execution.muted = true;
     CHECK(nes_rewind_configure(&execution.rewind, 3, NES_REWIND_DEFAULT_MEMORY_LIMIT));
+    debugger_init();
+    debug_events_enable(false);
     for (unsigned i = 10; i < 13; ++i) {
         ram[7] = (uint8_t)i;
+        apu.frame_irq_source = i == 11;
+        apu.irq_inhibit = false;
         CHECK(nes_rewind_capture(&execution.rewind, &state) == NES_REPLAY_OK);
     }
+    apu.frame_irq_source = false;
+    CHECK(cpu_step(&cpu) > 0);
+    debug_events_enable(true);
+    debug_events_clear();
     ram[7] = 99;
     frontend_panels_reset();
     frontend_panel_set_session_active(true);
@@ -101,11 +110,26 @@ int run_presentation_history_accuracy_tests(void) {
     CHECK(frontend_panel_action(0x2700, 0x2702, "2", 0, error, sizeof(error)));
     frontend_history_tick(viewer);
     CHECK(ram[7] == 99 && execution.rewind.count == 3);
+    uint64_t debugger_session = debugger_session_revision();
     CHECK(frontend_panel_action(0x2700, 0x2707, NULL, 0, error, sizeof(error)));
     CHECK(ram[7] == 11 && execution.rewind.count == 1 && !frontend_execution_paused(&execution));
+    CHECK(debugger_session_revision() == debugger_session + 1 && apu_irq_pending(&apu));
+    uint64_t frame = ppu.frame_count;
+    CHECK(cpu_step(&cpu) > 0);
+    ppu.frame_count = frame + 1;
+    debug_analysis_event(DEBUG_EVENT_READ, 0, 0);
+    CHECK(debug_events_count(DEBUG_EVENT_IRQ) == 0);
+    apu.frame_irq_source = false;
+    CHECK(cpu_step(&cpu) > 0);
+    ++ppu.frame_count;
+    debug_analysis_event(DEBUG_EVENT_READ, 0, 0);
+    CHECK(debug_events_count(DEBUG_EVENT_IRQ) == 1);
+    DebugNesEvent edge;
+    CHECK(debug_events_at(0, DEBUG_EVENT_IRQ, &edge) && edge.value == 0);
     frontend_history_destroy(viewer);
     nes_rewind_destroy(&execution.rewind);
     frontend_panels_reset();
+    debugger_shutdown();
     SDL_QuitSubSystem(SDL_INIT_VIDEO);
     CHECK(unload_rom());
     puts("History preview/branch/save/corruption/ownership regressions passed");

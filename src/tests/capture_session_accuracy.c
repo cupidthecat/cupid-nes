@@ -390,6 +390,15 @@ static int test_track_resets_and_policy(const char *directory) {
     CHECK(size == 44 + session.info.audio_frames * 4);
     CHECK(nes_capture_session_start(&session, path, false, NULL, &options) == NES_FILE_INVALID_ARGUMENT);
     CHECK(nes_execution_set_policy(NES_EXECUTION_LIVE));
+    CHECK(nes_capture_session_start(&session, path, false, NULL, &options) == NES_FILE_OK);
+    CHECK(nes_capture_session_begin_frame(&session));
+    CHECK(nes_execution_set_policy(NES_EXECUTION_REWIND));
+    vs_start_frame();
+    for (unsigned steps = 0; steps < 200000 && !ppu.frame_complete; ++steps) CHECK(vs_cpu_step() > 0);
+    CHECK(ppu.frame_complete);
+    CHECK(nes_capture_session_end_frame(&session, NULL) == NES_FILE_INVALID_ARGUMENT);
+    CHECK(!session.info.recording && !session.info.completed_frames && session.error[0]);
+    CHECK(nes_execution_set_policy(NES_EXECUTION_LIVE));
     options.byte_limit = 44;
     CHECK(nes_capture_session_start(&session, path, false, NULL, &options) == NES_FILE_OK);
     CHECK(nes_capture_session_begin_frame(&session));

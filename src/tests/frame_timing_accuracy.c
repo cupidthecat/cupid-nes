@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "../video/frame_timing.h"
+#include "../video/frame_wait.h"
 #include <SDL2/SDL.h>
 #include <math.h>
 #include <stdio.h>
@@ -19,12 +20,74 @@ static void count_service(void *context) {
     ++*(unsigned *)context;
 }
 
+static Uint64 clock_ticks, last_service;
+static unsigned sleeps, services, longest_sleep;
+
+static Uint64 SDLCALL test_counter(void) {
+    return clock_ticks += 100;
+}
+
+static void SDLCALL test_sleep(Uint32 milliseconds) {
+    ++sleeps;
+    if (milliseconds > longest_sleep) {
+        longest_sleep = milliseconds;
+    }
+
+    clock_ticks += milliseconds * 1000;
+}
+
+static void test_service(void *context) {
+    (void)context;
+    ++services;
+    last_service = clock_ticks;
+}
+
 int run_frame_timing_accuracy_tests(void) {
+    NesFrameRate rate = {0};
+    CHECK(nes_frame_rate_push(NULL, 100, 1000) == 0);
+    CHECK(nes_frame_rate_push(&rate, 100, 0) == 0 && rate.count == 0);
+    CHECK(nes_frame_rate_push(&rate, 100, 1000000) == 0);
+    /* A stable completion clock must not fluctuate between 59/61 frames
+     * because half-second sample buckets include partial frame work. */
+    for (unsigned i = 1; i <= 180; ++i) {
+        double fps = nes_frame_rate_push(&rate, 100 + (uint64_t)llround(i * 1000000.0 / 60.0988), 1000000);
+        CHECK(fabs(fps - 60.0988) < 0.003);
+    }
+    CHECK(rate.count == 61);
+    /* A sustained slowdown must remain visible rather than clamping to a
+     * target rate. Pauses and rate changes start a fresh measurement. */
+    for (unsigned i = 1; i <= 61; ++i) {
+        (void)nes_frame_rate_push(&rate, 4000000 + i * 40000, 1000000);
+    }
+    CHECK(fabs(nes_frame_rate_push(&rate, 6480000, 1000000) - 25) < 0.001);
+    rate = (NesFrameRate){0};
+    CHECK(nes_frame_rate_push(&rate, 9000000, 1000000) == 0);
+    CHECK(nes_frame_rate_push(&rate, 9020000, 1000000) == 50);
+    CHECK(nes_frame_rate_push(&rate, 9020000, 1000000) == 0 && rate.count == 1);
+    CHECK(nes_frame_rate_push(&rate, 10, 1000000) == 0 && rate.count == 1);
+    clock_ticks = 1000;
+    services = sleeps = longest_sleep = 0;
+    frame_wait(2500, 1000000, test_service, NULL, test_counter, test_sleep);
+    CHECK(clock_ticks >= 2500 && services >= 3 && sleeps == 0 && last_service >= 2000);
+    clock_ticks = 1000;
+    services = sleeps = longest_sleep = 0;
+    frame_wait(11000, 1000000, test_service, NULL, test_counter, test_sleep);
+    CHECK(clock_ticks >= 11000 && services >= 8 && sleeps > 0 && longest_sleep == 1);
+    services = 0;
+    frame_wait(0, 1000000, test_service, NULL, test_counter, test_sleep);
+    CHECK(services == 1);
+    frame_wait(NAN, 1000000, test_service, NULL, test_counter, test_sleep);
+    frame_wait(100000, INFINITY, test_service, NULL, test_counter, test_sleep);
+    CHECK(services == 1);
     unsigned serviced = 0;
     double frequency = (double)SDL_GetPerformanceFrequency();
     double deadline = (double)SDL_GetPerformanceCounter() + frequency * 0.004;
     nes_frame_timing_wait(deadline, frequency, count_service, &serviced);
     CHECK((double)SDL_GetPerformanceCounter() >= deadline);
+    /* Late frames still need to dispatch GTK paints and input. */
+    serviced = 0;
+    nes_frame_timing_wait(0, frequency, count_service, &serviced);
+    CHECK(serviced == 1);
     nes_frame_timing_wait(NAN, frequency, count_service, &serviced);
     nes_frame_timing_wait(deadline, 0, NULL, NULL);
     nes_frame_timing_wait(0, frequency, NULL, NULL);
@@ -34,10 +97,28 @@ int run_frame_timing_accuracy_tests(void) {
     CHECK(nes_frame_timing_sleep_ms(4.99) == 3 && nes_frame_timing_sleep_ms(5) == 4);
     CHECK(nes_frame_timing_sleep_ms(100000) == 4);
     CHECK(nes_frame_timing_present(100, 110, 90, 1000));
+    CHECK(nes_frame_timing_present(111, 110, 100, 1000));
     CHECK(!nes_frame_timing_present(120, 110, 100, 1000));
     CHECK(nes_frame_timing_present(150, 110, 100, 1000));
     CHECK(nes_frame_timing_present(120, 110, 0, 1000));
     CHECK(nes_frame_timing_present(90, 80, 100, 1000));
+    /* A cheap upload remains useful during catch-up; costly presentation can
+     * still be skipped to protect emulation throughput. */
+    CHECK(nes_frame_timing_present_cost(120, 110, 100, 1000, 0.5));
+    CHECK(!nes_frame_timing_present_cost(120, 110, 100, 1000, 8));
+    CHECK(!nes_frame_timing_present_cost(120, 110, 100, 1000, NAN));
+    CHECK(!nes_frame_timing_present_cost(120, 110, 100, 1000, -1));
+    double stalled = 1, due = 1, submitted = 0, maximum_gap = 0;
+    for (unsigned i = 0; i < 300; ++i) {
+        stalled += 13 + (i == 120 ? 12 : 0);
+        due += 1000.0 / 60;
+        CHECK(nes_frame_timing_present_cost(stalled, due, submitted, 1000, 0.5));
+        if (submitted && stalled - submitted > maximum_gap) maximum_gap = stalled - submitted;
+        submitted = stalled;
+        stalled += 0.5;
+        if (stalled < due) stalled = due;
+    }
+    CHECK(maximum_gap < 30);
     /* The same emulation work keeps its rate as presentation gets more costly. */
     for (unsigned cost = 2; cost <= 26; cost += 12) {
         double now = 1, deadline = 1, last = 0;
@@ -45,7 +126,7 @@ int run_frame_timing_accuracy_tests(void) {
         for (unsigned frame = 0; frame < 600; ++frame) {
             now += 3;
             deadline += 1000.0 / 60;
-            if (nes_frame_timing_present(now, deadline, last, 1000)) {
+            if (nes_frame_timing_present_cost(now, deadline, last, 1000, cost)) {
                 last = now;
                 now += cost;
                 ++presentations;

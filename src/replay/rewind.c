@@ -125,6 +125,7 @@ void nes_rewind_init(NesRewindHistory *history) {
 }
 
 void nes_rewind_clear(NesRewindHistory *history) {
+    nes_rewind_reset_inputs(history);
     if (!history || !history->entries || !history->capacity) {
         if (history) {
             history->count = 0;
@@ -135,6 +136,7 @@ void nes_rewind_clear(NesRewindHistory *history) {
     }
     for (size_t i = 0; i < history->count; ++i) {
         size_t index = (history->head + i) % history->capacity;
+        nes_rewind_free_media(history, index);
         free_entry(&history->entries[index]);
     }
     history->count = 0;
@@ -144,8 +146,10 @@ void nes_rewind_clear(NesRewindHistory *history) {
 
 void nes_rewind_destroy(NesRewindHistory *history) {
     if (!history) return;
+    nes_rewind_untrack_inputs(history);
     nes_rewind_clear(history);
     free(history->entries);
+    free(history->media);
     memset(history, 0, sizeof(*history));
 }
 
@@ -155,15 +159,20 @@ bool nes_rewind_configure(NesRewindHistory *history, size_t max_frames,
     if (max_frames && !max_bytes) return false;
 
     NesStateBlob *replacement = NULL;
+    NesRewindMedia *media = NULL;
     if (max_frames) {
         if (max_frames > SIZE_MAX / sizeof(*replacement)) return false;
         replacement = (NesStateBlob *)calloc(max_frames, sizeof(*replacement));
         if (!replacement) return false;
+        media = calloc(max_frames, sizeof(*media));
+        if (!media) { free(replacement); return false; }
     }
 
     nes_rewind_clear(history);
     free(history->entries);
+    free(history->media);
     history->entries = replacement;
+    history->media = media;
     history->capacity = max_frames;
     history->max_bytes = max_bytes;
     return true;
@@ -184,6 +193,7 @@ size_t nes_rewind_bytes(const NesRewindHistory *history) {
 static void discard_oldest(NesRewindHistory *history) {
     if (!history || !history->count || !history->capacity) return;
     NesStateBlob *entry = &history->entries[history->head];
+    nes_rewind_free_media(history, history->head);
     if (history->total_bytes >= entry->size) history->total_bytes -= entry->size;
     else history->total_bytes = 0;
     free_entry(entry);
@@ -221,6 +231,7 @@ NesReplayResult nes_rewind_capture(NesRewindHistory *history,
     history->entries[index] = captured;
     history->total_bytes += captured.size;
     history->count++;
+    nes_rewind_capture_inputs(history, index);
     return NES_REPLAY_OK;
 }
 
@@ -247,11 +258,7 @@ NesReplayResult nes_rewind_step(NesRewindHistory *history,
     nes_runahead_clear_presented_frame();
     nes_video_trace_reset_side(0);
     nes_video_trace_reset_side(1);
-    if (history->total_bytes >= entry->size) history->total_bytes -= entry->size;
-    else history->total_bytes = 0;
-    free_entry(entry);
-    history->count--;
-    if (!history->count) history->head = 0;
+    nes_rewind_truncate(history, history->count - 1);
     return NES_REPLAY_OK;
 }
 

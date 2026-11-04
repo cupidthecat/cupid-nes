@@ -171,6 +171,7 @@ static void live_overclock_changed(void *context, const NesOverclockConfig *conf
 }
 
 static int application_main(int argc, char *argv[]) {
+    frontend_desktop_prepare_video();
     SDL_AudioSpec have;
     SDL_AudioDeviceID audio_dev = 0; SDL_Window *window = NULL;
     SDL_Renderer *renderer = NULL;
@@ -579,8 +580,7 @@ static int application_main(int argc, char *argv[]) {
         (int)frontend_settings.window_width, (int)frontend_settings.window_height,
         SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
     if (!window) { fprintf(stderr, "SDL_CreateWindow Error: %s\n", SDL_GetError()); return 1; }
-    if (!renderer) renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
-    if (!renderer) renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
+    if (!renderer) renderer = frontend_desktop_create_renderer(window, SDL_RENDERER_ACCELERATED);
     if (!renderer) { fprintf(stderr, "SDL_CreateRenderer Error: %s\n", SDL_GetError()); return 1; }
 #ifndef CUPID_GTK
     if (frontend_settings.fullscreen)
@@ -800,9 +800,9 @@ static int application_main(int argc, char *argv[]) {
     palette_tool_init();
     const double performance_frequency = (double)SDL_GetPerformanceFrequency();
     double frame_deadline = (double)SDL_GetPerformanceCounter();
-    double fps_started = frame_deadline;
-    double last_desktop_present = 0;
-    unsigned fps_frames = 0;
+    double fps_updated = frame_deadline;
+    double last_desktop_present = 0, desktop_present_cost = 0;
+    NesFrameRate frame_rate = {0};
     uint64_t timing_revision = UINT64_MAX;
     double paced_speed = 0;
     int active_vsync = -1;
@@ -928,34 +928,6 @@ static int application_main(int argc, char *argv[]) {
                 }
             }
             if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
-                && e.key.windowID == SDL_GetWindowID(window)
-                && frontend_devices_handle_tape_key(&device_runtime, &e.key, path_error, sizeof(path_error))) {
-                if (path_error[0]) frontend_desktop_set_status(&desktop_ui, path_error);
-                continue;
-            }
-            if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
-                && e.key.windowID == SDL_GetWindowID(window)
-                && family_basic_key_event(&e.key, NULL, NULL,
-                                          cpu_total_cycles)) continue;
-            if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
-                && e.key.windowID == SDL_GetWindowID(window)
-                && subor_key_event(&e.key)) continue;
-            if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
-                && e.key.windowID == SDL_GetWindowID(window)
-                && party_tap_key_event(&e.key)) continue;
-            if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
-                && e.key.windowID == SDL_GetWindowID(window)
-                && boxing_key_event(&e.key)) continue;
-            if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
-                && e.key.windowID == SDL_GetWindowID(window)
-                && jissen_key_event(&e.key)) continue;
-            if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
-                && e.key.windowID == SDL_GetWindowID(window)
-                && extended_port_key_event(&e.key)) continue;
-            if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
-                && e.key.windowID == SDL_GetWindowID(window)
-                && mat_key_event(&e.key)) continue;
-            if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
                 && e.key.windowID == SDL_GetWindowID(window)) {
                 char capture_error[256] = {0};
                 if (nes_capture_frontend_handle_shortcut(&capture_runtime.frontend, &e.key,
@@ -1001,9 +973,6 @@ static int application_main(int argc, char *argv[]) {
                         break;
                     case SDLK_F7:
                         if (down) { palette_tool_toggle_overlay(); }
-                        break;
-                    case SDLK_F6:
-                        if (down) { ppu_palette_reset_default(); frontend_desktop_set_status(&desktop_ui,"Palette reset"); }
                         break;
                     case SDLK_5: if (vs_enabled()) vs_set_coin(0, down != 0); break;
                     case SDLK_6: if (vs_enabled()) vs_set_coin(1, down != 0); break;
@@ -1125,6 +1094,8 @@ static int application_main(int argc, char *argv[]) {
     
         frontend_desktop_update_activity(&desktop_ui);
         if (!frontend_session.active) {
+            memset(&frame_rate, 0, sizeof(frame_rate));
+            frontend_desktop_set_fps(&desktop_ui, 0);
             presentation_host.previous_end = 0;
             frontend_timing_reset(&presentation_host.timing);
             if (audio_dev) SDL_PauseAudioDevice(audio_dev, 1);
@@ -1142,8 +1113,12 @@ static int application_main(int argc, char *argv[]) {
         }
         double loop_speed = frontend_execution_speed(&execution_runtime);
         double loop_now = (double)SDL_GetPerformanceCounter();
-        if (timing_revision != execution_runtime.timing_revision || paced_speed != loop_speed ||
-            loop_now - frame_deadline > performance_frequency * 0.050) {
+        bool rate_changed = timing_revision != execution_runtime.timing_revision || paced_speed != loop_speed;
+        if (rate_changed) {
+            memset(&frame_rate, 0, sizeof(frame_rate));
+            fps_updated = loop_now;
+        }
+        if (rate_changed || loop_now - frame_deadline > performance_frequency * 0.050) {
             frame_deadline = loop_now;
             timing_revision = execution_runtime.timing_revision;
             paced_speed = loop_speed;
@@ -1161,7 +1136,10 @@ static int application_main(int argc, char *argv[]) {
         uint64_t host_emulation_start = SDL_GetPerformanceCounter();
         uint64_t frame_start_cycles = cpu_total_cycles;
         bool ran_frame = frontend_execution_run_frame(&execution_runtime);
-        if (ran_frame) frontend_devices_frame_complete(&device_runtime);
+        if (ran_frame) {
+            frontend_devices_frame_complete(&device_runtime);
+            frontend_audio_runtime_submit(&audio_runtime);
+        }
         if (ran_frame && !execution_runtime.rewind_held) {
             recorder_fraction_ms += 1000.0 / nes_timing()->fps;
             uint64_t elapsed_ms = (uint64_t)recorder_fraction_ms;
@@ -1171,10 +1149,23 @@ static int application_main(int argc, char *argv[]) {
         }
         uint64_t frame_elapsed_cycles = ran_frame && cpu_total_cycles >= frame_start_cycles
             ? cpu_total_cycles - frame_start_cycles : 0;
+        double next_deadline = frame_deadline + (double)frame_elapsed_cycles * performance_frequency
+            / (nes_timing()->cpu_hz * frontend_execution_speed(&execution_runtime));
+        bool present_frame = !desktop_ui.gtk || !ran_frame || nes_frame_timing_present_cost(
+            (double)SDL_GetPerformanceCounter(), next_deadline, last_desktop_present, performance_frequency, desktop_present_cost);
         uint64_t host_render_start = SDL_GetPerformanceCounter();
         char video_error[192] = {0};
-        bool video_ready = frontend_video_runtime_refresh(&video_runtime,
-                                                          video_error, sizeof(video_error));
+        /* Record every completed frame, but avoid filters, HD rendering and
+         * shader readback for display frames that will never be submitted. */
+        bool refresh_video = present_frame || capture_runtime.frontend.session.info.recording
+            || video_runtime.builder_preview || nes_hd_frontend_capture_armed(video_runtime.hd_frontend);
+        bool video_ready = true;
+        if (refresh_video) {
+            video_ready = frontend_video_runtime_refresh(&video_runtime, video_error, sizeof(video_error));
+        } else {
+            nes_shader_skip_frame(video_runtime.shader);
+        }
+        uint64_t host_render_end = SDL_GetPerformanceCounter();
         nes_capture_frontend_end_frame(&capture_runtime.frontend, ran_frame && video_ready);
         if (!video_ready) {
             fprintf(stderr, "Video output: %s\n",
@@ -1217,12 +1208,15 @@ static int application_main(int argc, char *argv[]) {
             SDL_RenderCopy(renderer, frontend_video_runtime_texture(&video_runtime), NULL, &game_rect);
         }
 
+        uint64_t host_wait_start = SDL_GetPerformanceCounter();
+        /* Submit ready images on their deadline. Waiting after submission
+         * exposes each frame's emulation-time variation as visible jitter. */
+        if (desktop_ui.gtk && ran_frame && present_frame) {
+            frontend_desktop_wait(&desktop_ui, next_deadline, performance_frequency);
+        }
         uint64_t host_present_start = SDL_GetPerformanceCounter();
         double presentation_now = (double)host_present_start;
-        double next_deadline = frame_deadline + (double)frame_elapsed_cycles * performance_frequency
-            / (nes_timing()->cpu_hz * frontend_execution_speed(&execution_runtime));
-        if (!desktop_ui.gtk || !ran_frame || nes_frame_timing_present(presentation_now,
-                next_deadline, last_desktop_present, performance_frequency)) {
+        if (present_frame) {
             last_desktop_present = presentation_now;
             frontend_desktop_render(&desktop_ui, video_width, video_height,
                 frontend_session.current_result.title,
@@ -1237,13 +1231,13 @@ static int application_main(int argc, char *argv[]) {
             SDL_RenderPresent(renderer);
         }
         uint64_t host_present_end = SDL_GetPerformanceCounter();
-    
-        double fps_now = (double)SDL_GetPerformanceCounter();
-        if (ran_frame) ++fps_frames;
-        if (fps_now - fps_started >= performance_frequency * 0.5) {
-            frontend_desktop_set_fps(&desktop_ui, fps_frames * performance_frequency / (fps_now - fps_started));
-            fps_frames = 0; fps_started = fps_now;
+        if (present_frame) {
+            double cost = (double)(host_render_end - host_render_start + host_present_end - host_present_start);
+            /* React immediately to costly filters; recover gradually when their
+             * cost drops so a single fast upload does not restart an overload. */
+            desktop_present_cost = fmax(cost, desktop_present_cost * 0.8);
         }
+    
         double speed = frontend_execution_speed(&execution_runtime);
         if (ran_frame) {
             frame_deadline += (double)frame_elapsed_cycles
@@ -1256,14 +1250,28 @@ static int application_main(int argc, char *argv[]) {
             if (execution_runtime.rewind_held) {
                 if (rewind_wait > 0) frontend_desktop_wait(&desktop_ui, current_ticks + rewind_wait, performance_frequency);
             } else SDL_Delay(8);
-        } else if (frame_deadline > current_ticks) {
-            frontend_desktop_wait(&desktop_ui, frame_deadline, performance_frequency);
-        } else if (current_ticks - frame_deadline > performance_frequency * 0.050) {
-            frame_deadline = current_ticks;
+        } else {
+            /* Late frames can skip uploading, but still dispatch the desktop. */
+            if (!desktop_ui.gtk || !present_frame) {
+                frontend_desktop_wait(&desktop_ui, frame_deadline, performance_frequency);
+            }
+            current_ticks = (double)SDL_GetPerformanceCounter();
+            if (current_ticks - frame_deadline > performance_frequency * 0.050) {
+                frame_deadline = current_ticks;
+            }
         }
-        if (ran_frame) (void)frontend_presentation_host_record(&presentation_host, host_emulation_start,
-            host_render_start, host_present_start, host_present_end, SDL_GetPerformanceCounter());
-        else {
+        uint64_t completed = SDL_GetPerformanceCounter();
+        if (ran_frame) {
+            (void)frontend_presentation_host_record(&presentation_host, host_emulation_start, host_render_start,
+                                                    host_wait_start, host_present_start, host_present_end, completed);
+            double fps = nes_frame_rate_push(&frame_rate, completed, (uint64_t)performance_frequency);
+            if ((double)completed - fps_updated >= performance_frequency * 0.25) {
+                frontend_desktop_set_fps(&desktop_ui, fps);
+                fps_updated = (double)completed;
+            }
+        } else {
+            memset(&frame_rate, 0, sizeof(frame_rate));
+            frontend_desktop_set_fps(&desktop_ui, 0);
             presentation_host.previous_end = 0;
             frontend_timing_reset(&presentation_host.timing);
         }
@@ -1300,7 +1308,7 @@ static int application_main(int argc, char *argv[]) {
     frontend_desktop_shutdown(&desktop_ui);
     debugger_shutdown();
     frontend_video_runtime_shutdown(&video_runtime);
-    SDL_DestroyRenderer(renderer);
+    frontend_desktop_destroy_renderer(window, renderer);
     SDL_DestroyWindow(window);
     frontend_audio_runtime_shutdown(&audio_runtime);
     apu_audio_shutdown_state(&apu);

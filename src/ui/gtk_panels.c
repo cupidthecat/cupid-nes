@@ -42,8 +42,9 @@ static bool invoke(Control *c, const char *text, int selected) {
     char error[256] = {0};
     bool ok = frontend_panel_action(c->panel->tool->id, c->id, text, selected, error, sizeof(error));
     if (!ok) {
-        cupid_gtk_tool_status(c->panel->tool, error);
+        if (error[0]) cupid_gtk_tool_status(c->panel->tool, error);
     } else {
+        c->panel->tool->ui.status[0] = 0;
         unsigned panel = c->panel->tool->id, destination = 0;
         if ((panel == CHEATS_GAME_GENIE_PANEL && c->id == GAME_GENIE_SEND) ||
             (memory_tools_panel(panel) && (c->id == MEMORY_SEARCH_SEND || c->id == MEMORY_SEARCH_TEST))) {
@@ -56,6 +57,9 @@ static bool invoke(Control *c, const char *text, int selected) {
             frontend_desktop_open_panel(&c->panel->tool->ui, destination);
         }
     }
+    /* A user action gets the next model refresh; passive tools keep rotating. */
+    c->panel->tool->refreshed = SDL_GetTicks() - 100;
+    c->panel->tool->desktop->refresh_next = c->panel->tool;
     return ok;
 }
 
@@ -148,8 +152,21 @@ static void browse(GtkButton *button, gpointer data) {
     GtkFileChooserAction action = c->type == FRONTEND_PANEL_DIRECTORY   ? GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER
                                   : c->type == FRONTEND_PANEL_FILE_SAVE ? GTK_FILE_CHOOSER_ACTION_SAVE
                                                                         : GTK_FILE_CHOOSER_ACTION_OPEN;
-    GtkFileChooserNative *dialog =
-        gtk_file_chooser_native_new("Choose a file", GTK_WINDOW(c->panel->tool->window), action, "Select", "Cancel");
+    bool save = c->type == FRONTEND_PANEL_FILE_SAVE;
+    unsigned type = c->type == FRONTEND_PANEL_DIRECTORY ? FRONTEND_OPEN_FOLDER : (unsigned)c->file_type;
+    const FrontendFileDialogInfo *kind = frontend_file_dialog_info(save, type);
+    if (!kind) {
+        cupid_gtk_tool_status(c->panel->tool, "Unknown file type");
+        return;
+    }
+    GtkFileChooserNative *dialog = gtk_file_chooser_native_new(
+        kind->title, GTK_WINDOW(c->panel->tool->window), action, save ? "Save" : "Open", "Cancel");
+    gtk_native_dialog_set_modal(GTK_NATIVE_DIALOG(dialog), TRUE);
+    cupid_gtk_file_filters(GTK_FILE_CHOOSER(dialog), save, type);
+    const char *path = gtk_button_get_label(GTK_BUTTON(c->widget));
+    if (g_strcmp0(path, "Browse...")) {
+        cupid_gtk_file_location(GTK_FILE_CHOOSER(dialog), path);
+    }
     c->dialog = GTK_NATIVE_DIALOG(dialog);
     g_signal_connect(dialog, "response", G_CALLBACK(file_response), c);
     gtk_native_dialog_show(GTK_NATIVE_DIALOG(dialog));
@@ -541,7 +558,7 @@ void cupid_gtk_panel_refresh(GtkWidget *root) {
                 c->last = g_strdup(text);
             }
         } else if (GTK_IS_LABEL(c->widget)) {
-            gtk_label_set_text(GTK_LABEL(c->widget), m->value ? m->value : "");
+            cupid_gtk_set_label(c->widget, m->value);
         } else if (GTK_IS_ENTRY(c->widget)) {
             const char *text = m->value ? m->value : "";
             if (!c->dirty && !gtk_widget_has_focus(c->widget) &&
@@ -551,7 +568,7 @@ void cupid_gtk_panel_refresh(GtkWidget *root) {
         } else if (c->type == FRONTEND_PANEL_ACTION) {
             if (c->cell_count) {
                 for (unsigned col = 0; col < c->cell_count; col++) {
-                    gtk_label_set_text(GTK_LABEL(c->cells[col]), col < m->item_count ? m->items[col] : "");
+                    cupid_gtk_set_label(c->cells[col], col < m->item_count ? m->items[col] : "");
                 }
                 if (m->selected) {
                     gtk_widget_add_css_class(c->widget, "suggested-action");
@@ -559,14 +576,14 @@ void cupid_gtk_panel_refresh(GtkWidget *root) {
                     gtk_widget_remove_css_class(c->widget, "suggested-action");
                 }
             } else {
-                gtk_button_set_label(GTK_BUTTON(c->widget), m->label);
+                cupid_gtk_set_button(c->widget, m->label);
             }
         } else if (GTK_IS_BUTTON(c->widget)) {
-            gtk_button_set_label(GTK_BUTTON(c->widget), m->value && *m->value ? m->value : "Browse...");
+            cupid_gtk_set_button(c->widget, m->value && *m->value ? m->value : "Browse...");
         }
     }
     if (model.status) {
-        gtk_label_set_text(GTK_LABEL(p->tool->status), model.status);
+        cupid_gtk_set_label(p->tool->status, model.status);
     }
     p->updating = false;
     if (p->debug) {

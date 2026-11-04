@@ -749,7 +749,7 @@ void desktop_layout(FrontendDesktopUi *ui, const char *title, const char *region
                       .backgroundColor = surface,
                       .clip = {.horizontal = true, .vertical = true}}) {
             char status[512];
-            bool message = ui->status[0] && SDL_GetTicks() < ui->status_until;
+            bool message = desktop_status_active(ui, SDL_GetTicks());
             snprintf(status, sizeof(status), "%.100s  •  %s  •  %s%s%s%s", title && *title ? title : "No game loaded",
                      region ? region : "Ready", run_state ? run_state : "Idle",
                      ui->capture && ui->capture->session.info.recording ? "  •  Recording" : "",

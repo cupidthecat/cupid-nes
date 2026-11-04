@@ -70,7 +70,16 @@ The first controller is player 1, the second is player 2, the third is player 3,
 | Left / right shoulder | SNES L / R, or Virtual Boy L / R, for those device types |
 | Right analog stick | Virtual Boy second D-pad |
 
-The keyboard writes player 1's button state, so player 1 can be driven by both the keyboard and the first controller. They update the same button state; avoid using both devices for the same button at once.
+The left analog stick also controls the D-pad, with a fixed dead zone of 16,000
+on SDL's signed axis range. Stick, D-pad, and keyboard holds combine: releasing
+one preserves the others. Releases follow the binding active when the button
+was pressed. Disconnecting a controller preserves keyboard buttons held for
+that player. Moving focus away releases peripheral keys and mouse buttons as
+well as pad buttons and held shortcuts.
+
+Open uses its configured shortcut on the startup desktop before a game is loaded.
+Tab and Shift+Tab move focus out of the game view unless a controller/shortcut
+binding or an emulated keyboard uses that key.
 
 Which player slots reach the game depends on the emulated wiring. Supported NES 2.0 default-input metadata can select ordinary devices automatically, and explicit command-line input options override the corresponding automatic fields. Supported VS metadata is decoded separately inside the VS cabinet model.
 
@@ -236,7 +245,11 @@ Changing or ejecting a side does not flush the disk image. Follow the game's dis
 
 ## Palette controls
 
-Open the palette editor from the desktop controls. Click one of the 64 swatches to open its color picker, then use the saturation/value area or hue strip to edit that color. F6 restores Cupid's built-in 64-color palette. F7 is the default quick-load state shortcut.
+Open the palette editor with F7 or **View > Palette > Palette editor**. Click
+one of the 64 swatches to open its color picker, then use the saturation/value
+area or hue strip to edit that color. **View > Palette > Reset palette** restores
+the built-in palette. F6 is the default quick-load state shortcut; rebinding it
+does not turn the old key into a palette-reset shortcut.
 
 Ctrl+V accepts either 64 six-digit RGB tokens or raw hexadecimal bytes for a 192-byte or 1536-byte palette. Token prefixes may be `#`, `0x`, or `$`. Raw input ignores non-hex separators.
 

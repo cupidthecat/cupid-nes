@@ -7,43 +7,68 @@
 #include "platform_frontend.h"
 #include <string.h>
 
-typedef struct {
-    const char *title, *label, *pattern, *extension;
-    bool save, directory;
-} FileKind;
+GtkFileFilter *cupid_gtk_file_filter(bool save, unsigned type) {
+    const FrontendFileDialogInfo *kind = frontend_file_dialog_info(save, type);
+    if (!kind || kind->directory) {
+        return NULL;
+    }
+    GtkFileFilter *filter = gtk_file_filter_new();
+    gtk_file_filter_set_name(filter, kind->label);
+    char **patterns = g_strsplit(kind->pattern, ";", -1);
+    for (unsigned i = 0; patterns[i]; ++i) {
+        if (g_str_has_prefix(patterns[i], "*.")) {
+            gtk_file_filter_add_suffix(filter, patterns[i] + 2);
+        } else {
+            gtk_file_filter_add_pattern(filter, patterns[i]);
+        }
+    }
+    g_strfreev(patterns);
+    return filter;
+}
 
-static const FileKind open_dialogs[] = {
-    {"Open Game", "Supported images", "*.nes;*.unf;*.unif;*.fds;*.qd;*.nsf;*.nsfe;*.stbx;*.bin;*.zip;*.7z", NULL, false,
-     false},
-    {"Play Input Movie", "Input movies and TAS projects", "*.cmv;*.movie;*.fm2;*.fm3;*.ctas", "fm2", false, false},
-    {"Load State", "Save states", "*.cst;*.cstate;*.state", "cst", false, false},
-    {"Load Palette", "Palette files", "*.pal", "pal", false, false},
-    {"Apply Patch", "IPS, UPS or BPS patches", "*.ips;*.ups;*.bps", NULL, false, false},
-    {"Load Tape", "Family BASIC tapes", "*.tap", "tap", false, false},
-    {"Choose Firmware", "Firmware images", "*.bin;*.rom;*.bios", NULL, false, false},
-    {"Choose Game Database", "Game databases", "*.txt;*.csv", "txt", false, false},
-    {"Install HD Pack", "HD pack archives", "*.zip", "zip", false, false},
-    {"Load Lua Script", "Lua scripts", "*.lua", "lua", false, false},
-    {"Load Cheats", "Cheat files", "*.txt;*.cht", "txt", false, false},
-    {"Choose a Folder", "Folders", "*", NULL, false, true},
-    {"Import Memory", "Binary memory dumps", "*.bin;*.dump", "bin", false, false},
-    {"Load Cheat Database", "Tab-separated cheat catalogs", "*.tsv;*.txt", "tsv", false, false},
-    {"Convert Legacy Movie", "FCM input movies", "*.fcm", "fcm", false, false}};
+void cupid_gtk_file_filters(GtkFileChooser *chooser, bool save, unsigned type) {
+    const FrontendFileDialogInfo *kind = frontend_file_dialog_info(save, type);
+    GtkFileFilter *filter = cupid_gtk_file_filter(save, type);
+    if (!filter) {
+        return;
+    }
+    gtk_file_chooser_add_filter(chooser, filter);
+    g_object_unref(filter);
+    filter = gtk_file_filter_new();
+    gtk_file_filter_set_name(filter, "All files");
+    gtk_file_filter_add_pattern(filter, "*");
+    gtk_file_chooser_add_filter(chooser, filter);
+    g_object_unref(filter);
+    if (save) {
+        char *name = g_strdup_printf("untitled.%s", kind->extension ? kind->extension : "bin");
+        gtk_file_chooser_set_current_name(chooser, name);
+        g_free(name);
+    }
+}
 
-static const FileKind save_dialogs[] = {
-    {"Save Screenshot", "PNG images", "*.png", "png", true, false},
-    {"Record Audio", "Wave audio", "*.wav", "wav", true, false},
-    {"Record Video", "AVI video", "*.avi", "avi", true, false},
-    {"Record Input Movie", "Input movies and TAS projects", "*.cmv;*.movie;*.fm2;*.fm3;*.ctas", "fm2", true, false},
-    {"Save State", "Save states", "*.cst;*.cstate;*.state", "cst", true, false},
-    {"Save Tape", "Family BASIC tapes", "*.tap", "tap", true, false},
-    {"Export HD Pack", "HD pack archives", "*.zip", "zip", true, false},
-    {"Save Cheats", "Cheat files", "*.txt;*.cht", "txt", true, false},
-    {"Choose Disk Overlay", "Disk overlays", "*.ips", "ips", true, false},
-    {"Save TAS Project", "Editable TAS projects", "*.ctas", "ctas", true, false},
-    {"Export TAS Movie", "Input movies and projects", "*.fm2;*.fm3", "fm2", true, false},
-    {"Export Table", "CSV tables", "*.csv", "csv", true, false},
-    {"Export Memory", "Binary memory dumps", "*.bin;*.dump", "bin", true, false}};
+void cupid_gtk_file_location(GtkFileChooser *chooser, const char *path) {
+    if (!path || !*path) {
+        return;
+    }
+    char *absolute = g_canonicalize_filename(path, NULL);
+    GFile *file = g_file_new_for_path(absolute);
+    if (g_file_test(absolute, G_FILE_TEST_IS_DIR)) {
+        gtk_file_chooser_set_current_folder(chooser, file, NULL);
+    } else if (gtk_file_chooser_get_action(chooser) == GTK_FILE_CHOOSER_ACTION_SAVE) {
+        GFile *folder = g_file_get_parent(file);
+        char *name = g_file_get_basename(file);
+        if (folder) {
+            gtk_file_chooser_set_current_folder(chooser, folder, NULL);
+        }
+        gtk_file_chooser_set_current_name(chooser, name);
+        g_free(name);
+        g_clear_object(&folder);
+    } else {
+        gtk_file_chooser_set_file(chooser, file, NULL);
+    }
+    g_object_unref(file);
+    g_free(absolute);
+}
 
 typedef struct {
     GtkNativeDialog *dialog;
@@ -82,43 +107,33 @@ static bool choose_file(bool save, unsigned type, char *path, size_t path_size, 
         chooser_error(error, error_size, "The file chooser is unavailable or already open");
         return false;
     }
-    if (type >= (save ? G_N_ELEMENTS(save_dialogs) : G_N_ELEMENTS(open_dialogs))) {
+    const FrontendFileDialogInfo *kind = frontend_file_dialog_info(save, type);
+    if (!kind) {
         chooser_error(error, error_size, "Unknown file type");
         return false;
     }
-    const FileKind *kind = save ? &save_dialogs[type] : &open_dialogs[type];
     GtkFileChooserAction action = kind->directory ? GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER
                                   : save          ? GTK_FILE_CHOOSER_ACTION_SAVE
                                                   : GTK_FILE_CHOOSER_ACTION_OPEN;
+    GtkWindow *parent = g_object_ref(chooser_parent);
+    GListModel *windows = gtk_window_get_toplevels();
+    for (guint i = 0; i < g_list_model_get_n_items(windows); ++i) {
+        GtkWindow *window = g_list_model_get_item(windows, i);
+        if (gtk_widget_get_visible(GTK_WIDGET(window)) && gtk_window_is_active(window) &&
+            gtk_widget_has_css_class(GTK_WIDGET(window), "cupid-desktop")) {
+            g_set_object(&parent, window);
+        }
+        g_object_unref(window);
+    }
     GtkFileChooserNative *native =
-        gtk_file_chooser_native_new(kind->title, chooser_parent, action, save ? "Save" : "Open", "Cancel");
+        gtk_file_chooser_native_new(kind->title, parent, action, save ? "Save" : "Open", "Cancel");
     GtkFileChooser *chooser = GTK_FILE_CHOOSER(native);
     gtk_native_dialog_set_modal(GTK_NATIVE_DIALOG(native), TRUE);
-    if (!kind->directory) {
-        GtkFileFilter *filter = gtk_file_filter_new();
-        gtk_file_filter_set_name(filter, kind->label);
-        char **patterns = g_strsplit(kind->pattern, ";", -1);
-        for (unsigned i = 0; patterns[i]; ++i) {
-            gtk_file_filter_add_pattern(filter, patterns[i]);
-        }
-        g_strfreev(patterns);
-        gtk_file_chooser_add_filter(chooser, filter);
-        g_object_unref(filter);
-        filter = gtk_file_filter_new();
-        gtk_file_filter_set_name(filter, "All files");
-        gtk_file_filter_add_pattern(filter, "*");
-        gtk_file_chooser_add_filter(chooser, filter);
-        g_object_unref(filter);
-    }
-    if (save) {
-        char *name = g_strdup_printf("untitled.%s", kind->extension ? kind->extension : "bin");
-        gtk_file_chooser_set_current_name(chooser, name);
-        g_free(name);
-    }
+    cupid_gtk_file_filters(chooser, save, type);
+    cupid_gtk_file_location(chooser, path);
     FileRequest request = {GTK_NATIVE_DIALOG(native), g_main_loop_new(NULL, FALSE), GTK_RESPONSE_CANCEL, false};
     active_request = &request;
     /* Also permits a headless smoke test to cancel the real nested dialog. */
-    GtkWindow *parent = g_object_ref(chooser_parent);
     g_object_set_data(G_OBJECT(parent), "cupid-file-dialog", native);
     g_signal_connect(native, "response", G_CALLBACK(chooser_response), &request);
     gtk_native_dialog_show(request.dialog);

@@ -19,6 +19,7 @@ extern "C" {
 
 typedef struct NesMovieSession NesMovieSession;
 typedef struct NesTasSession NesTasSession;
+struct NesRewindHistory;
 
 typedef enum {
     NES_MOVIE_IDLE = 0,
@@ -91,6 +92,10 @@ NesTasSession *nes_movie_tas(NesMovieSession *movie);
 const NesTasSession *nes_movie_tas_const(const NesMovieSession *movie);
 const char *nes_movie_error(const NesMovieSession *movie);
 const char *nes_movie_result_string(NesMovieResult result);
+/* Export complete retained transitions [first, end) as a state-start movie.
+ * The live machine, input ownership, and rewind ring are unchanged. */
+NesMovieResult nes_movie_export_history(const struct NesRewindHistory *history,
+                                       size_t first, size_t end, const char *path);
 
 #ifdef __cplusplus
 }

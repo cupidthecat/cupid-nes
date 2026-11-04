@@ -6,6 +6,7 @@
 #include "../ui/lifecycle_frontend.h"
 #include "../ui/recovery_store.h"
 #include "../ui/game_config.h"
+#include "../ui/desktop_internal.h"
 #include "../ui/image_open.h"
 #include "../ui/frontend_commands.h"
 #include "../ui/frontend_panels.h"
@@ -70,6 +71,61 @@ static bool finalize_fail(void *context, char *error, size_t size) {
     return false;
 }
 
+static int recorder_rejects_corrupt_history(StateRecorder *recorder, const FrontendSession *session) {
+    char path[4096], error[256];
+    CHECK(recovery_path(recorder->directory, recorder->key, ".recorder-index", path, sizeof(path)));
+    uint8_t *saved = NULL;
+    size_t saved_size = 0;
+    CHECK(nes_file_read_all(path, STATE_RECORDER_MAX + 9, &saved, &saved_size) == NES_FILE_OK);
+    CHECK(saved_size == 11 && saved[8] == 2);
+    uint8_t original[11];
+    memcpy(original, saved, sizeof(original));
+    free(saved);
+
+    const uint8_t malformed[][11] = {
+        {'B', 'A', 'D', 'R', 'E', 'C', '0', '1', 2, 0, 1},
+        {'C', 'U', 'P', 'R', 'E', 'C', '0', '1', 2, 0, 0},
+        {'C', 'U', 'P', 'R', 'E', 'C', '0', '1', 2, 0, STATE_RECORDER_MAX + 1},
+    };
+    for (size_t i = 0; i < sizeof(malformed) / sizeof(malformed[0]); ++i) {
+        CHECK(nes_file_write_atomic(path, malformed[i], sizeof(malformed[i])) == NES_FILE_OK);
+        CHECK(!state_recorder_image_changed(recorder, session, error, sizeof(error)));
+        CHECK(!state_recorder_capture(recorder, error, sizeof(error)));
+        CHECK(!recorder->running && recorder->count == 0);
+        FrontendPanelControl controls[16];
+        FrontendPanelModel model = {.controls = controls, .capacity = 16};
+        CHECK(frontend_panel_snapshot(LIFECYCLE_PANEL, &model, error, sizeof(error)));
+        unsigned checked = 0;
+        for (size_t control = 0; control < model.count; ++control) {
+            if (!strcmp(controls[control].label, "Recorder running") ||
+                !strcmp(controls[control].label, "Record snapshot now")) {
+                CHECK(!controls[control].enabled);
+                CHECK(!frontend_panel_action(LIFECYCLE_PANEL, controls[control].id, NULL, 1, error, sizeof(error)));
+                ++checked;
+            }
+        }
+        CHECK(checked == 2);
+        CHECK(nes_file_read_all(path, sizeof(original), &saved, &saved_size) == NES_FILE_OK);
+        bool unchanged = saved_size == sizeof(malformed[i]) && !memcmp(saved, malformed[i], saved_size);
+        free(saved);
+        CHECK(unchanged);
+
+        CHECK(nes_file_write_atomic(path, original, sizeof(original)) == NES_FILE_OK);
+        CHECK(state_recorder_image_changed(recorder, session, error, sizeof(error)));
+        CHECK(recorder->count == 2 && recorder->running);
+        CHECK(state_recorder_restore(recorder, 0, error, sizeof(error)) && read_mem(23) == 2);
+        CHECK(state_recorder_restore(recorder, 1, error, sizeof(error)) && read_mem(23) == 3);
+    }
+    CHECK(nes_file_remove(path) == NES_FILE_OK && MKDIR(path) == 0);
+    CHECK(!state_recorder_image_changed(recorder, session, error, sizeof(error)));
+    CHECK(!state_recorder_capture(recorder, error, sizeof(error)) && !recorder->running);
+    CHECK(RMDIR(path) == 0 && nes_file_write_atomic(path, original, sizeof(original)) == NES_FILE_OK);
+    CHECK(state_recorder_image_changed(recorder, session, error, sizeof(error)));
+    CHECK(state_recorder_restore(recorder, 0, error, sizeof(error)) && read_mem(23) == 2);
+    CHECK(state_recorder_restore(recorder, 1, error, sizeof(error)) && read_mem(23) == 3);
+    return 0;
+}
+
 static int exercise(const char *directory) {
     char image[1024], second[1024], path[4096], key[41], error[256] = {0};
     snprintf(image, sizeof(image), "%s/first.nes", directory);
@@ -121,6 +177,7 @@ static int exercise(const char *directory) {
     CHECK(state_recorder_capture(&lifecycle.recorder, error, sizeof(error)));
     CHECK(lifecycle.recorder.count == 2);
     CHECK(state_recorder_restore(&lifecycle.recorder, 0, error, sizeof(error)) && read_mem(23) == 2);
+    CHECK(recorder_rejects_corrupt_history(&lifecycle.recorder, &session) == 0);
     opts.time_based = true;
     opts.interval = 40;
     CHECK(state_recorder_configure(&lifecycle.recorder, &opts));
@@ -219,12 +276,47 @@ static int configurations(const char *directory) {
     return 0;
 }
 
+static int configuration_input_masks(const char *directory) {
+    const char *names[] = {"adapter", "port1", "port2", "expansion"};
+    const uint8_t masks[] = {NES_INPUT_OVERRIDE_ADAPTER, NES_INPUT_OVERRIDE_PORT1, NES_INPUT_OVERRIDE_PORT2,
+                             NES_INPUT_OVERRIDE_EXPANSION};
+    const uint8_t all =
+        NES_INPUT_OVERRIDE_ADAPTER | NES_INPUT_OVERRIDE_PORT1 | NES_INPUT_OVERRIDE_PORT2 | NES_INPUT_OVERRIDE_EXPANSION;
+    char path[4096], error[256];
+    snprintf(path, sizeof(path), "%s/input-globals.ini", directory);
+    GameConfigFrontend *configuration = calloc(1, sizeof(*configuration));
+    CHECK(configuration);
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
+        FrontendSettings global, effective;
+        FrontendSettingsReport report;
+        frontend_settings_defaults(&global);
+        global.saved_input_overrides = all & (uint8_t)~masks[i];
+        CHECK(game_config_init(configuration, &global, directory));
+        CHECK(game_config_set(&configuration->config, (size_t)game_config_find_field(names[i]), "0"));
+        CHECK(game_config_resolve(&global, &configuration->config, 0, &effective, NULL, 0, error, sizeof(error)));
+        CHECK(effective.saved_input_overrides == all);
+        CHECK(game_config_save_globals(configuration, path, &effective, &report));
+        CHECK(global.saved_input_overrides == (all & (uint8_t)~masks[i]));
+    }
+    free(configuration);
+    CHECK(nes_file_remove(path) == NES_FILE_OK);
+    return 0;
+}
+
 static int configuration_activation(const char *directory) {
     char image[1024], other[1024], error[256], key[41], other_key[41], settings_path[1024];
     snprintf(image, sizeof(image), "%s/configured.nes", directory);
     snprintf(other, sizeof(other), "%s/inherited.nes", directory);
     snprintf(settings_path, sizeof(settings_path), "%s/globals.ini", directory);
     CHECK(fixture(image, 3) && fixture(other, 4));
+    uint8_t *other_rom = NULL;
+    size_t other_size = 0;
+    CHECK(nes_file_read_all(other, 65536, &other_rom, &other_size) == NES_FILE_OK);
+    other_rom[6] = 0;
+    other_rom[7] = 8;
+    other_rom[15] = 0x2b; /* This image requests two SNES controllers. */
+    CHECK(nes_file_write_atomic(other, other_rom, other_size) == NES_FILE_OK);
+    free(other_rom);
     FrontendSettings global, effective;
     frontend_settings_defaults(&global);
     effective = global;
@@ -243,17 +335,47 @@ static int configuration_activation(const char *directory) {
     CHECK(recovery_game_key(&session, key));
     CHECK(game_config_set(&configuration->config, (size_t)game_config_find_field("region"), "2"));
     CHECK(game_config_set(&configuration->config, (size_t)game_config_find_field("master_volume"), "37"));
+    CHECK(game_config_set(&configuration->config, (size_t)game_config_find_field("port2"), "5"));
     CHECK(game_config_save(directory, key, &configuration->config, error, sizeof(error)));
     CHECK(nes_region_mode() == NES_REGION_MODE_AUTO);
     CHECK(frontend_session_action_reload(&actions, error, sizeof(error)));
     CHECK(effective.region_mode == NES_REGION_MODE_PAL && nes_region_mode() == NES_REGION_MODE_PAL);
     CHECK(effective.audio_mix.master_volume == 37 && global.audio_mix.master_volume == 100);
+    CHECK(joypad_port_device(1) == NES_PORT_ZAPPER);
     FrontendSettingsReport report;
     CHECK(game_config_save_globals(configuration, settings_path, &effective, &report));
     CHECK(global.region_mode == NES_REGION_MODE_AUTO && global.audio_mix.master_volume == 100);
+    CHECK(global.saved_input_overrides == 0);
+    for (unsigned reset = 0; reset < 2; ++reset) {
+        FrontendDesktopUi ui = {.settings = &effective,
+                                .staged = effective,
+                                .sessions = &actions,
+                                .settings_path = settings_path,
+                                .settings_category = 4};
+        if (reset) {
+            /* A saved game override remains active until the next image load. */
+            game_config_reset(&configuration->config, (size_t)game_config_find_field("port2"));
+            desktop_settings_button(&ui, 4);
+            desktop_settings_button(&ui, 4);
+        } else {
+            desktop_settings_button(&ui, 3);
+        }
+        CHECK(ui.staged.saved_input_overrides == 0);
+        desktop_settings_button(&ui, 0);
+        CHECK(joypad_port_device(1) == NES_PORT_ZAPPER);
+        CHECK(joypad_configuration_overrides() & NES_INPUT_OVERRIDE_PORT2);
+        CHECK(effective.input.ports[1] == NES_PORT_ZAPPER);
+        CHECK(effective.saved_input_overrides & NES_INPUT_OVERRIDE_PORT2);
+        CHECK(global.saved_input_overrides == 0);
+        CHECK(frontend_session_action_reload(&actions, error, sizeof(error)));
+        CHECK(joypad_port_device(1) == NES_PORT_ZAPPER);
+        CHECK(joypad_configuration_overrides() & NES_INPUT_OVERRIDE_PORT2);
+    }
     CHECK(frontend_session_action_open_path(&actions, other, error, sizeof(error)));
     CHECK(recovery_game_key(&session, other_key) && strcmp(key, other_key));
     CHECK(nes_region_mode() == NES_REGION_MODE_AUTO && effective.audio_mix.master_volume == 100);
+    CHECK(joypad_port_device(0) == NES_PORT_SNES_CONTROLLER && joypad_port_device(1) == NES_PORT_SNES_CONTROLLER);
+    CHECK(configuration->applied_input_overrides == 0);
     CHECK(game_config_set(&configuration->config, (size_t)game_config_find_field("fds_bios"), "missing-firmware.bin"));
     CHECK(game_config_save(directory, other_key, &configuration->config, error, sizeof(error)));
     CHECK(frontend_session_action_open_path(&actions, image, error, sizeof(error)));
@@ -261,6 +383,7 @@ static int configuration_activation(const char *directory) {
     CHECK(!frontend_session_action_open_path(&actions, other, error, sizeof(error)));
     CHECK(session.active && !strcmp(session.current.path, image) && read_mem(23) == 73);
     CHECK(effective.region_mode == NES_REGION_MODE_PAL && !strcmp(configuration->key, key));
+    CHECK(configuration->applied_input_overrides == NES_INPUT_OVERRIDE_PORT2);
     CHECK(game_config_register_ui(configuration, &global, directory));
     CHECK(nes_execution_set_policy(NES_EXECUTION_MOVIE_PLAYBACK));
     CHECK(!frontend_panel_action(GAME_CONFIG_PANEL, 4, NULL, 0, error, sizeof(error)));
@@ -422,6 +545,9 @@ int test_lifecycle_accuracy(void) {
     frontend_commands_reset();
     frontend_panels_reset();
     int failures = configurations(directory);
+    if (!failures) {
+        failures = configuration_input_masks(directory);
+    }
     if (!failures) {
         failures = exercise(directory);
     }

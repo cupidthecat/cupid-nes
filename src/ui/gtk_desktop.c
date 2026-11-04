@@ -5,6 +5,7 @@
  */
 #include "gtk_desktop.h"
 #include "gtk_internal.h"
+#include "history_frontend.h"
 #include "gtk_layout.h"
 #include "gtk_assembler.h"
 #include "gtk_keyboard.h"
@@ -45,13 +46,88 @@ GtkWidget *cupid_gtk_scroll(GtkWidget *child) {
     return w;
 }
 
+typedef struct {
+    GObject parent;
+    GdkTexture *texture;
+} CupidFramePaintable;
+
+typedef GObjectClass CupidFramePaintableClass;
+static void frame_paintable_interface(GdkPaintableInterface *iface);
+G_DEFINE_TYPE_WITH_CODE(CupidFramePaintable, cupid_frame_paintable, G_TYPE_OBJECT,
+                        G_IMPLEMENT_INTERFACE(GDK_TYPE_PAINTABLE, frame_paintable_interface))
+
+static void frame_paintable_snapshot(GdkPaintable *paintable, GdkSnapshot *snapshot, double width, double height) {
+    CupidFramePaintable *frame = (CupidFramePaintable *)paintable;
+    if (frame->texture) {
+        gdk_paintable_snapshot(GDK_PAINTABLE(frame->texture), snapshot, width, height);
+    }
+}
+
+static GdkPaintable *frame_paintable_image(GdkPaintable *paintable) {
+    CupidFramePaintable *frame = (CupidFramePaintable *)paintable;
+    return frame->texture ? GDK_PAINTABLE(g_object_ref(frame->texture)) : gdk_paintable_new_empty(0, 0);
+}
+
+static int frame_paintable_width(GdkPaintable *paintable) {
+    CupidFramePaintable *frame = (CupidFramePaintable *)paintable;
+    return frame->texture ? gdk_texture_get_width(frame->texture) : 0;
+}
+
+static int frame_paintable_height(GdkPaintable *paintable) {
+    CupidFramePaintable *frame = (CupidFramePaintable *)paintable;
+    return frame->texture ? gdk_texture_get_height(frame->texture) : 0;
+}
+
+static void frame_paintable_interface(GdkPaintableInterface *iface) {
+    iface->snapshot = frame_paintable_snapshot;
+    iface->get_current_image = frame_paintable_image;
+    iface->get_intrinsic_width = frame_paintable_width;
+    iface->get_intrinsic_height = frame_paintable_height;
+}
+
+static void frame_paintable_dispose(GObject *object) {
+    g_clear_object(&((CupidFramePaintable *)object)->texture);
+    G_OBJECT_CLASS(cupid_frame_paintable_parent_class)->dispose(object);
+}
+
+static void cupid_frame_paintable_class_init(CupidFramePaintableClass *klass) {
+    G_OBJECT_CLASS(klass)->dispose = frame_paintable_dispose;
+}
+
+static void cupid_frame_paintable_init(CupidFramePaintable *frame) {
+    (void)frame;
+}
+
 void cupid_gtk_picture(GtkWidget *picture, const uint32_t *pixels, unsigned w, unsigned h, unsigned stride) {
     if (!pixels || !w || !h) {
         return;
     }
-    GBytes *bytes = g_bytes_new(pixels, (size_t)stride * h);
-    GdkTexture *texture = gdk_memory_texture_new((int)w, (int)h, GDK_MEMORY_B8G8R8A8, bytes, stride);
-    gtk_picture_set_paintable(GTK_PICTURE(picture), GDK_PAINTABLE(texture));
+    uint32_t *copy = g_new(uint32_t, (size_t)w *h);
+    for (unsigned y = 0; y < h; ++y) {
+        const uint32_t *row = (const uint32_t *)((const unsigned char *)pixels + (size_t)y * stride);
+        for (unsigned x = 0; x < w; ++x) {
+            copy[(size_t)y * w + x] = row[x] | 0xff000000u;
+        }
+    }
+
+    GBytes *bytes = g_bytes_new_take(copy, (size_t)w * h * sizeof(*copy));
+    GdkTexture *texture = gdk_memory_texture_new((int)w, (int)h, GDK_MEMORY_DEFAULT, bytes, w * sizeof(*copy));
+    GdkPaintable *paintable = gtk_picture_get_paintable(GTK_PICTURE(picture));
+    if (paintable && G_TYPE_CHECK_INSTANCE_TYPE(paintable, cupid_frame_paintable_get_type())) {
+        bool resized = frame_paintable_width(paintable) != (int)w || frame_paintable_height(paintable) != (int)h;
+        g_set_object(&((CupidFramePaintable *)paintable)->texture, texture);
+        /* Replacing the picture's paintable queues a layout on every frame.
+         * Keep it stable and invalidate only contents at unchanged dimensions. */
+        gdk_paintable_invalidate_contents(paintable);
+        if (resized) {
+            gdk_paintable_invalidate_size(paintable);
+        }
+    } else {
+        CupidFramePaintable *frame = g_object_new(cupid_frame_paintable_get_type(), NULL);
+        frame->texture = g_object_ref(texture);
+        gtk_picture_set_paintable(GTK_PICTURE(picture), GDK_PAINTABLE(frame));
+        g_object_unref(frame);
+    }
     g_object_unref(texture);
     g_bytes_unref(bytes);
 }
@@ -137,6 +213,7 @@ SDL_Scancode cupid_gtk_scancode(guint key) {
     case GDK_KEY_BackSpace:
         return SDL_SCANCODE_BACKSPACE;
     case GDK_KEY_Tab:
+    case GDK_KEY_ISO_Left_Tab:
         return SDL_SCANCODE_TAB;
     case GDK_KEY_comma:
         return SDL_SCANCODE_COMMA;
@@ -217,7 +294,7 @@ static void key_event(CupidGtkDesktop *d, guint key, GdkModifierType mods, bool 
     SDL_PushEvent(&e);
 }
 
-static guint base_key(GtkEventControllerKey *c, guint key, guint code) {
+guint cupid_gtk_base_key(GtkEventControllerKey *c, guint key, guint code) {
     GdkKeymapKey *keys = NULL;
     guint *values = NULL;
     int count = 0;
@@ -236,12 +313,21 @@ static guint base_key(GtkEventControllerKey *c, guint key, guint code) {
 }
 
 static gboolean key_down(GtkEventControllerKey *c, guint key, guint code, GdkModifierType mods, gpointer data) {
-    key_event(data, base_key(c, key, code), mods, true);
+    if (key == GDK_KEY_Tab || key == GDK_KEY_ISO_Left_Tab) {
+        const FrontendBindingProfile *profile = frontend_settings_active_profile_const(((CupidGtkDesktop *)data)->ui->settings);
+        SDL_KeyboardEvent event = {.keysym = {.scancode = SDL_SCANCODE_TAB, .mod = cupid_gtk_modifiers(mods)}};
+        unsigned player, button; FrontendShortcut shortcut;
+        NesExpansionDevice expansion = joypad_expansion_device();
+        if (expansion != NES_EXPANSION_FAMILY_BASIC && expansion != NES_EXPANSION_SUBOR_KEYBOARD &&
+            !frontend_profile_player_key(profile, &event, &player, &button) &&
+            !frontend_profile_shortcut_key(profile, &event, &shortcut)) return FALSE;
+    }
+    key_event(data, cupid_gtk_base_key(c, key, code), mods, true);
     return TRUE;
 }
 
 static void key_up(GtkEventControllerKey *c, guint key, guint code, GdkModifierType mods, gpointer data) {
-    key_event(data, base_key(c, key, code), mods, false);
+    key_event(data, cupid_gtk_base_key(c, key, code), mods, false);
 }
 
 static void release_keys(CupidGtkDesktop *d) {
@@ -315,11 +401,19 @@ static void theme(CupidGtkDesktop *d) {
             GEnumClass *values = g_type_class_ref(G_PARAM_SPEC_VALUE_TYPE(property));
             GEnumValue *value = g_enum_get_value_by_nick(values, light ? "light" : "dark");
             if (value) {
-                g_object_set(settings, "gtk-interface-color-scheme", value->value, NULL);
+                int current = -1;
+                g_object_get(settings, "gtk-interface-color-scheme", &current, NULL);
+                if (current != value->value) {
+                    g_object_set(settings, "gtk-interface-color-scheme", value->value, NULL);
+                }
             }
             g_type_class_unref(values);
         } else {
-            g_object_set(settings, "gtk-application-prefer-dark-theme", light == 0, NULL);
+            gboolean current = FALSE;
+            g_object_get(settings, "gtk-application-prefer-dark-theme", &current, NULL);
+            if (current != (light == 0)) {
+                g_object_set(settings, "gtk-application-prefer-dark-theme", light == 0, NULL);
+            }
         }
     }
 #endif
@@ -330,11 +424,24 @@ typedef struct {
     DesktopMenuItem item;
 } MenuAction;
 
+static void dismiss_popovers(GtkWidget *widget) {
+    if (GTK_IS_POPOVER(widget)) {
+        gtk_popover_popdown(GTK_POPOVER(widget));
+    }
+    for (GtkWidget *child = gtk_widget_get_first_child(widget); child;
+         child = gtk_widget_get_next_sibling(child)) {
+        dismiss_popovers(child);
+    }
+}
+
 static void menu_action(GSimpleAction *action, GVariant *value, gpointer data) {
     (void)action;
     (void)value;
     MenuAction *a = data;
     FrontendDesktopUi *ui = a->desktop->ui;
+    /* Release the menu's input grab before a command presents another window. */
+    dismiss_popovers(a->desktop->menubar);
+    gtk_widget_grab_focus(a->desktop->picture);
     char error[256] = {0};
     switch (a->item.kind) {
     case 0:
@@ -359,6 +466,14 @@ static void menu_action(GSimpleAction *action, GVariant *value, gpointer data) {
     case 3:
         ui->quit_requested = true;
         break;
+    case DESKTOP_MENU_STATE_SLOT:
+        if (a->item.id < NES_STATE_SLOT_COUNT) {
+            ui->settings->state_slot = a->item.id;
+            char message[64];
+            g_snprintf(message, sizeof(message), "Quick state slot %u selected", a->item.id + 1);
+            desktop_copy_status(ui, message);
+        }
+        break;
     case 4:
     case 6:
         cupid_gtk_open(ui, 2, a->item.kind == 6);
@@ -369,7 +484,6 @@ static void menu_action(GSimpleAction *action, GVariant *value, gpointer data) {
     default:
         break;
     }
-    gtk_widget_grab_focus(a->desktop->picture);
 }
 
 static void free_menu(gpointer p, GClosure *closure) {
@@ -399,10 +513,12 @@ static GMenu *menu_level(CupidGtkDesktop *d, int depth, unsigned *serial) {
         g_snprintf(name, sizeof(name), "item%u", (*serial)++);
         g_snprintf(full, sizeof(full), "desktop.%s", name);
         FrontendCommandInfo command;
-        bool checkable = rows[i].kind == 0 && frontend_command_get(rows[i].id, &command) &&
-                         (command.flags & FRONTEND_COMMAND_CHECKABLE);
+        bool slot = rows[i].kind == DESKTOP_MENU_STATE_SLOT;
+        bool checkable = slot || (rows[i].kind == 0 && frontend_command_get(rows[i].id, &command) &&
+                         (command.flags & FRONTEND_COMMAND_CHECKABLE));
+        bool checked = slot ? d->ui->settings->state_slot == rows[i].id : checkable && command.checked;
         GSimpleAction *act = checkable
-                                 ? g_simple_action_new_stateful(name, NULL, g_variant_new_boolean(command.checked))
+                                 ? g_simple_action_new_stateful(name, NULL, g_variant_new_boolean(checked))
                                  : g_simple_action_new(name, NULL);
         MenuAction *a = g_new0(MenuAction, 1);
         a->desktop = d;
@@ -481,10 +597,19 @@ static void sync_actions(CupidGtkDesktop *d) {
         if (a->item.kind == 0 && frontend_command_get(a->item.id, &command)) {
             g_simple_action_set_enabled(G_SIMPLE_ACTION(action), command.enabled);
             if (command.flags & FRONTEND_COMMAND_CHECKABLE) {
-                g_simple_action_set_state(G_SIMPLE_ACTION(action), g_variant_new_boolean(command.checked));
+                GVariant *state = g_action_get_state(action);
+                if (!state || g_variant_get_boolean(state) != command.checked) {
+                    g_simple_action_set_state(G_SIMPLE_ACTION(action), g_variant_new_boolean(command.checked));
+                }
+                if (state) {
+                    g_variant_unref(state);
+                }
             }
         } else if (a->item.kind == 1 && frontend_panel_get(a->item.id, &panel)) {
             g_simple_action_set_enabled(G_SIMPLE_ACTION(action), panel.enabled);
+        } else if (a->item.kind == DESKTOP_MENU_STATE_SLOT) {
+            g_simple_action_set_state(G_SIMPLE_ACTION(action),
+                g_variant_new_boolean(d->ui->settings->state_slot == a->item.id));
         }
     }
     g_strfreev(names);
@@ -492,8 +617,8 @@ static void sync_actions(CupidGtkDesktop *d) {
 
 static void toolbar_action(GtkButton *button, gpointer data) {
     CupidGtkDesktop *d = data;
-    desktop_invoke_command(d->ui, GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(button), "command")));
     gtk_widget_grab_focus(d->picture);
+    desktop_invoke_command(d->ui, GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(button), "command")));
 }
 
 void cupid_gtk_record_draw(CupidGtkDesktop *d) {
@@ -535,7 +660,7 @@ static void game_snapshot(GtkWidget *widget, GtkSnapshot *snapshot) {
     graphene_rect_t bounds = GRAPHENE_RECT_INIT(0, 0, width, height);
     const GdkRGBA background = {.025f, .028f, .035f, 1.f};
     gtk_snapshot_append_color(snapshot, &background, &bounds);
-    if (!d->frame_texture || !d->session) {
+    if ((!d->frame_texture && !d->frame) || !d->session) {
         return;
     }
     if (!d->native_video) cupid_gtk_record_draw(d);
@@ -571,29 +696,44 @@ static void cupid_gtk_game_view_init(CupidGtkGameView *view) {
 }
 
 static void update_game(CupidGtkDesktop *d, const uint32_t *pixels, unsigned w, unsigned h, unsigned stride) {
-    /* Upload the source frame once; GTK scales its texture at presentation.
-     * The immutable copy outlives emulation's reusable pixel buffers. Like
-     * Cairo RGB24, the game view ignores the source's unused alpha byte. */
-    uint32_t *copy = g_new(uint32_t, (size_t)w * h);
-    for (unsigned y = 0; y < h; ++y) {
-        for (unsigned x = 0; x < w; ++x) {
-            copy[(size_t)y * w + x] = pixels[(size_t)y * stride + x] | 0xff000000u;
+    GskRenderer *renderer = gtk_native_get_renderer(GTK_NATIVE(d->window));
+    if (GSK_IS_CAIRO_RENDERER(renderer)) {
+        g_clear_object(&d->frame_texture);
+        /* Each snapshot owns its source surface until GTK finishes drawing it. */
+        if (d->frame) {
+            cairo_surface_destroy(d->frame);
         }
+
+        d->frame = cairo_image_surface_create(CAIRO_FORMAT_RGB24, (int)w, (int)h);
+        cairo_surface_flush(d->frame);
+        unsigned char *out = cairo_image_surface_get_data(d->frame);
+        int pitch = cairo_image_surface_get_stride(d->frame);
+        for (unsigned y = 0; y < h; ++y) {
+            memcpy(out + (size_t)y * pitch, pixels + (size_t)y * stride, w * sizeof(uint32_t));
+        }
+
+        cairo_surface_mark_dirty(d->frame);
+    } else {
+        if (d->frame) {
+            cairo_surface_destroy(d->frame);
+            d->frame = NULL;
+        }
+
+        /* GPU presentation needs only the immutable, opaque source texture. */
+        uint32_t *copy = g_new(uint32_t, (size_t)w *h);
+        for (unsigned y = 0; y < h; ++y) {
+            for (unsigned x = 0; x < w; ++x) {
+                copy[(size_t)y * w + x] = pixels[(size_t)y * stride + x] | 0xff000000u;
+            }
+        }
+
+        GBytes *bytes = g_bytes_new_take(copy, (size_t)w * h * sizeof(*copy));
+        GdkTexture *texture = gdk_memory_texture_new((int)w, (int)h, GDK_MEMORY_DEFAULT, bytes, w * sizeof(*copy));
+        g_bytes_unref(bytes);
+        g_clear_object(&d->frame_texture);
+        d->frame_texture = texture;
     }
 
-    GBytes *bytes = g_bytes_new_take(copy, (size_t)w * h * sizeof(*copy));
-    GdkTexture *texture = gdk_memory_texture_new((int)w, (int)h, GDK_MEMORY_DEFAULT, bytes, w * sizeof(*copy));
-    g_bytes_unref(bytes);
-    g_clear_object(&d->frame_texture);
-    d->frame_texture = texture;
-    if (d->frame) cairo_surface_destroy(d->frame);
-    d->frame = cairo_image_surface_create(CAIRO_FORMAT_RGB24, (int)w, (int)h);
-    cairo_surface_flush(d->frame);
-    unsigned char *out = cairo_image_surface_get_data(d->frame);
-    int pitch = cairo_image_surface_get_stride(d->frame);
-    for (unsigned y = 0; y < h; ++y)
-        memcpy(out + (size_t)y * pitch, pixels + (size_t)y * stride, w * sizeof(uint32_t));
-    cairo_surface_mark_dirty(d->frame);
     d->frame_width = w;
     d->frame_height = h;
     if (!d->native_video) gtk_widget_queue_draw(d->picture);
@@ -739,11 +879,14 @@ bool cupid_gtk_init(FrontendDesktopUi *ui) {
     }
     CupidGtkDesktop *d = g_new0(CupidGtkDesktop, 1);
     d->ui = ui;
+    g_object_get(gtk_settings_get_default(), "gtk-enable-animations", &d->animations, NULL);
     /* The SDL host is hidden; GTK focus decides whether queued controller input is accepted. */
     d->joystick_background = SDL_GetHintBoolean(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, SDL_FALSE);
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
     ui->gtk = d;
     d->window = gtk_window_new();
+    d->window_group = gtk_window_group_new();
+    gtk_window_group_add_window(d->window_group, GTK_WINDOW(d->window));
     gtk_widget_add_css_class(d->window, "cupid-desktop");
     gtk_window_set_title(GTK_WINDOW(d->window), "Cupid NES");
     gtk_window_set_default_size(GTK_WINDOW(d->window), (int)ui->settings->window_width,
@@ -788,9 +931,15 @@ bool cupid_gtk_init(FrontendDesktopUi *ui) {
     d->empty = gtk_label_new("Cupid NES\n\nOpen a game or drop a ROM here");
     gtk_overlay_add_overlay(GTK_OVERLAY(overlay), d->empty);
     d->status = cupid_gtk_label("Ready");
-    gtk_widget_add_css_class(d->status, "tool-status");
-    cupid_gtk_margins(d->status, 6);
-    gtk_box_append(GTK_BOX(box), d->status);
+    gtk_label_set_ellipsize(GTK_LABEL(d->status), PANGO_ELLIPSIZE_END);
+    gtk_widget_set_hexpand(d->status, TRUE);
+    d->status_info = cupid_gtk_label("");
+    GtkWidget *status_bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    gtk_widget_add_css_class(status_bar, "tool-status");
+    cupid_gtk_margins(status_bar, 6);
+    gtk_box_append(GTK_BOX(status_bar), d->status);
+    gtk_box_append(GTK_BOX(status_bar), d->status_info);
+    gtk_box_append(GTK_BOX(box), status_bar);
     GtkEventController *keys = gtk_event_controller_key_new();
     g_signal_connect(keys, "key-pressed", G_CALLBACK(key_down), d);
     g_signal_connect(keys, "key-released", G_CALLBACK(key_up), d);
@@ -813,6 +962,9 @@ bool cupid_gtk_init(FrontendDesktopUi *ui) {
         css,
         ".game-view { background: #08090b; } .monospace { font-family: monospace; }"
         ".cupid-desktop { font-size: 12px; }"
+        ".history-video { background: #08090b; }"
+        ".history-viewer scale slider { min-width: 14px; min-height: 14px; margin: 0; padding: 0; }"
+        ".history-viewer scale trough, .history-viewer scale highlight { min-width: 0; min-height: 4px; }"
         ".cupid-desktop, .cupid-desktop * { border-style: none; box-shadow: none; }"
         ".cupid-desktop button { min-height: 22px; padding: 3px 8px; border-radius: 3px; }"
         ".cupid-desktop button, .cupid-desktop entry, .cupid-desktop spinbutton {"
@@ -823,13 +975,32 @@ bool cupid_gtk_init(FrontendDesktopUi *ui) {
         ".cupid-desktop checkbutton check:checked, .cupid-desktop checkbutton check:indeterminate,"
         ".cupid-desktop checkbutton radio:checked {"
         " background-color: @theme_selected_bg_color; color: @theme_selected_fg_color; }"
-        ".cupid-desktop button:checked, .cupid-desktop notebook > header tab:checked {"
+        ".cupid-desktop button:checked {"
         " background-color: alpha(@theme_selected_bg_color, 0.22); }"
         ".cupid-desktop spinbutton entry { background-color: transparent; }"
-        ".cupid-desktop *:focus-visible { outline: 1px solid @theme_selected_bg_color; outline-offset: -2px; }"
+        ".cupid-desktop *:focus:focus-visible { outline: 1px solid @theme_selected_bg_color; outline-offset: -2px; }"
+        ".cupid-desktop .game-view:focus { outline: none; }"
         ".cupid-desktop entry { min-height: 24px; padding: 2px 6px; border-radius: 2px; }"
-        ".cupid-desktop dropdown button { min-height: 24px; }"
-        ".cupid-desktop notebook > header tab { min-height: 24px; padding: 3px 9px; }"
+        ".cupid-desktop dropdown { background-color: alpha(@theme_fg_color, 0.07); border-radius: 3px; }"
+        ".cupid-desktop dropdown:hover { background-color: alpha(@theme_fg_color, 0.12); }"
+        ".cupid-desktop dropdown > button, .cupid-desktop dropdown > button:hover {"
+        " min-height: 24px; margin: 0; background-image: none; background-color: transparent; color: @theme_fg_color; }"
+        ".cupid-desktop dropdown > button:checked { background-color: alpha(@theme_fg_color, 0.12); }"
+        ".cupid-desktop dropdown > button row, .cupid-desktop dropdown > button row:selected {"
+        " background-image: none; background-color: transparent; color: @theme_fg_color; }"
+        ".cupid-desktop dropdown popover row:hover {"
+        " background-color: alpha(@theme_fg_color, 0.09); color: @theme_fg_color; }"
+        ".cupid-desktop notebook > header { padding: 2px; background-color: alpha(@theme_fg_color, 0.035); }"
+        ".cupid-desktop notebook > header tab { min-height: 24px; padding: 3px 9px; margin: 2px 3px; border-radius: 3px;"
+        " background-image: none; background-color: transparent; color: alpha(@theme_fg_color, 0.75); }"
+        ".cupid-desktop notebook > header tab:hover { background-color: alpha(@theme_fg_color, 0.06); }"
+        ".cupid-desktop notebook > header tab:checked {"
+        " background-image: none; background-color: alpha(@theme_fg_color, 0.10); color: @theme_fg_color;"
+        " box-shadow: inset 0 -2px alpha(@theme_fg_color, 0.55); }"
+        ".cupid-desktop .navigation-sidebar row:hover { background-color: alpha(@theme_fg_color, 0.06); }"
+        ".cupid-desktop .navigation-sidebar row:selected {"
+        " background-color: alpha(@theme_fg_color, 0.10); color: @theme_fg_color;"
+        " box-shadow: inset 3px 0 alpha(@theme_fg_color, 0.55); }"
         ".cupid-desktop frame { border-radius: 2px; }"
         ".cupid-desktop frame > label { margin: 2px 8px; font-weight: bold; }"
         ".cupid-desktop flowboxchild { padding: 0; }"
@@ -853,6 +1024,8 @@ static gboolean tool_close(GtkWindow *window, gpointer data) {
     gtk_widget_set_visible(t->window, FALSE);
     t->ui.capture_binding = false;
     t->ui.edit_text_active = false;
+    if (t->kind == 1 && t->id == HISTORY_PANEL && t->ui.execution)
+        frontend_history_close(t->ui.execution->history_viewer);
     if (t->prompt) {
         gtk_window_destroy(GTK_WINDOW(t->prompt));
         t->prompt = NULL;
@@ -922,9 +1095,12 @@ static void refresh_information(CupidGtkTool *t) {
 
 FrontendDesktopUi *cupid_gtk_open(FrontendDesktopUi *ui, int kind, unsigned id) {
     CupidGtkDesktop *d = ui->gtk;
+    dismiss_popovers(d->menubar);
     for (CupidGtkTool *t = d->tools; t; t = t->next) {
         if (t->kind == kind && (t->id == id || kind == 3)) {
             if (kind == 2) refresh_information(t);
+            if (kind == 1 && id == HISTORY_PANEL && !gtk_widget_get_visible(t->window))
+                cupid_gtk_history_open(t->content);
             if (kind == 0 && !gtk_widget_get_visible(t->window)) {
                 t->ui.settings_open = false;
                 desktop_settings_open(&t->ui, true);
@@ -960,6 +1136,10 @@ FrontendDesktopUi *cupid_gtk_open(FrontendDesktopUi *ui, int kind, unsigned id) 
         title = info.title;
     }
     t->window = gtk_window_new();
+    /* Tools are independent top-level windows. Only their own dialogs share
+     * an input group; they must not block or stay above the emulator. */
+    t->window_group = gtk_window_group_new();
+    gtk_window_group_add_window(t->window_group, GTK_WINDOW(t->window));
     gtk_widget_add_css_class(t->window, "cupid-desktop");
     gtk_window_set_title(GTK_WINDOW(t->window), title);
     CupidGtkLayout layout = cupid_gtk_layout(id);
@@ -968,9 +1148,8 @@ FrontendDesktopUi *cupid_gtk_open(FrontendDesktopUi *ui, int kind, unsigned id) 
         gtk_window_set_default_size(GTK_WINDOW(t->window), id ? 760 : 540, id ? 480 : 300);
     }
     if (kind == 3) {
-        gtk_window_set_default_size(GTK_WINDOW(t->window), 760, 510);
+        gtk_window_set_default_size(GTK_WINDOW(t->window), 800, 620);
     }
-    gtk_window_set_transient_for(GTK_WINDOW(t->window), GTK_WINDOW(d->window));
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
     gtk_window_set_child(GTK_WINDOW(t->window), box);
     t->status = cupid_gtk_label("");
@@ -983,6 +1162,8 @@ FrontendDesktopUi *cupid_gtk_open(FrontendDesktopUi *ui, int kind, unsigned id) 
         t->content = cupid_gtk_keyboard_new(t);
     } else if (kind == 1 && id == ASSEMBLER_FRONTEND_PANEL) {
         t->content = cupid_gtk_assembler_new(id);
+    } else if (kind == 1 && id == HISTORY_PANEL) {
+        t->content = cupid_gtk_history_new(t);
     } else if (kind == 1 && id == TAS_PANEL) {
         t->content = cupid_gtk_tas_new(t);
     } else if (kind == 3 || (kind == 1 && desktop_ppu_panel(id))) {
@@ -1013,18 +1194,55 @@ FrontendDesktopUi *cupid_gtk_open(FrontendDesktopUi *ui, int kind, unsigned id) 
     return &t->ui;
 }
 
+static void shader_viewport(void *context, const NesVideoPresentationFrame *input, unsigned *width, unsigned *height) {
+    CupidGtkDesktop *d = context;
+    unsigned w = input->width, h = input->height;
+    if (d->ui->settings->aspect_mode == FRONTEND_ASPECT_4_3 && input->screens) {
+        w = (unsigned)(((uint64_t)h * 4u * input->screens + 2u) / 3u);
+    }
+    SDL_Rect game;
+    frontend_desktop_game_rect(d->ui, gtk_widget_get_width(d->picture), gtk_widget_get_height(d->picture),
+                              (int)w, (int)h, d->ui->settings->integer_scaling, &game);
+    if (game.w > 0 && game.h > 0) {
+        unsigned scale = (unsigned)gtk_widget_get_scale_factor(d->picture);
+        *width = (unsigned)game.w * scale;
+        *height = (unsigned)game.h * scale;
+    }
+}
+
 void cupid_gtk_render(FrontendDesktopUi *ui, const char *title, const char *region, const char *state) {
     CupidGtkDesktop *d = ui->gtk;
-    if (ui->video) ui->video->pixels_only = true;
+    if (ui->video) {
+        ui->video->pixels_only = true;
+        ui->video->viewport_size = shader_viewport;
+        ui->video->viewport_context = d;
+    }
     theme(d);
-    size_t recent = frontend_session_recent_count(ui->sessions ? ui->sessions->session : ui->idle_session);
+    const FrontendSession *recent_session = ui->sessions ? ui->sessions->session : ui->idle_session;
+    size_t recent = frontend_session_recent_count(recent_session);
+    uint64_t recent_revision = recent_session ? recent_session->recent_revision : 0;
+    const FrontendBindingProfile *profile = frontend_settings_active_profile_const(ui->settings);
+    FrontendHostBinding shortcuts[FRONTEND_SHORTCUT_COUNT] = {0};
+    if (profile) {
+        memcpy(shortcuts, profile->shortcuts, sizeof(shortcuts));
+    }
     bool session = frontend_panel_session_active();
+    bool paused = (ui->execution && frontend_execution_paused(ui->execution)) || !g_strcmp0(state, "Paused");
+    bool running = session && !paused;
+    if (d->animations && d->animations_running != running) {
+        d->animations_running = running;
+        g_object_set(gtk_settings_get_default(), "gtk-enable-animations", !running, NULL);
+    }
     if (!d->actions || d->commands != frontend_command_count() || d->panels != frontend_panel_count() ||
-        d->session != session || d->recent != recent) {
+        d->session != session || d->recent != recent || d->recent_session != recent_session ||
+        d->recent_revision != recent_revision || memcmp(d->shortcuts, shortcuts, sizeof(shortcuts))) {
         d->commands = frontend_command_count();
         d->panels = frontend_panel_count();
         d->session = session;
         d->recent = recent;
+        d->recent_session = recent_session;
+        d->recent_revision = recent_revision;
+        memcpy(d->shortcuts, shortcuts, sizeof(shortcuts));
         rebuild_menus(d);
     }
     if (d->fullscreen != ui->settings->fullscreen) {
@@ -1052,16 +1270,37 @@ void cupid_gtk_render(FrontendDesktopUi *ui, const char *title, const char *regi
     if (g_strcmp0(gtk_window_get_title(GTK_WINDOW(d->window)), caption)) {
         gtk_window_set_title(GTK_WINDOW(d->window), caption);
     }
-    g_snprintf(caption, sizeof(caption), "%s%s%s%s%s", state ? state : "Ready", region ? " | " : "",
-               region ? region : "", ui->status[0] ? " | " : "", ui->status);
-    if (ui->settings->show_fps) {
-        size_t n = strlen(caption);
-        g_snprintf(caption + n, sizeof(caption) - n, " | %.1f fps", ui->fps);
+    if (desktop_status_active(ui, SDL_GetTicks())) {
+        g_strlcpy(caption, ui->status, sizeof(caption));
+    } else {
+        g_snprintf(caption, sizeof(caption), "%s%s%s%s%s", state ? state : "Ready", region ? " | " : "",
+                   region ? region : "", ui->capture && ui->capture->session.info.recording ? " | Recording" : "",
+                   ui->execution && nes_movie_mode(ui->execution->movie) != NES_MOVIE_IDLE ? " | Movie active" : "");
     }
     if (strcmp(gtk_label_get_text(GTK_LABEL(d->status)), caption)) {
         gtk_label_set_text(GTK_LABEL(d->status), caption);
+        gtk_widget_set_tooltip_text(d->status, caption);
+    }
+    caption[0] = 0;
+    if (session) g_snprintf(caption, sizeof(caption), "Slot %u", ui->settings->state_slot + 1u);
+    if (ui->settings->show_fps && session) {
+        size_t n = strlen(caption);
+        if (paused) {
+            g_snprintf(caption + n, sizeof(caption) - n, " | FPS paused");
+        } else {
+            g_snprintf(caption + n, sizeof(caption) - n, " | %.1f fps", ui->fps);
+        }
+    }
+    if (strcmp(gtk_label_get_text(GTK_LABEL(d->status_info)), caption)) {
+        gtk_label_set_text(GTK_LABEL(d->status_info), caption);
     }
     for (CupidGtkTool *t = d->tools; t; t = t->next) {
+        if (gtk_widget_get_visible(t->window) && t->ui.status[0] && !desktop_status_active(&t->ui, SDL_GetTicks())) {
+            t->ui.status[0] = 0;
+            cupid_gtk_set_label(t->status, "");
+        }
+        if (t->kind == 1 && t->id == HISTORY_PANEL && gtk_widget_get_visible(t->window))
+            cupid_gtk_history_refresh(t->content);
         if (t->kind == 1 && t->id == TAS_PANEL && gtk_widget_get_visible(t->window)) {
             cupid_gtk_tas_video(t->content);
         }
@@ -1069,10 +1308,20 @@ void cupid_gtk_render(FrontendDesktopUi *ui, const char *title, const char *regi
     if (SDL_GetTicks() - d->refreshed >= 100) {
         d->refreshed = SDL_GetTicks();
         sync_actions(d);
-        for (CupidGtkTool *t = d->tools; t; t = t->next) {
-            if (!gtk_widget_get_visible(t->window)) {
+    }
+    /* Spread live tools over frames instead of refreshing every open window
+     * in one periodic burst. Round-robin order also serves large tool sets. */
+    CupidGtkTool *start = d->refresh_next ? d->refresh_next : d->tools;
+    if (start) {
+        CupidGtkTool *t = start;
+        do {
+            CupidGtkTool *next = t->next ? t->next : d->tools;
+            if (!gtk_widget_get_visible(t->window) || SDL_GetTicks() - t->refreshed < 100) {
+                t = next;
                 continue;
             }
+            t->refreshed = SDL_GetTicks();
+            d->refresh_next = next;
             t->ui.audio = ui->audio;
             t->ui.video = ui->video;
             t->ui.capture = ui->capture;
@@ -1086,6 +1335,8 @@ void cupid_gtk_render(FrontendDesktopUi *ui, const char *title, const char *regi
                 cupid_gtk_ppu_refresh(t->content);
             } else if (t->kind == 1 && t->id == ASSEMBLER_FRONTEND_PANEL) {
                 cupid_gtk_assembler_refresh(t->content);
+            } else if (t->kind == 1 && t->id == HISTORY_PANEL) {
+                cupid_gtk_history_refresh(t->content);
             } else if (t->kind == 1 && t->id == TAS_PANEL) {
                 cupid_gtk_tas_refresh(t->content);
             } else if (t->kind == 1) {
@@ -1094,10 +1345,11 @@ void cupid_gtk_render(FrontendDesktopUi *ui, const char *title, const char *regi
                 refresh_information(t);
             }
             if (t->ui.status[0]) {
-                gtk_label_set_text(GTK_LABEL(t->status), t->ui.status);
+                cupid_gtk_set_label(t->status, t->ui.status);
             }
             prompt_open(t);
-        }
+            break;
+        } while (t != start);
     }
     cupid_gtk_dispatch();
 }
@@ -1125,20 +1377,32 @@ bool cupid_gtk_captured(const FrontendDesktopUi *ui) {
     return false;
 }
 
+static bool group_active(GtkWindowGroup *group) {
+    GList *windows = gtk_window_group_list_windows(group);
+    bool active = false;
+    for (GList *window = windows; window; window = window->next) {
+        active |= gtk_window_is_active(GTK_WINDOW(window->data));
+    }
+    g_list_free(windows);
+    return active;
+}
+
 void cupid_gtk_activity(FrontendDesktopUi *ui) {
     if (!ui->execution) {
         return;
     }
     CupidGtkDesktop *d = ui->gtk;
-    bool focused = gtk_window_is_active(GTK_WINDOW(d->window)), modal = false;
+    bool focused = group_active(d->window_group), modal = false;
     for (CupidGtkTool *t = d->tools; t; t = t->next) {
         if (gtk_widget_get_visible(t->window)) {
-            focused |= gtk_window_is_active(GTK_WINDOW(t->window));
-            modal |= t->kind == 0;
+            bool active = group_active(t->window_group);
+            focused |= active;
+            modal |= t->kind == 0 && active;
         }
     }
     unsigned reasons = ui->execution->suspend_reasons & ~(FRONTEND_SUSPEND_UI | FRONTEND_SUSPEND_FOCUS);
-    if (!focused && ui->settings->pause_on_focus_loss) {
+    if ((!focused && ui->settings->pause_on_focus_loss) ||
+        (!gtk_window_is_active(GTK_WINDOW(d->window)) && ui->settings->pause_on_main_focus_loss)) {
         reasons |= FRONTEND_SUSPEND_FOCUS;
     }
     if (modal && ui->settings->pause_on_ui) {
@@ -1181,7 +1445,8 @@ bool cupid_gtk_event(FrontendDesktopUi *ui, const SDL_Event *event) {
         }
     }
     for (CupidGtkTool *t = ui->gtk->tools; t; t = t->next) {
-        if (t->ui.capture_binding && event->type == SDL_CONTROLLERBUTTONDOWN) {
+        if (t->ui.capture_binding && gtk_widget_get_visible(t->window) && group_active(t->window_group) &&
+            event->type == SDL_CONTROLLERBUTTONDOWN) {
             desktop_binding_gamepad(&t->ui, (SDL_GameControllerButton)event->cbutton.button);
             return true;
         }
@@ -1203,8 +1468,15 @@ void cupid_gtk_save_size(FrontendDesktopUi *ui) {
 
 void cupid_gtk_shutdown(FrontendDesktopUi *ui) {
     CupidGtkDesktop *d = ui->gtk;
+    if (d->animations_running) {
+        g_object_set(gtk_settings_get_default(), "gtk-enable-animations", d->animations, NULL);
+    }
     cupid_gtk_native_video_destroy(d);
-    if (ui->video) ui->video->pixels_only = false;
+    if (ui->video) {
+        ui->video->pixels_only = false;
+        ui->video->viewport_size = NULL;
+        ui->video->viewport_context = NULL;
+    }
     cupid_gtk_files_shutdown();
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, d->joystick_background ? "1" : "0");
     release_keys(d);
@@ -1212,10 +1484,12 @@ void cupid_gtk_shutdown(FrontendDesktopUi *ui) {
         CupidGtkTool *t = d->tools;
         d->tools = t->next;
         gtk_window_destroy(GTK_WINDOW(t->window));
+        g_clear_object(&t->window_group);
         desktop_tas_destroy(&t->ui);
         g_free(t);
     }
     gtk_window_destroy(GTK_WINDOW(d->window));
+    g_clear_object(&d->window_group);
     if (d->frame) {
         cairo_surface_destroy(d->frame);
     }

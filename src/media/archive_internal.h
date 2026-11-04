@@ -30,6 +30,7 @@ void *archive_allocate(ArchiveBudget *budget, size_t size);
 void *archive_reallocate(ArchiveBudget *budget, void *address, size_t size);
 void archive_deallocate(ArchiveBudget *budget, void *address);
 NesMediaResult archive_budget_result(const ArchiveBudget *budget);
+bool archive_has_signature(const uint8_t *data, size_t size);
 bool archive_supported_name(const char *name);
 bool archive_valid_utf8(const char *name);
 char *archive_utf16_name(const uint16_t *name, size_t units);

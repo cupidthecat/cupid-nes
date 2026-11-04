@@ -80,6 +80,25 @@ NesMediaResult archive_budget_result(const ArchiveBudget *budget) {
          : budget->allocation_failed ? NES_MEDIA_OUT_OF_MEMORY : NES_MEDIA_INVALID;
 }
 
+static bool zip_signature(const uint8_t *data, size_t size) {
+    if (!data || size < 4 || data[0] != 'P' || data[1] != 'K') {
+        return false;
+    }
+
+    return (data[2] == 0x03 && data[3] == 0x04)
+        || (data[2] == 0x05 && data[3] == 0x06)
+        || (data[2] == 0x06 && data[3] == 0x06)
+        || (data[2] == 0x07 && data[3] == 0x08);
+}
+
+static bool seven_zip_signature(const uint8_t *data, size_t size) {
+    return data && size >= 6 && !memcmp(data, "7z\xbc\xaf\x27\x1c", 6);
+}
+
+bool archive_has_signature(const uint8_t *data, size_t size) {
+    return zip_signature(data, size) || seven_zip_signature(data, size);
+}
+
 bool archive_supported_name(const char *name) {
     static const char *const extensions[] = {".nes", ".unf", ".unif", ".nsf", ".nsfe", ".fds", ".qd", ".stbx", ".bin"};
     const char *extension = strrchr(name, '.');
@@ -318,9 +337,9 @@ NesMediaResult archive_add_entry(ArchiveReader *reader, const char *name, size_t
 NesMediaResult archive_open(const uint8_t *data, size_t size, ArchiveReader *reader) {
     memset(reader, 0, sizeof(*reader));
     NesMediaResult result;
-    if (size >= 4 && !memcmp(data, "PK", 2)) {
+    if (zip_signature(data, size)) {
         result = archive_open_zip(data, size, reader);
-    } else if (size >= 6 && !memcmp(data, "7z\xbc\xaf\x27\x1c", 6)) {
+    } else if (seven_zip_signature(data, size)) {
         result = archive_open_7z(data, size, reader);
     } else {
         return NES_MEDIA_UNSUPPORTED;

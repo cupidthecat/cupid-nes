@@ -82,6 +82,7 @@ typedef struct FrontendDesktopUi {
     int settings_category;
     int settings_row;
     int settings_scroll;
+    uint8_t settings_input_changes;
     unsigned settings_player;
     unsigned capture_index;
     unsigned panel_id;
@@ -101,6 +102,10 @@ FrontendIdleResult frontend_desktop_idle_open(FrontendSettings *settings,
                                               SDL_Window **window,
                                               SDL_Renderer **renderer,
                                               char *error, size_t error_size);
+SDL_Renderer *frontend_desktop_create_renderer(SDL_Window *window, Uint32 flags);
+/* Call before initializing SDL video for the native GTK desktop. */
+void frontend_desktop_prepare_video(void);
+void frontend_desktop_destroy_renderer(SDL_Window *window, SDL_Renderer *renderer);
 void frontend_desktop_init(FrontendDesktopUi *ui, SDL_Window *window,
                            SDL_Renderer *renderer, FrontendSettings *settings,
                            FrontendExecutionRuntime *execution,

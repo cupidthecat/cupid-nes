@@ -21,6 +21,13 @@ static NesInputEventObserver active_observer;
 static void *active_observer_userdata;
 static unsigned injection_depth;
 static unsigned suppression_depth;
+static void (*passive_listener)(const NesInputEvent *, void *);
+static void *listener_userdata;
+
+void nes_input_event_set_listener(void (*listener)(const NesInputEvent *, void *), void *userdata) {
+    passive_listener = listener;
+    listener_userdata = userdata;
+}
 
 void nes_input_event_set_observer(NesInputEventObserver observer, void *userdata) {
     active_observer = observer;
@@ -34,8 +41,10 @@ void nes_input_event_clear_observer(void) {
 
 bool nes_input_event_submit(const NesInputEvent *event) {
     if (!event) return false;
-    if (injection_depth || suppression_depth || !active_observer) return true;
-    return active_observer(event, active_observer_userdata);
+    if (injection_depth || suppression_depth) return true;
+    if (active_observer && !active_observer(event, active_observer_userdata)) return false;
+    if (passive_listener) passive_listener(event, listener_userdata);
+    return true;
 }
 
 void nes_input_event_suppress_begin(void) { ++suppression_depth; }

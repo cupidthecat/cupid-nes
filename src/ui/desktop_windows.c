@@ -256,13 +256,14 @@ void frontend_desktop_update_activity(FrontendDesktopUi *ui) {
     for (FrontendDesktopUi *tool = ui->tools; tool; tool = tool->next) {
         focused |= tool->focused;
         /* Inspection tools are modeless, including their editable controls. */
-        modal |= tool->settings_open;
+        modal |= tool->settings_open && tool->focused;
     }
     unsigned reasons = ui->execution->suspend_reasons & ~(FRONTEND_SUSPEND_UI | FRONTEND_SUSPEND_FOCUS);
     if (modal && ui->settings->pause_on_ui) {
         reasons |= FRONTEND_SUSPEND_UI;
     }
-    if (!focused && ui->settings->pause_on_focus_loss) {
+    if ((!focused && ui->settings->pause_on_focus_loss) ||
+        (!ui->focused && ui->settings->pause_on_main_focus_loss)) {
         reasons |= FRONTEND_SUSPEND_FOCUS;
     }
     frontend_execution_set_suspension(ui->execution, reasons);

@@ -145,15 +145,7 @@ NesReplayResult nes_history_resume(NesRewindHistory *history, size_t index, NesS
     if (result != NES_STATE_OK) {
         return NES_REPLAY_STATE_ERROR;
     }
-    while (history->count > index) {
-        NesStateBlob *last = &history->entries[(history->head + history->count - 1) % history->capacity];
-        history->total_bytes -= last->size;
-        nes_state_blob_free(last);
-        --history->count;
-    }
-    if (!history->count) {
-        history->head = 0;
-    }
+    nes_rewind_truncate(history, index);
     nes_runahead_clear_presented_frame();
     nes_video_trace_reset_side(0);
     nes_video_trace_reset_side(1);

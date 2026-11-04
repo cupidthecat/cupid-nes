@@ -71,18 +71,26 @@ void frontend_presentation_host_reset(FrontendPresentationHost *host) {
 }
 
 bool frontend_presentation_host_record(FrontendPresentationHost *host, uint64_t emulation_start, uint64_t render_start,
-                                       uint64_t present_start, uint64_t present_end, uint64_t pacing_end) {
-    if (!host || !host->frequency || emulation_start > render_start || render_start > present_start ||
-        present_start > present_end || present_end > pacing_end) {
+                                       uint64_t wait_start, uint64_t present_start, uint64_t present_end,
+                                       uint64_t pacing_end) {
+    if (!host || !host->frequency || emulation_start > render_start || render_start > wait_start ||
+        wait_start > present_start || present_start > present_end || present_end > pacing_end) {
         return false;
     }
     NesHostFrameSample sample = {0};
-    uint64_t boundaries[] = {emulation_start, render_start, present_start, present_end, pacing_end};
-    for (unsigned i = 0; i < 4; ++i) {
-        sample.milliseconds[i] = nes_frame_timing_elapsed(boundaries[i], boundaries[i + 1], host->frequency);
-    }
+    sample.milliseconds[NES_HOST_EMULATION] = nes_frame_timing_elapsed(emulation_start, render_start, host->frequency);
+    sample.milliseconds[NES_HOST_RENDER] = nes_frame_timing_elapsed(render_start, wait_start, host->frequency);
+    sample.milliseconds[NES_HOST_PRESENT] = nes_frame_timing_elapsed(present_start, present_end, host->frequency);
+    sample.milliseconds[NES_HOST_PACING] = nes_frame_timing_elapsed(wait_start, present_start, host->frequency) +
+                                           nes_frame_timing_elapsed(present_end, pacing_end, host->frequency);
     uint64_t begin = host->previous_end && host->previous_end <= pacing_end ? host->previous_end : emulation_start;
     sample.milliseconds[NES_HOST_INTERVAL] = nes_frame_timing_elapsed(begin, pacing_end, host->frequency);
     host->previous_end = pacing_end;
+    NesAudioOutputStats audio;
+    if (host->audio && nes_audio_output_stats(host->audio->output, &audio)) {
+        sample.audio_available = true;
+        sample.audio_queue_ms = audio.queue_ms;
+        sample.audio_underruns = audio.underruns;
+    }
     return nes_frame_timing_push(&host->timing.timing, &sample);
 }

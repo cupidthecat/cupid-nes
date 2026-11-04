@@ -438,6 +438,10 @@ bool debugger_assemble_program(uint16_t address, const char *source, DebugAssemb
             snprintf(instruction, sizeof(instruction), "%s", p);
             /* Resolve a bare operand symbol, including indexed and indirect forms.
              * Immediate label expressions are deliberately unsupported. */
+            char mnemonic[4] = {0};
+            for (unsigned i = 0; i < 3 && p[i]; ++i) {
+                mnemonic[i] = (char)toupper((unsigned char)p[i]);
+            }
             const char *operand = p;
             while (isalpha((unsigned char)*operand)) {
                 ++operand;
@@ -448,7 +452,8 @@ bool debugger_assemble_program(uint16_t address, const char *source, DebugAssemb
                 skip_space(&operand);
             }
             if (symbol_start((unsigned char)*operand) &&
-                !(toupper((unsigned char)*operand) == 'A' && end_of_line(operand + 1))) {
+                !(toupper((unsigned char)*operand) == 'A' && end_of_line(operand + 1) &&
+                  opcode_for(mnemonic, ACC) >= 0)) {
                 const char *tail = operand;
                 while (symbol_char((unsigned char)*tail)) {
                     ++tail;
@@ -468,10 +473,6 @@ bool debugger_assemble_program(uint16_t address, const char *source, DebugAssemb
                     }
                     value = labels[i].address;
                 } else {
-                    char mnemonic[4] = {0};
-                    for (unsigned i = 0; i < 3 && p[i]; ++i) {
-                        mnemonic[i] = (char)toupper((unsigned char)p[i]);
-                    }
                     if (opcode_for(mnemonic, REL) >= 0) {
                         value = (uint16_t)(address + used + 2);
                     }

@@ -297,6 +297,10 @@ NesHdFrontend *nes_hd_frontend_create(NesHdRuntime *runtime,
     return frontend;
 }
 
+bool nes_hd_frontend_capture_armed(const NesHdFrontend *frontend) {
+    return frontend && frontend->capture_armed;
+}
+
 void nes_hd_frontend_set_capture_source(NesHdFrontend *frontend,
                                         const NesHdFrameSource *source) {
     if (!frontend) return;

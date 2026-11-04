@@ -114,6 +114,9 @@ static void remember_request(FrontendSession *session, const FrontendImageReques
         }
     }
     if (found < session->recent_count) {
+        if (found) {
+            ++session->recent_revision;
+        }
         FrontendImageRequest saved = session->recent[found];
         memmove(&session->recent[1], &session->recent[0], found * sizeof(session->recent[0]));
         session->recent[0] = saved;
@@ -123,6 +126,7 @@ static void remember_request(FrontendSession *session, const FrontendImageReques
         ? session->recent_count : FRONTEND_RECENT_MAX - 1;
     memmove(&session->recent[1], &session->recent[0], move_count * sizeof(session->recent[0]));
     session->recent[0] = *request;
+    ++session->recent_revision;
     if (session->recent_count < FRONTEND_RECENT_MAX) ++session->recent_count;
 }
 
@@ -195,7 +199,10 @@ const FrontendImageRequest *frontend_session_recent(const FrontendSession *sessi
 void frontend_session_trim_recent(FrontendSession *session, size_t limit) {
     if (!session) return;
     if (limit > FRONTEND_RECENT_MAX) limit = FRONTEND_RECENT_MAX;
-    if (session->recent_count > limit) session->recent_count = limit;
+    if (session->recent_count > limit) {
+        session->recent_count = limit;
+        ++session->recent_revision;
+    }
 }
 
 static bool encode_field(const char *source, char *dst, size_t capacity, size_t *used) {
@@ -339,6 +346,9 @@ bool frontend_session_load_recent(FrontendSession *session, const char *path,
     size_t size = 0;
     NesFileResult result = nes_file_read_all(path, RECENT_FILE_LIMIT, &data, &size);
     if (result == NES_FILE_NOT_FOUND) {
+        if (session->recent_count) {
+            ++session->recent_revision;
+        }
         session->recent_count = 0;
         if (error && error_size) error[0] = '\0';
         return true;
@@ -399,6 +409,7 @@ bool frontend_session_load_recent(FrontendSession *session, const char *path,
     }
     memcpy(session->recent, parsed, parsed_count * sizeof(parsed[0]));
     session->recent_count = parsed_count;
+    ++session->recent_revision;
     if (error && error_size) error[0] = '\0';
     return true;
 }

@@ -361,6 +361,18 @@ PPU *vs_side_ppu(unsigned side) {
     return side == 1 && vs_dual_system() ? &vs.sub_ppu.state : NULL;
 }
 
+unsigned vs_audio_available(void) {
+    unsigned available = APU_RING_CAP - 1;
+    unsigned machines = vs_dual_system() ? 2 : 1;
+    for (unsigned side = 0; side < machines; ++side) {
+        const APU *a = vs_side_apu(side);
+        unsigned count = (atomic_load_explicit(&a->ring_w, memory_order_acquire)
+            - atomic_load_explicit(&a->ring_r, memory_order_acquire)) & (APU_RING_CAP - 1);
+        if (count < available) available = count;
+    }
+    return available;
+}
+
 void vs_audio_init(int sample_rate) {
     apu_audio_init_state(vs_side_apu(0), sample_rate);
     apu_audio_init_state(vs_side_apu(1), sample_rate);

@@ -11,14 +11,29 @@ Launch Cupid without an image to open the startup window. Use Open, press
 Ctrl+O, drop a game image, or select a recent entry. Recent entries retain the
 archive member, patch, firmware selection, and save identity needed to reopen
 that image. A failed replacement leaves the current machine available.
+The recent-games menu updates when entries move or replace an older entry,
+including when the list has reached its limit.
 
 The top menu bar contains File, Emulation, View, Audio, Media, Tools, and Help.
 A compact icon toolbar below it provides Open, Pause/Resume, Frame advance,
 Reset, and Settings. Hover over a button to see its name.
 Commands are grouped into native submenus. Keyboard navigation, focus, text
-selection, and scrolling use GTK controls. The main status bar shows the region,
-execution state, and recent action message. Netplay supplies its connection
-status while listening or connected.
+selection, and scrolling use GTK controls. The main status bar shows the region
+and execution state, including recording and active input movies. A recent action
+message appears for six seconds, then the bar returns to the current session
+status. Netplay supplies its connection status while listening or connected.
+The selected quick-state slot and optional FPS counter remain visible beside
+messages. Long messages shorten to fit the window; hover to read the full text.
+Successful tool actions clear a preceding temporary error before the panel shows
+its current result. Temporary tool messages also expire after six seconds.
+
+File > Save states > Save State File and Load State File open native file choosers. F5 and F6
+use the selected quick slot; Ctrl+F5 and Ctrl+F6 choose a named state file.
+Tool-panel file pickers use the file type's title and filters, with an All files
+option. Filters accept uppercase and mixed-case extensions. Choosers start from
+the stored path when one is available; Save also restores its filename.
+Canceling a chooser keeps the current path. A chooser opened from an active
+tool belongs to that tool's window.
 
 The startup screen, menus, settings, feature panels, palette editor, and text
 entry use GTK4. On Windows, the light/dark appearance follows the system
@@ -29,10 +44,16 @@ Short tasks use compact forms. Longer tools use tabs or scroll their controls.
 ![Desktop](images/desktop-main.png)
 
 Settings, game information, the palette editor, and feature panels open in separate native windows.
+Each window has normal stacking and its own dialog input group. A tool window
+does not stay above the emulator, and its dialogs only block that tool.
 Use the operating system's window frame to close or resize them, or drag the title bar to move them beside the game or onto another display.
 Opening a debugger or inspection tool leaves emulation running. A breakpoint,
 Pause, or a stepping command can still stop it. Moving focus between Cupid
-windows does not trigger the pause-on-focus-loss preference. Tool status areas
+windows does not trigger Pause when leaving Cupid. Enable General > Focus >
+Pause when leaving main window to pause when you switch to a tool or another
+application. This option is off by default. Pause while using Settings applies
+while Settings has focus; returning to the game releases that automatic pause.
+Tool status areas
 show selection details, validation failures, and the result of the last action.
 
 File controls in tool windows also open native choosers. Scripts, cheat files,
@@ -85,6 +106,10 @@ Overscan uses a row for each region and a column for each edge. The audio mixers
 place volume and pan beside each channel. Controller mapping pairs keyboard and
 gamepad bindings on the same row. If Apply finds an invalid value on another
 tab, it opens that tab and focuses the field without applying the pending edits.
+Shortcut labels in the menus follow the active bindings. Shifted keys use the
+same underlying key during binding capture and gameplay. Disconnecting a
+controller releases its held fast-forward and rewind actions, including after
+a binding change.
 
 ![Video settings](images/desktop-category-2.png)
 Numeric fields accept values such as 1.25 for speed or 44100 for sample rate.
@@ -221,10 +246,12 @@ editor with an error beside the input. Load cheat file, Save cheat file, and
 Load Lua Script open file choosers. Canceling a chooser leaves the active
 cheats or script unchanged.
 
-View > Palette > Palette editor (F7) opens a separate window with all 64 colors. Select a swatch, drag an RGB
-slider, or use its minus/plus buttons. Load palette opens a `.pal` file; Reset
-palette restores the default colors. Ctrl+V accepts palette text while the
-editor is open. Escape or Close returns to the game.
+View > Palette > Palette editor (F7) opens a separate window with all 64 colors.
+The grid sits above two expanding control groups. Select a swatch or enter its
+index, choose a color with the color button, then press Apply color. Undo last
+edit restores the preceding colors. Import PAL and Export PAL read and write
+`.pal` files containing 64 RGB colors or eight emphasis tables. Restore default
+palette returns to the built-in colors. These edits affect displayed colors.
 
 ![Debugger in its own window](images/desktop-debugger-window.png)
 
@@ -233,8 +260,10 @@ editor is open. Escape or Close returns to the game.
 Settings and menus follow the pause-on-UI preference. This automatic pause is
 separate from manual pause, so closing a window or returning from another app
 does not undo a manual pause. Returning to the game resets its pacing deadline
-and audio output buffer. Selecting a speed ends held or toggled fast-forward;
-VSync is suspended at speeds other than 100%. Tool windows refresh at most
+and audio output buffer. Selecting a speed ends held or toggled fast-forward.
+The native desktop leaves synchronization to the desktop compositor. Its VSync
+setting is labeled as managed by the desktop and cannot be changed. The SDL
+frontend suspends VSync at speeds other than 100%. Tool windows refresh at most
 30 times per second and do not wait for VSync.
 
 Rewind snapshots lock audio state briefly without pausing and restarting the

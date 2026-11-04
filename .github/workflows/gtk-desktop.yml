@@ -12,18 +12,62 @@ jobs:
   linux-gtk:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    env:
+      GDK_BACKEND: x11
+      SDL_VIDEODRIVER: x11
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install GTK development dependencies
-        run: sudo apt-get update && sudo apt-get install -y build-essential libgtk-4-dev libsdl2-dev libcurl4-openssl-dev xvfb
+        run: sudo apt-get update && sudo apt-get install -y build-essential libgtk-4-dev libsdl2-dev libcurl4-openssl-dev xvfb weston
       - name: Build production GTK desktop
         run: make -j2 GTK=1 BUILD_REVISION=${{ github.sha }} all gtk-smoke
       - name: Validate GTK settings transactions under Xvfb
         run: xvfb-run -a env GSK_RENDERER=cairo G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-settings-test
       - name: Exercise GTK desktop under Xvfb
         run: xvfb-run -a env GSK_RENDERER=cairo G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke build/gtk-smoke
+      - name: Check native history navigation and playback
+        run: |
+          xvfb-run -a env GSK_RENDERER=cairo G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke --history-check
+          xvfb-run -a env GSK_RENDERER=gl G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke --history-check
+      - name: Check save-state dialogs and status refresh with accelerated compositors
+        run: |
+          xvfb-run -a env GSK_RENDERER=gl G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke --session-ui-check
+          xvfb-run -a env GSK_RENDERER=ngl G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke --session-ui-check
+          xvfb-run -a env GSK_RENDERER=ngl GDK_SCALE=2 G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke --session-ui-check
+      - name: Check Linux software and accelerated frame pixels
+        run: |
+          xvfb-run -a env GSK_RENDERER=cairo G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke --native-video-check
+          xvfb-run -a env GSK_RENDERER=gl G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke --native-video-check
+          xvfb-run -a env GSK_RENDERER=ngl SDL_RENDER_DRIVER=opengl SDL_FRAMEBUFFER_ACCELERATION=1 G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke --native-video-check
+          xvfb-run -a env -u GSK_RENDERER G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke --startup-check
+      - name: Check production Linux launch with conflicting driver hints
+        run: |
+          xvfb-run -a env GSK_RENDERER=ngl SDL_RENDER_DRIVER=opengl SDL_FRAMEBUFFER_ACCELERATION=1 G_DEBUG=fatal-criticals python3 scripts/check-gtk-launch.py ./cupid-nes
+          xvfb-run -a env -u GSK_RENDERER SDL_RENDER_DRIVER=opengl SDL_FRAMEBUFFER_ACCELERATION=1 G_DEBUG=fatal-criticals python3 scripts/check-gtk-launch.py ./cupid-nes
+      - name: Check palette layout, popup dismissal and hover styling
+        run: xvfb-run -a env GSK_RENDERER=cairo SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke --palette-check
+      - name: Check independent tool windows and dialog input groups
+        run: xvfb-run -a env GSK_RENDERER=cairo SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke --windows-check
+      - name: Check native Wayland startup
+        run: |
+          export XDG_RUNTIME_DIR=$(mktemp -d)
+          weston --backend=headless-backend.so --socket=cupid-wayland --idle-time=0 > build/weston.log 2>&1 &
+          weston_pid=$!
+          trap 'kill "$weston_pid"; rm -rf "$XDG_RUNTIME_DIR"' EXIT
+          for attempt in $(seq 1 50); do
+            test -S "$XDG_RUNTIME_DIR/cupid-wayland" && break
+            sleep 0.1
+          done
+          test -S "$XDG_RUNTIME_DIR/cupid-wayland"
+          WAYLAND_DISPLAY=cupid-wayland GSK_RENDERER=cairo G_DEBUG=fatal-criticals SDL_VIDEO_WAYLAND_ALLOW_LIBDECOR=1 python3 scripts/check-gtk-launch.py ./cupid-nes --backend wayland
+      - name: Check Linux TAS grid pixels and playback following
+        run: |
+          xvfb-run -a env GSK_RENDERER=cairo G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke --tas-video-check
+          xvfb-run -a env GSK_RENDERER=gl G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke --tas-video-check
+          xvfb-run -a env GSK_RENDERER=ngl G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke --tas-video-check
+          xvfb-run -a env GSK_RENDERER=ngl GDK_SCALE=2 G_DEBUG=fatal-criticals SDL_AUDIODRIVER=dummy ./build/gtk-ui-smoke --tas-video-check
       - name: Package Linux preview
         run: python3 scripts/package-gtk-linux.py --executable cupid-nes --revision '${{ github.sha }}'
       - name: Verify extracted Linux desktop

@@ -4,6 +4,20 @@
 
 Cupid prints loader, SDL, persistence, and option errors to the terminal that launched it. Keep that output when diagnosing a failure because the final `Failed to load ROM` line is often preceded by the more specific cause.
 
+## State dialogs and status messages
+
+Load a game before using the save-state commands. Save State File and Load State
+File in File > Save states, or Ctrl+F5 and Ctrl+F6, open file choosers. F5 and F6 use the selected
+quick slot. In Tools > Save States, Save state file and Load state file use the
+displayed path; Choose save destination and Choose existing state change it.
+Cancel leaves the path and current machine unchanged.
+
+Recent action messages expire after six seconds. The main bar then shows the
+current execution or connection status. The selected slot and enabled FPS counter
+remain visible during messages. Hover over shortened text to read it in full;
+Help > Recent messages keeps the message history. A tool-panel error clears after
+a successful action, so it cannot hide that action's result.
+
 ## Linux build errors
 
 If compilation fails because `SDL2/SDL.h` or the SDL2 library cannot be found, install the development package and rebuild:
@@ -55,9 +69,34 @@ frame. A machine that cannot run the core fast enough can still fall behind.
 Open **Tools > Picture, sound and timing > Frame Timing Statistics** to compare
 the emulation rate with the display draw rate. High jitter or a large maximum frame
 interval can explain choppy motion even when average FPS is near the target.
+The audio row shows queued playback time and underrun callbacks. Playback
+prefills a reservoir before starting or resuming sound and after an underrun.
+The target holds at least 60 ms after one device block, or two blocks for very
+large device buffers. This adds audio latency in exchange for surviving brief
+stalls. Host resampling follows small device-clock differences without changing
+recorded audio or emulated timing. Sustained CPU slowdown can still exhaust it.
+On Linux, check the CPU power policy if core time spikes in both windowed and
+fullscreen modes; reducing display size cannot fix a core that misses its budget.
+
 The draw row counts new images drawn by the game viewport. It does not measure
 the monitor's refresh rate. Pending GTK work is serviced during frame waits;
-the high-resolution clock controls when the next emulated frame starts.
+the high-resolution clock schedules image submission after emulation and filters
+finish. The status-bar FPS counter averages 60 completed frame intervals to
+avoid fluctuations from partial frames in short sampling windows. For individual
+stalls, use the timing panel's jitter, p95, and maximum interval values.
+
+Settings pauses gameplay by default. The FPS bar says **FPS paused** while
+execution is suspended, including while a recent action message occupies the
+main status field. To keep playing while changing options, turn off **Pause
+while using Settings** under Settings > General and apply the change. Focus-loss pause
+is a separate preference. Opening a complex window for the first time or applying
+an option that reopens a device can still cause a brief interruption.
+
+If an FM2 runs at normal speed until the TAS editor opens, update to a build
+with the playback-following fix. Older builds could keep starting scroll
+animations while the movie advanced, repeatedly redrawing the input grid.
+Current builds move the grid directly and reuse its drawing between changes.
+The live preview keeps updating alongside the game.
 
 Open Game Information and check **Video renderer**. On Windows, Cupid uses an
 accelerated SDL game viewport, preferring Direct3D 11. GTK can continue to use
@@ -74,6 +113,10 @@ produce black borders around windows with GL or Vulkan, so Cupid does not
 enable it automatically.
 
 Existing `GDK_DEBUG` and `GSK_RENDERER` environment overrides are preserved.
+On Linux, GTK selects the renderer for both the game and desktop widgets.
+With GTK 4.10 or later, the Cairo path prepares a software image and accelerated
+renderers prepare a texture. Each path retains its submitted image while GTK
+finishes drawing it. GTK 4.8 uses the Cairo drawing path for the game.
 If windows have thick black outer margins, remove `dcomp` from `GDK_DEBUG`
 and restart Cupid. This affects the native window surface, so changing widget
 border styles does not fix it.
@@ -142,6 +185,26 @@ An EPSM cartridge does not require the file to start. Without it, Cupid reports 
 ## SDL window or renderer errors
 
 `SDL_Init Error`, `SDL_CreateWindow Error`, `SDL_CreateRenderer Error`, and `SDL_CreateTexture Error` come from SDL setup before emulation starts. On Linux, confirm a working graphical session and SDL2 installation. On Windows, make sure the `SDL2.dll` copied by the build script remains beside `cupid-nes.exe` and that the executable is running in a desktop session with a usable graphics driver.
+
+## Linux launch stops at a graphics-context warning
+
+`gdk_gl_context_make_current() failed` means GTK could not activate its graphics
+context. GTK builds use an offscreen software SDL surface for the hidden input
+host on X11 and Wayland. The surface avoids a native window framebuffer and a
+competing OpenGL context. This selection also applies when `SDL_RENDER_DRIVER=opengl` or
+`SDL_FRAMEBUFFER_ACCELERATION=1` is set. The visible game view still follows
+GTK's renderer selection.
+
+The GTK desktop disables libdecor for its hidden SDL host before SDL video
+starts. Some libdecor decoration plugins load GTK 3, which conflicts with
+Cupid's GTK 4 types and prevents startup. GTK draws the visible window's
+decorations independently.
+
+If the warning persists with a current build, try `GSK_RENDERER=cairo cupid-nes`
+and include the GTK version, graphics driver, renderer environment variables,
+and complete launch log in the report. An SDL shader uses its own context;
+Cupid releases and restores GTK's context around shader operations, including
+a rejected preset reload.
 
 ## Controller is ignored
 

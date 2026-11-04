@@ -18,6 +18,67 @@
         }                                                                                                              \
     } while (0)
 
+/* Compare actual widget pixels: GTK propagates focus-visible to the whole window,
+ * so that state alone must not outline every toolbar control during gameplay. */
+static GBytes *toolbar_pixels(GtkWidget *toolbar) {
+    gtk_widget_queue_draw(toolbar);
+    for (unsigned i = 0; i < 20; ++i) {
+        cupid_gtk_dispatch();
+        SDL_Delay(10);
+    }
+    int width = gtk_widget_get_width(toolbar), height = gtk_widget_get_height(toolbar);
+    GdkPaintable *paintable = gtk_widget_paintable_new(toolbar);
+    GtkSnapshot *snapshot = gtk_snapshot_new();
+    gdk_paintable_snapshot(paintable, GDK_SNAPSHOT(snapshot), width, height);
+    g_object_unref(paintable);
+    GskRenderNode *node = gtk_snapshot_free_to_node(snapshot);
+    if (!node) {
+        return NULL;
+    }
+    GskRenderer *renderer = gtk_native_get_renderer(gtk_widget_get_native(toolbar));
+    graphene_rect_t bounds = GRAPHENE_RECT_INIT(0, 0, width, height);
+    GdkTexture *texture = gsk_renderer_render_texture(renderer, node, &bounds);
+    gsk_render_node_unref(node);
+    if (!texture) {
+        return NULL;
+    }
+    gsize stride = (gsize)width * 4;
+    guchar *pixels = g_malloc(stride * height);
+    gdk_texture_download(texture, pixels, stride);
+    g_object_unref(texture);
+    return g_bytes_new_take(pixels, stride * height);
+}
+
+static bool gameplay_focus_accuracy(CupidGtkDesktop *d) {
+    GtkWindow *window = GTK_WINDOW(d->window);
+    GtkWidget *toolbar = gtk_widget_get_next_sibling(d->menubar);
+    gboolean visible = gtk_window_get_focus_visible(window);
+    gtk_widget_grab_focus(d->picture);
+    gtk_window_set_focus_visible(window, FALSE);
+    GBytes *before = toolbar_pixels(toolbar);
+    gtk_window_set_focus_visible(window, TRUE);
+    GBytes *after = toolbar_pixels(toolbar);
+    bool unchanged = before && after && g_bytes_equal(before, after);
+    g_clear_pointer(&before, g_bytes_unref);
+    g_clear_pointer(&after, g_bytes_unref);
+
+    /* Keyboard users still need a focus indicator on the actual toolbar button. */
+    gtk_widget_grab_focus(gtk_widget_get_first_child(toolbar));
+    gtk_window_set_focus_visible(window, FALSE);
+    before = toolbar_pixels(toolbar);
+    gtk_window_set_focus_visible(window, TRUE);
+    after = toolbar_pixels(toolbar);
+    bool indicated = before && after && !g_bytes_equal(before, after);
+    g_clear_pointer(&before, g_bytes_unref);
+    g_clear_pointer(&after, g_bytes_unref);
+    gtk_widget_grab_focus(d->picture);
+    gtk_window_set_focus_visible(window, visible);
+    if (!unchanged || !indicated) {
+        fprintf(stderr, "GTK gameplay focus: stable toolbar=%d, focused button indicator=%d\n", unchanged, indicated);
+    }
+    return unchanged && indicated;
+}
+
 /* Called by the full GTK smoke executable using its isolated, paused fixture. */
 bool test_gtk_input_accuracy(FrontendDesktopUi *ui) {
     if (!ui || !ui->gtk || !ui->execution) {
@@ -36,6 +97,8 @@ bool test_gtk_input_accuracy(FrontendDesktopUi *ui) {
     bool old_rewind = ui->execution->rewind_held, old_fast = ui->execution->execution.fast_forward_held;
     SDL_Keymod old_mods = SDL_GetModState();
     Uint32 window_id = SDL_GetWindowID(ui->window);
+
+    CHECK(gameplay_focus_accuracy(d));
 
     const struct {
         guint numeric, alias;

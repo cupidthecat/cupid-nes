@@ -1059,6 +1059,7 @@ static void ppu_fetch_background(void) {
 }
 
 static void ppu_clock_sprite_counters(int dot) {
+    if (!ppu.sprite_counting_mask) return;
     for (unsigned i = 0; i < 8; ++i) {
         uint8_t bit = (uint8_t)(1u << i);
         if ((ppu.sprite_counting_mask & bit) && dot == ppu.sprite_start_dot[i]) {
@@ -1085,7 +1086,7 @@ static void ppu_render_dot(int x, int y) {
     if (ppu.fetches_enabled) {
         uint8_t active = ppu.sprite_skip_clocks ? ppu.sprite_valid_mask : ppu.sprite_active_mask;
         bool show_sprites = (ppu.mask & 0x10) && (x >= 8 || (ppu.mask & 4));
-        for (unsigned i = 0; i < 8; ++i) {
+        for (unsigned i = 0; i < 8 && (active || presentation); ++i) {
             uint8_t slot = (uint8_t)(1u << i);
             if (!(active & slot)) {
                 if (presentation) ppu_trace_blank_sprite(presentation, i, x, show_sprites);
@@ -1175,6 +1176,7 @@ void ppu_step_dots(int ppu_cycles) {
         ppu_step_nsf_dots(ppu_cycles);
         return;
     }
+    const NesTiming *timing = nes_timing();
     for (int i = 0; i < ppu_cycles; ++i) {
         if (nes_overclock_extra_active()) {
             /* Blank extension: the bus and delayed register accesses still run. */
@@ -1193,7 +1195,7 @@ void ppu_step_dots(int ppu_cycles) {
         int dot = ppu.dot;
         bool rendering = ppu.fetches_enabled;
         bool visible = line < 240;
-        bool prerender = line == (int)nes_timing()->scanlines - 1;
+        bool prerender = line == (int)timing->scanlines - 1;
         ppu.bus_ale_this_dot = false;
         ppu.bus_read_this_dot = false;
         ppu.oam_read_latch = ppu.oam_bus;
@@ -1234,7 +1236,7 @@ void ppu_step_dots(int ppu_cycles) {
             if (visible && rendering) ppu.secondary_index = 0;
             if (line == 0) ppu.skipped_frame_dot = false;
         }
-        if (line == (int)nes_timing()->vblank_scanline && dot == 1) {
+        if (line == (int)timing->vblank_scanline && dot == 1) {
             cart_notify_vblank_start();
             ppu_begin_vblank();
         }
@@ -1245,7 +1247,7 @@ void ppu_step_dots(int ppu_cycles) {
             ppu.sprite_zero_hit = false;
             ppu.suppress_vblank = false;
         }
-        if (nes_timing()->region == NES_REGION_PAL && line >= 265 && !prerender
+        if (timing->region == NES_REGION_PAL && line >= 265 && !prerender
             && dot && !(dot & 1)) {
             ppu.oam_addr++;
             ppu_refresh_oam_row(ppu.oam_addr >> 3);
@@ -1282,8 +1284,8 @@ void ppu_step_dots(int ppu_cycles) {
             }
         }
 
-        bool skip_dot = !vs_enabled() && nes_timing()->region == NES_REGION_NTSC
-                     && prerender && dot == 339
+        bool skip_dot = prerender && dot == 339
+                     && timing->region == NES_REGION_NTSC && !vs_enabled()
                      && ppu.odd_frame && ppu.rendering_enabled;
         if ((visible || prerender) && dot == 339) {
             if (ppu.rendering_enabled)
@@ -1336,7 +1338,7 @@ void ppu_step_dots(int ppu_cycles) {
         }
         if (ppu.dot == 341) {
             ppu.dot = 0;
-            if (++ppu.scanline == (int)nes_timing()->scanlines) {
+            if (++ppu.scanline == (int)timing->scanlines) {
                 ppu.scanline = 0;
                 const DMC *dmc = &apu_active_state()->dmc;
                 nes_overclock_begin_frame(!vs_enabled() && !cart_nsf_active(),
@@ -1346,13 +1348,13 @@ void ppu_step_dots(int ppu_cycles) {
                 ppu.odd_frame = !ppu.odd_frame;
                 if (!ppu.tas_postrender_boundary) ppu_complete_frame();
             }
-            if (ppu.scanline == (int)nes_timing()->vblank_scanline)
+            if (ppu.scanline == (int)timing->vblank_scanline)
                 nes_overclock_begin_extra(true);
-            else if (ppu.scanline == (int)nes_timing()->scanlines - 1)
+            else if (ppu.scanline == (int)timing->scanlines - 1)
                 nes_overclock_begin_extra(false);
             if (ppu.tas_postrender_boundary && ppu.scanline == 240) ppu_complete_frame();
             if (ppu.startup_writes_restricted
-                && ppu.scanline == (int)nes_timing()->scanlines - 1)
+                && ppu.scanline == (int)timing->scanlines - 1)
                 ppu.startup_writes_restricted = false;
         }
     }
@@ -1408,6 +1410,8 @@ uint32_t get_color(uint8_t idx) {
 
     // Otherwise, use the active base palette and apply software emphasis.
     uint32_t c = ppu__active_palette_base[idx];
+    if (!(emphasis & 0xE0u)) return 0xFF000000u | (c & 0xFFFFFFu);
+
     float r = (float)((c >> 16) & 0xFF);
     float g = (float)((c >>  8) & 0xFF);
     float b = (float)((c      ) & 0xFF);

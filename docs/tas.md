@@ -8,6 +8,11 @@ An imported movie opens paused and read-only. **Play** runs it; **Frame** and
 **Back** move one frame at a time. Playback pauses at the end and keeps the
 project open.
 
+On Linux, **Follow** moves the visible rows directly as playback advances.
+The grid reuses its drawing between edits and scrolls; the live preview updates
+without rebuilding the window layout. These updates keep the editor from slowing
+the movie through continuous scroll animations.
+
 The editor has its own desktop window. Drag its title bar to move it and its
 edges to resize it alongside the game. Opening the editor again raises the
 existing window. The Tools menu, `--tas`, and dropping a movie onto the game

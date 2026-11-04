@@ -47,6 +47,14 @@ typedef enum {
     FRONTEND_OPEN_LEGACY_MOVIE
 } FrontendOpenFileType;
 
+typedef struct {
+    const char *title, *label, *pattern, *extension;
+    bool save, directory;
+} FrontendFileDialogInfo;
+
+/* Borrowed metadata shared by native commands and tool-panel browsers. */
+const FrontendFileDialogInfo *frontend_file_dialog_info(bool save, unsigned type);
+
 /* Optional host chooser; NULL restores the native platform dialog. */
 typedef bool (*FrontendFileChooser)(bool save, unsigned type, char *path, size_t path_size,
                                      char *error, size_t error_size, void *context);

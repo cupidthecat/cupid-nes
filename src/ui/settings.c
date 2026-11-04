@@ -283,6 +283,7 @@ void frontend_settings_defaults(FrontendSettings *settings) {
     settings->remember_window_size = true;
     settings->recent_file_limit = FRONTEND_RECENT_MAX;
     settings->pause_on_focus_loss = true;
+    settings->pause_on_main_focus_loss = false;
     settings->pause_on_ui = true;
     settings->ppu_viewer_live = true;
     settings->ppu_viewer_grid = true;
@@ -699,6 +700,8 @@ static bool set_known_setting(FrontendSettings *settings, const char *key,
         if (!parse_unsigned_range(value, FRONTEND_RECENT_MAX, &settings->recent_file_limit)) return false;
     } else if (strcmp(key, "pause_on_focus_loss") == 0) {
         if (!parse_boolean(value, &settings->pause_on_focus_loss)) return false;
+    } else if (strcmp(key, "pause_on_main_focus_loss") == 0) {
+        if (!parse_boolean(value, &settings->pause_on_main_focus_loss)) return false;
     } else if (strcmp(key, "pause_on_ui") == 0) {
         if (!parse_boolean(value, &settings->pause_on_ui)) return false;
     } else if (strcmp(key, "ppu_viewer_live") == 0) {
@@ -1131,7 +1134,7 @@ bool frontend_settings_save(const char *path, const FrontendSettings *settings,
                           "version=%u\nregion=%s\nconsole=%s\nvideo_filter=%s\n"
                           "speed=%.6g\nfast_forward_speed=%.6g\n"
                           "reopen_last_image=%s\nremember_window_size=%s\nrecent_file_limit=%u\n"
-                          "pause_on_focus_loss=%s\npause_on_ui=%s\n"
+                          "pause_on_focus_loss=%s\npause_on_main_focus_loss=%s\npause_on_ui=%s\n"
                           "ppu_viewer_live=%s\nppu_viewer_grid=%s\nshow_fps=%s\nfullscreen=%s\ninteger_scaling=%s\nmuted=%s\n"
                           "window_width=%u\nwindow_height=%u\n"
                           "disk_save_mode=%s\ndisk_overlay_path=%s\n"
@@ -1145,7 +1148,6 @@ bool frontend_settings_save(const char *path, const FrontendSettings *settings,
                           "capture_displayed_output=%s\n"
                           "capture_screenshot_path=%s\ncapture_audio_path=%s\ncapture_video_path=%s\n"
                           "state_slot=%u\nstate_file_path=%s\n"
-                          "adapter=%s\nport1=%s\nport2=%s\nexpansion=%s\n"
                           "zapper_radius=%u\nactive_profile=%s\n",
                           FRONTEND_SETTINGS_VERSION,
                           name_for_value(region_names, 4, settings->region_mode),
@@ -1156,6 +1158,7 @@ bool frontend_settings_save(const char *path, const FrontendSettings *settings,
                           settings->remember_window_size ? "true" : "false",
                           settings->recent_file_limit,
                           settings->pause_on_focus_loss ? "true" : "false",
+                          settings->pause_on_main_focus_loss ? "true" : "false",
                           settings->pause_on_ui ? "true" : "false",
                           settings->ppu_viewer_live ? "true" : "false",
                           settings->ppu_viewer_grid ? "true" : "false",
@@ -1182,15 +1185,24 @@ bool frontend_settings_save(const char *path, const FrontendSettings *settings,
                           settings->capture_paths[0], settings->capture_paths[1],
                           settings->capture_paths[2],
                           settings->state_slot, settings->state_file_path,
-                          name_for_value(adapter_names, 4, settings->input.adapter),
-                          name_for_value(port_names, sizeof(port_names) / sizeof(port_names[0]),
-                                         settings->input.ports[0]),
-                          name_for_value(port_names, sizeof(port_names) / sizeof(port_names[0]),
-                                         settings->input.ports[1]),
-                          name_for_value(expansion_names,
-                                         sizeof(expansion_names) / sizeof(expansion_names[0]),
-                                         settings->input.expansion),
                           settings->zapper_radius, settings->active_profile);
+    if (settings->saved_input_overrides & NES_INPUT_OVERRIDE_ADAPTER) {
+        ok = ok && append_text(buffer, SETTINGS_SAVE_CAPACITY, &used, "adapter=%s\n",
+                               name_for_value(adapter_names, 4, settings->input.adapter));
+    }
+    for (unsigned port = 0; port < 2; ++port) {
+        uint8_t mask = port ? NES_INPUT_OVERRIDE_PORT2 : NES_INPUT_OVERRIDE_PORT1;
+        if (settings->saved_input_overrides & mask) {
+            ok = ok && append_text(buffer, SETTINGS_SAVE_CAPACITY, &used, "port%u=%s\n", port + 1,
+                                   name_for_value(port_names, sizeof(port_names) / sizeof(port_names[0]),
+                                                  settings->input.ports[port]));
+        }
+    }
+    if (settings->saved_input_overrides & NES_INPUT_OVERRIDE_EXPANSION) {
+        ok = ok && append_text(buffer, SETTINGS_SAVE_CAPACITY, &used, "expansion=%s\n",
+                               name_for_value(expansion_names, sizeof(expansion_names) / sizeof(expansion_names[0]),
+                                              settings->input.expansion));
+    }
     ok = ok && append_text(buffer, SETTINGS_SAVE_CAPACITY, &used,
                           "rewind_seconds=%u\nrewind_step_frames=%u\nrun_ahead_frames=%u\n"
                           "vsync=%s\naspect_ratio=%s\nbilinear_interpolation=%s\n"

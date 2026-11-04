@@ -439,7 +439,7 @@ int install_discovery_switch_and_panel() {
                                 panel_capture_text.c_str(), -1, error, sizeof(error)));
     CHECK(frontend_panel_action(HD_PACK_PANEL, HD_CONTROL_CAPTURE_ARMED,
                                 nullptr, 1, error, sizeof(error)));
-    CHECK(nes_video_trace_active);
+    CHECK(nes_video_trace_active && nes_hd_frontend_capture_armed(frontend));
     nes_hd_frontend_set_capture_source(frontend, &capture_source);
     model.count = 0;
     CHECK(frontend_panel_snapshot(HD_PACK_PANEL, &model, error, sizeof(error)));
@@ -454,7 +454,7 @@ int install_discovery_switch_and_panel() {
     CHECK(panel_capture && panel_capture.candidate->tiles.size() == 2);
     CHECK(frontend_panel_action(HD_PACK_PANEL, HD_CONTROL_CAPTURE_ARMED,
                                 nullptr, 0, error, sizeof(error)));
-    CHECK(!nes_video_trace_active);
+    CHECK(!nes_video_trace_active && !nes_hd_frontend_capture_armed(frontend));
 
     CHECK(frontend_panel_action(HD_PACK_PANEL, HD_CONTROL_INSTALL_FOLDER,
                                 "src/tests/fixtures/hd_pack_v109", -1, error, sizeof(error)));

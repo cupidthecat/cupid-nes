@@ -206,6 +206,11 @@ static int inspection_trace_and_watches(void) {
     DebugTraceEntry trace;
     CHECK(debugger_trace_at(0, &trace));
     CHECK(trace.pc == 0x8000 && trace.opcode == 0xA9);
+    CHECK(nes_execution_set_policy(NES_EXECUTION_SPECULATIVE));
+    CHECK(cpu_step(&cpu) > 0);
+    size_t speculative_trace_count = debugger_trace_count();
+    CHECK(nes_execution_set_policy(NES_EXECUTION_LIVE));
+    CHECK(speculative_trace_count == 1);
 
     DebugDisassembly disassembly;
     CHECK(debugger_disassemble(0x8004, &disassembly));

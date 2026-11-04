@@ -207,6 +207,44 @@ static int game_replacement_identity(void) {
     return 0;
 }
 
+static int large_list_persistence(void) {
+    static const unsigned counts[] = {0, 9, 10, 256};
+    static const char description[] = "Möbius 猫\tline\nreturn\rslash\\";
+    static const char escaped[] = "Möbius 猫\\tline\\nreturn\\rslash\\\\";
+    static const char header[] = "CUPID-CHEATS\t1\t1234ABCD\n";
+    const char *path = "build/cheat-large-list.txt";
+    for (size_t trial = 0; trial < sizeof(counts) / sizeof(counts[0]); ++trial) {
+        cheats_init();
+        cheats_set_game_identity(0x1234ABCDu);
+        for (unsigned i = 0; i < counts[trial]; ++i) {
+            char code[32];
+            snprintf(code, sizeof(code), "%04X:%02X:A5", 0x8000u + i, i);
+            CHECK(cheats_add(code, description, (i & 1u) == 0, NULL) == CHEAT_OK);
+        }
+
+        CHECK(cheats_save_file(path) == CHEAT_OK);
+        uint8_t *saved = NULL;
+        size_t saved_size = 0;
+        CHECK(nes_file_read_all(path, 65536, &saved, &saved_size) == NES_FILE_OK);
+        CHECK(saved_size == sizeof(header) - 1 + counts[trial] * (14 + sizeof(escaped) - 1));
+        CHECK(!memcmp(saved, header, sizeof(header) - 1));
+        free(saved);
+        CHECK(cheats_clear() == CHEAT_OK);
+        CHECK(cheats_load_file(path) == CHEAT_OK && cheats_count() == counts[trial]);
+        for (unsigned i = 0; i < counts[trial]; ++i) {
+            CheatRecord loaded;
+            CHECK(cheats_at(i, &loaded));
+            CHECK(loaded.address == 0x8000u + i && loaded.value == i);
+            CHECK(loaded.has_compare && loaded.compare == 0xA5);
+            CHECK(loaded.enabled == ((i & 1u) == 0));
+            CHECK(!strcmp(loaded.description, description));
+        }
+    }
+
+    CHECK(nes_file_remove(path) == NES_FILE_OK);
+    return 0;
+}
+
 static int frontend_panel_crud(void) {
     char path[160];
     const uint32_t identity = 0xA11CE123u;
@@ -237,6 +275,9 @@ static int frontend_panel_crud(void) {
     CHECK(cheats_count() == 1);
     CheatRecord record;
     CHECK(cheats_at(0, &record) && !record.enabled && !strcmp(record.code, "8000:7F"));
+    CHECK(frontend_panel_snapshot(CHEATS_FRONTEND_PANEL, &model, error, sizeof(error)));
+    CHECK(controls[1].id == CHEAT_CONTROL_CODE && !strcmp(controls[1].value, "8000:7F"));
+    CHECK(controls[2].id == CHEAT_CONTROL_DESCRIPTION && !strcmp(controls[2].value, "frontend"));
     uint8_t *saved = NULL; size_t saved_size = 0;
     CHECK(nes_file_read_all(path, 4096, &saved, &saved_size) == NES_FILE_OK);
     CHECK(saved_size > 0);
@@ -244,6 +285,19 @@ static int frontend_panel_crud(void) {
     CHECK(frontend_panel_action(CHEATS_FRONTEND_PANEL, CHEAT_CONTROL_ENABLED,
                                 NULL, -1, error, sizeof(error)));
     CHECK(cheats_at(0, &record) && record.enabled);
+    CHECK(frontend_panel_action(CHEATS_FRONTEND_PANEL, CHEAT_CONTROL_CODE,
+                               "8010:A5:7F", -1, error, sizeof(error)));
+    CHECK(frontend_panel_action(CHEATS_FRONTEND_PANEL, CHEAT_CONTROL_DESCRIPTION,
+                               "Edited Möbius 猫", -1, error, sizeof(error)));
+    CHECK(frontend_panel_snapshot(CHEATS_FRONTEND_PANEL, &model, error, sizeof(error)));
+    CHECK(!strcmp(controls[1].value, "8010:A5:7F"));
+    CHECK(!strcmp(controls[2].value, "Edited Möbius 猫"));
+    CHECK(frontend_panel_action(CHEATS_FRONTEND_PANEL, CHEAT_CONTROL_LIST,
+                               NULL, 0, error, sizeof(error)));
+    CHECK(frontend_panel_snapshot(CHEATS_FRONTEND_PANEL, &model, error, sizeof(error)));
+    CHECK(!strcmp(controls[1].value, "8000:7F") && !strcmp(controls[2].value, "frontend"));
+    CHECK(frontend_panel_action(CHEATS_FRONTEND_PANEL, CHEAT_CONTROL_LIST,
+                               NULL, 1, error, sizeof(error)));
     CHECK(frontend_panel_action(CHEATS_FRONTEND_PANEL, CHEAT_CONTROL_REMOVE,
                                 NULL, -1, error, sizeof(error)));
     CHECK(cheats_count() == 0);
@@ -261,6 +315,7 @@ int test_cheat_accuracy(void) {
     failures += crud_policy_and_hash();
     failures += persistence_and_retention();
     failures += game_replacement_identity();
+    failures += large_list_persistence();
     failures += frontend_panel_crud();
     (void)nes_execution_set_policy(NES_EXECUTION_LIVE);
     cheats_set_execution_policy(NES_EXECUTION_LIVE);
