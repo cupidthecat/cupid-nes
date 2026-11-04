@@ -43,6 +43,28 @@ static void test_service(void *context) {
 }
 
 int run_frame_timing_accuracy_tests(void) {
+    NesFrameRate rate = {0};
+    CHECK(nes_frame_rate_push(NULL, 100, 1000) == 0);
+    CHECK(nes_frame_rate_push(&rate, 100, 0) == 0 && rate.count == 0);
+    CHECK(nes_frame_rate_push(&rate, 100, 1000000) == 0);
+    /* A stable completion clock must not fluctuate between 59/61 frames
+     * because half-second sample buckets include partial frame work. */
+    for (unsigned i = 1; i <= 180; ++i) {
+        double fps = nes_frame_rate_push(&rate, 100 + (uint64_t)llround(i * 1000000.0 / 60.0988), 1000000);
+        CHECK(fabs(fps - 60.0988) < 0.003);
+    }
+    CHECK(rate.count == 61);
+    /* A sustained slowdown must remain visible rather than clamping to a
+     * target rate. Pauses and rate changes start a fresh measurement. */
+    for (unsigned i = 1; i <= 61; ++i) {
+        (void)nes_frame_rate_push(&rate, 4000000 + i * 40000, 1000000);
+    }
+    CHECK(fabs(nes_frame_rate_push(&rate, 6480000, 1000000) - 25) < 0.001);
+    rate = (NesFrameRate){0};
+    CHECK(nes_frame_rate_push(&rate, 9000000, 1000000) == 0);
+    CHECK(nes_frame_rate_push(&rate, 9020000, 1000000) == 50);
+    CHECK(nes_frame_rate_push(&rate, 9020000, 1000000) == 0 && rate.count == 1);
+    CHECK(nes_frame_rate_push(&rate, 10, 1000000) == 0 && rate.count == 1);
     clock_ticks = 1000;
     services = sleeps = longest_sleep = 0;
     frame_wait(2500, 1000000, test_service, NULL, test_counter, test_sleep);

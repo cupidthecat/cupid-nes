@@ -27,6 +27,15 @@ typedef struct {
     size_t count, next;
 } NesFrameTiming;
 
+/* One second of completed frames at normal NTSC speed, without counting a
+ * partial first frame. Clear this state when execution pauses or changes rate. */
+typedef struct {
+    uint64_t completed[61];
+    size_t count, next;
+} NesFrameRate;
+
+double nes_frame_rate_push(NesFrameRate *rate, uint64_t completed, uint64_t frequency);
+
 typedef struct {
     double recent, average, minimum, maximum, p95;
 } NesHostMetric;

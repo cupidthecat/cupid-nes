@@ -80,7 +80,10 @@ fullscreen modes; reducing display size cannot fix a core that misses its budget
 
 The draw row counts new images drawn by the game viewport. It does not measure
 the monitor's refresh rate. Pending GTK work is serviced during frame waits;
-the high-resolution clock controls when the next emulated frame starts.
+the high-resolution clock schedules image submission after emulation and filters
+finish. The status-bar FPS counter averages 60 completed frame intervals to
+avoid fluctuations from partial frames in short sampling windows. For individual
+stalls, use the timing panel's jitter, p95, and maximum interval values.
 
 If an FM2 runs at normal speed until the TAS editor opens, update to a build
 with the playback-following fix. Older builds could keep starting scroll

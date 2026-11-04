@@ -94,6 +94,7 @@ int benchmark_gtk(const char *path, const char *movie) {
     SDL_PauseAudioDevice(audio, 0);
     const char *names[] = {"window", "maximized", "fullscreen", "maximized-ppu", "movie", "tas-editor"};
     double frequency = (double)SDL_GetPerformanceFrequency();
+    bool work_jitter = g_getenv("CUPID_BENCHMARK_WORK_JITTER") != NULL;
     int result = 0;
     for (unsigned mode = 0; mode < (movie ? G_N_ELEMENTS(names) : 4); ++mode) {
         if (mode == 4) {
@@ -185,20 +186,28 @@ int benchmark_gtk(const char *path, const char *movie) {
             }
             frontend_audio_runtime_submit(&audio_runtime);
             deadline += (cpu_total_cycles - cycles) * frequency / nes_timing()->cpu_hz;
+            /* Alternate host workload without changing emulated timing. */
+            if (work_jitter && (i & 1)) {
+                SDL_Delay(4);
+            }
             double now = (double)SDL_GetPerformanceCounter();
             if (nes_frame_timing_present_cost(now, deadline, last_present, frequency, present_cost)) {
                 if (!frontend_video_runtime_refresh(&video, error, sizeof(error))) {
                     result = 1;
                     break;
                 }
+                uint64_t rendered = SDL_GetPerformanceCounter();
+                frontend_desktop_wait(&ui, deadline, frequency);
+                uint64_t present_start = SDL_GetPerformanceCounter();
                 frontend_desktop_render(&ui, 256, 240, "Presentation benchmark", "NTSC", "Running");
-                present_cost = fmax(present_cost * 0.8, (double)SDL_GetPerformanceCounter() - now);
-                last_present = now;
+                present_cost =
+                    fmax(present_cost * 0.8, rendered - now + (double)SDL_GetPerformanceCounter() - present_start);
+                last_present = (double)present_start;
                 ++presented;
             } else {
                 nes_shader_skip_frame(video.shader);
+                frontend_desktop_wait(&ui, deadline, frequency);
             }
-            frontend_desktop_wait(&ui, deadline, frequency);
             uint64_t end = SDL_GetPerformanceCounter();
             NesHostFrameSample sample = {0};
             sample.milliseconds[NES_HOST_INTERVAL] = nes_frame_timing_elapsed(previous, end, (uint64_t)frequency);

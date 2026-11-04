@@ -248,6 +248,14 @@ Do not lower pass requirements, substitute expected output, add cartridge-specif
 
 ## Desktop performance
 
+The desktop benchmark also accepts `CUPID_BENCHMARK_WORK_JITTER=1` in its
+environment. This adds a four-millisecond host delay on alternating paced frames
+without changing emulated cycles. Compare the reported draw jitter and interval
+percentiles with and without it to check whether spare frame time absorbs
+variable work. Keep the window visible and run timing measurements separately
+from builds and other CPU-heavy checks. Draw measurements record application
+submission, not monitor scanout.
+
 The GTK smoke executable exercises Save State File and Load State File through
 their real menu actions and Ctrl+F5/Ctrl+F6 shortcuts. It checks that native
 choosers have a parent, are modal, use state-file filters, and preserve the stored

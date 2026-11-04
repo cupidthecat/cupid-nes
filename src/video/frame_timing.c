@@ -10,6 +10,23 @@
 #include <stdlib.h>
 #include <string.h>
 
+double nes_frame_rate_push(NesFrameRate *rate, uint64_t completed, uint64_t frequency) {
+    if (!rate || !frequency) {
+        return 0;
+    }
+    const size_t capacity = sizeof(rate->completed) / sizeof(rate->completed[0]);
+    if (rate->count && completed <= rate->completed[(rate->next + capacity - 1) % capacity]) {
+        memset(rate, 0, sizeof(*rate));
+    }
+    rate->completed[rate->next] = completed;
+    rate->next = (rate->next + 1) % capacity;
+    if (rate->count < capacity) {
+        ++rate->count;
+    }
+    uint64_t oldest = rate->completed[(rate->next + capacity - rate->count) % capacity];
+    return completed > oldest ? (double)(rate->count - 1) * frequency / (double)(completed - oldest) : 0;
+}
+
 void nes_frame_timing_reset(NesFrameTiming *timing) {
     if (timing) {
         memset(timing, 0, sizeof(*timing));

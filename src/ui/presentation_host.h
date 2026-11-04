@@ -30,5 +30,6 @@ void frontend_presentation_host_reset(FrontendPresentationHost *host);
 /* Monotonic performance-counter boundaries for one completed host frame. Idle
  * and paused iterations should instead clear previous_end and reset timing. */
 bool frontend_presentation_host_record(FrontendPresentationHost *host, uint64_t emulation_start, uint64_t render_start,
-                                       uint64_t present_start, uint64_t present_end, uint64_t pacing_end);
+                                       uint64_t wait_start, uint64_t present_start, uint64_t present_end,
+                                       uint64_t pacing_end);
 #endif

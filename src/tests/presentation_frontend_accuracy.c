@@ -76,10 +76,12 @@ int run_presentation_frontend_accuracy_tests(void) {
     settings.shader_path[0] = 0;
     CHECK(frontend_presentation_restore_settings(&video, &audio, &settings, error, sizeof(error)));
     host.frequency = 1000;
-    CHECK(frontend_presentation_host_record(&host, 100, 110, 115, 116, 120));
+    CHECK(frontend_presentation_host_record(&host, 100, 110, 112, 115, 116, 120));
     NesFrameTimingSummary summary;
     CHECK(nes_frame_timing_summary(&host.timing.timing, &summary) && summary.fps == 50 &&
-          summary.metrics[NES_HOST_EMULATION].average == 10 && summary.metrics[NES_HOST_PRESENT].average == 1);
+          summary.metrics[NES_HOST_EMULATION].average == 10 && summary.metrics[NES_HOST_PRESENT].average == 1 &&
+          summary.metrics[NES_HOST_RENDER].average == 2 && summary.metrics[NES_HOST_PACING].average == 7);
+    CHECK(!frontend_presentation_host_record(&host, 100, 110, 116, 115, 116, 120));
     frontend_presentation_host_reset(&host);
     CHECK(host.previous_end == 0 && host.timing.timing.count == 0 && draws.count == 0);
     NesShaderPreset *shader = video.shader;

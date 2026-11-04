@@ -14,9 +14,7 @@ The **Bookmarks** sidebar stores ten temporary positions with preview images. Ct
 
 Browsing pauses live execution. Each preview temporarily restores an authoritative rewind snapshot, copies its video, then restores the live machine and its completed display frame. The viewer plays retained final stereo samples through a separate output device. It never runs the core, saves battery data, or injects preview inputs. Snapshots, input events and audio share the configured rewind memory limit; shorter retention is possible when that limit is reached. A missing audio device leaves video navigation available.
 
-Movie/netplay ownership and unreplayable host state prevent browsing. Reset, game replacement and rewind reconfiguration invalidate the viewer. Cupid uses its existing single machine core and freezes the live timeline while browsing; Mesen uses a separate playback emulator. Movie exports use Cupid's `.movie` format. Mesen's `.mmo` format is not supported. The SDL fallback retains its separate preview window and shared panel controls.
-
-The behavior follows [Mesen 2's viewer UI](https://github.com/SourMesen/Mesen2/blob/b9fa69ddc6d0a331fb103fdb5eef6904305703c2/UI/Windows/HistoryViewerWindow.axaml), [playback and export controller](https://github.com/SourMesen/Mesen2/blob/b9fa69ddc6d0a331fb103fdb5eef6904305703c2/Core/Shared/HistoryViewer.cpp), and [view model](https://github.com/SourMesen/Mesen2/blob/b9fa69ddc6d0a331fb103fdb5eef6904305703c2/UI/ViewModels/HistoryViewerViewModel.cs). The older NES behavior was checked against [original Mesen](https://github.com/SourMesen/Mesen/blob/e1180957b31979d4b82d613af9263fcb9442a685/Core/HistoryViewer.cpp). Frame navigation and bookmark previews follow [FCEUX playback](https://github.com/TASEmulators/fceux/blob/8cc753da0b8e6924089ed76ce6a2a93997492264/src/drivers/Qt/TasEditor/playback.cpp) and [bookmarks](https://github.com/TASEmulators/fceux/blob/8cc753da0b8e6924089ed76ce6a2a93997492264/src/drivers/Qt/TasEditor/bookmarks.cpp).
+Movie/netplay ownership and unreplayable host state prevent browsing. Reset, game replacement and rewind reconfiguration invalidate the viewer. Cupid freezes its live timeline while browsing. Movie exports use Cupid's `.movie` format; `.mmo` files are not supported. The SDL fallback retains its separate preview window and shared panel controls.
 
 ## Shader Presets
 
@@ -59,11 +57,18 @@ presentation calls. The GTK widget path can combine multiple submissions into on
 this rate can be lower than the emulation rate. These measurements do not report
 when the monitor displays the image. The SDL frontend marks draw timing unavailable.
 
-The desktop sleeps in short steps while servicing pending GTK work, then checks
-the high-resolution clock during the final part of the wait. This preserves
-fractional frame deadlines and lets the display update between emulated frames.
-GTK drawing that happens during a wait is included in pacing time; drawing
-during submission is included in presentation time.
+The desktop prepares each image, then waits for its deadline before submitting
+it to GTK. Variations in emulation and filter time therefore use the available
+frame budget instead of moving each image's submission time. The wait services
+pending GTK work and uses the high-resolution clock for its final fraction of a
+millisecond. Both this wait and any wait after presentation count as pacing time.
+GTK drawing during a wait also counts as pacing time.
+
+The main status-bar FPS counter uses the last 60 completed frame intervals,
+about one second at normal NTSC speed. It updates four times per second and
+starts a new measurement after a pause, session change, or speed change.
+It reports the measured rate, including sustained slowdowns and fast-forward;
+it does not clamp the number to the regional target.
 
 These are host wall-clock measurements, not emulated CPU or PPU cycles. Idle/pause transitions reset the measurements. The audio row shows the host playback queue and the number of underrun callbacks since the output device was opened. Startup prefill is excluded. Playback retains a short reservoir and adjusts host resampling by at most 0.5% to follow the device clock; emulated clocks, recorded samples, and movie input are unchanged. **Reset measurements** clears both sets of retained samples.
 
