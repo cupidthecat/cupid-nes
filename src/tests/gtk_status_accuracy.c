@@ -31,6 +31,10 @@ static GtkWidget *find_button(GtkWidget *widget, const char *label) {
 }
 
 bool test_gtk_status_accuracy(FrontendDesktopUi *ui) {
+    bool was_paused = ui->execution->execution.paused;
+    unsigned suspended = ui->execution->suspend_reasons;
+    execution_control_set_paused(&ui->execution->execution, false);
+    frontend_execution_suspend(ui->execution, suspended, false);
     bool show_fps = ui->settings->show_fps;
     unsigned slot = ui->settings->state_slot;
     frontend_desktop_set_status(ui, "Old operation failed");
@@ -53,9 +57,13 @@ bool test_gtk_status_accuracy(FrontendDesktopUi *ui) {
     CHECK(strstr(gtk_label_get_text(GTK_LABEL(details)), "59.9 fps"));
     CHECK(strstr(gtk_label_get_text(GTK_LABEL(details)), "Slot 10"));
     CHECK(!strcmp(gtk_label_get_text(GTK_LABEL(ui->gtk->status)), "State file saved"));
+    frontend_execution_suspend(ui->execution, FRONTEND_SUSPEND_UI, true);
+    render_status(ui, "Running");
+    CHECK(strstr(gtk_label_get_text(GTK_LABEL(details)), "FPS paused"));
+    frontend_execution_suspend(ui->execution, FRONTEND_SUSPEND_UI, false);
     frontend_desktop_set_fps(ui, 0);
     render_status(ui, "Paused");
-    CHECK(strstr(gtk_label_get_text(GTK_LABEL(details)), "0.0 fps"));
+    CHECK(strstr(gtk_label_get_text(GTK_LABEL(details)), "FPS paused"));
     ui->settings->show_fps = false;
     render_status(ui, "Paused");
     CHECK(!strstr(gtk_label_get_text(GTK_LABEL(details)), "fps"));
@@ -98,6 +106,8 @@ bool test_gtk_status_accuracy(FrontendDesktopUi *ui) {
     frontend_desktop_set_status(ui, NULL);
     ui->settings->show_fps = show_fps;
     ui->settings->state_slot = slot;
+    execution_control_set_paused(&ui->execution->execution, was_paused);
+    frontend_execution_suspend(ui->execution, suspended, true);
     puts("GTK status expiry, live FPS, selected slot and bounded layout: PASS");
     return true;
 }

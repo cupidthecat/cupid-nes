@@ -256,6 +256,13 @@ variable work. Keep the window visible and run timing measurements separately
 from builds and other CPU-heavy checks. Draw measurements record application
 submission, not monitor scanout.
 
+Set `CUPID_BENCHMARK_UI=1` to exercise menus, Settings category changes,
+registered debugger tools, window resizing, retained tools, and staged dropdown
+choices during paced playback. The fixture disables UI and focus-loss pauses
+in its own settings. It reports frame intervals and per-tool GTK paint costs;
+these measurements include initial window creation. Run it on a visible desktop
+separately from other tests to avoid measuring their CPU load.
+
 The GTK smoke executable exercises Save State File and Load State File through
 their real menu actions and Ctrl+F5/Ctrl+F6 shortcuts. It checks that native
 choosers have a parent, are modal, use state-file filters, and preserve the stored

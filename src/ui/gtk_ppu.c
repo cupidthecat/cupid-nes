@@ -273,7 +273,7 @@ static void describe(Ppu *v) {
                      ? "Click a pixel to paint. Select CPU banks and pause the game. Only CHR RAM is writable."
                      : "Select a tile to inspect its address. Double-click to open it in the tile editor.");
     }
-    gtk_label_set_text(GTK_LABEL(v->detail), text);
+    cupid_gtk_set_label(v->detail, text);
 }
 
 static void refresh(Ppu *v) {
@@ -282,7 +282,7 @@ static void refresh(Ppu *v) {
     if (!available) {
         v->valid = false;
         v->undo_count = 0;
-        gtk_label_set_text(GTK_LABEL(v->detail), "Open a game to inspect PPU memory.");
+        cupid_gtk_set_label(v->detail, "Open a game to inspect PPU memory.");
         if (v->apply) {
             gtk_widget_set_sensitive(v->apply, FALSE);
         }
@@ -371,7 +371,7 @@ static void refresh(Ppu *v) {
                 char byte[8];
                 unsigned a = v->page + i;
                 snprintf(byte, sizeof(byte), "%02X", oam(v) ? v->image.oam[a] : v->image.memory[a]);
-                gtk_button_set_label(GTK_BUTTON(v->memory[i]), byte);
+                cupid_gtk_set_button(v->memory[i], byte);
                 if (a == v->selected) {
                     gtk_widget_add_css_class(v->memory[i], "suggested-action");
                 } else {
@@ -379,7 +379,7 @@ static void refresh(Ppu *v) {
                 }
                 if (!(i & 15)) {
                     snprintf(byte, sizeof(byte), "%04X", a);
-                    gtk_label_set_text(GTK_LABEL(v->row_labels[i / 16]), byte);
+                    cupid_gtk_set_label(v->row_labels[i / 16], byte);
                 }
             }
             break;
@@ -391,11 +391,10 @@ static void refresh(Ppu *v) {
     char footer[160];
     snprintf(footer, sizeof(footer), "%s | Frame %llu | Scanline %d, dot %d", live(v) ? "Live" : "Frozen",
              (unsigned long long)v->image.state.frame, v->image.state.scanline, v->image.state.dot);
-    gtk_label_set_text(GTK_LABEL(v->footer), v->runtime_palette ? "Display palette: 64 colors" : footer);
+    cupid_gtk_set_label(v->footer, v->runtime_palette ? "Display palette: 64 colors" : footer);
     if (v->pause) {
-        gtk_button_set_label(GTK_BUTTON(v->pause),
-                             v->tool->ui.execution && frontend_execution_paused(v->tool->ui.execution) ? "Resume"
-                                                                                                       : "Pause");
+        cupid_gtk_set_button(
+            v->pause, v->tool->ui.execution && frontend_execution_paused(v->tool->ui.execution) ? "Resume" : "Pause");
     }
     if (v->apply) {
         gtk_widget_set_sensitive(v->apply, v->runtime_palette || can_edit(v));

@@ -70,6 +70,16 @@ starts a new measurement after a pause, session change, or speed change.
 It reports the measured rate, including sustained slowdowns and fast-forward;
 it does not clamp the number to the regional target.
 
+The native desktop spreads periodic tool updates across game presentations,
+rotating through visible windows. Each tool waits at least 100 ms between
+these refreshes; with many tools open, updates can be less frequent. Live video
+previews continue to update per frame. Buttons and edits still act immediately.
+Settings categories retain their controls after
+the first visit. Unchanged labels, menu checks, and theme preferences do not
+request another layout or redraw. GTK control animations are suspended during
+gameplay and restored while paused or idle, following the original animation
+preference when the desktop closes.
+
 These are host wall-clock measurements, not emulated CPU or PPU cycles. Idle/pause transitions reset the measurements. The audio row shows the host playback queue and the number of underrun callbacks since the output device was opened. Startup prefill is excluded. Playback retains a short reservoir and adjusts host resampling by at most 0.5% to follow the device clock; emulated clocks, recorded samples, and movie input are unchanged. **Reset measurements** clears both sets of retained samples.
 
 ## Existing video controls

@@ -46,6 +46,42 @@ static bool open_recent(void *context, const FrontendImageRequest *request, Fron
     return true;
 }
 
+static bool fair_refresh(FrontendDesktopUi *ui) {
+    GList *visible = NULL;
+    for (CupidGtkTool *t = ui->gtk->tools; t; t = t->next) {
+        if (gtk_widget_get_visible(t->window)) {
+            visible = g_list_prepend(visible, t);
+        }
+        gtk_widget_set_visible(t->window, FALSE);
+    }
+    FrontendDesktopUi *models[] = {cupid_gtk_open(ui, 2, 0), cupid_gtk_open(ui, 2, 1), cupid_gtk_open(ui, 0, 0)};
+    CupidGtkTool *tools[3] = {0};
+    uint32_t stale = SDL_GetTicks() - 100;
+    for (CupidGtkTool *t = ui->gtk->tools; t; t = t->next) {
+        for (unsigned i = 0; i < G_N_ELEMENTS(models); ++i) {
+            if (&t->ui == models[i]) {
+                tools[i] = t;
+                t->refreshed = stale;
+            }
+        }
+    }
+    bool ok = tools[0] && tools[1] && tools[2];
+    ui->gtk->refresh_next = tools[0];
+    for (unsigned frame = 1; ok && frame <= 3; ++frame) {
+        frontend_desktop_render(ui, 256, 240, "Refresh fixture", "NTSC", "Paused");
+        unsigned refreshed = 0;
+        for (unsigned i = 0; i < 3; ++i) {
+            refreshed += tools[i]->refreshed != stale;
+        }
+        ok = refreshed == frame;
+    }
+    for (CupidGtkTool *t = ui->gtk->tools; t; t = t->next) {
+        gtk_widget_set_visible(t->window, g_list_find(visible, t) != NULL);
+    }
+    g_list_free(visible);
+    return ok;
+}
+
 bool test_gtk_workflows(FrontendDesktopUi *ui) {
     FrontendSession session;
     frontend_session_init(&session, open_recent, NULL);
@@ -117,7 +153,8 @@ bool test_gtk_workflows(FrontendDesktopUi *ui) {
     filtered &= !gtk_filter_match(GTK_FILTER(filter), info);
     g_object_unref(info);
     g_object_unref(filter);
-    printf("GTK workflows: reordered=%d replaced=%d shortcuts=%d file extensions=%d\n", reordered, replaced, remapped,
-           filtered);
-    return ok && reordered && replaced && remapped && filtered;
+    bool fair = fair_refresh(ui);
+    printf("GTK workflows: reordered=%d replaced=%d shortcuts=%d file extensions=%d fair refresh=%d\n", reordered,
+           replaced, remapped, filtered, fair);
+    return ok && reordered && replaced && remapped && filtered && fair;
 }

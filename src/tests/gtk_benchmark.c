@@ -33,6 +33,115 @@ static void settle(FrontendDesktopUi *ui) {
     }
 }
 
+static GtkWidget *find_type(GtkWidget *root, GType type) {
+    if (G_TYPE_CHECK_INSTANCE_TYPE(root, type)) {
+        return root;
+    }
+    for (GtkWidget *child = gtk_widget_get_first_child(root); child; child = gtk_widget_get_next_sibling(child)) {
+        GtkWidget *found = find_type(child, type);
+        if (found) {
+            return found;
+        }
+    }
+    return NULL;
+}
+
+typedef struct {
+    uint64_t start, count, total, maximum;
+} PaintStats;
+
+static void paint_start(GdkFrameClock *clock, GtkWidget *window) {
+    (void)clock;
+    PaintStats *stats = g_object_get_data(G_OBJECT(window), "benchmark-paint");
+    stats->start = SDL_GetPerformanceCounter();
+}
+
+static void paint_end(GdkFrameClock *clock, GtkWidget *window) {
+    (void)clock;
+    PaintStats *stats = g_object_get_data(G_OBJECT(window), "benchmark-paint");
+    uint64_t elapsed = SDL_GetPerformanceCounter() - stats->start;
+    ++stats->count;
+    stats->total += elapsed;
+    if (elapsed > stats->maximum) {
+        stats->maximum = elapsed;
+    }
+}
+
+static void track_paints(GtkWidget *window) {
+    if (g_object_get_data(G_OBJECT(window), "benchmark-paint")) {
+        return;
+    }
+    GdkFrameClock *clock = gtk_widget_get_frame_clock(window);
+    if (!clock) {
+        return;
+    }
+    g_object_set_data_full(G_OBJECT(window), "benchmark-paint", g_new0(PaintStats, 1), g_free);
+    g_signal_connect_object(clock, "before-paint", G_CALLBACK(paint_start), window, 0);
+    g_signal_connect_object(clock, "after-paint", G_CALLBACK(paint_end), window, 0);
+}
+
+static void interact(FrontendDesktopUi *ui, unsigned mode, unsigned frame) {
+    if (frame % 15) {
+        return;
+    }
+    if (mode == 0) {
+        GtkWidget *popover = find_type(ui->gtk->menubar, GTK_TYPE_POPOVER);
+        if (popover) {
+            if ((frame / 15) & 1) {
+                gtk_popover_popdown(GTK_POPOVER(popover));
+            } else {
+                gtk_popover_popup(GTK_POPOVER(popover));
+            }
+        }
+    } else if (mode == 1) {
+        cupid_gtk_open(ui, 0, 0);
+        for (CupidGtkTool *tool = ui->gtk->tools; tool; tool = tool->next) {
+            if (tool->kind != 0) {
+                continue;
+            }
+            GtkWidget *categories = find_type(tool->content, GTK_TYPE_LIST_BOX);
+            gtk_list_box_select_row(GTK_LIST_BOX(categories),
+                                    gtk_list_box_get_row_at_index(GTK_LIST_BOX(categories), (frame / 15) % 8));
+        }
+    } else if (mode == 2) {
+        FrontendPanelInfo info;
+        size_t count = frontend_panel_count();
+        if (count && frontend_panel_at((frame / 15) % count, &info) && info.enabled) {
+            cupid_gtk_open(ui, 1, info.id);
+        }
+    } else if (mode == 3) {
+        gtk_window_set_default_size(GTK_WINDOW(ui->gtk->window), ((frame / 15) & 1) ? 900 : 1100,
+                                    ((frame / 15) & 1) ? 700 : 800);
+    } else if (mode == 4) {
+        if (!frame) {
+            for (CupidGtkTool *tool = ui->gtk->tools; tool; tool = tool->next) {
+                if (tool->kind == 1) {
+                    gtk_widget_set_visible(tool->window, TRUE);
+                }
+            }
+        }
+    } else {
+        cupid_gtk_open(ui, 0, 0);
+        for (CupidGtkTool *tool = ui->gtk->tools; tool; tool = tool->next) {
+            if (tool->kind != 0) {
+                continue;
+            }
+            GtkWidget *categories = find_type(tool->content, GTK_TYPE_LIST_BOX);
+            gtk_list_box_select_row(GTK_LIST_BOX(categories),
+                                    gtk_list_box_get_row_at_index(GTK_LIST_BOX(categories), 2));
+            GtkWidget *stack = find_type(tool->content, GTK_TYPE_STACK);
+            GtkWidget *choice = find_type(gtk_stack_get_visible_child(GTK_STACK(stack)), GTK_TYPE_DROP_DOWN);
+            if (choice) {
+                guint count = g_list_model_get_n_items(gtk_drop_down_get_model(GTK_DROP_DOWN(choice)));
+                if (count) {
+                    gtk_drop_down_set_selected(GTK_DROP_DOWN(choice),
+                                               (gtk_drop_down_get_selected(GTK_DROP_DOWN(choice)) + 1) % count);
+                }
+            }
+        }
+    }
+}
+
 int benchmark_gtk(const char *path, const char *movie) {
     uint8_t *image = NULL;
     size_t size = 0;
@@ -55,6 +164,7 @@ int benchmark_gtk(const char *path, const char *movie) {
     FrontendSettings settings;
     frontend_settings_defaults(&settings);
     settings.pause_on_focus_loss = false;
+    settings.pause_on_ui = false;
     settings.show_fps = true;
     SDL_AudioSpec have = {0};
     SDL_AudioDeviceID audio = 0;
@@ -93,11 +203,19 @@ int benchmark_gtk(const char *path, const char *movie) {
     }
     SDL_PauseAudioDevice(audio, 0);
     const char *names[] = {"window", "maximized", "fullscreen", "maximized-ppu", "movie", "tas-editor"};
+    const char *ui_names[] = {"menus", "settings", "tools", "resize", "retained-tools", "choices"};
+    bool interaction = g_getenv("CUPID_BENCHMARK_UI") != NULL;
+    if (interaction) {
+        movie = NULL;
+    }
     double frequency = (double)SDL_GetPerformanceFrequency();
     bool work_jitter = g_getenv("CUPID_BENCHMARK_WORK_JITTER") != NULL;
     int result = 0;
-    for (unsigned mode = 0; mode < (movie ? G_N_ELEMENTS(names) : 4); ++mode) {
-        if (mode == 4) {
+    for (unsigned mode = 0; mode < (interaction ? G_N_ELEMENTS(ui_names) : movie ? G_N_ELEMENTS(names) : 4); ++mode) {
+        for (CupidGtkTool *tool = ui.gtk->tools; tool; tool = tool->next) {
+            gtk_widget_set_visible(tool->window, FALSE);
+        }
+        if (movie && mode == 4) {
             for (CupidGtkTool *tool = ui.gtk->tools; tool; tool = tool->next) {
                 gtk_widget_set_visible(tool->window, FALSE);
             }
@@ -107,18 +225,21 @@ int benchmark_gtk(const char *path, const char *movie) {
                 break;
             }
         }
-        if (mode == 5) {
+        if (movie && mode == 5) {
             cupid_gtk_open(&ui, 1, TAS_PANEL);
         }
-        settings.fullscreen = mode == 2;
+        settings.fullscreen = !interaction && mode == 2;
         settle(&ui);
-        if (mode == 1 || mode == 3) {
+        if (!interaction && (mode == 1 || mode == 3)) {
             gtk_window_maximize(GTK_WINDOW(ui.gtk->window));
         }
-        if (mode == 3) {
+        if (!interaction && mode == 3) {
             cupid_gtk_open(&ui, 1, DEBUG_PPU_PATTERNS);
         }
         settle(&ui);
+        if (interaction) {
+            gtk_window_unmaximize(GTK_WINDOW(ui.gtk->window));
+        }
         if (!gtk_widget_get_mapped(ui.gtk->picture) || gtk_widget_get_width(ui.gtk->picture) <= 0 ||
             gtk_widget_get_height(ui.gtk->picture) <= 0) {
             fprintf(stderr, "Benchmark viewport is not allocated; keep the game window visible\n");
@@ -159,9 +280,10 @@ int benchmark_gtk(const char *path, const char *movie) {
         double elapsed = (SDL_GetPerformanceCounter() - begin) / frequency;
         GskRenderer *gsk = gtk_native_get_renderer(GTK_NATIVE(ui.gtk->window));
         const char *game_renderer = cupid_gtk_native_video_name(ui.gtk);
-        printf("GTK benchmark: %s %dx%d, %s, %u frames, %.1f fps, core %.2f ms, presentation %.2f ms\n", names[mode],
-               gtk_widget_get_width(ui.gtk->picture), gtk_widget_get_height(ui.gtk->picture), game_renderer ? game_renderer : G_OBJECT_TYPE_NAME(gsk),
-               frames, frames / elapsed, core * 1000 / frames, presentation * 1000 / frames);
+        printf("GTK benchmark: %s %dx%d, %s, %u frames, %.1f fps, core %.2f ms, presentation %.2f ms\n",
+               interaction ? ui_names[mode] : names[mode], gtk_widget_get_width(ui.gtk->picture),
+               gtk_widget_get_height(ui.gtk->picture), game_renderer ? game_renderer : G_OBJECT_TYPE_NAME(gsk), frames,
+               frames / elapsed, core * 1000 / frames, presentation * 1000 / frames);
         fflush(stdout);
         /* Repeat with the production deadline calculation. Throughput above
          * 60 does not by itself establish stable normal-speed playback. */
@@ -176,6 +298,15 @@ int benchmark_gtk(const char *path, const char *movie) {
         ui.gtk->last_draw = 0;
         uint64_t previous = begin;
         for (unsigned i = 0; i < frames; ++i) {
+            if (interaction) {
+                interact(&ui, mode, i);
+                track_paints(ui.gtk->window);
+                for (CupidGtkTool *tool = ui.gtk->tools; tool; tool = tool->next) {
+                    if (gtk_widget_get_visible(tool->window)) {
+                        track_paints(tool->window);
+                    }
+                }
+            }
             SDL_Event event;
             while (SDL_PollEvent(&event)) {
             }
@@ -220,15 +351,31 @@ int benchmark_gtk(const char *path, const char *movie) {
             result = 1;
             break;
         }
-        printf("GTK paced: %s, %.2f fps (target %.2f), %u/%u presentations\n", names[mode], frames / elapsed, nes_timing()->fps, presented, frames);
+        const char *label = interaction ? ui_names[mode] : names[mode];
+        printf("GTK paced: %s, %.2f fps (target %.2f), %u/%u presentations\n", label, frames / elapsed,
+               nes_timing()->fps, presented, frames);
         NesFrameTimingSummary paced, drawn;
         (void)nes_frame_timing_summary(&pacing, &paced);
         (void)nes_frame_timing_summary(&ui.gtk->draw_timing, &drawn);
-        printf("GTK cadence: %s, host jitter %.3f ms, p95 %.3f ms, max %.3f ms; %llu unique draws, draw jitter %.3f ms, p95 %.3f ms, max %.3f ms\n",
-            names[mode], paced.interval_jitter_ms, paced.metrics[NES_HOST_INTERVAL].p95,
-            paced.metrics[NES_HOST_INTERVAL].maximum, (unsigned long long)ui.gtk->drawn_frames,
-            drawn.interval_jitter_ms, drawn.metrics[NES_HOST_INTERVAL].p95, drawn.metrics[NES_HOST_INTERVAL].maximum);
+        printf("GTK cadence: %s, host jitter %.3f ms, p95 %.3f ms, max %.3f ms; %llu unique draws, draw jitter %.3f "
+               "ms, p95 %.3f ms, max %.3f ms\n",
+               label, paced.interval_jitter_ms, paced.metrics[NES_HOST_INTERVAL].p95,
+               paced.metrics[NES_HOST_INTERVAL].maximum, (unsigned long long)ui.gtk->drawn_frames,
+               drawn.interval_jitter_ms, drawn.metrics[NES_HOST_INTERVAL].p95,
+               drawn.metrics[NES_HOST_INTERVAL].maximum);
         fflush(stdout);
+        if (interaction) {
+            for (CupidGtkTool *tool = ui.gtk->tools; tool; tool = tool->next) {
+                PaintStats *stats = g_object_get_data(G_OBJECT(tool->window), "benchmark-paint");
+                if (stats && stats->count) {
+                    printf("GTK paints: %s, %llu paints, avg %.3f ms, max %.3f ms\n",
+                           gtk_window_get_title(GTK_WINDOW(tool->window)), (unsigned long long)stats->count,
+                           stats->total * 1000.0 / frequency / stats->count, stats->maximum * 1000.0 / frequency);
+                    *stats = (PaintStats){0};
+                }
+            }
+            fflush(stdout);
+        }
         if (result) {
             break;
         }

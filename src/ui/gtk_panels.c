@@ -57,6 +57,9 @@ static bool invoke(Control *c, const char *text, int selected) {
             frontend_desktop_open_panel(&c->panel->tool->ui, destination);
         }
     }
+    /* A user action gets the next model refresh; passive tools keep rotating. */
+    c->panel->tool->refreshed = SDL_GetTicks() - 100;
+    c->panel->tool->desktop->refresh_next = c->panel->tool;
     return ok;
 }
 
@@ -555,7 +558,7 @@ void cupid_gtk_panel_refresh(GtkWidget *root) {
                 c->last = g_strdup(text);
             }
         } else if (GTK_IS_LABEL(c->widget)) {
-            gtk_label_set_text(GTK_LABEL(c->widget), m->value ? m->value : "");
+            cupid_gtk_set_label(c->widget, m->value);
         } else if (GTK_IS_ENTRY(c->widget)) {
             const char *text = m->value ? m->value : "";
             if (!c->dirty && !gtk_widget_has_focus(c->widget) &&
@@ -565,7 +568,7 @@ void cupid_gtk_panel_refresh(GtkWidget *root) {
         } else if (c->type == FRONTEND_PANEL_ACTION) {
             if (c->cell_count) {
                 for (unsigned col = 0; col < c->cell_count; col++) {
-                    gtk_label_set_text(GTK_LABEL(c->cells[col]), col < m->item_count ? m->items[col] : "");
+                    cupid_gtk_set_label(c->cells[col], col < m->item_count ? m->items[col] : "");
                 }
                 if (m->selected) {
                     gtk_widget_add_css_class(c->widget, "suggested-action");
@@ -573,14 +576,14 @@ void cupid_gtk_panel_refresh(GtkWidget *root) {
                     gtk_widget_remove_css_class(c->widget, "suggested-action");
                 }
             } else {
-                gtk_button_set_label(GTK_BUTTON(c->widget), m->label);
+                cupid_gtk_set_button(c->widget, m->label);
             }
         } else if (GTK_IS_BUTTON(c->widget)) {
-            gtk_button_set_label(GTK_BUTTON(c->widget), m->value && *m->value ? m->value : "Browse...");
+            cupid_gtk_set_button(c->widget, m->value && *m->value ? m->value : "Browse...");
         }
     }
     if (model.status) {
-        gtk_label_set_text(GTK_LABEL(p->tool->status), model.status);
+        cupid_gtk_set_label(p->tool->status, model.status);
     }
     p->updating = false;
     if (p->debug) {

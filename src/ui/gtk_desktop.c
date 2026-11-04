@@ -391,11 +391,19 @@ static void theme(CupidGtkDesktop *d) {
             GEnumClass *values = g_type_class_ref(G_PARAM_SPEC_VALUE_TYPE(property));
             GEnumValue *value = g_enum_get_value_by_nick(values, light ? "light" : "dark");
             if (value) {
-                g_object_set(settings, "gtk-interface-color-scheme", value->value, NULL);
+                int current = -1;
+                g_object_get(settings, "gtk-interface-color-scheme", &current, NULL);
+                if (current != value->value) {
+                    g_object_set(settings, "gtk-interface-color-scheme", value->value, NULL);
+                }
             }
             g_type_class_unref(values);
         } else {
-            g_object_set(settings, "gtk-application-prefer-dark-theme", light == 0, NULL);
+            gboolean current = FALSE;
+            g_object_get(settings, "gtk-application-prefer-dark-theme", &current, NULL);
+            if (current != (light == 0)) {
+                g_object_set(settings, "gtk-application-prefer-dark-theme", light == 0, NULL);
+            }
         }
     }
 #endif
@@ -569,7 +577,13 @@ static void sync_actions(CupidGtkDesktop *d) {
         if (a->item.kind == 0 && frontend_command_get(a->item.id, &command)) {
             g_simple_action_set_enabled(G_SIMPLE_ACTION(action), command.enabled);
             if (command.flags & FRONTEND_COMMAND_CHECKABLE) {
-                g_simple_action_set_state(G_SIMPLE_ACTION(action), g_variant_new_boolean(command.checked));
+                GVariant *state = g_action_get_state(action);
+                if (!state || g_variant_get_boolean(state) != command.checked) {
+                    g_simple_action_set_state(G_SIMPLE_ACTION(action), g_variant_new_boolean(command.checked));
+                }
+                if (state) {
+                    g_variant_unref(state);
+                }
             }
         } else if (a->item.kind == 1 && frontend_panel_get(a->item.id, &panel)) {
             g_simple_action_set_enabled(G_SIMPLE_ACTION(action), panel.enabled);
@@ -842,6 +856,7 @@ bool cupid_gtk_init(FrontendDesktopUi *ui) {
     }
     CupidGtkDesktop *d = g_new0(CupidGtkDesktop, 1);
     d->ui = ui;
+    g_object_get(gtk_settings_get_default(), "gtk-enable-animations", &d->animations, NULL);
     /* The SDL host is hidden; GTK focus decides whether queued controller input is accepted. */
     d->joystick_background = SDL_GetHintBoolean(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, SDL_FALSE);
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
@@ -1189,6 +1204,12 @@ void cupid_gtk_render(FrontendDesktopUi *ui, const char *title, const char *regi
         memcpy(shortcuts, profile->shortcuts, sizeof(shortcuts));
     }
     bool session = frontend_panel_session_active();
+    bool paused = (ui->execution && frontend_execution_paused(ui->execution)) || !g_strcmp0(state, "Paused");
+    bool running = session && !paused;
+    if (d->animations && d->animations_running != running) {
+        d->animations_running = running;
+        g_object_set(gtk_settings_get_default(), "gtk-enable-animations", !running, NULL);
+    }
     if (!d->actions || d->commands != frontend_command_count() || d->panels != frontend_panel_count() ||
         d->session != session || d->recent != recent || d->recent_session != recent_session ||
         d->recent_revision != recent_revision || memcmp(d->shortcuts, shortcuts, sizeof(shortcuts))) {
@@ -1241,12 +1262,20 @@ void cupid_gtk_render(FrontendDesktopUi *ui, const char *title, const char *regi
     if (session) g_snprintf(caption, sizeof(caption), "Slot %u", ui->settings->state_slot + 1u);
     if (ui->settings->show_fps && session) {
         size_t n = strlen(caption);
-        g_snprintf(caption + n, sizeof(caption) - n, " | %.1f fps", ui->fps);
+        if (paused) {
+            g_snprintf(caption + n, sizeof(caption) - n, " | FPS paused");
+        } else {
+            g_snprintf(caption + n, sizeof(caption) - n, " | %.1f fps", ui->fps);
+        }
     }
     if (strcmp(gtk_label_get_text(GTK_LABEL(d->status_info)), caption)) {
         gtk_label_set_text(GTK_LABEL(d->status_info), caption);
     }
     for (CupidGtkTool *t = d->tools; t; t = t->next) {
+        if (gtk_widget_get_visible(t->window) && t->ui.status[0] && !desktop_status_active(&t->ui, SDL_GetTicks())) {
+            t->ui.status[0] = 0;
+            cupid_gtk_set_label(t->status, "");
+        }
         if (t->kind == 1 && t->id == HISTORY_PANEL && gtk_widget_get_visible(t->window))
             cupid_gtk_history_refresh(t->content);
         if (t->kind == 1 && t->id == TAS_PANEL && gtk_widget_get_visible(t->window)) {
@@ -1256,14 +1285,20 @@ void cupid_gtk_render(FrontendDesktopUi *ui, const char *title, const char *regi
     if (SDL_GetTicks() - d->refreshed >= 100) {
         d->refreshed = SDL_GetTicks();
         sync_actions(d);
-        for (CupidGtkTool *t = d->tools; t; t = t->next) {
-            if (!gtk_widget_get_visible(t->window)) {
+    }
+    /* Spread live tools over frames instead of refreshing every open window
+     * in one periodic burst. Round-robin order also serves large tool sets. */
+    CupidGtkTool *start = d->refresh_next ? d->refresh_next : d->tools;
+    if (start) {
+        CupidGtkTool *t = start;
+        do {
+            CupidGtkTool *next = t->next ? t->next : d->tools;
+            if (!gtk_widget_get_visible(t->window) || SDL_GetTicks() - t->refreshed < 100) {
+                t = next;
                 continue;
             }
-            if (t->ui.status[0] && !desktop_status_active(&t->ui, SDL_GetTicks())) {
-                t->ui.status[0] = 0;
-                gtk_label_set_text(GTK_LABEL(t->status), "");
-            }
+            t->refreshed = SDL_GetTicks();
+            d->refresh_next = next;
             t->ui.audio = ui->audio;
             t->ui.video = ui->video;
             t->ui.capture = ui->capture;
@@ -1287,10 +1322,11 @@ void cupid_gtk_render(FrontendDesktopUi *ui, const char *title, const char *regi
                 refresh_information(t);
             }
             if (t->ui.status[0]) {
-                gtk_label_set_text(GTK_LABEL(t->status), t->ui.status);
+                cupid_gtk_set_label(t->status, t->ui.status);
             }
             prompt_open(t);
-        }
+            break;
+        } while (t != start);
     }
     cupid_gtk_dispatch();
 }
@@ -1409,6 +1445,9 @@ void cupid_gtk_save_size(FrontendDesktopUi *ui) {
 
 void cupid_gtk_shutdown(FrontendDesktopUi *ui) {
     CupidGtkDesktop *d = ui->gtk;
+    if (d->animations_running) {
+        g_object_set(gtk_settings_get_default(), "gtk-enable-animations", d->animations, NULL);
+    }
     cupid_gtk_native_video_destroy(d);
     if (ui->video) {
         ui->video->pixels_only = false;

@@ -11,17 +11,35 @@
 #include "../video/frame_timing.h"
 typedef struct CupidGtkTool CupidGtkTool;
 
+/* Setting identical label text still rebuilds its layout in GTK. */
+static inline void cupid_gtk_set_label(GtkWidget *label, const char *text) {
+    const char *value = text ? text : "";
+    if (g_strcmp0(gtk_label_get_text(GTK_LABEL(label)), value)) {
+        gtk_label_set_text(GTK_LABEL(label), value);
+    }
+}
+
+static inline void cupid_gtk_set_button(GtkWidget *button, const char *text) {
+    const char *value = text ? text : "";
+    if (g_strcmp0(gtk_button_get_label(GTK_BUTTON(button)), value)) {
+        gtk_button_set_label(GTK_BUTTON(button), value);
+    }
+}
+
 typedef struct CupidGtkDesktop {
     FrontendDesktopUi *ui;
     GtkWidget *window, *picture, *status, *status_info, *menubar, *empty;
     GtkWindowGroup *window_group;
     GSimpleActionGroup *actions;
     CupidGtkTool *tools;
+    CupidGtkTool *refresh_next;
     size_t commands, panels, recent;
     const FrontendSession *recent_session;
     uint64_t recent_revision;
     FrontendHostBinding shortcuts[FRONTEND_SHORTCUT_COUNT];
     bool session, held[SDL_NUM_SCANCODES], fullscreen, joystick_background;
+    gboolean animations;
+    bool animations_running;
     uint32_t refreshed, theme_checked;
     cairo_surface_t *frame;
     GdkTexture *frame_texture;
@@ -42,6 +60,7 @@ struct CupidGtkTool {
     GtkWindowGroup *window_group;
     int kind;
     unsigned id;
+    uint32_t refreshed;
 };
 
 GtkWidget *cupid_gtk_scroll(GtkWidget *child);

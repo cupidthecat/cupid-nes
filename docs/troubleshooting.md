@@ -85,6 +85,13 @@ finish. The status-bar FPS counter averages 60 completed frame intervals to
 avoid fluctuations from partial frames in short sampling windows. For individual
 stalls, use the timing panel's jitter, p95, and maximum interval values.
 
+Settings pauses gameplay by default. The FPS bar says **FPS paused** while
+execution is suspended, including while a recent action message occupies the
+main status field. To keep playing while changing options, turn off **Pause
+while using Settings** under Settings > General and apply the change. Focus-loss pause
+is a separate preference. Opening a complex window for the first time or applying
+an option that reopens a device can still cause a brief interruption.
+
 If an FM2 runs at normal speed until the TAS editor opens, update to a build
 with the playback-following fix. Older builds could keep starting scroll
 animations while the movie advanced, repeatedly redrawing the input grid.
