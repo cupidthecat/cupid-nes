@@ -4,29 +4,10 @@ Cupid is an NES and Famicom emulator for Windows and Linux. It supports NTSC,
 PAL, and Dendy timing, cartridge games, Disk System images, NSF/NSFe music,
 StudyBox media, and supported VS System arcade images.
 
-The GTK4 desktop has native menus, a compact toolbar, and separate windows for
-settings and tools. Keep the debugger, memory editor, or TAS timeline beside the
-game. Windows follows the system light or dark appearance.
-Controls have no surrounding borders; keyboard focus stays visible in both themes.
-The desktop paces emulation independently of expensive display updates. When
-presentation falls behind, it shows the latest frame while preserving audio,
-movie input, and captured frames. See [performance troubleshooting](docs/troubleshooting.md#slow-video-in-a-large-window).
-Frame waits use the high-resolution clock and service pending desktop paints
-between frames, including late frames and the final spin wait. With GTK 4.10
-or later, Linux prepares an opaque texture for GPU rendering or a Cairo image
-for software rendering. GTK 4.8 uses the Cairo drawing path. Windows uses an
-accelerated SDL game viewport even when GTK uses Cairo for desktop widgets.
-Game Information shows the game renderer and refreshes when a game is replaced
-or unloaded.
-GTK builds use a software SDL renderer and window surface for the hidden input
-host. GTK renders the visible Linux window, and shader processing restores its
-graphics context after loading, rendering, or releasing a preset. Explicit renderer overrides
-remain available for troubleshooting.
-Frame Timing Statistics reports emulation and display draw rates
-separately, with interval jitter to help diagnose uneven motion.
-The TAS editor reuses its grid drawing between changes. Follow Playback moves
-directly to the current row, and live preview frames update without repeating
-the window layout.
+The GTK4 desktop has native menus, a compact toolbar, and separate windows for settings and tools.
+You can keep the debugger, memory editor, or TAS timeline open beside the game.
+On Windows, it follows the system's light or dark appearance. Controls are
+borderless, with visible keyboard focus in both themes.
 
 ![Cupid desktop](docs/images/desktop-main.png)
 
@@ -34,32 +15,34 @@ the window layout.
 
 Get the Windows ZIP from [Releases](https://github.com/cupidthecat/cupid-nes/releases).
 Extract it into a new folder and run `cupid-nes.cmd`. The package includes GTK and
-its runtime libraries. Preview releases are available while the desktop changes
-are under review.
+its runtime libraries. Preview releases are also available.
 
 Linux x64 previews are available as `cupid-linux-x64.tar.gz` for Ubuntu 24.04.
 See [Linux download instructions](docs/getting-started.md#linux) for runtime dependencies.
 
 Use **File > Open Game**, press **Ctrl+O**, or drop an image onto the game window.
 Recent games remember archive members and patches. Opening another image switches
-games in the same window; a failed load keeps the current session available.
+games in the same window. If loading fails, you can continue the current session.
 Disk System and StudyBox images need their respective BIOS files.
 
 ## Settings and tools
 
-Open **Settings** from the toolbar or press **Ctrl+Comma**. Choose a category on
-the left. Video, audio, input, media, and hardware pages divide longer lists into
-tabs. **Apply** saves validated changes; **Cancel** discards pending changes.
-File fields have native pickers. Audio settings list detected output devices.
-Controller choices remain automatic until explicitly selected. Saving other
-preferences preserves automatic detection, and game-specific controller choices
-stay with that game. See [configuration](docs/configuration.md) for saved settings.
+Open **Settings** from the toolbar or press **Ctrl+Comma**, then choose a category
+on the left. Longer video, audio, input, media, and hardware pages use tabs.
+**Apply** validates and saves changes; **Cancel** discards pending edits. File
+fields open native pickers, and audio settings list detected output devices.
+
+Controllers are detected automatically until you choose a device. Saving other
+preferences keeps automatic detection enabled, and controller choices saved for
+one game stay with that game. See [configuration](docs/configuration.md) for
+details about saved settings.
 
 ![Video settings](docs/images/desktop-category-2.png)
 
-Memory Search keeps results beside range and comparison controls. The debugger
-places registers and breakpoints beside disassembly. The header editor separates
-ROM, RAM, and console fields; format, mirroring, and region use named choices.
+Memory Search shows results beside its range and comparison controls. The
+debugger keeps registers and breakpoints beside the disassembly. In the header
+editor, ROM, RAM, and console fields have separate groups, with named choices
+for format, mirroring, and region.
 
 ![Debugger](docs/images/desktop-debugger-window.png)
 
@@ -75,13 +58,13 @@ ROM, RAM, and console fields; format, mirroring, and region use named choices.
 | Edit cartridge metadata | [iNES and NES 2.0 header editor](docs/header-editor.md) |
 | Use expansion input | [Controllers and peripherals](docs/controls.md), [Family BASIC keyboard](docs/keyboard.md) |
 
-The cheat editor supports up to 256 codes per game. Saved lists preserve UTF-8
-descriptions, and a rejected catalog import keeps the previous catalog available.
+The cheat editor supports up to 256 codes per game and saves UTF-8 descriptions.
+If a catalog import fails, the previous catalog stays loaded.
 
-The TAS editor opens FM2 movies and FM3 projects. Its input grid sits beside a
-resizable game preview and editing tabs. Save the full editing session as CTAS
-or export a movie. The preview uses the same opaque game colors as the main view.
-The converter handles supported power-on FCM movies after checking game identity.
+The TAS editor opens FM2 movies and FM3 projects, with an input grid beside a
+resizable game preview and editing tabs. You can save the full session as CTAS
+or export a movie. The preview uses the same opaque colors as the main game view.
+The converter checks game identity before converting supported power-on FCM movies.
 
 ![TAS editor](docs/images/tas-editor.png)
 
@@ -105,9 +88,33 @@ explains the menus, individual windows, and settings.
 | Ctrl+F12 / Shift+F12 | Audio / video recording |
 | Ctrl+Shift+F12 | Stop and finalize recording |
 
-Settings can change keyboard and gamepad assignments and select another input
+Use Settings to change keyboard and gamepad assignments or choose another input
 profile. The first SDL controller drives player 1 by default. See
 [controls](docs/controls.md) for device-specific input and shortcut precedence.
+
+## Rendering and timing
+
+The desktop paces emulation separately from expensive display updates. If
+presentation falls behind, it shows the latest frame while preserving audio,
+movie input, and captured frames. Frame Timing Statistics shows emulation and
+display draw rates separately, along with interval jitter to help diagnose
+uneven motion. See [performance troubleshooting](docs/troubleshooting.md#slow-video-in-a-large-window).
+
+Frame waits use a high-resolution clock and process pending desktop paints
+between frames, including late frames and the final spin wait. On Linux with
+GTK 4.10 or later, the game view uses an opaque texture for GPU rendering or a
+Cairo image for software rendering. GTK 4.8 uses Cairo. On Windows, the game view
+uses accelerated SDL rendering even when GTK draws desktop widgets with Cairo.
+Game Information shows the renderer and updates when you replace or unload a game.
+
+GTK builds use a software SDL renderer and window surface for the hidden input
+host. GTK draws the visible Linux window. Shader processing restores GTK's
+graphics context after loading, rendering, or releasing a preset. You can
+override the renderer for troubleshooting.
+
+The TAS editor reuses its grid drawing until something changes. Follow Playback
+moves directly to the current row, and preview updates do not repeat the window
+layout.
 
 ## Build from source
 
@@ -146,11 +153,11 @@ command-line settings take precedence. The [hardware reference](docs/hardware.md
 lists mapper families, expansion sound, controller devices, supported layouts,
 and remaining limits. Mapper support is not a per-game compatibility guarantee.
 
-Cartridge saves normally live beside the ROM. Disk System writes default to a
-separate IPS overlay. Quitting or replacing an image finalizes recordings and
-persistent data first; failed writes leave the session available for retry.
-The state recorder preserves existing snapshots when its history index cannot
-be read and reports the problem before allowing another capture.
+Cartridge saves normally live beside the ROM. Disk System writes use a separate
+IPS overlay by default. Before quitting or replacing an image, Cupid finalizes
+recordings and saves persistent data. If a write fails, it keeps the session open
+so you can retry. If the state recorder cannot read its history index, it keeps
+existing snapshots and reports the problem before allowing another capture.
 See [saves and media](docs/saves.md), [states and replay](docs/replay.md),
 [netplay](docs/netplay.md), and [HD packs](docs/hd-packs.md).
 
